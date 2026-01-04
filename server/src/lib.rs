@@ -1,5 +1,6 @@
 pub mod api;
 pub mod auth;
+pub mod dsl;
 pub mod event_log;
 pub mod events;
 pub mod html;
@@ -19,6 +20,7 @@ pub fn create_app(state: AppState) -> Router {
         .route("/t/:tag", axum::routing::get(html::tag_page))
         .route("/t/:tag/a/:aspect", axum::routing::get(html::tag_aspect_page))
         .route("/api/v0/vote", axum::routing::post(api::post_vote))
+        .route("/api/v0/ingest", axum::routing::post(api::post_ingest))
         .route("/api/v0/pair", axum::routing::get(api::get_pair))
         .route("/api/v0/rank", axum::routing::get(api::get_rank))
         .with_state(state)

@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     auth::{require_key, AuthedKey},
+    dsl,
     events::{canonicalize_aspect, canonicalize_item, canonicalize_tag, Event, VoteCast},
     ranking::ranked_items,
     reducer::GroupKey,
@@ -76,6 +77,7 @@ pub async fn post_vote(
         a: a.clone(),
         b: b.clone(),
         score,
+        body: None,
         voter_key_id,
     };
 
@@ -365,6 +367,188 @@ pub async fn get_pair(State(state): State<AppState>, Query(q): Query<PairQuery>)
         aspect: format!(":{aspect}"),
         left: format!("/{}", left),
         right: format!("/{}", right),
+    })
+    .into_response()
+}
+
+#[derive(Debug, Deserialize)]
+pub struct IngestRequest {
+    /// Raw text containing DSL (and optionally prose).
+    pub text: String,
+    /// Parsing mode: "full" (default), "lines", or "dsl".
+    #[serde(default)]
+    pub mode: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct IngestResponse {
+    pub ok: bool,
+    pub tags: Vec<String>,
+    pub events_appended: usize,
+    pub next: NextMoves,
+}
+
+fn ratio_to_score(left: i32, right: i32) -> i32 {
+    let l = left.max(0) as f64;
+    let r = right.max(0) as f64;
+    let denom = l + r;
+    if denom <= 0.0 {
+        return 0;
+    }
+    let p_left = l / denom; // 0..1
+    // Map to [-50, 50] to match server's convention (see rank.py).
+    let score = (p_left * 100.0 - 50.0).round() as i32;
+    score.clamp(-50, 50)
+}
+
+/// Ingest a DSL/prose document, emitting events into the JSONL log.
+///
+/// Interpretation model:
+/// - `#tag` sets the active tag context
+/// - `:aspect` sets the active aspect context (default: "default")
+/// - `/item {body}` emits `ItemUpsert` (and `TagAdd` if tag context exists)
+/// - `/a 2:1 /b {explanation}` emits `VoteCast` (and `TagAdd` for both items if tag context exists)
+pub async fn post_ingest(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    Json(req): Json<IngestRequest>,
+) -> impl IntoResponse {
+    let AuthedKey { id: voter_key_id } = match require_key(State(state.clone()), headers).await {
+        Ok(k) => k,
+        Err(e) => return (e.0, e.1).into_response(),
+    };
+
+    let mode = req
+        .mode
+        .clone()
+        .unwrap_or_else(|| "full".to_string())
+        .to_lowercase();
+
+    let doc = match mode.as_str() {
+        "full" => Ok(dsl::parse_full(&req.text)),
+        "lines" => dsl::parse_lines(&req.text).map_err(|e| e.to_string()),
+        "dsl" => dsl::parse(&req.text).map_err(|e| e.to_string()),
+        _ => Err(format!("invalid mode: {}", mode)),
+    };
+
+    let doc = match doc {
+        Ok(d) => d,
+        Err(e) => return (StatusCode::BAD_REQUEST, e).into_response(),
+    };
+
+    let mut current_tag: Option<String> = None;
+    let mut current_aspect: String = "default".to_string();
+    let ts = now_ms();
+
+    let mut events: Vec<Event> = Vec::new();
+    let mut tags_seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+
+    for s in doc.statements {
+        match s {
+            dsl::Stmt::Prose { .. } => {}
+            dsl::Stmt::Email { .. } => {}
+            dsl::Stmt::Hashtag { name } => {
+                let t = canonicalize_tag(&name);
+                current_tag = Some(t.clone());
+                tags_seen.insert(t);
+            }
+            dsl::Stmt::Attribute { name } => {
+                current_aspect = canonicalize_aspect(&name);
+            }
+            dsl::Stmt::Item { title, body } => {
+                let item = canonicalize_item(&title);
+                events.push(Event::ItemUpsert(crate::events::ItemUpsert {
+                    ts,
+                    item: item.clone(),
+                    body,
+                }));
+                if let Some(tag) = current_tag.clone() {
+                    events.push(Event::TagAdd(crate::events::TagAdd {
+                        ts,
+                        tag,
+                        item: item.clone(),
+                    }));
+                }
+            }
+            dsl::Stmt::Vote {
+                item1,
+                item2,
+                ratio_left,
+                ratio_right,
+                explanation,
+            } => {
+                let Some(tag) = current_tag.clone() else {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        "vote requires an active #tag context".to_string(),
+                    )
+                        .into_response();
+                };
+                let aspect = current_aspect.clone();
+                let a = canonicalize_item(&item1);
+                let b = canonicalize_item(&item2);
+                let score = ratio_to_score(ratio_left, ratio_right);
+                events.push(Event::VoteCast(VoteCast {
+                    ts,
+                    tag: tag.clone(),
+                    aspect,
+                    a: a.clone(),
+                    b: b.clone(),
+                    score,
+                    body: explanation,
+                    voter_key_id: voter_key_id.clone(),
+                }));
+                // Ensure both items exist under the tag (helps /pair pool).
+                events.push(Event::TagAdd(crate::events::TagAdd {
+                    ts,
+                    tag: tag.clone(),
+                    item: a.clone(),
+                }));
+                events.push(Event::TagAdd(crate::events::TagAdd {
+                    ts,
+                    tag,
+                    item: b.clone(),
+                }));
+            }
+        }
+    }
+
+    let tags_vec: Vec<String> = tags_seen.into_iter().collect();
+    events.push(Event::DslIngested(crate::events::DslIngested {
+        ts,
+        raw: req.text.clone(),
+        tags: tags_vec.clone(),
+        voter_key_id: voter_key_id.clone(),
+    }));
+
+    let events_appended = events.len();
+
+    // Persist then reduce.
+    for ev in &events {
+        if let Err(err) = state.event_log.append(ev).await {
+            return (StatusCode::INTERNAL_SERVER_ERROR, format!("{err}")).into_response();
+        }
+    }
+    {
+        let mut reduced = state.reduced.write().await;
+        for ev in events.into_iter() {
+            reduced.apply_event(ev);
+        }
+    }
+
+    let primary_tag = tags_vec
+        .get(0)
+        .cloned()
+        .unwrap_or_else(|| "untagged".to_string());
+    Json(IngestResponse {
+        ok: true,
+        tags: tags_vec.iter().map(|t| format!("#{t}")).collect(),
+        events_appended,
+        next: NextMoves {
+            vote: format!("npx slugsocial pair #{} --aspect :{}", primary_tag, current_aspect),
+            rank: format!("npx slugsocial rank #{} --aspect :{}", primary_tag, current_aspect),
+            web: format!("https://slug.social/t/{}", primary_tag),
+        },
     })
     .into_response()
 }

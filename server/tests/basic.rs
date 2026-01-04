@@ -14,6 +14,7 @@ fn vote(ts: i64, tag: &str, aspect: &str, a: &str, b: &str, score: i32) -> Event
         a: a.to_string(),
         b: b.to_string(),
         score,
+        body: None,
         voter_key_id: "test".to_string(),
     })
 }

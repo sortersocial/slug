@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use crate::events::{canonicalize_aspect, canonicalize_item, canonicalize_tag, Event, VoteCast};
+use crate::events::{canonicalize_aspect, canonicalize_item, canonicalize_tag, DslIngested, Event, VoteCast};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct GroupKey {
@@ -104,6 +104,7 @@ pub struct ReducerState {
     pub items: HashSet<String>,
     pub tags: HashMap<String, HashSet<String>>, // tag -> set(item)
     pub item_bodies: HashMap<String, String>,
+    pub ingests_by_tag: HashMap<String, VecDeque<DslIngested>>,
 }
 
 impl ReducerState {
@@ -131,6 +132,18 @@ impl ReducerState {
                 let item = canonicalize_item(&t.item);
                 self.items.insert(item.clone());
                 self.tags.entry(tag).or_default().insert(item);
+            }
+            Event::DslIngested(mut ing) => {
+                // Canonicalize tags for indexing.
+                ing.tags = ing.tags.into_iter().map(|t| canonicalize_tag(&t)).collect();
+
+                for tag in ing.tags.iter() {
+                    let q = self.ingests_by_tag.entry(tag.clone()).or_default();
+                    q.push_front(ing.clone());
+                    while q.len() > 25 {
+                        q.pop_back();
+                    }
+                }
             }
         }
     }

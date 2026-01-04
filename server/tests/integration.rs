@@ -52,7 +52,7 @@ async fn test_index_page() {
     assert!(response.status().is_success());
     let body = response.text().await.unwrap();
     assert!(body.contains("<html"), "should contain HTML");
-    assert!(body.contains("Slug"), "should contain Slug");
+    assert!(body.contains("slug.social"), "should contain slug.social");
 }
 
 #[tokio::test]
@@ -70,7 +70,7 @@ async fn test_vote_endpoint() {
 
     let response = client
         .post(&format!("http://{}/api/v0/vote", addr))
-        .header("Authorization", "Bearer test-secret")
+        .header("x-slug-key", "test-secret")
         .json(&vote_payload)
         .send()
         .await
@@ -78,8 +78,8 @@ async fn test_vote_endpoint() {
 
     assert!(response.status().is_success());
     let body: serde_json::Value = response.json().await.unwrap();
-    assert_eq!(body["status"], "ok");
-    assert!(body["next_moves"].is_object());
+    assert_eq!(body["ok"], true);
+    assert!(body["next"].is_object());
 }
 
 #[tokio::test]
@@ -121,7 +121,7 @@ async fn test_rank_endpoint() {
 
     client
         .post(&format!("http://{}/api/v0/vote", addr))
-        .header("Authorization", "Bearer test-secret")
+        .header("x-slug-key", "test-secret")
         .json(&vote_payload)
         .send()
         .await
@@ -139,6 +139,6 @@ async fn test_rank_endpoint() {
     assert!(body["ranking"].is_array());
     let ranking = body["ranking"].as_array().unwrap();
     assert_eq!(ranking.len(), 2);
-    assert_eq!(ranking[0]["item"], "rust");
+    assert_eq!(ranking[0]["item"], "/rust");
 }
 

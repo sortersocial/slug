@@ -22,6 +22,7 @@ pub enum Event {
     VoteCast(VoteCast),
     ItemUpsert(ItemUpsert),
     TagAdd(TagAdd),
+    DslIngested(DslIngested),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -38,6 +39,9 @@ pub struct VoteCast {
     pub b: String,
     /// Preference score in [-50, 50]. Positive means prefer `a`, negative means prefer `b`.
     pub score: i32,
+    /// Optional vote explanation/body (from DSL `{ ... }`).
+    #[serde(default)]
+    pub body: Option<String>,
     /// API key identifier (not secret), for attribution/rate limiting.
     pub voter_key_id: String,
 }
@@ -59,6 +63,18 @@ pub struct TagAdd {
     pub tag: String,
     /// Item without leading '/'.
     pub item: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DslIngested {
+    /// Unix timestamp in milliseconds.
+    pub ts: i64,
+    /// Raw DSL/prose that was ingested.
+    pub raw: String,
+    /// Tags referenced/active during ingestion (without leading '#').
+    pub tags: Vec<String>,
+    /// API key identifier (not secret), for attribution/rate limiting.
+    pub voter_key_id: String,
 }
 
 
