@@ -49,6 +49,7 @@ enum Command {
         ratio: String,
         b: String,
         /// Optional sigils (`:aspect`, `@actor`) followed by a required explanation string.
+        /// If you omit the explanation argument, the CLI will read it from stdin (heredoc / pipe).
         ///
         /// Example:
         ///   npx slugsocial vote '#tag' /a 2:1 /b :default @me "because ..."
@@ -282,7 +283,7 @@ fn parse_sigils(tokens: &[String]) -> Result<(String, Option<String>)> {
     Ok((aspect.unwrap_or_else(|| ":default".to_string()), actor))
 }
 
-fn parse_sigils_and_body(tokens: &[String]) -> Result<(String, Option<String>, String)> {
+fn parse_sigils_and_body(tokens: &[String]) -> Result<(String, Option<String>, Option<String>)> {
     let mut aspect: Option<String> = None;
     let mut actor: Option<String> = None;
     let mut body_parts: Vec<String> = Vec::new();
@@ -310,12 +311,11 @@ fn parse_sigils_and_body(tokens: &[String]) -> Result<(String, Option<String>, S
     }
 
     let body = body_parts.join(" ").trim().to_string();
-    if body.is_empty() {
-        return Err(anyhow!(
-            "missing vote explanation. Example: npx slugsocial vote '#tag' /a 2:1 /b :default @you \"because ...\""
-        ));
-    }
-    Ok((aspect.unwrap_or_else(|| ":default".to_string()), actor, body))
+    Ok((
+        aspect.unwrap_or_else(|| ":default".to_string()),
+        actor,
+        if body.is_empty() { None } else { Some(body) },
+    ))
 }
 
 fn validate_ratio(r: &str) -> Result<(i32, i32)> {
@@ -589,7 +589,21 @@ async fn main() -> Result<()> {
         } => {
             let client = http_client()?;
             let _ = validate_ratio(&ratio)?;
-            let (aspect, actor, body) = parse_sigils_and_body(&tokens)?;
+            let (aspect, actor, mut body) = parse_sigils_and_body(&tokens)?;
+            if body.as_deref().unwrap_or("").trim().is_empty() {
+                // Read from stdin (supports heredoc / piping). This will be empty for interactive TTY.
+                let mut buf = String::new();
+                let _ = std::io::stdin().read_to_string(&mut buf);
+                let b = buf.trim().to_string();
+                if !b.is_empty() {
+                    body = Some(b);
+                }
+            }
+            let body = body.ok_or_else(|| anyhow!(
+                "missing vote explanation.\n\
+Provide it as a trailing argument:\n  npx slugsocial vote '#tag' /a 2:1 /b :default @you \"because ...\"\n\
+or via stdin:\n  printf '%s\\n' 'because ...' | npx slugsocial vote '#tag' /a 2:1 /b :default @you"
+            ))?;
             let req = VoteRequest {
                 tag: format!("#{}", canonicalize_tag(&tag)),
                 aspect,

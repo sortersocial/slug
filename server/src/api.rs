@@ -1,4 +1,5 @@
 use axum::{
+    extract::rejection::JsonRejection,
     extract::{Query, State},
     http::StatusCode,
     response::IntoResponse,
@@ -77,8 +78,30 @@ fn now_ms() -> i64 {
 pub async fn post_vote(
     State(state): State<AppState>,
     _headers: axum::http::HeaderMap,
-    Json(req): Json<VoteRequest>,
+    payload: Result<Json<VoteRequest>, JsonRejection>,
 ) -> impl IntoResponse {
+    let Json(req) = match payload {
+        Ok(v) => v,
+        Err(rej) => {
+            let msg = rej.to_string();
+            let hint = if msg.contains("missing field `body`") || msg.contains("missing field 'body'") {
+                Some(
+                    "your client is missing the required vote explanation.\n\
+upgrade `slugsocial` and pass a justification string.\n\
+\n\
+example:\n\
+  npx slugsocial vote '#tag' /a 2:1 /b :default @you \"because ...\"\n\
+\n\
+or via stdin:\n\
+  printf '%s\\n' 'because ...' | npx slugsocial vote '#tag' /a 2:1 /b :default @you"
+                        .to_string(),
+                )
+            } else {
+                Some(format!("invalid JSON: {msg}"))
+            };
+            return api_error(StatusCode::UNPROCESSABLE_ENTITY, "invalid request body", hint);
+        }
+    };
     let actor_c = req.actor.as_ref().map(|a| canonicalize_actor(a));
     let voter_key_id = actor_c.clone().unwrap_or_else(|| "anon".to_string());
     let tag = canonicalize_tag(&req.tag);
