@@ -38,7 +38,7 @@ impl EventLog {
 
     pub async fn append(&self, event: &Event) -> Result<(), EventLogError> {
         self.ensure_parent_dir().await?;
-        let mut f = OpenOptions::new()
+        let mut f: tokio::fs::File = OpenOptions::new()
             .create(true)
             .append(true)
             .open(&self.path)

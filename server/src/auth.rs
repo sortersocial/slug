@@ -10,7 +10,7 @@ fn now_ms() -> i64 {
     let t = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
-    (t.as_millis() as i64)
+    t.as_millis() as i64
 }
 
 #[derive(Debug, Clone)]

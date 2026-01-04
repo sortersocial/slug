@@ -5,15 +5,15 @@ use serde::{Deserialize, Serialize};
 /// - aspects are stored without leading ':'
 /// - items are stored without leading '/'
 pub fn canonicalize_tag(input: &str) -> String {
-    input.trim().trim_start_matches('#').to_string()
+    input.trim().trim_start_matches('#').to_lowercase()
 }
 
 pub fn canonicalize_aspect(input: &str) -> String {
-    input.trim().trim_start_matches(':').to_string()
+    input.trim().trim_start_matches(':').to_lowercase()
 }
 
 pub fn canonicalize_item(input: &str) -> String {
-    input.trim().trim_start_matches('/').to_string()
+    input.trim().trim_start_matches('/').to_lowercase()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
