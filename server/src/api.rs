@@ -9,7 +9,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
-    auth::{require_key, AuthedKey},
     dsl,
     events::{canonicalize_actor, canonicalize_aspect, canonicalize_item, canonicalize_tag, Event, VoteCast},
     ranking::ranked_items,
@@ -75,15 +74,11 @@ fn now_ms() -> i64 {
 
 pub async fn post_vote(
     State(state): State<AppState>,
-    headers: axum::http::HeaderMap,
+    _headers: axum::http::HeaderMap,
     Json(req): Json<VoteRequest>,
 ) -> impl IntoResponse {
-    let AuthedKey { id: voter_key_id } = match require_key(State(state.clone()), headers).await {
-        Ok(k) => k,
-        Err(e) => return (e.0, e.1).into_response(),
-    };
-
     let actor_c = req.actor.as_ref().map(|a| canonicalize_actor(a));
+    let voter_key_id = actor_c.clone().unwrap_or_else(|| "anon".to_string());
     let tag = canonicalize_tag(&req.tag);
     let aspect = canonicalize_aspect(&req.aspect);
     let a = canonicalize_item(&req.a);
@@ -706,13 +701,12 @@ pub struct IngestResponse {
 /// - `/a 2:1 /b {explanation}` emits `VoteCast` (and `TagAdd` for both items if tag context exists)
 pub async fn post_ingest(
     State(state): State<AppState>,
-    headers: axum::http::HeaderMap,
+    _headers: axum::http::HeaderMap,
     Json(req): Json<IngestRequest>,
 ) -> impl IntoResponse {
-    let AuthedKey { id: voter_key_id } = match require_key(State(state.clone()), headers).await {
-        Ok(k) => k,
-        Err(e) => return (e.0, e.1).into_response(),
-    };
+    // Open-write mode: attribution comes from `@actor` in the document, else "anon".
+    let mut current_actor: Option<String> = None;
+    let mut voter_key_id: String = "anon".to_string();
 
     let mode = req
         .mode
@@ -732,7 +726,6 @@ pub async fn post_ingest(
         Err(e) => return api_error(StatusCode::BAD_REQUEST, e, None),
     };
 
-    let mut current_actor: Option<String> = None;
     let mut current_tag: Option<String> = None;
     let mut current_aspect: String = "default".to_string();
     let ts = now_ms();
@@ -748,6 +741,7 @@ pub async fn post_ingest(
             dsl::Stmt::Actor { name } => {
                 let a = canonicalize_actor(&name);
                 current_actor = Some(a.clone());
+                voter_key_id = a;
             }
             dsl::Stmt::Hashtag { name } => {
                 let t = canonicalize_tag(&name);

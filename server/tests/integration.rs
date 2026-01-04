@@ -67,7 +67,6 @@ async fn test_vote_endpoint() {
     });
     client
         .post(&format!("http://{}/api/v0/ingest", addr))
-        .header("x-slug-key", "test-secret")
         .json(&ingest_payload)
         .send()
         .await
@@ -83,7 +82,6 @@ async fn test_vote_endpoint() {
 
     let response = client
         .post(&format!("http://{}/api/v0/vote", addr))
-        .header("x-slug-key", "test-secret")
         .json(&vote_payload)
         .send()
         .await
@@ -93,29 +91,6 @@ async fn test_vote_endpoint() {
     let body: serde_json::Value = response.json().await.unwrap();
     assert_eq!(body["ok"], true);
     assert!(body["next"].is_object());
-}
-
-#[tokio::test]
-async fn test_vote_requires_auth() {
-    let (addr, _tmp, _log, _handle) = create_test_server().await;
-    let client = reqwest::Client::new();
-
-    let vote_payload = serde_json::json!({
-        "tag": "#rust",
-        "aspect": ":speed",
-        "a": "/clap",
-        "b": "/argh",
-        "ratio": "3:1"
-    });
-
-    let response = client
-        .post(&format!("http://{}/api/v0/vote", addr))
-        .json(&vote_payload)
-        .send()
-        .await
-        .unwrap();
-
-    assert_eq!(response.status(), 401);
 }
 
 #[tokio::test]
@@ -130,7 +105,6 @@ async fn test_rank_endpoint() {
     });
     client
         .post(&format!("http://{}/api/v0/ingest", addr))
-        .header("x-slug-key", "test-secret")
         .json(&ingest_payload)
         .send()
         .await
@@ -146,7 +120,6 @@ async fn test_rank_endpoint() {
 
     client
         .post(&format!("http://{}/api/v0/vote", addr))
-        .header("x-slug-key", "test-secret")
         .json(&vote_payload)
         .send()
         .await

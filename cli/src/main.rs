@@ -1,6 +1,5 @@
 use anyhow::{anyhow, Context, Result};
 use clap::{Parser, Subcommand};
-use reqwest::header::{HeaderMap, HeaderValue};
 use serde::{Deserialize, Serialize};
 use std::io::Read;
 use std::path::PathBuf;
@@ -15,10 +14,6 @@ struct ApiError {
 #[derive(Parser, Debug)]
 #[command(name = "slugsocial", version, about = "Slug Social CLI (thin client)")]
 struct Cli {
-    /// API key secret (sent as x-slug-key)
-    #[arg(long, env = "SLUG_KEY")]
-    key: Option<String>,
-
     #[command(subcommand)]
     cmd: Command,
 }
@@ -303,7 +298,7 @@ fn print_tags(resp: &TagsResponse) {
         println!("  /item-a 2:1 /item-b");
         println!("  EOF");
         println!();
-        println!("  # ingest it (requires SLUG_KEY)");
+        println!("  # ingest it");
         println!("  npx slugsocial ingest first.sorter");
         println!();
         println!("  # then explore");
@@ -388,13 +383,8 @@ fn print_recent_votes(resp: &RecentVotesResponse) {
     }
 }
 
-fn http_client(key: Option<&str>) -> Result<reqwest::Client> {
-    let mut headers = HeaderMap::new();
-    if let Some(k) = key {
-        let v = HeaderValue::from_str(k).context("invalid SLUG_KEY value")?;
-        headers.insert("x-slug-key", v);
-    }
-    Ok(reqwest::Client::builder().default_headers(headers).build()?)
+fn http_client() -> Result<reqwest::Client> {
+    Ok(reqwest::Client::new())
 }
 
 async fn expect_json<T: for<'de> Deserialize<'de>>(resp: reqwest::Response) -> Result<T> {
@@ -415,19 +405,19 @@ async fn expect_json<T: for<'de> Deserialize<'de>>(resp: reqwest::Response) -> R
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let Cli { key, cmd } = Cli::parse();
+    let Cli { cmd } = Cli::parse();
     let base = "https://slug.social";
 
     match cmd {
         Command::Healthz => {
-            let client = http_client(key.as_deref())?;
+            let client = http_client()?;
             let url = format!("{base}/healthz");
             let body = client.get(url).send().await?.text().await?;
             println!("{body}");
         }
 
         Command::Rank { tag, tokens, limit } => {
-            let client = http_client(key.as_deref())?;
+            let client = http_client()?;
             let tag_c = canonicalize_tag(&tag);
             let (aspect, _actor) = parse_sigils(&tokens)?;
             let aspect_c = canonicalize_aspect(&aspect);
@@ -442,7 +432,7 @@ async fn main() -> Result<()> {
         }
 
         Command::Pair { tag, tokens, random } => {
-            let client = http_client(key.as_deref())?;
+            let client = http_client()?;
             let tag_c = canonicalize_tag(&tag);
             let (aspect, _actor) = parse_sigils(&tokens)?;
             let aspect_c = canonicalize_aspect(&aspect);
@@ -463,11 +453,7 @@ async fn main() -> Result<()> {
             b,
             tokens,
         } => {
-            let key = key
-                .as_deref()
-                .ok_or_else(|| anyhow!("missing --key or SLUG_KEY (required for voting)"))?;
-
-            let client = http_client(Some(key))?;
+            let client = http_client()?;
             let _ = validate_ratio(&ratio)?;
             let (aspect, actor) = parse_sigils(&tokens)?;
             let req = VoteRequest {
@@ -491,10 +477,7 @@ async fn main() -> Result<()> {
         }
 
         Command::Ingest { file, mode } => {
-            let key = key
-                .as_deref()
-                .ok_or_else(|| anyhow!("missing --key or SLUG_KEY (required for ingest)"))?;
-            let client = http_client(Some(key))?;
+            let client = http_client()?;
 
             let mut text = String::new();
             match file {
@@ -535,14 +518,14 @@ async fn main() -> Result<()> {
         }
 
         Command::Tags => {
-            let client = http_client(key.as_deref())?;
+            let client = http_client()?;
             let url = format!("{base}/api/v0/tags");
             let resp: TagsResponse = expect_json(client.get(url).send().await?).await?;
             print_tags(&resp);
         }
 
         Command::Tag { tag } => {
-            let client = http_client(key.as_deref())?;
+            let client = http_client()?;
             let tag_c = canonicalize_tag(&tag);
             let url = format!("{base}/api/v0/tag?tag={}", urlencoding::encode(&tag_c));
             let resp: TagDetailResponse = expect_json(client.get(url).send().await?).await?;
@@ -550,7 +533,7 @@ async fn main() -> Result<()> {
         }
 
         Command::Item { item } => {
-            let client = http_client(key.as_deref())?;
+            let client = http_client()?;
             let item_c = canonicalize_item(&item);
             let url = format!("{base}/api/v0/item?item={}", urlencoding::encode(&item_c));
             let resp: ItemResponse = expect_json(client.get(url).send().await?).await?;
@@ -558,7 +541,7 @@ async fn main() -> Result<()> {
         }
 
         Command::Recent { tag, tokens } => {
-            let client = http_client(key.as_deref())?;
+            let client = http_client()?;
             let tag_c = canonicalize_tag(&tag);
             let (aspect, _actor) = parse_sigils(&tokens)?;
             let aspect_c = canonicalize_aspect(&aspect);
