@@ -66,6 +66,16 @@ enum Command {
         mode: String,
     },
 
+    /// Check a DSL/prose document without committing it (parse/validate + show simulated rankings)
+    Check {
+        /// Optional path to a file. If omitted, reads from stdin.
+        #[arg(value_name = "FILE")]
+        file: Option<PathBuf>,
+        /// Parsing mode: full (default), lines, or dsl
+        #[arg(long, default_value = "full")]
+        mode: String,
+    },
+
     /// Simple health check
     Healthz,
 
@@ -208,6 +218,21 @@ struct IngestResponse {
     tags: Vec<String>,
     events_appended: usize,
     next: NextMoves,
+}
+
+#[derive(Debug, Deserialize)]
+struct CheckGroup {
+    tag: String,
+    aspect: String,
+    ranking: Vec<RankRow>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CheckResponse {
+    ok: bool,
+    tags: Vec<String>,
+    groups: Vec<CheckGroup>,
+    next: Vec<String>,
 }
 
 fn canonicalize_sigiled(input: &str, sigil: char) -> String {
@@ -624,6 +649,61 @@ async fn main() -> Result<()> {
                 print_next(&resp.next);
             } else {
                 return Err(anyhow!("ingest failed"));
+            }
+        }
+
+        Command::Check { file, mode } => {
+            let client = http_client()?;
+
+            let mut text = String::new();
+            match file {
+                Some(path) => {
+                    text = std::fs::read_to_string(&path)
+                        .with_context(|| format!("failed to read {}", path.display()))?;
+                }
+                None => {
+                    std::io::stdin()
+                        .read_to_string(&mut text)
+                        .context("failed to read stdin")?;
+                }
+            }
+
+            if text.trim().is_empty() {
+                return Err(anyhow!("no input provided (empty)"));
+            }
+
+            let req = IngestRequest {
+                text,
+                mode: Some(mode),
+            };
+            let url = format!("{base}/api/v0/check");
+            let resp: CheckResponse = expect_json(client.post(url).json(&req).send().await?).await?;
+            if resp.ok {
+                println!("✓ check ok (dry-run)");
+                if !resp.tags.is_empty() {
+                    println!("tags:");
+                    for t in &resp.tags {
+                        println!("  {t}");
+                    }
+                }
+                if resp.groups.is_empty() {
+                    println!();
+                    println!("(no ranking groups touched by this doc yet)");
+                } else {
+                    for g in &resp.groups {
+                        println!();
+                        print_ranking(&g.tag, &g.aspect, &g.ranking);
+                    }
+                }
+                if !resp.next.is_empty() {
+                    println!();
+                    println!("next:");
+                    for n in &resp.next {
+                        println!("  {n}");
+                    }
+                }
+            } else {
+                return Err(anyhow!("check failed"));
             }
         }
 

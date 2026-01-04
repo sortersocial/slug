@@ -725,6 +725,21 @@ pub struct IngestResponse {
     pub next: NextMoves,
 }
 
+#[derive(Debug, Serialize)]
+pub struct CheckGroup {
+    pub tag: String,
+    pub aspect: String,
+    pub ranking: Vec<RankRow>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CheckResponse {
+    pub ok: bool,
+    pub tags: Vec<String>,
+    pub groups: Vec<CheckGroup>,
+    pub next: Vec<String>,
+}
+
 /// Ingest a DSL/prose document, emitting events into the JSONL log.
 ///
 /// Interpretation model:
@@ -955,6 +970,231 @@ pub async fn post_ingest(
             ),
             web: format!("https://slug.social/t/{}", primary_tag),
         },
+    })
+    .into_response()
+}
+
+/// Check a DSL/prose document without committing it:
+/// parse + validate + show simulated rankings for the groups it touches.
+pub async fn post_check(
+    State(state): State<AppState>,
+    _headers: axum::http::HeaderMap,
+    Json(req): Json<IngestRequest>,
+) -> impl IntoResponse {
+    let mode = req
+        .mode
+        .clone()
+        .unwrap_or_else(|| "full".to_string())
+        .to_lowercase();
+
+    let doc = match mode.as_str() {
+        "full" => Ok(dsl::parse_full(&req.text)),
+        "lines" => dsl::parse_lines(&req.text).map_err(|e| e.to_string()),
+        "dsl" => dsl::parse(&req.text).map_err(|e| e.to_string()),
+        _ => Err(format!("invalid mode: {}", mode)),
+    };
+
+    let doc = match doc {
+        Ok(d) => d,
+        Err(e) => return api_error(StatusCode::BAD_REQUEST, e, None),
+    };
+
+    // Open-write semantics: actor comes from `@actor` in the document.
+    let mut current_actor: Option<String> = None;
+    let mut voter_key_id: String = "anon".to_string();
+    let mut current_tag: Option<String> = None;
+    let mut current_aspect: String = "default".to_string();
+    let ts = now_ms();
+
+    let mut events: Vec<Event> = Vec::new();
+    let mut tags_seen: BTreeSet<String> = BTreeSet::new();
+    let mut defined_in_doc: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut groups_touched: BTreeSet<(String, String)> = BTreeSet::new(); // (tag, aspect)
+
+    for s in doc.statements {
+        match s {
+            dsl::Stmt::Prose { .. } => {}
+            dsl::Stmt::Email { .. } => {}
+            dsl::Stmt::Actor { name } => {
+                let a = canonicalize_actor(&name);
+                current_actor = Some(a.clone());
+                voter_key_id = a;
+            }
+            dsl::Stmt::Hashtag { name } => {
+                let t = canonicalize_tag(&name);
+                current_tag = Some(t.clone());
+                tags_seen.insert(t);
+            }
+            dsl::Stmt::Attribute { name } => {
+                current_aspect = canonicalize_aspect(&name);
+            }
+            dsl::Stmt::Item { title, body } => {
+                let item = canonicalize_item(&title);
+                let Some(body) = body else {
+                    return api_error(
+                        StatusCode::BAD_REQUEST,
+                        format!("item missing body: /{item}"),
+                        Some("items must be declared with bodies, e.g. `/item { ... }`".to_string()),
+                    );
+                };
+                if body.trim().is_empty() {
+                    return api_error(
+                        StatusCode::BAD_REQUEST,
+                        format!("item body is empty: /{item}"),
+                        Some("write at least one sentence inside `{ ... }`".to_string()),
+                    );
+                }
+                events.push(Event::ItemUpsert(crate::events::ItemUpsert {
+                    ts,
+                    item: item.clone(),
+                    body: Some(body),
+                }));
+                defined_in_doc.insert(item.clone());
+                if let Some(tag) = current_tag.clone() {
+                    events.push(Event::TagAdd(crate::events::TagAdd {
+                        ts,
+                        tag: tag.clone(),
+                        item: item.clone(),
+                    }));
+                }
+            }
+            dsl::Stmt::Vote {
+                item1,
+                item2,
+                ratio_left,
+                ratio_right,
+                explanation,
+            } => {
+                let Some(tag) = current_tag.clone() else {
+                    return api_error(
+                        StatusCode::BAD_REQUEST,
+                        "vote requires an active #tag context",
+                        Some("add a `#tag` line before any votes".to_string()),
+                    );
+                };
+                let aspect = current_aspect.clone();
+                let a = canonicalize_item(&item1);
+                let b = canonicalize_item(&item2);
+
+                // Enforce: items must already be defined (earlier in the doc or in existing state),
+                // and must have bodies.
+                {
+                    let reduced = state.reduced.read().await;
+                    let items_in_tag = reduced.tags.get(&tag);
+                    let mut missing: Vec<String> = Vec::new();
+                    for it in [&a, &b] {
+                        let ok_in_doc = defined_in_doc.contains(it);
+                        let ok_in_tag = items_in_tag.map(|s| s.contains(it)).unwrap_or(false);
+                        if !(ok_in_doc || ok_in_tag) {
+                            missing.push(format!("/{it}"));
+                        }
+                    }
+                    if !missing.is_empty() {
+                        return api_error(
+                            StatusCode::BAD_REQUEST,
+                            "vote references undefined item(s)",
+                            Some(format!(
+                                "define items with bodies before voting. missing: {}",
+                                missing.join(", ")
+                            )),
+                        );
+                    }
+                    let mut missing_body: Vec<String> = Vec::new();
+                    for it in [&a, &b] {
+                        let ok_body_in_doc = defined_in_doc.contains(it);
+                        let ok_body_in_state = reduced.item_bodies.contains_key(it);
+                        if !(ok_body_in_doc || ok_body_in_state) {
+                            missing_body.push(format!("/{it}"));
+                        }
+                    }
+                    if !missing_body.is_empty() {
+                        return api_error(
+                            StatusCode::BAD_REQUEST,
+                            "vote references item(s) without bodies",
+                            Some(format!(
+                                "missing bodies: {}. Declare each item as `/item {{ ... }}`",
+                                missing_body.join(", ")
+                            )),
+                        );
+                    }
+                }
+
+                events.push(Event::VoteCast(VoteCast {
+                    ts,
+                    tag: tag.clone(),
+                    aspect: aspect.clone(),
+                    a: a.clone(),
+                    b: b.clone(),
+                    ratio_left,
+                    ratio_right,
+                    body: explanation,
+                    voter_key_id: voter_key_id.clone(),
+                    actor: current_actor.clone(),
+                }));
+                // Ensure both items exist under the tag (helps /pair pool).
+                events.push(Event::TagAdd(crate::events::TagAdd {
+                    ts,
+                    tag: tag.clone(),
+                    item: a.clone(),
+                }));
+                events.push(Event::TagAdd(crate::events::TagAdd {
+                    ts,
+                    tag: tag.clone(),
+                    item: b.clone(),
+                }));
+
+                groups_touched.insert((tag, aspect));
+            }
+        }
+    }
+
+    // Apply to a clone (dry-run).
+    let mut simulated = { state.reduced.read().await.clone() };
+    for ev in events.into_iter() {
+        simulated.apply_event(ev);
+    }
+
+    let mut groups: Vec<CheckGroup> = Vec::new();
+    for (tag, aspect) in groups_touched.into_iter() {
+        let key = GroupKey {
+            tag: canonicalize_tag(&tag),
+            aspect: canonicalize_aspect(&aspect),
+        };
+        let ranking = simulated
+            .groups
+            .get_mut(&key)
+            .map(|g| ranked_items(g, 10000, 1e-8))
+            .unwrap_or_default()
+            .into_iter()
+            .take(25)
+            .map(|r| RankRow {
+                item: format!("/{}", r.item),
+                score: r.score,
+            })
+            .collect();
+        groups.push(CheckGroup {
+            tag: format!("#{}", key.tag),
+            aspect: format!(":{}", key.aspect),
+            ranking,
+        });
+    }
+    groups.sort_by(|a, b| (a.tag.clone(), a.aspect.clone()).cmp(&(b.tag.clone(), b.aspect.clone())));
+
+    let tags_vec: Vec<String> = tags_seen.into_iter().collect();
+    let primary_tag = tags_vec
+        .get(0)
+        .cloned()
+        .unwrap_or_else(|| "untagged".to_string());
+
+    Json(CheckResponse {
+        ok: true,
+        tags: tags_vec.iter().map(|t| format!("#{t}")).collect(),
+        groups,
+        next: vec![
+            "npx slugsocial ingest <file.sorter>".to_string(),
+            "npx slugsocial tags".to_string(),
+            format!("https://slug.social/t/{}", primary_tag),
+        ],
     })
     .into_response()
 }

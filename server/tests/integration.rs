@@ -142,3 +142,35 @@ async fn test_rank_endpoint() {
     assert_eq!(ranking[0]["item"], "/rust");
 }
 
+#[tokio::test]
+async fn test_check_endpoint_does_not_commit() {
+    let (addr, tmp, _log, _handle) = create_test_server().await;
+    let client = reqwest::Client::new();
+
+    let check_payload = serde_json::json!({
+        "text": "#t\n:default\n/a {x}\n/b {y}\n/a 2:1 /b {because}\n",
+        "mode": "dsl"
+    });
+    let resp = client
+        .post(&format!("http://{}/api/v0/check", addr))
+        .json(&check_payload)
+        .send()
+        .await
+        .unwrap();
+    assert!(resp.status().is_success());
+
+    // It should not write events.jsonl.
+    let log_path = tmp.path().join("events.jsonl");
+    let content = std::fs::read_to_string(&log_path).unwrap_or_default();
+    assert!(content.trim().is_empty(), "check must not append events");
+
+    // And the live state should still have no tags.
+    let tags_resp = client
+        .get(&format!("http://{}/api/v0/tags", addr))
+        .send()
+        .await
+        .unwrap();
+    let body: serde_json::Value = tags_resp.json().await.unwrap();
+    assert!(body["tags"].as_array().unwrap().is_empty());
+}
+

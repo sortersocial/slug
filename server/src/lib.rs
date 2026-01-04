@@ -25,6 +25,7 @@ pub fn create_app(state: AppState) -> Router {
         .route("/api/v0/recent_votes", axum::routing::get(api::get_recent_votes))
         .route("/api/v0/vote", axum::routing::post(api::post_vote))
         .route("/api/v0/ingest", axum::routing::post(api::post_ingest))
+        .route("/api/v0/check", axum::routing::post(api::post_check))
         .route("/api/v0/pair", axum::routing::get(api::get_pair))
         .route("/api/v0/rank", axum::routing::get(api::get_rank))
         .with_state(state)
