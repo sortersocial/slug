@@ -10,6 +10,11 @@
   "bin": {
     "slugsocial": "bin/slugsocial.js"
   },
+  "files": [
+    "bin/slugsocial.js",
+    "README.md",
+    "package.json"
+  ],
   "optionalDependencies": {
     "@sortersocial/slugsocial-darwin-arm64": "0.0.1",
     "@sortersocial/slugsocial-darwin-x64": "0.0.1"
