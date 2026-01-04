@@ -17,12 +17,6 @@ function die(msg) {
   process.exit(1);
 }
 
-function env(name) {
-  const v = process.env[name];
-  if (!v || !v.trim()) return undefined;
-  return v.trim();
-}
-
 function platformTriple() {
   const p = process.platform;
   const a = process.arch;
@@ -53,13 +47,6 @@ function resolvePlatformPackage() {
 }
 
 async function main() {
-  const overrideBin = env("SLUGSOCIAL_BIN");
-  if (overrideBin) {
-    const args = process.argv.slice(2);
-    const res = childProcess.spawnSync(overrideBin, args, { stdio: "inherit" });
-    process.exit(res.status ?? 1);
-  }
-
   const pkgDir = resolvePlatformPackage();
   const ext = process.platform === "win32" ? ".exe" : "";
   const bin = path.join(pkgDir, "bin", `slugsocial${ext}`);
