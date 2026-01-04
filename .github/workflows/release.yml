@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write
 
 jobs:
   build-binaries:
@@ -53,6 +54,7 @@ jobs:
     name: publish npm
     needs: build-binaries
     runs-on: ubuntu-22.04
+    environment: release
     steps:
       - uses: actions/checkout@v4
 
@@ -109,11 +111,10 @@ jobs:
 
       - name: Publish npm root package
         shell: bash
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euxo pipefail
           cd packages/npm
-          npm publish --access public
+          # Publish unscoped `slugsocial` via npm Trusted Publishing (OIDC).
+          npm publish --access public --provenance
 
 
