@@ -86,15 +86,15 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
+          export VERSION="${GITHUB_REF_NAME#v}"
           echo "version=$VERSION"
 
           # Root package
-          node -e "const fs=require('fs'); const p='packages/npm/package.json'; const j=JSON.parse(fs.readFileSync(p,'utf8')); j.version=process.env.VERSION; for (const k of Object.keys(j.optionalDependencies||{})) j.optionalDependencies[k]=process.env.VERSION; fs.writeFileSync(p, JSON.stringify(j,null,2)+'\\n');" VERSION="$VERSION"
+          node -e "const fs=require('fs'); const p='packages/npm/package.json'; const j=JSON.parse(fs.readFileSync(p,'utf8')); j.version=process.env.VERSION; for (const k of Object.keys(j.optionalDependencies||{})) j.optionalDependencies[k]=process.env.VERSION; fs.writeFileSync(p, JSON.stringify(j,null,2)+'\\n');"
 
           # Platform packages
           for pkg in packages/npm/platforms/*; do
-            node -e "const fs=require('fs'); const p=process.argv[1]+'/package.json'; const j=JSON.parse(fs.readFileSync(p,'utf8')); j.version=process.env.VERSION; fs.writeFileSync(p, JSON.stringify(j,null,2)+'\\n');" "$pkg" VERSION="$VERSION"
+            node -e "const fs=require('fs'); const p=process.argv[1]+'/package.json'; const j=JSON.parse(fs.readFileSync(p,'utf8')); j.version=process.env.VERSION; fs.writeFileSync(p, JSON.stringify(j,null,2)+'\\n');" "$pkg"
           done
 
       - name: Publish npm platform packages
