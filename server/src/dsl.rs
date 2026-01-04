@@ -20,7 +20,8 @@ pub enum Stmt {
         item2: String,
         ratio_left: i32,
         ratio_right: i32,
-        explanation: Option<String>,
+        /// Required non-empty explanation (from trailing `{ ... }`).
+        explanation: String,
     },
     Attribute { name: String },
     Email { address: String },
@@ -436,7 +437,7 @@ fn parse_slash_statement(stripped: &str, masker: &BlockMasker) -> Result<Stmt, D
         });
     }
 
-    // Otherwise parse comparison then "/item2" then optional body.
+    // Otherwise parse comparison then "/item2" then REQUIRED body.
     let ((ratio_left, ratio_right), mut k) = parse_comparison_at(s, i)
         .ok_or_else(|| DslError::Parse(format!("invalid comparison near: {}", &s[i..])))?;
     k = skip_ws(s, k);
@@ -448,11 +449,16 @@ fn parse_slash_statement(stripped: &str, masker: &BlockMasker) -> Result<Stmt, D
         .ok_or_else(|| DslError::Parse("invalid rhs item name".to_string()))?;
     m = skip_ws(s, m);
 
-    let mut explanation: Option<String> = None;
-    if let Some((tok, end)) = parse_block_token_at(s, m) {
-        explanation = Some(masker.extract_body(&tok));
-        m = end;
+    let Some((tok, end)) = parse_block_token_at(s, m) else {
+        return Err(DslError::Parse(
+            "missing vote explanation (add a trailing `{ ... }`)".to_string(),
+        ));
+    };
+    let explanation = masker.extract_body(&tok);
+    if explanation.trim().is_empty() {
+        return Err(DslError::Parse("empty vote explanation".to_string()));
     }
+    m = end;
     let tail = s[m..].trim();
     if !tail.is_empty() {
         return Err(DslError::Parse("extra tokens after vote".to_string()));
@@ -640,7 +646,7 @@ mod tests {
 
     #[test]
     fn parse_vote_ratio_and_symbols() {
-        let d1 = parse("/a 3:1 /b").unwrap();
+        let d1 = parse("/a 3:1 /b {because}").unwrap();
         assert_eq!(
             d1.statements,
             vec![Stmt::Vote {
@@ -648,11 +654,11 @@ mod tests {
                 item2: "b".to_string(),
                 ratio_left: 3,
                 ratio_right: 1,
-                explanation: None
+                explanation: "because".to_string()
             }]
         );
 
-        let d2 = parse("/a > /b").unwrap();
+        let d2 = parse("/a > /b {because}").unwrap();
         assert_eq!(
             d2.statements,
             vec![Stmt::Vote {
@@ -660,11 +666,11 @@ mod tests {
                 item2: "b".to_string(),
                 ratio_left: 2,
                 ratio_right: 1,
-                explanation: None
+                explanation: "because".to_string()
             }]
         );
 
-        let d3 = parse("/a = /b").unwrap();
+        let d3 = parse("/a = /b {because}").unwrap();
         assert_eq!(
             d3.statements,
             vec![Stmt::Vote {
@@ -672,7 +678,7 @@ mod tests {
                 item2: "b".to_string(),
                 ratio_left: 1,
                 ratio_right: 1,
-                explanation: None
+                explanation: "because".to_string()
             }]
         );
     }
@@ -735,14 +741,14 @@ signature: thanks
                 item2: "b".to_string(),
                 ratio_left: 2,
                 ratio_right: 1,
-                explanation: Some("because".to_string())
+                explanation: "because".to_string()
             }]
         );
     }
 
     #[test]
     fn parse_actor_allows_slashes_and_dots() {
-        let doc = parse_lines("@cursor/gpt-5.2\n#t\n/a {x}\n/b {y}\n/a 2:1 /b\n").unwrap();
+        let doc = parse_lines("@cursor/gpt-5.2\n#t\n/a {x}\n/b {y}\n/a 2:1 /b {because}\n").unwrap();
         assert!(doc
             .statements
             .iter()

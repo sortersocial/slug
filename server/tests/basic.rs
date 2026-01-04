@@ -15,7 +15,7 @@ fn vote(ts: i64, tag: &str, aspect: &str, a: &str, b: &str, left: i32, right: i3
         b: b.to_string(),
         ratio_left: left,
         ratio_right: right,
-        body: None,
+        body: "because test".to_string(),
         voter_key_id: "test".to_string(),
         actor: None,
     })

@@ -38,6 +38,8 @@ pub struct VoteRequest {
     /// Ratio string like "3:1" (preferred).
     #[serde(default)]
     pub ratio: Option<String>,
+    /// Required human explanation for the vote (non-empty).
+    pub body: String,
     /// Optional self-declared actor (e.g. "@tommy").
     #[serde(default)]
     pub actor: Option<String>,
@@ -112,6 +114,15 @@ pub async fn post_vote(
         }
     };
 
+    let body = req.body.trim().to_string();
+    if body.is_empty() {
+        return api_error(
+            StatusCode::BAD_REQUEST,
+            "missing vote explanation",
+            Some("provide a non-empty `body` explaining why you voted that way".to_string()),
+        );
+    }
+
     // Enforce: items must already exist in the tag AND have bodies.
     {
         let reduced = state.reduced.read().await;
@@ -165,7 +176,7 @@ pub async fn post_vote(
         b: b.clone(),
         ratio_left,
         ratio_right,
-        body: None,
+        body,
         voter_key_id,
         actor: actor_c.clone(),
     };
@@ -209,7 +220,7 @@ pub async fn post_vote(
         ranking,
         next: NextMoves {
             vote: format!(
-                "npx slugsocial vote #{} /{} 2:1 /{} :{}{}",
+                "npx slugsocial vote '#{}' /{} 2:1 /{} :{}{} \"because ...\"",
                 tag,
                 a,
                 b,
@@ -658,7 +669,7 @@ pub struct VoteRow {
     pub b: String,
     pub ratio: String,
     pub actor: Option<String>,
-    pub body: Option<String>,
+    pub body: String,
 }
 
 #[derive(Debug, Serialize)]

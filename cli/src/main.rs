@@ -41,14 +41,17 @@ enum Command {
         random: bool,
     },
 
-    /// Cast a vote (ratio like 3:1) for a vs b
+    /// Cast a vote (ratio like 3:1) for a vs b (requires a justification string)
     Vote {
         tag: String,
         a: String,
         /// Ratio like "3:1" (prefer a over b).
         ratio: String,
         b: String,
-        /// Optional additional sigil tokens: `:aspect` and/or `@actor`
+        /// Optional sigils (`:aspect`, `@actor`) followed by a required explanation string.
+        ///
+        /// Example:
+        ///   npx slugsocial vote '#tag' /a 2:1 /b :default @me "because ..."
         #[arg(value_name = "TOKENS", trailing_var_arg = true)]
         tokens: Vec<String>,
     },
@@ -98,6 +101,7 @@ struct VoteRequest {
     ratio: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     actor: Option<String>,
+    body: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -180,7 +184,7 @@ struct VoteRow {
     b: String,
     ratio: String,
     actor: Option<String>,
-    body: Option<String>,
+    body: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -253,6 +257,42 @@ fn parse_sigils(tokens: &[String]) -> Result<(String, Option<String>)> {
     Ok((aspect.unwrap_or_else(|| ":default".to_string()), actor))
 }
 
+fn parse_sigils_and_body(tokens: &[String]) -> Result<(String, Option<String>, String)> {
+    let mut aspect: Option<String> = None;
+    let mut actor: Option<String> = None;
+    let mut body_parts: Vec<String> = Vec::new();
+
+    for t in tokens {
+        let tt = t.trim();
+        if tt.is_empty() {
+            continue;
+        }
+        if tt.starts_with(':') {
+            if aspect.is_some() {
+                return Err(anyhow!("multiple aspects provided"));
+            }
+            aspect = Some(format!(":{}", canonicalize_aspect(tt)));
+            continue;
+        }
+        if tt.starts_with('@') {
+            if actor.is_some() {
+                return Err(anyhow!("multiple actors provided"));
+            }
+            actor = Some(format!("@{}", canonicalize_actor(tt)));
+            continue;
+        }
+        body_parts.push(tt.to_string());
+    }
+
+    let body = body_parts.join(" ").trim().to_string();
+    if body.is_empty() {
+        return Err(anyhow!(
+            "missing vote explanation. Example: npx slugsocial vote '#tag' /a 2:1 /b :default @you \"because ...\""
+        ));
+    }
+    Ok((aspect.unwrap_or_else(|| ":default".to_string()), actor, body))
+}
+
 fn validate_ratio(r: &str) -> Result<(i32, i32)> {
     let t = r.trim();
     let (l, rr) = t
@@ -305,7 +345,7 @@ fn print_tags(resp: &TagsResponse) {
         println!("  :default");
         println!("  /item-a {{ one sentence describing it }}");
         println!("  /item-b {{ one sentence describing it }}");
-        println!("  /item-a 2:1 /item-b");
+        println!("  /item-a 2:1 /item-b {{ because ... }}");
         println!("  EOF");
         println!();
         println!("  # ingest it");
@@ -326,7 +366,7 @@ fn print_tags(resp: &TagsResponse) {
     println!("  # see rankings / get a pair / vote");
     println!("  npx slugsocial rank '<#tag>' :default");
     println!("  npx slugsocial pair '<#tag>' :default");
-    println!("  npx slugsocial vote '<#tag>' /a 2:1 /b :default @you");
+    println!("  npx slugsocial vote '<#tag>' /a 2:1 /b :default @you \"because ...\"");
     println!("  # add another tag by ingesting another doc containing a new #tag");
     println!("  npx slugsocial ingest another.sorter");
 }
@@ -388,13 +428,9 @@ fn print_recent_votes(resp: &RecentVotesResponse) {
     }
     for v in &resp.votes {
         let who = v.actor.clone().unwrap_or_else(|| "@anon".to_string());
-        if let Some(body) = &v.body {
-            println!("{} {}  {}  {}  {}  [{}]", v.tag, v.aspect, v.a, v.ratio, v.b, who);
-            println!("{{{}}}", body);
-            println!();
-        } else {
-            println!("{} {}  {}  {}  {}  [{}]", v.tag, v.aspect, v.a, v.ratio, v.b, who);
-        }
+        println!("{} {}  {}  {}  {}  [{}]", v.tag, v.aspect, v.a, v.ratio, v.b, who);
+        println!("{{{}}}", v.body);
+        println!();
     }
     // HATEOAS followups are context dependent; users can copy from any printed line above.
     println!();
@@ -511,7 +547,7 @@ async fn main() -> Result<()> {
             // Quote tags because `#` is a shell comment starter.
             let qtag = shell_quote(&resp.tag);
             println!(
-                "  npx slugsocial vote {} {} 2:1 {} {} @you",
+                "  npx slugsocial vote {} {} 2:1 {} {} @you \"because ...\"",
                 qtag, resp.left, resp.right, resp.aspect
             );
             println!("  npx slugsocial pair {} {}", qtag, resp.aspect);
@@ -528,7 +564,7 @@ async fn main() -> Result<()> {
         } => {
             let client = http_client()?;
             let _ = validate_ratio(&ratio)?;
-            let (aspect, actor) = parse_sigils(&tokens)?;
+            let (aspect, actor, body) = parse_sigils_and_body(&tokens)?;
             let req = VoteRequest {
                 tag: format!("#{}", canonicalize_tag(&tag)),
                 aspect,
@@ -536,6 +572,7 @@ async fn main() -> Result<()> {
                 b: format!("/{}", canonicalize_item(&b)),
                 ratio: Some(ratio),
                 actor,
+                body,
             };
             let url = format!("{base}/api/v0/vote");
             let resp: VoteResponse = expect_json(client.post(url).json(&req).send().await?).await?;

@@ -45,9 +45,10 @@ pub struct VoteCast {
     pub ratio_left: i32,
     /// Ratio numerator for `b` (right item). Example: `/a 3:1 /b` => `ratio_right=1`.
     pub ratio_right: i32,
-    /// Optional vote explanation/body (from DSL `{ ... }`).
-    #[serde(default)]
-    pub body: Option<String>,
+    /// Vote explanation/body (from DSL `{ ... }` or CLI/API `body`).
+    ///
+    /// Required: votes without explanations are rejected (opaque/unhelpful).
+    pub body: String,
     /// API key identifier (not secret), for attribution/rate limiting.
     pub voter_key_id: String,
     /// Optional self-declared actor (from DSL `@name` or CLI `--as @name`).

@@ -26,7 +26,7 @@ Now we have two discrete, addressable items. Imagine two dots floating on a
 Now let's draw a line segment between the two dots.
 
 :overall
-/a 2:1 /b
+/a 2:1 /b {a edges out b in this aspect}
 
 
 We have asserted that /a wins over /b, winning 66% of that matchup.
@@ -41,7 +41,7 @@ Easy enough.
 
 /c
 
-/a 3:1 /c
+/a 3:1 /c {a strongly preferred to c here}
 Now the ranking is
 
 1) /a
@@ -103,9 +103,9 @@ Sorter is proprietary, trying to become a venture scale business.
 Now we have six dots swimming around. Lets order them.
 
 :truth
-/collective = /asynchronous
-/asynchronous = /precise
-/precise = /transitive
+/collective = /asynchronous {roughly equally important}
+/asynchronous = /precise {roughly equally important}
+/precise = /transitive {roughly equally important}
 
 All equally, absolutely true.
 

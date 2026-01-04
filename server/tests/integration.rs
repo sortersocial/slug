@@ -77,7 +77,8 @@ async fn test_vote_endpoint() {
         "aspect": ":speed",
         "a": "/clap",
         "b": "/argh",
-        "ratio": "3:1"
+        "ratio": "3:1",
+        "body": "because clap is more full-featured"
     });
 
     let response = client
@@ -115,7 +116,8 @@ async fn test_rank_endpoint() {
         "aspect": ":speed",
         "a": "/rust",
         "b": "/go",
-        "ratio": "3:1"
+        "ratio": "3:1",
+        "body": "because i prefer rust for systems work"
     });
 
     client
