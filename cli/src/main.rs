@@ -215,7 +215,7 @@ fn canonicalize_tag(input: &str) -> String {
     canonicalize_sigiled(input, '#')
 }
 fn canonicalize_actor(input: &str) -> String {
-    canonicalize_sigiled(input, '@')
+    canonicalize_sigiled(input, '@').to_lowercase()
 }
 fn canonicalize_aspect(input: &str) -> String {
     canonicalize_sigiled(input, ':')

@@ -206,6 +206,27 @@ fn is_word(s: &str) -> bool {
     !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
+fn is_actor_name(s: &str) -> bool {
+    // Allow slash-separated namespaces like "cursor/gpt-5.2".
+    // Rules:
+    // - non-empty, <= 64 chars
+    // - allowed chars: [A-Za-z0-9_.-/]
+    // - no leading/trailing '/', no '//' sequences
+    // - each segment must be non-empty
+    if s.is_empty() || s.len() > 64 {
+        return false;
+    }
+    if s.starts_with('/') || s.ends_with('/') || s.contains("//") {
+        return false;
+    }
+    if !s.chars().all(|c| {
+        c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.' || c == '/'
+    }) {
+        return false;
+    }
+    s.split('/').all(|seg| !seg.is_empty())
+}
+
 fn is_block_token(s: &str) -> bool {
     // "__BLOCK_" + 8 hex + "__"
     if !s.starts_with("__BLOCK_") || !s.ends_with("__") {
@@ -491,7 +512,7 @@ fn parse_line(masked_line: &str, masker: &BlockMasker) -> Result<Vec<Stmt>, DslE
                 }])
             } else {
                 let name = tok.trim_start_matches('@').trim();
-                if !is_word(name) {
+                if !is_actor_name(name) {
                     return Err(DslError::Parse(format!("invalid actor: {tok}")));
                 }
                 Ok(vec![Stmt::Actor {
@@ -717,6 +738,15 @@ signature: thanks
                 explanation: Some("because".to_string())
             }]
         );
+    }
+
+    #[test]
+    fn parse_actor_allows_slashes_and_dots() {
+        let doc = parse_lines("@cursor/gpt-5.2\n#t\n/a {x}\n/b {y}\n/a 2:1 /b\n").unwrap();
+        assert!(doc
+            .statements
+            .iter()
+            .any(|s| matches!(s, Stmt::Actor { name } if name == "cursor/gpt-5.2")));
     }
 }
 
