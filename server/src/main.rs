@@ -35,6 +35,10 @@ fn parse_keys(s: &str) -> Vec<KeyRecord> {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Intentionally use stderr so we always see this in platform logs,
+    // even if tracing is misconfigured.
+    eprintln!("[boot] slugsocial-server starting");
+
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env().add_directive("info".parse()?))
         .init();
@@ -46,6 +50,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let rate_limit_per_minute: u32 = env_var("SLUG_RATE_LIMIT_PER_MIN")
         .and_then(|s| s.parse().ok())
         .unwrap_or(60);
+
+    eprintln!(
+        "[boot] data_dir={data_dir} event_log_path={event_log_path} keys={}",
+        keys.len()
+    );
 
     let cfg = AppConfig {
         data_dir,
@@ -83,18 +92,46 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or(8080);
     let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
     tracing::info!(%addr, "listening");
+    eprintln!("[boot] binding {addr}");
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await?;
 
+    eprintln!("[boot] server exited");
     Ok(())
 }
 
 async fn shutdown_signal() {
-    let _ = tokio::signal::ctrl_c().await;
-    tracing::info!("shutdown");
+    // Fly and other platforms typically use SIGTERM. Ctrl+C is SIGINT.
+    // We log the exact signal that caused shutdown to help diagnose early exits.
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        let mut sigterm =
+            signal(SignalKind::terminate()).expect("failed to install SIGTERM handler");
+        let mut sigint = signal(SignalKind::interrupt()).expect("failed to install SIGINT handler");
+
+        tokio::select! {
+            _ = sigterm.recv() => {
+                eprintln!("[shutdown] received SIGTERM");
+                tracing::info!("shutdown: sigterm");
+            }
+            _ = sigint.recv() => {
+                eprintln!("[shutdown] received SIGINT");
+                tracing::info!("shutdown: sigint");
+            }
+        }
+        return;
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+        eprintln!("[shutdown] ctrl_c");
+        tracing::info!("shutdown");
+    }
 }
 
 
