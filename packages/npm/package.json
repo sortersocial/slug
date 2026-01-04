@@ -1,5 +1,5 @@
 {
-  "name": "@sortersocial/slugsocial",
+  "name": "slugsocial",
   "version": "0.0.1",
   "description": "Slug Social CLI shim (execs bundled Rust slugsocial) — npx-friendly",
   "license": "MIT",
