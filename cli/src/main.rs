@@ -269,11 +269,19 @@ fn print_ranking(tag: &str, aspect: &str, rows: &[RankRow]) {
     println!();
     if rows.is_empty() {
         println!("(no items yet)");
+        println!();
+        println!("next:");
+        println!("  npx slugsocial tag '{tag}'");
+        println!("  npx slugsocial ingest <file.sorter>");
         return;
     }
     for (i, r) in rows.iter().enumerate() {
         println!("{:>3}. {:<24} {:.6}", i + 1, r.item, r.score);
     }
+    println!();
+    println!("next:");
+    println!("  npx slugsocial pair '{tag}' {aspect}");
+    println!("  npx slugsocial recent '{tag}' {aspect}");
 }
 
 fn print_next(next: &NextMoves) {
@@ -303,7 +311,7 @@ fn print_tags(resp: &TagsResponse) {
         println!();
         println!("  # then explore");
         println!("  npx slugsocial tags");
-        println!("  npx slugsocial tag #my-first-tag");
+        println!("  npx slugsocial tag '#my-first-tag'");
         return;
     }
     for t in &resp.tags {
@@ -312,11 +320,11 @@ fn print_tags(resp: &TagsResponse) {
     println!();
     println!("next:");
     println!("  # inspect a tag");
-    println!("  npx slugsocial tag <#tag>");
+    println!("  npx slugsocial tag '<#tag>'");
     println!("  # see rankings / get a pair / vote");
-    println!("  npx slugsocial rank <#tag> :default");
-    println!("  npx slugsocial pair <#tag> :default");
-    println!("  npx slugsocial vote <#tag> /a 2:1 /b :default @you");
+    println!("  npx slugsocial rank '<#tag>' :default");
+    println!("  npx slugsocial pair '<#tag>' :default");
+    println!("  npx slugsocial vote '<#tag>' /a 2:1 /b :default @you");
     println!("  # add another tag by ingesting another doc containing a new #tag");
     println!("  npx slugsocial ingest another.sorter");
 }
@@ -349,6 +357,11 @@ fn print_tag_detail(resp: &TagDetailResponse) {
             println!("  {}", ing.snippet.replace('\n', "\\n"));
         }
     }
+    println!();
+    println!("next:");
+    println!("  npx slugsocial rank '{}' :default", resp.tag);
+    println!("  npx slugsocial pair '{}' :default", resp.tag);
+    println!("  npx slugsocial recent '{}' :default", resp.tag);
 }
 
 fn print_item(resp: &ItemResponse) {
@@ -381,6 +394,11 @@ fn print_recent_votes(resp: &RecentVotesResponse) {
             println!("{} {}  {}  {}  {}  [{}]", v.tag, v.aspect, v.a, v.ratio, v.b, who);
         }
     }
+    // HATEOAS followups are context dependent; users can copy from any printed line above.
+    println!();
+    println!("next:");
+    println!("  npx slugsocial pair '<#tag>' :default");
+    println!("  npx slugsocial rank '<#tag>' :default");
 }
 
 fn http_client() -> Result<reqwest::Client> {
