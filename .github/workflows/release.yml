@@ -111,14 +111,14 @@ jobs:
 
       - name: Publish npm root package
         shell: bash
+        env:
+          # Unscoped packages need a token that is allowed to create/publish unscoped names.
+          # GitHub's setup-node expects NODE_AUTH_TOKEN. See:
+          # https://docs.github.com/en/actions/tutorials/publish-packages/publish-nodejs-packages
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN_UNSCOPED }}
         run: |
           set -euxo pipefail
           cd packages/npm
-          # Publish unscoped `slugsocial` via npm Trusted Publishing (OIDC).
-          # Ensure we *do not* use NODE_AUTH_TOKEN auth for this step; trusted publishing uses OIDC.
-          export NPM_CONFIG_USERCONFIG="$(mktemp)"
-          unset NODE_AUTH_TOKEN || true
-          npm config set registry "https://registry.npmjs.org/"
           npm publish --access public --provenance
 
 
