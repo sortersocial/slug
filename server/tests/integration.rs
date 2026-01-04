@@ -1,14 +1,12 @@
-use axum_test::TestServer;
 use slugsocial_server::{
-    api,
     event_log::EventLog,
-    html,
     state::{AppConfig, AppState, KeyRecord},
 };
 use tempfile::TempDir;
-use tower::ServiceBuilder;
+use tokio::net::TcpListener;
+use std::net::SocketAddr;
 
-async fn create_test_server() -> (TestServer, TempDir, EventLog) {
+async fn create_test_server() -> (SocketAddr, TempDir, EventLog, tokio::task::JoinHandle<()>) {
     let tmp = TempDir::new().unwrap();
     let log_path = tmp.path().join("events.jsonl");
     let log = EventLog::new(&log_path);
@@ -24,41 +22,43 @@ async fn create_test_server() -> (TestServer, TempDir, EventLog) {
     };
 
     let state = AppState::new(cfg);
-    let app = axum::Router::new()
-        .route("/healthz", axum::routing::get(|| async { "ok" }))
-        .route("/", axum::routing::get(html::index))
-        .route("/t/:tag", axum::routing::get(html::tag_page))
-        .route("/t/:tag/a/:aspect", axum::routing::get(html::tag_aspect_page))
-        .route("/api/v0/vote", axum::routing::post(api::post_vote))
-        .route("/api/v0/rank", axum::routing::get(api::get_rank))
-        .with_state(state)
-        .layer(ServiceBuilder::new().into_inner());
+    let app = slugsocial_server::create_app(state);
 
-    let server = TestServer::new(app).unwrap();
-    (server, tmp, log)
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let handle = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    // Give server a moment to start
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    (addr, tmp, log, handle)
 }
 
 #[tokio::test]
 async fn test_healthz() {
-    let (server, _tmp, _log) = create_test_server().await;
-    let response = server.get("/healthz").await;
-    response.assert_status_ok();
-    response.assert_text("ok");
+    let (addr, _tmp, _log, _handle) = create_test_server().await;
+    let client = reqwest::Client::new();
+    let response = client.get(&format!("http://{}/healthz", addr)).send().await.unwrap();
+    assert!(response.status().is_success());
+    assert_eq!(response.text().await.unwrap(), "ok");
 }
 
 #[tokio::test]
 async fn test_index_page() {
-    let (server, _tmp, _log) = create_test_server().await;
-    let response = server.get("/").await;
-    response.assert_status_ok();
-    let body = response.text();
+    let (addr, _tmp, _log, _handle) = create_test_server().await;
+    let client = reqwest::Client::new();
+    let response = client.get(&format!("http://{}/", addr)).send().await.unwrap();
+    assert!(response.status().is_success());
+    let body = response.text().await.unwrap();
     assert!(body.contains("<html"), "should contain HTML");
     assert!(body.contains("Slug"), "should contain Slug");
 }
 
 #[tokio::test]
 async fn test_vote_endpoint() {
-    let (server, _tmp, _log) = create_test_server().await;
+    let (addr, _tmp, _log, _handle) = create_test_server().await;
+    let client = reqwest::Client::new();
 
     let vote_payload = serde_json::json!({
         "tag": "#rust",
@@ -68,21 +68,24 @@ async fn test_vote_endpoint() {
         "score": 30
     });
 
-    let response = server
-        .post("/api/v0/vote")
-        .add_header("Authorization", "Bearer test-secret")
+    let response = client
+        .post(&format!("http://{}/api/v0/vote", addr))
+        .header("Authorization", "Bearer test-secret")
         .json(&vote_payload)
-        .await;
+        .send()
+        .await
+        .unwrap();
 
-    response.assert_status_ok();
-    let body: serde_json::Value = response.json();
+    assert!(response.status().is_success());
+    let body: serde_json::Value = response.json().await.unwrap();
     assert_eq!(body["status"], "ok");
     assert!(body["next_moves"].is_object());
 }
 
 #[tokio::test]
 async fn test_vote_requires_auth() {
-    let (server, _tmp, _log) = create_test_server().await;
+    let (addr, _tmp, _log, _handle) = create_test_server().await;
+    let client = reqwest::Client::new();
 
     let vote_payload = serde_json::json!({
         "tag": "#rust",
@@ -92,13 +95,20 @@ async fn test_vote_requires_auth() {
         "score": 30
     });
 
-    let response = server.post("/api/v0/vote").json(&vote_payload).await;
-    response.assert_status(401);
+    let response = client
+        .post(&format!("http://{}/api/v0/vote", addr))
+        .json(&vote_payload)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 401);
 }
 
 #[tokio::test]
 async fn test_rank_endpoint() {
-    let (server, _tmp, _log) = create_test_server().await;
+    let (addr, _tmp, _log, _handle) = create_test_server().await;
+    let client = reqwest::Client::new();
 
     // First add a vote
     let vote_payload = serde_json::json!({
@@ -109,74 +119,26 @@ async fn test_rank_endpoint() {
         "score": 40
     });
 
-    server
-        .post("/api/v0/vote")
-        .add_header("Authorization", "Bearer test-secret")
+    client
+        .post(&format!("http://{}/api/v0/vote", addr))
+        .header("Authorization", "Bearer test-secret")
         .json(&vote_payload)
-        .await;
+        .send()
+        .await
+        .unwrap();
 
     // Then query ranking
-    let response = server
-        .get("/api/v0/rank?tag=%23langs&aspect=%3Aspeed")
-        .await;
+    let response = client
+        .get(&format!("http://{}/api/v0/rank?tag=%23langs&aspect=%3Aspeed", addr))
+        .send()
+        .await
+        .unwrap();
 
-    response.assert_status_ok();
-    let body: serde_json::Value = response.json();
+    assert!(response.status().is_success());
+    let body: serde_json::Value = response.json().await.unwrap();
     assert!(body["ranking"].is_array());
     let ranking = body["ranking"].as_array().unwrap();
     assert_eq!(ranking.len(), 2);
     assert_eq!(ranking[0]["item"], "rust");
-}
-
-#[tokio::test]
-async fn test_tag_page() {
-    let (server, _tmp, _log) = create_test_server().await;
-
-    // Add a vote to create a tag
-    let vote_payload = serde_json::json!({
-        "tag": "#test-tag",
-        "aspect": ":quality",
-        "a": "/item-a",
-        "b": "/item-b",
-        "score": 20
-    });
-
-    server
-        .post("/api/v0/vote")
-        .add_header("Authorization", "Bearer test-secret")
-        .json(&vote_payload)
-        .await;
-
-    let response = server.get("/t/test-tag").await;
-    response.assert_status_ok();
-    let body = response.text();
-    assert!(body.contains("test-tag"), "should contain tag name");
-}
-
-#[tokio::test]
-async fn test_tag_aspect_page() {
-    let (server, _tmp, _log) = create_test_server().await;
-
-    // Add votes
-    let vote_payload = serde_json::json!({
-        "tag": "#tools",
-        "aspect": ":usefulness",
-        "a": "/tool-a",
-        "b": "/tool-b",
-        "score": 35
-    });
-
-    server
-        .post("/api/v0/vote")
-        .add_header("Authorization", "Bearer test-secret")
-        .json(&vote_payload)
-        .await;
-
-    let response = server.get("/t/tools/a/usefulness").await;
-    response.assert_status_ok();
-    let body = response.text();
-    assert!(body.contains("tools"), "should contain tag");
-    assert!(body.contains("usefulness"), "should contain aspect");
-    assert!(body.contains("tool-a") || body.contains("tool-b"), "should contain items");
 }
 

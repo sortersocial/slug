@@ -1,0 +1,8 @@
+target/
+.git/
+.gitignore
+*.md
+*.rs.bak
+.env
+.env.local
+

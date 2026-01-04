@@ -7,4 +7,21 @@ pub mod ranking;
 pub mod reducer;
 pub mod state;
 
+use axum::Router;
+use tower_http::trace::TraceLayer;
+
+use crate::state::AppState;
+
+pub fn create_app(state: AppState) -> Router {
+    Router::new()
+        .route("/healthz", axum::routing::get(|| async { "ok" }))
+        .route("/", axum::routing::get(html::index))
+        .route("/t/:tag", axum::routing::get(html::tag_page))
+        .route("/t/:tag/a/:aspect", axum::routing::get(html::tag_aspect_page))
+        .route("/api/v0/vote", axum::routing::post(api::post_vote))
+        .route("/api/v0/rank", axum::routing::get(api::get_rank))
+        .with_state(state)
+        .layer(TraceLayer::new_for_http())
+}
+
 
