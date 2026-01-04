@@ -1,0 +1,18 @@
+[package]
+name = "slugsocial"
+version = "0.0.1"
+edition = "2021"
+license = "MIT"
+
+[[bin]]
+name = "slugsocial"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive", "env"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+urlencoding = "2"
+
