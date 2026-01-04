@@ -29,6 +29,16 @@ enum Command {
         limit: usize,
     },
 
+    /// Get a suggested pair of items to compare next
+    Pair {
+        tag: String,
+        #[arg(long, default_value = ":default")]
+        aspect: String,
+        /// If true, ignore ranking and return a random pair (useful for “skip”)
+        #[arg(long)]
+        random: bool,
+    },
+
     /// Cast a vote (score in [-50, 50]) for a vs b
     Vote {
         a: String,
@@ -65,6 +75,14 @@ struct RankResponse {
     tag: String,
     aspect: String,
     ranking: Vec<RankRow>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PairResponse {
+    tag: String,
+    aspect: String,
+    left: String,
+    right: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -152,6 +170,20 @@ async fn main() -> Result<()> {
             );
             let resp: RankResponse = client.get(url).send().await?.json().await?;
             print_ranking(&resp.tag, &resp.aspect, &resp.ranking);
+        }
+
+        Command::Pair { tag, aspect, random } => {
+            let client = http_client(cli.key.as_deref())?;
+            let tag_c = canonicalize_tag(&tag);
+            let aspect_c = canonicalize_aspect(&aspect);
+            let url = format!(
+                "{base}/api/v0/pair?tag={}&aspect={}&random={}",
+                urlencoding::encode(&tag_c),
+                urlencoding::encode(&aspect_c),
+                if random { "true" } else { "false" }
+            );
+            let resp: PairResponse = client.get(url).send().await?.json().await?;
+            println!("{} {}", resp.left, resp.right);
         }
 
         Command::Vote {

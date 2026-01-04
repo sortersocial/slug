@@ -18,6 +18,12 @@ pub struct GroupState {
     /// Aggregated directed edge weights: (src_idx, dst_idx) -> weight.
     pub edges: HashMap<(usize, usize), f64>,
 
+    /// Unordered pairs that have at least one vote recorded between them (i<j).
+    ///
+    /// We cannot reliably infer this from `edges` alone because extreme votes can
+    /// produce a zero-weight edge in one direction.
+    pub voted_pairs: HashSet<(usize, usize)>,
+
     pub dirty: bool,
     pub cached_scores: Vec<f64>,
 
@@ -31,6 +37,7 @@ impl GroupState {
             item_to_idx: HashMap::new(),
             idx_to_item: Vec::new(),
             edges: HashMap::new(),
+            voted_pairs: HashSet::new(),
             dirty: true,
             cached_scores: Vec::new(),
             recent_votes: VecDeque::with_capacity(200),
@@ -66,6 +73,10 @@ impl GroupState {
 
         let a_idx = self.ensure_item(&vote.a);
         let b_idx = self.ensure_item(&vote.b);
+
+        // Track that this unordered pair has been voted on (at least once).
+        let (i, j) = if a_idx < b_idx { (a_idx, b_idx) } else { (b_idx, a_idx) };
+        self.voted_pairs.insert((i, j));
 
         // We follow the pagerank.rs convention where a negative magnitude means
         // left/a is preferred. Our VoteCast has positive score => prefer a, so
