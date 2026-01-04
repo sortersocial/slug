@@ -69,14 +69,21 @@ pub async fn index(State(state): State<AppState>) -> impl IntoResponse {
 
 pub async fn tag_page(State(state): State<AppState>, Path(tag): Path<String>) -> impl IntoResponse {
     let tag = tag.trim_start_matches('#').to_string();
-    let mut aspects: Vec<String> = {
+    let (mut aspects, ingests) = {
         let reduced = state.reduced.read().await;
-        reduced
+        let aspects: Vec<String> = reduced
             .groups
             .keys()
             .filter(|k| k.tag == tag)
             .map(|k| k.aspect.clone())
             .collect()
+            ;
+        let ingests = reduced
+            .ingests_by_tag
+            .get(&tag)
+            .cloned()
+            .unwrap_or_default();
+        (aspects, ingests)
     };
     aspects.sort();
     aspects.dedup();
@@ -94,6 +101,16 @@ pub async fn tag_page(State(state): State<AppState>, Path(tag): Path<String>) ->
                     @for a in aspects {
                         li { a href={(format!("/t/{tag}/a/{a}"))} { ":" (a) } }
                     }
+                }
+            }
+
+            h2 { "recent ingests" }
+            @if ingests.is_empty() {
+                p class="muted" { "none yet" }
+            } @else {
+                @for ing in ingests.iter().take(5) {
+                    p class="muted" { (format!("ts={} · key={}", ing.ts, ing.voter_key_id)) }
+                    pre { (ing.raw) }
                 }
             }
         },
@@ -130,8 +147,13 @@ fn render_group(tag: &str, aspect: &str, group: &mut GroupState) -> Markup {
         } @else {
             pre {
                 @for v in group.recent_votes.iter().take(25) {
-                    (format!("#{} :{}  /{}  {}  /{}  [{}]\n",
-                        v.tag, v.aspect, v.a, v.score, v.b, v.voter_key_id))
+                    @if let Some(body) = &v.body {
+                        (format!("#{} :{}  /{}  {}  /{}  [{}]\n{{{}}}\n\n",
+                            v.tag, v.aspect, v.a, v.score, v.b, v.voter_key_id, body))
+                    } @else {
+                        (format!("#{} :{}  /{}  {}  /{}  [{}]\n",
+                            v.tag, v.aspect, v.a, v.score, v.b, v.voter_key_id))
+                    }
                 }
             }
         }

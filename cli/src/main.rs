@@ -2,6 +2,8 @@ use anyhow::{anyhow, Context, Result};
 use clap::{Parser, Subcommand};
 use reqwest::header::{HeaderMap, HeaderValue};
 use serde::{Deserialize, Serialize};
+use std::io::Read;
+use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
 #[command(name = "slugsocial", version, about = "Slug Social CLI (thin client)")]
@@ -51,6 +53,16 @@ enum Command {
         aspect: String,
     },
 
+    /// Ingest a DSL (and optional prose) document and emit events on the server
+    Ingest {
+        /// Optional path to a file. If omitted, reads from stdin.
+        #[arg(value_name = "FILE")]
+        file: Option<PathBuf>,
+        /// Parsing mode: full (default), lines, or dsl
+        #[arg(long, default_value = "full")]
+        mode: String,
+    },
+
     /// Simple health check
     Healthz,
 }
@@ -98,6 +110,20 @@ struct VoteResponse {
     tag: String,
     aspect: String,
     ranking: Vec<RankRow>,
+    next: NextMoves,
+}
+
+#[derive(Debug, Serialize)]
+struct IngestRequest {
+    text: String,
+    mode: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct IngestResponse {
+    ok: bool,
+    tags: Vec<String>,
+    events_appended: usize,
     next: NextMoves,
 }
 
@@ -215,6 +241,51 @@ async fn main() -> Result<()> {
                 print_next(&resp.next);
             } else {
                 return Err(anyhow!("vote failed"));
+            }
+        }
+
+        Command::Ingest { file, mode } => {
+            let key = cli
+                .key
+                .as_deref()
+                .ok_or_else(|| anyhow!("missing --key or SLUG_KEY (required for ingest)"))?;
+            let client = http_client(Some(key))?;
+
+            let mut text = String::new();
+            match file {
+                Some(path) => {
+                    text = std::fs::read_to_string(&path)
+                        .with_context(|| format!("failed to read {}", path.display()))?;
+                }
+                None => {
+                    std::io::stdin()
+                        .read_to_string(&mut text)
+                        .context("failed to read stdin")?;
+                }
+            }
+
+            if text.trim().is_empty() {
+                return Err(anyhow!("no input provided (empty)"));
+            }
+
+            let req = IngestRequest {
+                text,
+                mode: Some(mode),
+            };
+            let url = format!("{base}/api/v0/ingest");
+            let resp: IngestResponse = client.post(url).json(&req).send().await?.json().await?;
+            if resp.ok {
+                println!("✓ ingested");
+                println!("events: {}", resp.events_appended);
+                if !resp.tags.is_empty() {
+                    println!("tags:");
+                    for t in &resp.tags {
+                        println!("  {t}");
+                    }
+                }
+                print_next(&resp.next);
+            } else {
+                return Err(anyhow!("ingest failed"));
             }
         }
     }
