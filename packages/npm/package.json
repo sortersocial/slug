@@ -1,0 +1,18 @@
+{
+  "name": "slugsocial",
+  "version": "0.0.1",
+  "description": "Slug Social CLI shim (downloads and execs Rust slugsocial) — npx-friendly",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/your-org/your-repo.git"
+  },
+  "bin": {
+    "slugsocial": "bin/slugsocial.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
+
+

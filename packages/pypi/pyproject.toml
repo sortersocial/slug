@@ -1,0 +1,17 @@
+[build-system]
+requires = ["hatchling>=1.21.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "slugsocial"
+version = "0.0.1"
+description = "Slug Social CLI shim (downloads and execs Rust slugsocial) — uvx-friendly"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+dependencies = []
+
+[project.scripts]
+slugsocial = "slugsocial.__main__:main"
+
+
