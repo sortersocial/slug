@@ -1,33 +1,29 @@
 # `npx slugsocial`
 
-Ultra-thin shim that **downloads** (once) and **execs** the Rust `slugsocial` binary.
+Ultra-thin shim that **execs the Rust `slugsocial` binary bundled via platform packages**.
 
 ## Usage
 
-```bash
-# Option A: point at an existing local build
-export SLUGSOCIAL_BIN="/path/to/slugsocial"
-
-npx slugsocial healthz
-```
+Install/run:
 
 ```bash
-# Option B: download from GitHub Releases (recommended)
-export SLUGSOCIAL_RELEASE_BASE="https://github.com/<org>/<repo>/releases/download"
-export SLUGSOCIAL_TAG="v0.0.1"
-
 npx slugsocial --help
 ```
 
 ## Publish checklist (npm)
 
-- Update `packages/npm/package.json` `repository.url`.
-- Ensure `bin/slugsocial.js` is executable (`chmod +x`).
-- Bump version.
-- Publish from `packages/npm`:
+- Publish **platform packages** first (one per OS/arch), each containing `bin/slugsocial` (or `.exe`).
+- Then publish the root `slugsocial` package which has `optionalDependencies` on those platform packages.
 
-```bash
-npm publish --access public
-```
+Repo: `sortersocial/slug` (`https://github.com/sortersocial/slug`)
+
+Packages to publish:
+- `@sortersocial/slugsocial-darwin-arm64` (from `packages/npm/platforms/darwin-arm64`)
+- `@sortersocial/slugsocial-darwin-x64`
+- `@sortersocial/slugsocial-linux-arm64`
+- `@sortersocial/slugsocial-linux-x64`
+- `@sortersocial/slugsocial-win32-arm64`
+- `@sortersocial/slugsocial-win32-x64`
+- `slugsocial` (from `packages/npm`)
 
 

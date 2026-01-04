@@ -1,14 +1,22 @@
 {
   "name": "slugsocial",
   "version": "0.0.1",
-  "description": "Slug Social CLI shim (downloads and execs Rust slugsocial) — npx-friendly",
+  "description": "Slug Social CLI shim (execs bundled Rust slugsocial) — npx-friendly",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/your-org/your-repo.git"
+    "url": "git+https://github.com/sortersocial/slug.git"
   },
   "bin": {
     "slugsocial": "bin/slugsocial.js"
+  },
+  "optionalDependencies": {
+    "@sortersocial/slugsocial-darwin-arm64": "0.0.1",
+    "@sortersocial/slugsocial-darwin-x64": "0.0.1",
+    "@sortersocial/slugsocial-linux-arm64": "0.0.1",
+    "@sortersocial/slugsocial-linux-x64": "0.0.1",
+    "@sortersocial/slugsocial-win32-arm64": "0.0.1",
+    "@sortersocial/slugsocial-win32-x64": "0.0.1"
   },
   "engines": {
     "node": ">=18"

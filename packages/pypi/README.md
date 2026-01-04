@@ -1,21 +1,12 @@
 # `uvx slugsocial`
 
-Ultra-thin shim that **downloads** (once) and **execs** the Rust `slugsocial` binary.
+Ultra-thin shim that **execs the Rust `slugsocial` binary bundled in platform wheels**.
 
 ## Usage
 
-```bash
-# Option A: point at an existing local build
-export SLUGSOCIAL_BIN="/path/to/slugsocial"
-
-uvx slugsocial healthz
-```
+Install/run:
 
 ```bash
-# Option B: download from GitHub Releases (recommended)
-export SLUGSOCIAL_RELEASE_BASE="https://github.com/<org>/<repo>/releases/download"
-export SLUGSOCIAL_TAG="v0.0.1"
-
 uvx slugsocial --help
 ```
 

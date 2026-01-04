@@ -1,23 +1,22 @@
-# Releasing `slugsocial` (Rust CLI) for `npx`/`uvx` shims
+# Releasing `slugsocial` (Rust CLI) for `npx`/`uvx`
 
-The `packages/npm` and `packages/pypi` packages are **thin shims**. They do **not** implement CLI parsing; they download and exec the Rust `slugsocial` binary.
+Repo: `https://github.com/sortersocial/slug`
 
-## Environment variables (shim)
+The `packages/npm` and `packages/pypi` packages are **thin shims**. They do **not** implement CLI parsing; they exec the Rust `slugsocial` binary that is bundled via:
 
-- `SLUGSOCIAL_BIN`: absolute path to an existing `slugsocial` binary (skips download)
-- `SLUGSOCIAL_RELEASE_BASE`: GitHub Releases download base, e.g. `https://github.com/<org>/<repo>/releases/download`
-- `SLUGSOCIAL_TAG`: release tag (defaults vary by shim; recommended: `vX.Y.Z`)
+- **npm optionalDependencies** (per-platform packages)
+- **PyPI platform wheels** (binary included in wheel)
 
-## Required GitHub release assets
+## Release artifacts you need to build
 
-For each release tag `vX.Y.Z`, publish **one file per platform/arch**:
+You still need one Rust binary per platform/arch:
 
-- `slugsocial-darwin-x64`
-- `slugsocial-darwin-arm64`
-- `slugsocial-linux-x64`
-- `slugsocial-linux-arm64`
-- `slugsocial-windows-x64.exe`
-- `slugsocial-windows-arm64.exe`
+- `darwin-arm64`
+- `darwin-x64`
+- `linux-arm64`
+- `linux-x64`
+- `win32-arm64`
+- `win32-x64`
 
 ## Build commands (examples)
 

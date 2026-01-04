@@ -1,0 +1,119 @@
+name: release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-binaries:
+    name: build slugsocial binaries (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            target: aarch64-apple-darwin
+            plat: darwin
+            arch: arm64
+            ext: ""
+          - os: macos-13
+            target: x86_64-apple-darwin
+            plat: darwin
+            arch: x64
+            ext: ""
+          - os: ubuntu-22.04
+            target: aarch64-unknown-linux-gnu
+            plat: linux
+            arch: arm64
+            ext: ""
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            plat: linux
+            arch: x64
+            ext: ""
+          - os: windows-2022
+            target: aarch64-pc-windows-msvc
+            plat: win32
+            arch: arm64
+            ext: ".exe"
+          - os: windows-2022
+            target: x86_64-pc-windows-msvc
+            plat: win32
+            arch: x64
+            ext: ".exe"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build Rust CLI
+        run: cargo build --release -p slugsocial --target ${{ matrix.target }}
+
+      - name: Prepare artifact
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp "target/${{ matrix.target }}/release/slugsocial${{ matrix.ext }}" "dist/slugsocial-${{ matrix.plat }}-${{ matrix.arch }}${{ matrix.ext }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: slugsocial-${{ matrix.plat }}-${{ matrix.arch }}
+          path: dist/*
+
+  publish:
+    name: publish npm + pypi
+    needs: build-binaries
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Copy binaries into npm platform packages
+        shell: bash
+        run: |
+          set -euxo pipefail
+          for dir in artifacts/*; do
+            name="$(basename "$dir")"
+            # name is slugsocial-<plat>-<arch>
+            plat="$(echo "$name" | cut -d- -f2)"
+            arch="$(echo "$name" | cut -d- -f3)"
+            pkg="packages/npm/platforms/${plat}-${arch}"
+            mkdir -p "$pkg/bin"
+            # Find the binary file
+            bin="$(ls "$dir"/slugsocial-* | head -1)"
+            if [[ "$plat" == "win32" ]]; then
+              cp "$bin" "$pkg/bin/slugsocial.exe"
+            else
+              cp "$bin" "$pkg/bin/slugsocial"
+              chmod +x "$pkg/bin/slugsocial"
+            fi
+          done
+
+      - name: Build PyPI wheels (platform)
+        run: |
+          echo "TODO: build and upload platform wheels that include packages/pypi/slugsocial/bin/slugsocial(.exe)"
+          echo "Suggested: use cibuildwheel or a matrix job that copies the appropriate binary into packages/pypi/slugsocial/bin/ and runs hatch build"
+
+      - name: Publish npm (TODO)
+        run: |
+          echo "TODO: npm publish packages/npm/platforms/* then packages/npm"
+          echo "Requires NPM_TOKEN secret"
+
+      - name: Publish PyPI (TODO)
+        run: |
+          echo "TODO: twine upload dist/*"
+          echo "Requires PYPI_TOKEN secret"
+
+

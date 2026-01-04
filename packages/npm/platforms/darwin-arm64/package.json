@@ -1,0 +1,15 @@
+{
+  "name": "@sortersocial/slugsocial-darwin-arm64",
+  "version": "0.0.1",
+  "description": "Platform binary for slugsocial (darwin arm64)",
+  "license": "MIT",
+  "os": ["darwin"],
+  "cpu": ["arm64"],
+  "files": ["bin/slugsocial", "bin/slugsocial.exe", "bin/README.txt"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sortersocial/slug.git"
+  }
+}
+
+
