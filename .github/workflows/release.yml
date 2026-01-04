@@ -27,16 +27,14 @@ jobs:
             plat: darwin
             arch: x64
             ext: ""
-          - os: ubuntu-24.04-arm64
-            target: aarch64-unknown-linux-gnu
-            plat: linux
-            arch: arm64
-            ext: ""
           - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             plat: linux
             arch: x64
             ext: ""
+#
+# NOTE: linux arm64 is temporarily disabled because GitHub arm runners can sit queued
+# for long periods. Re-enable once we switch to a reliable cross-compile strategy.
 
     steps:
       - uses: actions/checkout@v4
