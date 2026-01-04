@@ -13,8 +13,6 @@ You still need one Rust binary per platform/arch:
 
 - `darwin-arm64`
 - `darwin-x64`
-- `linux-arm64`
-- `linux-x64`
 
 ## Build commands (examples)
 

@@ -12,9 +12,7 @@
   },
   "optionalDependencies": {
     "@sortersocial/slugsocial-darwin-arm64": "0.0.1",
-    "@sortersocial/slugsocial-darwin-x64": "0.0.1",
-    "@sortersocial/slugsocial-linux-arm64": "0.0.1",
-    "@sortersocial/slugsocial-linux-x64": "0.0.1"
+    "@sortersocial/slugsocial-darwin-x64": "0.0.1"
   },
   "engines": {
     "node": ">=18"

@@ -20,8 +20,6 @@ Repo: `sortersocial/slug` (`https://github.com/sortersocial/slug`)
 Packages to publish:
 - `@sortersocial/slugsocial-darwin-arm64` (from `packages/npm/platforms/darwin-arm64`)
 - `@sortersocial/slugsocial-darwin-x64`
-- `@sortersocial/slugsocial-linux-arm64`
-- `@sortersocial/slugsocial-linux-x64`
 - `slugsocial` (from `packages/npm`)
 
 

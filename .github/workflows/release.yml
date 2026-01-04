@@ -27,21 +27,6 @@ jobs:
             plat: darwin
             arch: x64
             ext: ""
-          - os: ubuntu-24.04-arm64
-            target: aarch64-unknown-linux-gnu
-            plat: linux
-            arch: arm64
-            ext: ""
-          - os: ubuntu-22.04
-            target: x86_64-unknown-linux-gnu
-            plat: linux
-            arch: x64
-            ext: ""
-          - os: ubuntu-22.04
-            target: aarch64-unknown-linux-gnu
-            plat: linux
-            arch: arm64
-            ext: ""
 
     steps:
       - uses: actions/checkout@v4
@@ -51,16 +36,7 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Build Rust CLI
-        shell: bash
-        run: |
-          set -euxo pipefail
-          if [[ "${{ matrix.target }}" == "aarch64-unknown-linux-gnu" ]]; then
-            # Cross-compile on standard ubuntu runner to avoid scarce arm64 runners.
-            cargo install --locked cross || true
-            cross build --release -p slugsocial --target ${{ matrix.target }}
-          else
-            cargo build --release -p slugsocial --target ${{ matrix.target }}
-          fi
+        run: cargo build --release -p slugsocial --target ${{ matrix.target }}
 
       - name: Prepare artifact
         shell: bash
