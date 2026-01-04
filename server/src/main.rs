@@ -82,8 +82,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/", get(html::index))
         .route("/t/:tag", get(html::tag_page))
         .route("/t/:tag/a/:aspect", get(html::tag_aspect_page))
+        .route("/api/v0/tags", get(api::get_tags))
+        .route("/api/v0/tag", get(api::get_tag))
+        .route("/api/v0/item", get(api::get_item))
+        .route("/api/v0/recent_votes", get(api::get_recent_votes))
         .route("/api/v0/vote", axum::routing::post(api::post_vote))
         .route("/api/v0/ingest", axum::routing::post(api::post_ingest))
+        .route("/api/v0/pair", get(api::get_pair))
         .route("/api/v0/rank", get(api::get_rank))
         .with_state(state)
         .layer(TraceLayer::new_for_http());

@@ -6,6 +6,7 @@ use axum::{
 };
 use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
     auth::{require_key, AuthedKey},
@@ -414,6 +415,206 @@ pub async fn get_pair(State(state): State<AppState>, Query(q): Query<PairQuery>)
         right: format!("/{}", right),
     })
     .into_response()
+}
+
+// ============================================================================
+// Exploration APIs (read-only)
+// ============================================================================
+
+#[derive(Debug, Serialize)]
+pub struct TagSummary {
+    pub tag: String,
+    pub items: usize,
+    pub aspects: usize,
+    pub web: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TagsResponse {
+    pub tags: Vec<TagSummary>,
+}
+
+pub async fn get_tags(State(state): State<AppState>) -> impl IntoResponse {
+    let reduced = state.reduced.read().await;
+
+    let mut aspects_by_tag: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for k in reduced.groups.keys() {
+        aspects_by_tag
+            .entry(k.tag.clone())
+            .or_default()
+            .insert(k.aspect.clone());
+    }
+
+    let mut tags: BTreeSet<String> = BTreeSet::new();
+    tags.extend(reduced.tags.keys().cloned());
+    tags.extend(aspects_by_tag.keys().cloned());
+
+    let mut out: Vec<TagSummary> = Vec::new();
+    for t in tags.into_iter() {
+        let items = reduced.tags.get(&t).map(|s| s.len()).unwrap_or(0);
+        let aspects = aspects_by_tag.get(&t).map(|s| s.len()).unwrap_or(0);
+        out.push(TagSummary {
+            tag: format!("#{t}"),
+            items,
+            aspects,
+            web: format!("https://slug.social/t/{t}"),
+        });
+    }
+
+    Json(TagsResponse { tags: out }).into_response()
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TagDetailQuery {
+    pub tag: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TagDetailResponse {
+    pub tag: String,
+    pub items: Vec<String>,
+    pub aspects: Vec<String>,
+    pub recent_ingests: Vec<IngestRow>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct IngestRow {
+    pub ts: i64,
+    pub actor: Option<String>,
+    pub voter_key_id: String,
+    pub snippet: String,
+}
+
+pub async fn get_tag(State(state): State<AppState>, Query(q): Query<TagDetailQuery>) -> impl IntoResponse {
+    let tag = canonicalize_tag(&q.tag);
+    let reduced = state.reduced.read().await;
+
+    let mut items: Vec<String> = reduced
+        .tags
+        .get(&tag)
+        .map(|s| s.iter().cloned().collect())
+        .unwrap_or_else(Vec::new);
+    items.sort();
+
+    let mut aspects: BTreeSet<String> = BTreeSet::new();
+    for k in reduced.groups.keys() {
+        if k.tag == tag {
+            aspects.insert(k.aspect.clone());
+        }
+    }
+
+    let recent_ingests: Vec<IngestRow> = reduced
+        .ingests_by_tag
+        .get(&tag)
+        .map(|q| {
+            q.iter()
+                .take(20)
+                .map(|ing| IngestRow {
+                    ts: ing.ts,
+                    actor: ing.actor.as_ref().map(|a| format!("@{a}")),
+                    voter_key_id: ing.voter_key_id.clone(),
+                    snippet: ing.raw.chars().take(800).collect(),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    Json(TagDetailResponse {
+        tag: format!("#{tag}"),
+        items: items.into_iter().map(|it| format!("/{}", it)).collect(),
+        aspects: aspects.into_iter().map(|a| format!(":{a}")).collect(),
+        recent_ingests,
+    })
+    .into_response()
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ItemQuery {
+    pub item: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ItemResponse {
+    pub item: String,
+    pub body: Option<String>,
+    pub tags: Vec<String>,
+}
+
+pub async fn get_item(State(state): State<AppState>, Query(q): Query<ItemQuery>) -> impl IntoResponse {
+    let item = canonicalize_item(&q.item);
+    let reduced = state.reduced.read().await;
+
+    let body = reduced.item_bodies.get(&item).cloned();
+    let mut tags: Vec<String> = Vec::new();
+    for (t, set) in reduced.tags.iter() {
+        if set.contains(&item) {
+            tags.push(format!("#{t}"));
+        }
+    }
+    tags.sort();
+
+    Json(ItemResponse {
+        item: format!("/{}", item),
+        body,
+        tags,
+    })
+    .into_response()
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RecentVotesQuery {
+    pub tag: String,
+    pub aspect: String,
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct VoteRow {
+    pub ts: i64,
+    pub tag: String,
+    pub aspect: String,
+    pub a: String,
+    pub b: String,
+    pub ratio: String,
+    pub actor: Option<String>,
+    pub body: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RecentVotesResponse {
+    pub votes: Vec<VoteRow>,
+}
+
+pub async fn get_recent_votes(
+    State(state): State<AppState>,
+    Query(q): Query<RecentVotesQuery>,
+) -> impl IntoResponse {
+    let tag = canonicalize_tag(&q.tag);
+    let aspect = canonicalize_aspect(&q.aspect);
+    let limit = q.limit.unwrap_or(25).clamp(1, 200);
+
+    let reduced = state.reduced.read().await;
+    let key = GroupKey { tag, aspect };
+    let Some(group) = reduced.groups.get(&key) else {
+        return Json(RecentVotesResponse { votes: vec![] }).into_response();
+    };
+
+    let mut out: Vec<VoteRow> = Vec::new();
+    for v in group.recent_votes.iter().take(limit) {
+        out.push(VoteRow {
+            ts: v.ts,
+            tag: format!("#{}", v.tag),
+            aspect: format!(":{}", v.aspect),
+            a: format!("/{}", v.a),
+            b: format!("/{}", v.b),
+            ratio: format!("{}:{}", v.ratio_left, v.ratio_right),
+            actor: v.actor.as_ref().map(|a| format!("@{a}")),
+            body: v.body.clone(),
+        });
+    }
+
+    Json(RecentVotesResponse { votes: out }).into_response()
 }
 
 #[derive(Debug, Deserialize)]

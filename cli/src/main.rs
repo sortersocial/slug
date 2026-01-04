@@ -63,6 +63,27 @@ enum Command {
 
     /// Simple health check
     Healthz,
+
+    /// List tags in the index (agent-friendly)
+    Tags,
+
+    /// Show tag details (items, aspects, recent ingests)
+    Tag {
+        tag: String,
+    },
+
+    /// Show item details (body + tags)
+    Item {
+        item: String,
+    },
+
+    /// Show recent votes for a tag/aspect
+    Recent {
+        tag: String,
+        /// Optional additional sigil tokens: `:aspect`
+        #[arg(value_name = "TOKENS", trailing_var_arg = true)]
+        tokens: Vec<String>,
+    },
 }
 
 #[derive(Debug, Serialize)]
@@ -103,6 +124,59 @@ struct NextMoves {
     vote: String,
     rank: String,
     web: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct TagsResponse {
+    tags: Vec<TagSummary>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TagSummary {
+    tag: String,
+    items: usize,
+    aspects: usize,
+    web: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct TagDetailResponse {
+    tag: String,
+    items: Vec<String>,
+    aspects: Vec<String>,
+    recent_ingests: Vec<IngestRow>,
+}
+
+#[derive(Debug, Deserialize)]
+struct IngestRow {
+    ts: i64,
+    actor: Option<String>,
+    voter_key_id: String,
+    snippet: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ItemResponse {
+    item: String,
+    body: Option<String>,
+    tags: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RecentVotesResponse {
+    votes: Vec<VoteRow>,
+}
+
+#[derive(Debug, Deserialize)]
+struct VoteRow {
+    ts: i64,
+    tag: String,
+    aspect: String,
+    a: String,
+    b: String,
+    ratio: String,
+    actor: Option<String>,
+    body: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -206,6 +280,78 @@ fn print_next(next: &NextMoves) {
     println!("  {}", next.vote);
     println!("  {}", next.rank);
     println!("  {}", next.web);
+}
+
+fn print_tags(resp: &TagsResponse) {
+    if resp.tags.is_empty() {
+        println!("(no tags yet)");
+        return;
+    }
+    for t in &resp.tags {
+        println!("{:<32} items={:<4} aspects={:<3} {}", t.tag, t.items, t.aspects, t.web);
+    }
+}
+
+fn print_tag_detail(resp: &TagDetailResponse) {
+    println!("{}", resp.tag);
+    if !resp.aspects.is_empty() {
+        println!();
+        println!("aspects:");
+        for a in &resp.aspects {
+            println!("  {a}");
+        }
+    }
+    if !resp.items.is_empty() {
+        println!();
+        println!("items:");
+        for it in &resp.items {
+            println!("  {it}");
+        }
+    }
+    if !resp.recent_ingests.is_empty() {
+        println!();
+        println!("recent ingests:");
+        for ing in &resp.recent_ingests {
+            let who = ing
+                .actor
+                .clone()
+                .unwrap_or_else(|| format!("@{}", ing.voter_key_id));
+            println!("  ts={} {}", ing.ts, who);
+            println!("  {}", ing.snippet.replace('\n', "\\n"));
+        }
+    }
+}
+
+fn print_item(resp: &ItemResponse) {
+    println!("{}", resp.item);
+    if !resp.tags.is_empty() {
+        println!();
+        println!("tags:");
+        for t in &resp.tags {
+            println!("  {t}");
+        }
+    }
+    if let Some(body) = &resp.body {
+        println!();
+        println!("{body}");
+    }
+}
+
+fn print_recent_votes(resp: &RecentVotesResponse) {
+    if resp.votes.is_empty() {
+        println!("(none yet)");
+        return;
+    }
+    for v in &resp.votes {
+        let who = v.actor.clone().unwrap_or_else(|| "@anon".to_string());
+        if let Some(body) = &v.body {
+            println!("{} {}  {}  {}  {}  [{}]", v.tag, v.aspect, v.a, v.ratio, v.b, who);
+            println!("{{{}}}", body);
+            println!();
+        } else {
+            println!("{} {}  {}  {}  {}  [{}]", v.tag, v.aspect, v.a, v.ratio, v.b, who);
+        }
+    }
 }
 
 fn http_client(key: Option<&str>) -> Result<reqwest::Client> {
@@ -336,6 +482,43 @@ async fn main() -> Result<()> {
             } else {
                 return Err(anyhow!("ingest failed"));
             }
+        }
+
+        Command::Tags => {
+            let client = http_client(key.as_deref())?;
+            let url = format!("{base}/api/v0/tags");
+            let resp: TagsResponse = client.get(url).send().await?.json().await?;
+            print_tags(&resp);
+        }
+
+        Command::Tag { tag } => {
+            let client = http_client(key.as_deref())?;
+            let tag_c = canonicalize_tag(&tag);
+            let url = format!("{base}/api/v0/tag?tag={}", urlencoding::encode(&tag_c));
+            let resp: TagDetailResponse = client.get(url).send().await?.json().await?;
+            print_tag_detail(&resp);
+        }
+
+        Command::Item { item } => {
+            let client = http_client(key.as_deref())?;
+            let item_c = canonicalize_item(&item);
+            let url = format!("{base}/api/v0/item?item={}", urlencoding::encode(&item_c));
+            let resp: ItemResponse = client.get(url).send().await?.json().await?;
+            print_item(&resp);
+        }
+
+        Command::Recent { tag, tokens } => {
+            let client = http_client(key.as_deref())?;
+            let tag_c = canonicalize_tag(&tag);
+            let (aspect, _actor) = parse_sigils(&tokens)?;
+            let aspect_c = canonicalize_aspect(&aspect);
+            let url = format!(
+                "{base}/api/v0/recent_votes?tag={}&aspect={}",
+                urlencoding::encode(&tag_c),
+                urlencoding::encode(&aspect_c),
+            );
+            let resp: RecentVotesResponse = client.get(url).send().await?.json().await?;
+            print_recent_votes(&resp);
         }
     }
 
