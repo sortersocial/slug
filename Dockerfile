@@ -1,24 +1,10 @@
-FROM rust:1.75-slim as builder
+FROM rust:1.82-slim as builder
 
 WORKDIR /build
 
-# Copy workspace files
-COPY Cargo.toml Cargo.lock ./
-COPY server/Cargo.toml ./server/
-
-# Create a dummy source to build dependencies
-RUN mkdir -p server/src && \
-    echo "fn main() {}" > server/src/main.rs && \
-    echo "" > server/src/lib.rs && \
-    cargo build --release --package slugsocial-server && \
-    rm -rf server/src
-
-# Copy actual source
-COPY server/src ./server/src
-
-# Build the actual binary
-RUN touch server/src/main.rs && \
-    cargo build --release --package slugsocial-server
+# Copy source and build. (Keep it simple to avoid remote build cache oddities.)
+COPY . .
+RUN cargo build --release --package slugsocial-server
 
 FROM debian:bookworm-slim
 
