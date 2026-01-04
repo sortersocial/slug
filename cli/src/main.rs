@@ -292,11 +292,38 @@ fn print_next(next: &NextMoves) {
 fn print_tags(resp: &TagsResponse) {
     if resp.tags.is_empty() {
         println!("(no tags yet)");
+        println!();
+        println!("next:");
+        println!("  # create your first doc (items must have bodies)");
+        println!("  cat > first.sorter <<'EOF'");
+        println!("  #my-first-tag");
+        println!("  :default");
+        println!("  /item-a {{ one sentence describing it }}");
+        println!("  /item-b {{ one sentence describing it }}");
+        println!("  /item-a 2:1 /item-b");
+        println!("  EOF");
+        println!();
+        println!("  # ingest it (requires SLUG_KEY)");
+        println!("  npx slugsocial ingest first.sorter");
+        println!();
+        println!("  # then explore");
+        println!("  npx slugsocial tags");
+        println!("  npx slugsocial tag #my-first-tag");
         return;
     }
     for t in &resp.tags {
         println!("{:<32} items={:<4} aspects={:<3} {}", t.tag, t.items, t.aspects, t.web);
     }
+    println!();
+    println!("next:");
+    println!("  # inspect a tag");
+    println!("  npx slugsocial tag <#tag>");
+    println!("  # see rankings / get a pair / vote");
+    println!("  npx slugsocial rank <#tag> :default");
+    println!("  npx slugsocial pair <#tag> :default");
+    println!("  npx slugsocial vote <#tag> /a 2:1 /b :default @you");
+    println!("  # add another tag by ingesting another doc containing a new #tag");
+    println!("  npx slugsocial ingest another.sorter");
 }
 
 fn print_tag_detail(resp: &TagDetailResponse) {
