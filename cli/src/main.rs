@@ -401,6 +401,12 @@ fn print_recent_votes(resp: &RecentVotesResponse) {
     println!("  npx slugsocial rank '<#tag>' :default");
 }
 
+fn shell_quote(s: &str) -> String {
+    // Minimal POSIX-ish single-quote escaping: wrap in '...' and escape embedded ' as '\''.
+    let escaped = s.replace('\'', "'\\''");
+    format!("'{escaped}'")
+}
+
 fn http_client() -> Result<reqwest::Client> {
     Ok(reqwest::Client::new())
 }
@@ -461,7 +467,19 @@ async fn main() -> Result<()> {
                 if random { "true" } else { "false" }
             );
             let resp: PairResponse = expect_json(client.get(url).send().await?).await?;
-            println!("{} {}", resp.left, resp.right);
+            println!("pair:");
+            println!("  {} {}", resp.left, resp.right);
+            println!();
+            println!("next:");
+            // Quote tags because `#` is a shell comment starter.
+            let qtag = shell_quote(&resp.tag);
+            println!(
+                "  npx slugsocial vote {} {} 2:1 {} {} @you",
+                qtag, resp.left, resp.right, resp.aspect
+            );
+            println!("  npx slugsocial pair {} {}", qtag, resp.aspect);
+            println!("  npx slugsocial rank {} {}", qtag, resp.aspect);
+            println!("  npx slugsocial recent {} {}", qtag, resp.aspect);
         }
 
         Command::Vote {
