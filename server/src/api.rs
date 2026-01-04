@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     auth::{require_key, AuthedKey},
     dsl,
-    events::{canonicalize_aspect, canonicalize_item, canonicalize_tag, Event, VoteCast},
+    events::{canonicalize_actor, canonicalize_aspect, canonicalize_item, canonicalize_tag, Event, VoteCast},
     ranking::ranked_items,
     reducer::GroupKey,
     state::AppState,
@@ -18,11 +18,21 @@ use crate::{
 
 #[derive(Debug, Deserialize)]
 pub struct VoteRequest {
-    pub tag: String,
+    /// Optional namespace (historically a hashtag tag). If omitted, defaults to actor or key id.
+    #[serde(default)]
+    pub tag: Option<String>,
     pub aspect: String,
     pub a: String,
     pub b: String,
-    pub score: i32,
+    /// Ratio string like "3:1" (preferred).
+    #[serde(default)]
+    pub ratio: Option<String>,
+    /// Legacy scalar score in [-50, 50] (deprecated).
+    #[serde(default)]
+    pub score: Option<i32>,
+    /// Optional self-declared actor (e.g. "@tommy").
+    #[serde(default)]
+    pub actor: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -64,11 +74,40 @@ pub async fn post_vote(
         Err(e) => return (e.0, e.1).into_response(),
     };
 
-    let tag = canonicalize_tag(&req.tag);
+    let actor_c = req.actor.as_ref().map(|a| canonicalize_actor(a));
+    let namespace_raw = req
+        .tag
+        .as_deref()
+        .map(|t| t.to_string())
+        .or_else(|| actor_c.clone())
+        .unwrap_or_else(|| voter_key_id.clone());
+    let tag = canonicalize_tag(&namespace_raw);
     let aspect = canonicalize_aspect(&req.aspect);
     let a = canonicalize_item(&req.a);
     let b = canonicalize_item(&req.b);
-    let score = req.score.clamp(-50, 50);
+
+    fn parse_ratio(s: &str) -> Option<(i32, i32)> {
+        let t = s.trim();
+        let (l, r) = t.split_once(':')?;
+        let left: i32 = l.trim().parse().ok()?;
+        let right: i32 = r.trim().parse().ok()?;
+        Some((left, right))
+    }
+
+    let (ratio_left, ratio_right, score) = match (req.ratio.as_deref(), req.score) {
+        (Some(r), _) => {
+            let Some((l, rr)) = parse_ratio(r) else {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    "invalid ratio (expected like 3:1)".to_string(),
+                )
+                    .into_response();
+            };
+            (l.max(0), rr.max(0), None)
+        }
+        (None, Some(s)) => (0, 0, Some(s.clamp(-50, 50))),
+        (None, None) => return (StatusCode::BAD_REQUEST, "missing ratio".to_string()).into_response(),
+    };
 
     let vote = VoteCast {
         ts: now_ms(),
@@ -76,9 +115,12 @@ pub async fn post_vote(
         aspect: aspect.clone(),
         a: a.clone(),
         b: b.clone(),
+        ratio_left,
+        ratio_right,
         score,
         body: None,
         voter_key_id,
+        actor: actor_c.clone(),
     };
 
     let event = Event::VoteCast(vote.clone());
@@ -120,10 +162,13 @@ pub async fn post_vote(
         ranking,
         next: NextMoves {
             vote: format!(
-                "npx slugsocial vote /{} 2:1 /{} --tag #{} --aspect :{}",
-                a, b, tag, aspect
+                "npx slugsocial vote /{} 2:1 /{} --aspect :{} --as @{}",
+                a, b, aspect, tag
             ),
-            rank: format!("npx slugsocial rank #{} --aspect :{}", tag, aspect),
+            rank: format!(
+                "npx slugsocial rank @{} --aspect :{}",
+                tag, aspect
+            ),
             web: format!("https://slug.social/t/{}/a/{}", tag, aspect),
         },
     };
@@ -388,19 +433,6 @@ pub struct IngestResponse {
     pub next: NextMoves,
 }
 
-fn ratio_to_score(left: i32, right: i32) -> i32 {
-    let l = left.max(0) as f64;
-    let r = right.max(0) as f64;
-    let denom = l + r;
-    if denom <= 0.0 {
-        return 0;
-    }
-    let p_left = l / denom; // 0..1
-    // Map to [-50, 50] to match the server's score convention.
-    let score = (p_left * 100.0 - 50.0).round() as i32;
-    score.clamp(-50, 50)
-}
-
 /// Ingest a DSL/prose document, emitting events into the JSONL log.
 ///
 /// Interpretation model:
@@ -436,6 +468,7 @@ pub async fn post_ingest(
         Err(e) => return (StatusCode::BAD_REQUEST, e).into_response(),
     };
 
+    let mut current_actor: Option<String> = None;
     let mut current_tag: Option<String> = None;
     let mut current_aspect: String = "default".to_string();
     let ts = now_ms();
@@ -447,10 +480,25 @@ pub async fn post_ingest(
         match s {
             dsl::Stmt::Prose { .. } => {}
             dsl::Stmt::Email { .. } => {}
+            dsl::Stmt::Actor { name } => {
+                let a = canonicalize_actor(&name);
+                current_actor = Some(a.clone());
+                // If no tag context yet, default the namespace to the actor.
+                if current_tag.is_none() {
+                    current_tag = Some(a.clone());
+                    tags_seen.insert(a);
+                }
+            }
             dsl::Stmt::Hashtag { name } => {
                 let t = canonicalize_tag(&name);
-                current_tag = Some(t.clone());
-                tags_seen.insert(t);
+                // If an actor is set, namespacing becomes "@actor/#tag" => "actor/tag".
+                let effective = if let Some(a) = current_actor.clone() {
+                    format!("{}/{}", a, t)
+                } else {
+                    t
+                };
+                current_tag = Some(effective.clone());
+                tags_seen.insert(effective);
             }
             dsl::Stmt::Attribute { name } => {
                 current_aspect = canonicalize_aspect(&name);
@@ -462,10 +510,15 @@ pub async fn post_ingest(
                     item: item.clone(),
                     body,
                 }));
-                if let Some(tag) = current_tag.clone() {
+                // If no explicit tag, default namespace to actor or key id.
+                let tag = current_tag
+                    .clone()
+                    .or_else(|| current_actor.clone())
+                    .unwrap_or_else(|| voter_key_id.clone());
+                {
                     events.push(Event::TagAdd(crate::events::TagAdd {
                         ts,
-                        tag,
+                        tag: tag.clone(),
                         item: item.clone(),
                     }));
                 }
@@ -477,26 +530,25 @@ pub async fn post_ingest(
                 ratio_right,
                 explanation,
             } => {
-                let Some(tag) = current_tag.clone() else {
-                    return (
-                        StatusCode::BAD_REQUEST,
-                        "vote requires an active #tag context".to_string(),
-                    )
-                        .into_response();
-                };
+                let tag = current_tag
+                    .clone()
+                    .or_else(|| current_actor.clone())
+                    .unwrap_or_else(|| voter_key_id.clone());
                 let aspect = current_aspect.clone();
                 let a = canonicalize_item(&item1);
                 let b = canonicalize_item(&item2);
-                let score = ratio_to_score(ratio_left, ratio_right);
                 events.push(Event::VoteCast(VoteCast {
                     ts,
                     tag: tag.clone(),
                     aspect,
                     a: a.clone(),
                     b: b.clone(),
-                    score,
+                    ratio_left,
+                    ratio_right,
+                    score: None,
                     body: explanation,
                     voter_key_id: voter_key_id.clone(),
+                    actor: current_actor.clone(),
                 }));
                 // Ensure both items exist under the tag (helps /pair pool).
                 events.push(Event::TagAdd(crate::events::TagAdd {
@@ -519,6 +571,7 @@ pub async fn post_ingest(
         raw: req.text.clone(),
         tags: tags_vec.clone(),
         voter_key_id: voter_key_id.clone(),
+        actor: current_actor.clone(),
     }));
 
     let events_appended = events.len();
@@ -545,8 +598,14 @@ pub async fn post_ingest(
         tags: tags_vec.iter().map(|t| format!("#{t}")).collect(),
         events_appended,
         next: NextMoves {
-            vote: format!("npx slugsocial pair #{} --aspect :{}", primary_tag, current_aspect),
-            rank: format!("npx slugsocial rank #{} --aspect :{}", primary_tag, current_aspect),
+            vote: format!(
+                "npx slugsocial pair @{} --aspect :{}",
+                primary_tag, current_aspect
+            ),
+            rank: format!(
+                "npx slugsocial rank @{} --aspect :{}",
+                primary_tag, current_aspect
+            ),
             web: format!("https://slug.social/t/{}", primary_tag),
         },
     })

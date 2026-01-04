@@ -16,6 +16,10 @@ pub fn canonicalize_item(input: &str) -> String {
     input.trim().trim_start_matches('/').to_lowercase()
 }
 
+pub fn canonicalize_actor(input: &str) -> String {
+    input.trim().trim_start_matches('@').to_lowercase()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
@@ -29,7 +33,7 @@ pub enum Event {
 pub struct VoteCast {
     /// Unix timestamp in milliseconds.
     pub ts: i64,
-    /// Tag without leading '#'.
+    /// Namespace without leading '#'. (Historically a tag; now often a user/space.)
     pub tag: String,
     /// Aspect without leading ':'.
     pub aspect: String,
@@ -37,13 +41,24 @@ pub struct VoteCast {
     pub a: String,
     /// Item B without leading '/'.
     pub b: String,
-    /// Preference score in [-50, 50]. Positive means prefer `a`, negative means prefer `b`.
-    pub score: i32,
+    /// Ratio numerator for `a` (left item). Example: `/a 3:1 /b` => `ratio_left=3`.
+    #[serde(default)]
+    pub ratio_left: i32,
+    /// Ratio numerator for `b` (right item). Example: `/a 3:1 /b` => `ratio_right=1`.
+    #[serde(default)]
+    pub ratio_right: i32,
+    /// Legacy preference score in [-50, 50]. Positive means prefer `a`, negative means prefer `b`.
+    /// Kept for backward compatibility when loading old event logs.
+    #[serde(default)]
+    pub score: Option<i32>,
     /// Optional vote explanation/body (from DSL `{ ... }`).
     #[serde(default)]
     pub body: Option<String>,
     /// API key identifier (not secret), for attribution/rate limiting.
     pub voter_key_id: String,
+    /// Optional self-declared actor (from DSL `@name` or CLI `--as @name`).
+    #[serde(default)]
+    pub actor: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -75,6 +90,9 @@ pub struct DslIngested {
     pub tags: Vec<String>,
     /// API key identifier (not secret), for attribution/rate limiting.
     pub voter_key_id: String,
+    /// Optional self-declared actor (from DSL `@name` or CLI `--as @name`).
+    #[serde(default)]
+    pub actor: Option<String>,
 }
 
 

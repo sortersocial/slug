@@ -91,7 +91,7 @@ pub async fn tag_page(State(state): State<AppState>, Path(tag): Path<String>) ->
     let page = layout(
         &format!("#{tag}"),
         html! {
-            h1 { "#" (tag) }
+            h1 { "@" (tag) }
             p { a href="/" { "← index" } }
             h2 { "aspects" }
             @if aspects.is_empty() {
@@ -109,7 +109,11 @@ pub async fn tag_page(State(state): State<AppState>, Path(tag): Path<String>) ->
                 p class="muted" { "none yet" }
             } @else {
                 @for ing in ingests.iter().take(5) {
-                    p class="muted" { (format!("ts={} · key={}", ing.ts, ing.voter_key_id)) }
+                    @if let Some(actor) = &ing.actor {
+                        p class="muted" { (format!("ts={} · @{} · key={}", ing.ts, actor, ing.voter_key_id)) }
+                    } @else {
+                        p class="muted" { (format!("ts={} · key={}", ing.ts, ing.voter_key_id)) }
+                    }
                     pre { (ing.raw) }
                 }
             }
@@ -121,8 +125,8 @@ pub async fn tag_page(State(state): State<AppState>, Path(tag): Path<String>) ->
 fn render_group(tag: &str, aspect: &str, group: &mut GroupState) -> Markup {
     let ranking = ranked_items(group, 10000, 1e-8);
     html! {
-        h1 { "#" (tag) " " ":" (aspect) }
-        p { a href={(format!("/t/{tag}"))} { "← #" (tag) } " · " a href="/" { "index" } }
+        h1 { "@" (tag) " " ":" (aspect) }
+        p { a href={(format!("/t/{tag}"))} { "← @" (tag) } " · " a href="/" { "index" } }
 
         h2 { "ranking" }
         @if ranking.is_empty() {
@@ -147,12 +151,21 @@ fn render_group(tag: &str, aspect: &str, group: &mut GroupState) -> Markup {
         } @else {
             pre {
                 @for v in group.recent_votes.iter().take(25) {
+                    @let who = v.actor.as_deref().unwrap_or(&v.voter_key_id);
+                    @let ratio = if v.ratio_left > 0 || v.ratio_right > 0 {
+                        format!("{}:{}", v.ratio_left, v.ratio_right)
+                    } else if let Some(score) = v.score {
+                        // Legacy display (should become rare over time).
+                        format!("{score}")
+                    } else {
+                        "1:1".to_string()
+                    };
                     @if let Some(body) = &v.body {
-                        (format!("#{} :{}  /{}  {}  /{}  [{}]\n{{{}}}\n\n",
-                            v.tag, v.aspect, v.a, v.score, v.b, v.voter_key_id, body))
+                        (format!("@{} :{}  /{}  {}  /{}\n{{{}}}\n\n",
+                            who, v.aspect, v.a, ratio, v.b, body))
                     } @else {
-                        (format!("#{} :{}  /{}  {}  /{}  [{}]\n",
-                            v.tag, v.aspect, v.a, v.score, v.b, v.voter_key_id))
+                        (format!("@{} :{}  /{}  {}  /{}\n",
+                            who, v.aspect, v.a, ratio, v.b))
                     }
                 }
             }

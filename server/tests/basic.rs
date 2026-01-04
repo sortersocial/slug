@@ -6,16 +6,19 @@ use slugsocial_server::{
 };
 use tempfile::TempDir;
 
-fn vote(ts: i64, tag: &str, aspect: &str, a: &str, b: &str, score: i32) -> Event {
+fn vote(ts: i64, tag: &str, aspect: &str, a: &str, b: &str, left: i32, right: i32) -> Event {
     Event::VoteCast(VoteCast {
         ts,
         tag: tag.to_string(),
         aspect: aspect.to_string(),
         a: a.to_string(),
         b: b.to_string(),
-        score,
+        ratio_left: left,
+        ratio_right: right,
+        score: None,
         body: None,
         voter_key_id: "test".to_string(),
+        actor: None,
     })
 }
 
@@ -27,8 +30,8 @@ fn vote(ts: i64, tag: &str, aspect: &str, a: &str, b: &str, score: i32) -> Event
 fn reducer_and_ranking_linear_chain() {
     // Prefer /a over /b over /c.
     let mut state = ReducerState::default();
-    state.apply_event(vote(1, "#t", ":x", "/a", "/b", 40));
-    state.apply_event(vote(2, "#t", ":x", "/b", "/c", 40));
+    state.apply_event(vote(1, "#t", ":x", "/a", "/b", 3, 1));
+    state.apply_event(vote(2, "#t", ":x", "/b", "/c", 3, 1));
 
     let key = GroupKey {
         tag: "t".to_string(),
@@ -47,9 +50,9 @@ fn reducer_and_ranking_linear_chain() {
 fn reducer_canonicalizes_identifiers() {
     let mut state = ReducerState::default();
     // Mix of formats
-    state.apply_event(vote(1, "tag", "aspect", "item-a", "item-b", 20));
-    state.apply_event(vote(2, "#tag", ":aspect", "/item-a", "/item-b", 20));
-    state.apply_event(vote(3, "TAG", "ASPECT", "ITEM-A", "ITEM-B", 20));
+    state.apply_event(vote(1, "tag", "aspect", "item-a", "item-b", 2, 1));
+    state.apply_event(vote(2, "#tag", ":aspect", "/item-a", "/item-b", 2, 1));
+    state.apply_event(vote(3, "TAG", "ASPECT", "ITEM-A", "ITEM-B", 2, 1));
 
     let key = GroupKey {
         tag: canonicalize_tag("tag"),
@@ -90,9 +93,9 @@ fn reducer_handles_tag_add() {
 fn reducer_aggregates_multiple_votes() {
     let mut state = ReducerState::default();
     // Multiple votes between same pair should accumulate weights
-    state.apply_event(vote(1, "#t", ":x", "/a", "/b", 10));
-    state.apply_event(vote(2, "#t", ":x", "/a", "/b", 20));
-    state.apply_event(vote(3, "#t", ":x", "/a", "/b", 30));
+    state.apply_event(vote(1, "#t", ":x", "/a", "/b", 2, 1));
+    state.apply_event(vote(2, "#t", ":x", "/a", "/b", 2, 1));
+    state.apply_event(vote(3, "#t", ":x", "/a", "/b", 2, 1));
 
     let key = GroupKey {
         tag: "t".to_string(),
@@ -110,8 +113,8 @@ fn reducer_aggregates_multiple_votes() {
 #[test]
 fn reducer_clamps_score_bounds() {
     let mut state = ReducerState::default();
-    state.apply_event(vote(1, "#t", ":x", "/a", "/b", 1000)); // Way over limit
-    state.apply_event(vote(2, "#t", ":x", "/a", "/b", -1000)); // Way under limit
+    state.apply_event(vote(1, "#t", ":x", "/a", "/b", 1000, 1)); // Way over limit
+    state.apply_event(vote(2, "#t", ":x", "/a", "/b", 1, 1000)); // Way under limit
 
     let key = GroupKey {
         tag: "t".to_string(),
@@ -130,9 +133,9 @@ fn reducer_clamps_score_bounds() {
 fn ranking_cycle_is_nearly_equal() {
     // Rock-paper-scissors cycle.
     let mut state = ReducerState::default();
-    state.apply_event(vote(1, "#rps", ":x", "/rock", "/scissors", 40)); // rock > scissors
-    state.apply_event(vote(2, "#rps", ":x", "/scissors", "/paper", 40)); // scissors > paper
-    state.apply_event(vote(3, "#rps", ":x", "/paper", "/rock", 40)); // paper > rock
+    state.apply_event(vote(1, "#rps", ":x", "/rock", "/scissors", 3, 1)); // rock > scissors
+    state.apply_event(vote(2, "#rps", ":x", "/scissors", "/paper", 3, 1)); // scissors > paper
+    state.apply_event(vote(3, "#rps", ":x", "/paper", "/rock", 3, 1)); // paper > rock
 
     let key = GroupKey {
         tag: "rps".to_string(),
@@ -153,7 +156,7 @@ fn ranking_single_item() {
     let mut state = ReducerState::default();
     // Apply a vote to create a single-item group (self-vote doesn't make sense, but creates the item)
     // Actually, we need at least 2 items for ranking. Let's test with 2 items and one neutral vote.
-    state.apply_event(vote(1, "#t", ":x", "/only", "/other", 0));
+    state.apply_event(vote(1, "#t", ":x", "/only", "/other", 1, 1));
     // Then remove the other item by only ranking the first
     let key = GroupKey {
         tag: "t".to_string(),
@@ -177,11 +180,11 @@ fn ranking_empty_group() {
 fn ranking_dominant_item_wins() {
     // Item A beats everyone strongly, others have mixed results
     let mut state = ReducerState::default();
-    state.apply_event(vote(1, "#t", ":x", "/champion", "/b", 45));
-    state.apply_event(vote(2, "#t", ":x", "/champion", "/c", 45));
-    state.apply_event(vote(3, "#t", ":x", "/champion", "/d", 45));
-    state.apply_event(vote(4, "#t", ":x", "/b", "/c", 10));
-    state.apply_event(vote(5, "#t", ":x", "/c", "/d", 10));
+    state.apply_event(vote(1, "#t", ":x", "/champion", "/b", 10, 1));
+    state.apply_event(vote(2, "#t", ":x", "/champion", "/c", 10, 1));
+    state.apply_event(vote(3, "#t", ":x", "/champion", "/d", 10, 1));
+    state.apply_event(vote(4, "#t", ":x", "/b", "/c", 2, 1));
+    state.apply_event(vote(5, "#t", ":x", "/c", "/d", 2, 1));
 
     let key = GroupKey {
         tag: "t".to_string(),
@@ -198,9 +201,9 @@ fn ranking_dominant_item_wins() {
 fn ranking_neutral_votes_produce_equal_scores() {
     let mut state = ReducerState::default();
     // All neutral votes (score=0) should produce roughly equal scores
-    state.apply_event(vote(1, "#t", ":x", "/a", "/b", 0));
-    state.apply_event(vote(2, "#t", ":x", "/b", "/c", 0));
-    state.apply_event(vote(3, "#t", ":x", "/c", "/a", 0));
+    state.apply_event(vote(1, "#t", ":x", "/a", "/b", 1, 1));
+    state.apply_event(vote(2, "#t", ":x", "/b", "/c", 1, 1));
+    state.apply_event(vote(3, "#t", ":x", "/c", "/a", 1, 1));
 
     let key = GroupKey {
         tag: "t".to_string(),
@@ -222,7 +225,7 @@ fn ranking_converges_with_many_iterations() {
     // Create a clear linear ordering
     for i in 0..5 {
         if i < 4 {
-            state.apply_event(vote(i as i64, "#t", ":x", &format!("/{}", i), &format!("/{}", i+1), 40));
+            state.apply_event(vote(i as i64, "#t", ":x", &format!("/{}", i), &format!("/{}", i+1), 3, 1));
         }
     }
 
@@ -253,8 +256,8 @@ async fn event_log_append_and_load() {
     let log = EventLog::new(log_path);
 
     let events = vec![
-        vote(1, "#t", ":x", "/a", "/b", 20),
-        vote(2, "#t", ":x", "/b", "/c", 30),
+        vote(1, "#t", ":x", "/a", "/b", 2, 1),
+        vote(2, "#t", ":x", "/b", "/c", 3, 1),
         Event::ItemUpsert(ItemUpsert {
             ts: 3,
             item: "/a".to_string(),
@@ -281,14 +284,14 @@ async fn event_log_handles_corrupt_lines() {
     let log = EventLog::new(&log_path);
 
     // Write valid events using the log itself, then manually corrupt one line
-    log.append(&vote(1, "#t", ":x", "/a", "/b", 20)).await.unwrap();
+    log.append(&vote(1, "#t", ":x", "/a", "/b", 2, 1)).await.unwrap();
     
     use std::fs;
     use std::io::Write;
     let mut f = fs::OpenOptions::new().append(true).open(&log_path).unwrap();
     writeln!(f, "not json at all").unwrap();
     
-    log.append(&vote(2, "#t", ":x", "/b", "/c", 30)).await.unwrap();
+    log.append(&vote(2, "#t", ":x", "/b", "/c", 3, 1)).await.unwrap();
     
     // Add empty line
     writeln!(f, "").unwrap();
@@ -305,7 +308,7 @@ async fn event_log_creates_parent_dirs() {
     let log_path = tmp.path().join("subdir").join("nested").join("events.jsonl");
     let log = EventLog::new(&log_path);
 
-    log.append(&vote(1, "#t", ":x", "/a", "/b", 20)).await.unwrap();
+    log.append(&vote(1, "#t", ":x", "/a", "/b", 2, 1)).await.unwrap();
     assert!(log_path.exists());
 }
 
@@ -352,7 +355,7 @@ async fn full_workflow_reducer_and_ranking() {
     }));
 
     // Vote
-    state.apply_event(vote(5, "#langs", ":speed", "/rust", "/go", 30));
+    state.apply_event(vote(5, "#langs", ":speed", "/rust", "/go", 3, 1));
 
     let key = GroupKey {
         tag: "langs".to_string(),

@@ -8,6 +8,10 @@ use std::path::PathBuf;
 #[derive(Parser, Debug)]
 #[command(name = "slugsocial", version, about = "Slug Social CLI (thin client)")]
 struct Cli {
+    /// Optional self-declared actor/space (e.g. "@tommy"). Used as the default namespace.
+    #[arg(long = "as", env = "SLUG_AS")]
+    as_actor: Option<String>,
+
     /// API key secret (sent as x-slug-key)
     #[arg(long, env = "SLUG_KEY")]
     key: Option<String>,
@@ -20,7 +24,9 @@ struct Cli {
 enum Command {
     /// Fetch and print a ranking for a tag/aspect
     Rank {
-        tag: String,
+        /// Optional namespace to rank. If omitted, defaults to --as.
+        #[arg(value_name = "SPACE")]
+        tag: Option<String>,
         #[arg(long, default_value = ":default")]
         aspect: String,
         #[arg(long, default_value_t = 25)]
@@ -29,7 +35,9 @@ enum Command {
 
     /// Get a suggested pair of items to compare next
     Pair {
-        tag: String,
+        /// Optional namespace. If omitted, defaults to --as.
+        #[arg(value_name = "SPACE")]
+        tag: Option<String>,
         #[arg(long, default_value = ":default")]
         aspect: String,
         /// If true, ignore ranking and return a random pair (useful for “skip”)
@@ -37,14 +45,12 @@ enum Command {
         random: bool,
     },
 
-    /// Cast a vote (score in [-50, 50]) for a vs b
+    /// Cast a vote (ratio like 3:1) for a vs b
     Vote {
         a: String,
-        #[arg(allow_hyphen_values = true)]
-        score: i32,
+        /// Ratio like "3:1" (prefer a over b).
+        ratio: String,
         b: String,
-        #[arg(long)]
-        tag: String,
         #[arg(long, default_value = ":default")]
         aspect: String,
     },
@@ -65,11 +71,17 @@ enum Command {
 
 #[derive(Debug, Serialize)]
 struct VoteRequest {
-    tag: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tag: Option<String>,
     aspect: String,
     a: String,
     b: String,
-    score: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ratio: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    score: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    actor: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -131,11 +143,41 @@ fn canonicalize_sigiled(input: &str, sigil: char) -> String {
 fn canonicalize_tag(input: &str) -> String {
     canonicalize_sigiled(input, '#')
 }
+fn canonicalize_actor(input: &str) -> String {
+    canonicalize_sigiled(input, '@')
+}
 fn canonicalize_aspect(input: &str) -> String {
     canonicalize_sigiled(input, ':')
 }
 fn canonicalize_item(input: &str) -> String {
     canonicalize_sigiled(input, '/')
+}
+
+fn resolve_space(default_actor: Option<&str>, maybe_space: Option<String>) -> Result<String> {
+    if let Some(t) = maybe_space {
+        let trimmed = t.trim();
+        if trimmed.starts_with('@') {
+            return Ok(canonicalize_actor(trimmed));
+        }
+        return Ok(canonicalize_tag(trimmed));
+    }
+    if let Some(a) = default_actor {
+        return Ok(canonicalize_actor(a));
+    }
+    Err(anyhow!("missing space: pass a SPACE argument (like #programming-languages) or set --as @name / SLUG_AS"))
+}
+
+fn validate_ratio(r: &str) -> Result<(i32, i32)> {
+    let t = r.trim();
+    let (l, rr) = t
+        .split_once(':')
+        .ok_or_else(|| anyhow!("invalid ratio (expected like 3:1)"))?;
+    let left: i32 = l.trim().parse().context("invalid ratio (left)")?;
+    let right: i32 = rr.trim().parse().context("invalid ratio (right)")?;
+    if left < 0 || right < 0 {
+        return Err(anyhow!("invalid ratio (must be non-negative)"));
+    }
+    Ok((left, right))
 }
 
 fn print_ranking(tag: &str, aspect: &str, rows: &[RankRow]) {
@@ -169,20 +211,24 @@ fn http_client(key: Option<&str>) -> Result<reqwest::Client> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let cli = Cli::parse();
+    let Cli {
+        as_actor,
+        key,
+        cmd,
+    } = Cli::parse();
     let base = "https://slug.social";
 
-    match cli.cmd {
+    match cmd {
         Command::Healthz => {
-            let client = http_client(cli.key.as_deref())?;
+            let client = http_client(key.as_deref())?;
             let url = format!("{base}/healthz");
             let body = client.get(url).send().await?.text().await?;
             println!("{body}");
         }
 
         Command::Rank { tag, aspect, limit } => {
-            let client = http_client(cli.key.as_deref())?;
-            let tag_c = canonicalize_tag(&tag);
+            let client = http_client(key.as_deref())?;
+            let tag_c = resolve_space(as_actor.as_deref(), tag)?;
             let aspect_c = canonicalize_aspect(&aspect);
             let url = format!(
                 "{base}/api/v0/rank?tag={}&aspect={}&limit={}",
@@ -195,8 +241,8 @@ async fn main() -> Result<()> {
         }
 
         Command::Pair { tag, aspect, random } => {
-            let client = http_client(cli.key.as_deref())?;
-            let tag_c = canonicalize_tag(&tag);
+            let client = http_client(key.as_deref())?;
+            let tag_c = resolve_space(as_actor.as_deref(), tag)?;
             let aspect_c = canonicalize_aspect(&aspect);
             let url = format!(
                 "{base}/api/v0/pair?tag={}&aspect={}&random={}",
@@ -208,25 +254,21 @@ async fn main() -> Result<()> {
             println!("{} {}", resp.left, resp.right);
         }
 
-        Command::Vote {
-            a,
-            score,
-            b,
-            tag,
-            aspect,
-        } => {
-            let key = cli
-                .key
+        Command::Vote { a, ratio, b, aspect } => {
+            let key = key
                 .as_deref()
                 .ok_or_else(|| anyhow!("missing --key or SLUG_KEY (required for voting)"))?;
 
             let client = http_client(Some(key))?;
+            let _ = validate_ratio(&ratio)?;
             let req = VoteRequest {
-                tag: format!("#{}", canonicalize_tag(&tag)),
+                tag: None,
                 aspect: format!(":{}", canonicalize_aspect(&aspect)),
                 a: format!("/{}", canonicalize_item(&a)),
                 b: format!("/{}", canonicalize_item(&b)),
-                score,
+                ratio: Some(ratio),
+                score: None,
+                actor: as_actor.clone(),
             };
             let url = format!("{base}/api/v0/vote");
             let resp: VoteResponse = client.post(url).json(&req).send().await?.json().await?;
@@ -241,8 +283,7 @@ async fn main() -> Result<()> {
         }
 
         Command::Ingest { file, mode } => {
-            let key = cli
-                .key
+            let key = key
                 .as_deref()
                 .ok_or_else(|| anyhow!("missing --key or SLUG_KEY (required for ingest)"))?;
             let client = http_client(Some(key))?;
@@ -262,6 +303,14 @@ async fn main() -> Result<()> {
 
             if text.trim().is_empty() {
                 return Err(anyhow!("no input provided (empty)"));
+            }
+
+            // If caller passed --as, prefix the document with an actor directive.
+            if let Some(a) = &as_actor {
+                let a = a.trim().trim_start_matches('@');
+                if !a.is_empty() {
+                    text = format!("@{}\n\n{}", a, text);
+                }
             }
 
             let req = IngestRequest {

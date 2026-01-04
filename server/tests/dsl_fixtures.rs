@@ -18,6 +18,7 @@ fn parses_tutorial_fixture_with_prose() {
     for s in &doc.statements {
         match s {
             dsl::Stmt::Hashtag { .. } => hashtags += 1,
+            dsl::Stmt::Actor { .. } => {}
             dsl::Stmt::Item { .. } => items += 1,
             dsl::Stmt::Vote { .. } => votes += 1,
             dsl::Stmt::Attribute { .. } => attrs += 1,

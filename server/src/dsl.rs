@@ -12,6 +12,8 @@ pub struct Document {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Stmt {
     Hashtag { name: String },
+    /// Actor signature / namespace. Example: `@tommy`
+    Actor { name: String },
     Item { title: String, body: Option<String> },
     Vote {
         item1: String,
@@ -477,14 +479,21 @@ fn parse_line(masked_line: &str, masker: &BlockMasker) -> Result<Vec<Stmt>, DslE
             Ok(out)
         }
         '@' => {
-            // Whole token is an email (python's grammar supports email_address as a statement).
-            let addr = stripped.trim();
-            if !looks_like_email(addr) {
-                return Err(DslError::Parse(format!("invalid email: {addr}")));
+            // Either an actor signature (`@name`) or an email address statement.
+            let tok = stripped.trim();
+            if looks_like_email(tok) {
+                Ok(vec![Stmt::Email {
+                    address: tok.to_string(),
+                }])
+            } else {
+                let name = tok.trim_start_matches('@').trim();
+                if !is_word(name) {
+                    return Err(DslError::Parse(format!("invalid actor: {tok}")));
+                }
+                Ok(vec![Stmt::Actor {
+                    name: name.to_string(),
+                }])
             }
-            Ok(vec![Stmt::Email {
-                address: addr.to_string(),
-            }])
         }
         '/' => {
             Ok(vec![parse_slash_statement(stripped, masker)?])

@@ -1,6 +1,9 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use crate::events::{canonicalize_aspect, canonicalize_item, canonicalize_tag, DslIngested, Event, VoteCast};
+use crate::events::{
+    canonicalize_actor, canonicalize_aspect, canonicalize_item, canonicalize_tag, DslIngested, Event,
+    VoteCast,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct GroupKey {
@@ -69,7 +72,16 @@ impl GroupState {
         vote.aspect = canonicalize_aspect(&vote.aspect);
         vote.a = canonicalize_item(&vote.a);
         vote.b = canonicalize_item(&vote.b);
-        vote.score = vote.score.clamp(-50, 50);
+        vote.actor = vote.actor.as_ref().map(|a| canonicalize_actor(a));
+        if vote.ratio_left < 0 {
+            vote.ratio_left = 0;
+        }
+        if vote.ratio_right < 0 {
+            vote.ratio_right = 0;
+        }
+        if let Some(score) = vote.score {
+            vote.score = Some(score.clamp(-50, 50));
+        }
 
         let a_idx = self.ensure_item(&vote.a);
         let b_idx = self.ensure_item(&vote.b);
@@ -78,18 +90,25 @@ impl GroupState {
         let (i, j) = if a_idx < b_idx { (a_idx, b_idx) } else { (b_idx, a_idx) };
         self.voted_pairs.insert((i, j));
 
-        // We follow the convention where a negative magnitude means
-        // left/a is preferred. Our VoteCast has positive score => prefer a, so
-        // we negate it.
-        let magnitude = (-(vote.score) as f64).clamp(-50.0, 50.0);
-        let weight_left_wins = magnitude + 50.0; // in [0,100]
-        let weight_right_wins = 100.0 - weight_left_wins;
-
         // Edge weights represent how much probability mass should flow from loser -> winner.
-        // With magnitude=-50 (prefer a completely), weight_left_wins=0 and weight_right_wins=100,
-        // so flow b->a is maximal.
-        self.add_edge_weight(a_idx, b_idx, weight_left_wins);
-        self.add_edge_weight(b_idx, a_idx, weight_right_wins);
+        //
+        // Preferred form: ratios. For `/a 3:1 /b`, we add flow b->a by 3 and flow a->b by 1.
+        //
+        // Back-compat: legacy score in [-50, 50], mapped into weights in [0, 100].
+        let (w_a, w_b) = if vote.ratio_left > 0 || vote.ratio_right > 0 {
+            (vote.ratio_left as f64, vote.ratio_right as f64)
+        } else if let Some(score) = vote.score {
+            // score>0 means prefer a. Convert to weight for b->a (a wins) and a->b (b wins).
+            let s = score as f64;
+            let p_a = ((s + 50.0) / 100.0).clamp(0.0, 1.0);
+            let p_b = 1.0 - p_a;
+            (p_a * 100.0, p_b * 100.0)
+        } else {
+            (1.0, 1.0)
+        };
+
+        self.add_edge_weight(b_idx, a_idx, w_a);
+        self.add_edge_weight(a_idx, b_idx, w_b);
 
         self.recent_votes.push_front(vote);
         while self.recent_votes.len() > 200 {
@@ -136,6 +155,7 @@ impl ReducerState {
             Event::DslIngested(mut ing) => {
                 // Canonicalize tags for indexing.
                 ing.tags = ing.tags.into_iter().map(|t| canonicalize_tag(&t)).collect();
+                ing.actor = ing.actor.as_ref().map(|a| canonicalize_actor(a));
 
                 for tag in ing.tags.iter() {
                     let q = self.ingests_by_tag.entry(tag.clone()).or_default();

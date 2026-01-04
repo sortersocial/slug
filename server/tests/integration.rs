@@ -65,7 +65,7 @@ async fn test_vote_endpoint() {
         "aspect": ":speed",
         "a": "/clap",
         "b": "/argh",
-        "score": 30
+        "ratio": "3:1"
     });
 
     let response = client
@@ -92,7 +92,7 @@ async fn test_vote_requires_auth() {
         "aspect": ":speed",
         "a": "/clap",
         "b": "/argh",
-        "score": 30
+        "ratio": "3:1"
     });
 
     let response = client
@@ -116,7 +116,7 @@ async fn test_rank_endpoint() {
         "aspect": ":speed",
         "a": "/rust",
         "b": "/go",
-        "score": 40
+        "ratio": "3:1"
     });
 
     client
