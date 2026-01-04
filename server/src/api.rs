@@ -18,9 +18,8 @@ use crate::{
 
 #[derive(Debug, Deserialize)]
 pub struct VoteRequest {
-    /// Optional namespace (historically a hashtag tag). If omitted, defaults to actor or key id.
-    #[serde(default)]
-    pub tag: Option<String>,
+    /// Hashtag namespace (required).
+    pub tag: String,
     pub aspect: String,
     pub a: String,
     pub b: String,
@@ -75,13 +74,7 @@ pub async fn post_vote(
     };
 
     let actor_c = req.actor.as_ref().map(|a| canonicalize_actor(a));
-    let namespace_raw = req
-        .tag
-        .as_deref()
-        .map(|t| t.to_string())
-        .or_else(|| actor_c.clone())
-        .unwrap_or_else(|| voter_key_id.clone());
-    let tag = canonicalize_tag(&namespace_raw);
+    let tag = canonicalize_tag(&req.tag);
     let aspect = canonicalize_aspect(&req.aspect);
     let a = canonicalize_item(&req.a);
     let b = canonicalize_item(&req.b);
@@ -162,12 +155,24 @@ pub async fn post_vote(
         ranking,
         next: NextMoves {
             vote: format!(
-                "npx slugsocial vote /{} 2:1 /{} --aspect :{} --as @{}",
-                a, b, aspect, tag
+                "npx slugsocial vote /{} 2:1 /{} --tag #{} --aspect :{}{}",
+                a,
+                b,
+                tag,
+                aspect,
+                actor_c
+                    .as_ref()
+                    .map(|ac| format!(" --as @{}", ac))
+                    .unwrap_or_default()
             ),
             rank: format!(
-                "npx slugsocial rank @{} --aspect :{}",
-                tag, aspect
+                "npx slugsocial rank #{} --aspect :{}{}",
+                tag,
+                aspect,
+                actor_c
+                    .as_ref()
+                    .map(|ac| format!(" --as @{}", ac))
+                    .unwrap_or_default()
             ),
             web: format!("https://slug.social/t/{}/a/{}", tag, aspect),
         },
@@ -483,22 +488,11 @@ pub async fn post_ingest(
             dsl::Stmt::Actor { name } => {
                 let a = canonicalize_actor(&name);
                 current_actor = Some(a.clone());
-                // If no tag context yet, default the namespace to the actor.
-                if current_tag.is_none() {
-                    current_tag = Some(a.clone());
-                    tags_seen.insert(a);
-                }
             }
             dsl::Stmt::Hashtag { name } => {
                 let t = canonicalize_tag(&name);
-                // If an actor is set, namespacing becomes "@actor/#tag" => "actor/tag".
-                let effective = if let Some(a) = current_actor.clone() {
-                    format!("{}/{}", a, t)
-                } else {
-                    t
-                };
-                current_tag = Some(effective.clone());
-                tags_seen.insert(effective);
+                current_tag = Some(t.clone());
+                tags_seen.insert(t);
             }
             dsl::Stmt::Attribute { name } => {
                 current_aspect = canonicalize_aspect(&name);
@@ -510,12 +504,7 @@ pub async fn post_ingest(
                     item: item.clone(),
                     body,
                 }));
-                // If no explicit tag, default namespace to actor or key id.
-                let tag = current_tag
-                    .clone()
-                    .or_else(|| current_actor.clone())
-                    .unwrap_or_else(|| voter_key_id.clone());
-                {
+                if let Some(tag) = current_tag.clone() {
                     events.push(Event::TagAdd(crate::events::TagAdd {
                         ts,
                         tag: tag.clone(),
@@ -530,10 +519,13 @@ pub async fn post_ingest(
                 ratio_right,
                 explanation,
             } => {
-                let tag = current_tag
-                    .clone()
-                    .or_else(|| current_actor.clone())
-                    .unwrap_or_else(|| voter_key_id.clone());
+                let Some(tag) = current_tag.clone() else {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        "vote requires an active #tag context".to_string(),
+                    )
+                        .into_response();
+                };
                 let aspect = current_aspect.clone();
                 let a = canonicalize_item(&item1);
                 let b = canonicalize_item(&item2);
@@ -599,12 +591,22 @@ pub async fn post_ingest(
         events_appended,
         next: NextMoves {
             vote: format!(
-                "npx slugsocial pair @{} --aspect :{}",
-                primary_tag, current_aspect
+                "npx slugsocial pair #{} --aspect :{}{}",
+                primary_tag,
+                current_aspect,
+                current_actor
+                    .as_ref()
+                    .map(|a| format!(" --as @{}", a))
+                    .unwrap_or_default()
             ),
             rank: format!(
-                "npx slugsocial rank @{} --aspect :{}",
-                primary_tag, current_aspect
+                "npx slugsocial rank #{} --aspect :{}{}",
+                primary_tag,
+                current_aspect,
+                current_actor
+                    .as_ref()
+                    .map(|a| format!(" --as @{}", a))
+                    .unwrap_or_default()
             ),
             web: format!("https://slug.social/t/{}", primary_tag),
         },

@@ -8,7 +8,7 @@ use std::path::PathBuf;
 #[derive(Parser, Debug)]
 #[command(name = "slugsocial", version, about = "Slug Social CLI (thin client)")]
 struct Cli {
-    /// Optional self-declared actor/space (e.g. "@tommy"). Used as the default namespace.
+    /// Optional self-declared actor (e.g. "@tommy") for attribution/signing.
     #[arg(long = "as", env = "SLUG_AS")]
     as_actor: Option<String>,
 
@@ -24,9 +24,7 @@ struct Cli {
 enum Command {
     /// Fetch and print a ranking for a tag/aspect
     Rank {
-        /// Optional namespace to rank. If omitted, defaults to --as.
-        #[arg(value_name = "SPACE")]
-        tag: Option<String>,
+        tag: String,
         #[arg(long, default_value = ":default")]
         aspect: String,
         #[arg(long, default_value_t = 25)]
@@ -35,9 +33,7 @@ enum Command {
 
     /// Get a suggested pair of items to compare next
     Pair {
-        /// Optional namespace. If omitted, defaults to --as.
-        #[arg(value_name = "SPACE")]
-        tag: Option<String>,
+        tag: String,
         #[arg(long, default_value = ":default")]
         aspect: String,
         /// If true, ignore ranking and return a random pair (useful for “skip”)
@@ -51,6 +47,8 @@ enum Command {
         /// Ratio like "3:1" (prefer a over b).
         ratio: String,
         b: String,
+        #[arg(long)]
+        tag: String,
         #[arg(long, default_value = ":default")]
         aspect: String,
     },
@@ -71,8 +69,7 @@ enum Command {
 
 #[derive(Debug, Serialize)]
 struct VoteRequest {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    tag: Option<String>,
+    tag: String,
     aspect: String,
     a: String,
     b: String,
@@ -153,20 +150,6 @@ fn canonicalize_item(input: &str) -> String {
     canonicalize_sigiled(input, '/')
 }
 
-fn resolve_space(default_actor: Option<&str>, maybe_space: Option<String>) -> Result<String> {
-    if let Some(t) = maybe_space {
-        let trimmed = t.trim();
-        if trimmed.starts_with('@') {
-            return Ok(canonicalize_actor(trimmed));
-        }
-        return Ok(canonicalize_tag(trimmed));
-    }
-    if let Some(a) = default_actor {
-        return Ok(canonicalize_actor(a));
-    }
-    Err(anyhow!("missing space: pass a SPACE argument (like #programming-languages) or set --as @name / SLUG_AS"))
-}
-
 fn validate_ratio(r: &str) -> Result<(i32, i32)> {
     let t = r.trim();
     let (l, rr) = t
@@ -228,7 +211,7 @@ async fn main() -> Result<()> {
 
         Command::Rank { tag, aspect, limit } => {
             let client = http_client(key.as_deref())?;
-            let tag_c = resolve_space(as_actor.as_deref(), tag)?;
+            let tag_c = canonicalize_tag(&tag);
             let aspect_c = canonicalize_aspect(&aspect);
             let url = format!(
                 "{base}/api/v0/rank?tag={}&aspect={}&limit={}",
@@ -242,7 +225,7 @@ async fn main() -> Result<()> {
 
         Command::Pair { tag, aspect, random } => {
             let client = http_client(key.as_deref())?;
-            let tag_c = resolve_space(as_actor.as_deref(), tag)?;
+            let tag_c = canonicalize_tag(&tag);
             let aspect_c = canonicalize_aspect(&aspect);
             let url = format!(
                 "{base}/api/v0/pair?tag={}&aspect={}&random={}",
@@ -254,7 +237,7 @@ async fn main() -> Result<()> {
             println!("{} {}", resp.left, resp.right);
         }
 
-        Command::Vote { a, ratio, b, aspect } => {
+        Command::Vote { a, ratio, b, tag, aspect } => {
             let key = key
                 .as_deref()
                 .ok_or_else(|| anyhow!("missing --key or SLUG_KEY (required for voting)"))?;
@@ -262,7 +245,7 @@ async fn main() -> Result<()> {
             let client = http_client(Some(key))?;
             let _ = validate_ratio(&ratio)?;
             let req = VoteRequest {
-                tag: None,
+                tag: format!("#{}", canonicalize_tag(&tag)),
                 aspect: format!(":{}", canonicalize_aspect(&aspect)),
                 a: format!("/{}", canonicalize_item(&a)),
                 b: format!("/{}", canonicalize_item(&b)),

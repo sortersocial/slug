@@ -91,7 +91,7 @@ pub async fn tag_page(State(state): State<AppState>, Path(tag): Path<String>) ->
     let page = layout(
         &format!("#{tag}"),
         html! {
-            h1 { "@" (tag) }
+            h1 { "#" (tag) }
             p { a href="/" { "← index" } }
             h2 { "aspects" }
             @if aspects.is_empty() {
@@ -125,8 +125,8 @@ pub async fn tag_page(State(state): State<AppState>, Path(tag): Path<String>) ->
 fn render_group(tag: &str, aspect: &str, group: &mut GroupState) -> Markup {
     let ranking = ranked_items(group, 10000, 1e-8);
     html! {
-        h1 { "@" (tag) " " ":" (aspect) }
-        p { a href={(format!("/t/{tag}"))} { "← @" (tag) } " · " a href="/" { "index" } }
+        h1 { "#" (tag) " " ":" (aspect) }
+        p { a href={(format!("/t/{tag}"))} { "← #" (tag) } " · " a href="/" { "index" } }
 
         h2 { "ranking" }
         @if ranking.is_empty() {
@@ -161,11 +161,11 @@ fn render_group(tag: &str, aspect: &str, group: &mut GroupState) -> Markup {
                         "1:1".to_string()
                     };
                     @if let Some(body) = &v.body {
-                        (format!("@{} :{}  /{}  {}  /{}\n{{{}}}\n\n",
-                            who, v.aspect, v.a, ratio, v.b, body))
+                        (format!("#{} :{}  /{}  {}  /{}  [@{}]\n{{{}}}\n\n",
+                            v.tag, v.aspect, v.a, ratio, v.b, who, body))
                     } @else {
-                        (format!("@{} :{}  /{}  {}  /{}\n",
-                            who, v.aspect, v.a, ratio, v.b))
+                        (format!("#{} :{}  /{}  {}  /{}  [@{}]\n",
+                            v.tag, v.aspect, v.a, ratio, v.b, who))
                     }
                 }
             }
