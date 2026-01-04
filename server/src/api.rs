@@ -299,6 +299,10 @@ pub struct PairResponse {
     pub aspect: String,
     pub left: String,
     pub right: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub left_body: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub right_body: Option<String>,
 }
 
 fn pick_random_distinct(items: &[String]) -> Option<(String, String)> {
@@ -376,11 +380,20 @@ pub async fn get_pair(State(state): State<AppState>, Query(q): Query<PairQuery>)
                 Some(format!("add items via ingest:\n#{}\n/item {{ ... }}", tag)),
             );
         };
+        let (left_body, right_body) = {
+            let reduced = state.reduced.read().await;
+            (
+                reduced.item_bodies.get(&left).cloned(),
+                reduced.item_bodies.get(&right).cloned(),
+            )
+        };
         return Json(PairResponse {
             tag: format!("#{tag}"),
             aspect: format!(":{aspect}"),
             left: format!("/{}", left),
             right: format!("/{}", right),
+            left_body,
+            right_body,
         })
         .into_response();
     }
@@ -466,11 +479,20 @@ pub async fn get_pair(State(state): State<AppState>, Query(q): Query<PairQuery>)
         );
     };
 
+    let (left_body, right_body) = {
+        let reduced = state.reduced.read().await;
+        (
+            reduced.item_bodies.get(&left).cloned(),
+            reduced.item_bodies.get(&right).cloned(),
+        )
+    };
     Json(PairResponse {
         tag: format!("#{tag}"),
         aspect: format!(":{aspect}"),
         left: format!("/{}", left),
         right: format!("/{}", right),
+        left_body,
+        right_body,
     })
     .into_response()
 }

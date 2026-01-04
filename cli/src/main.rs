@@ -119,6 +119,8 @@ struct PairResponse {
     aspect: String,
     left: String,
     right: String,
+    left_body: Option<String>,
+    right_body: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -407,6 +409,30 @@ fn shell_quote(s: &str) -> String {
     format!("'{escaped}'")
 }
 
+fn preview_body(body: &str) -> String {
+    let s = body.trim();
+    if s.is_empty() {
+        return "(no body)".to_string();
+    }
+    let mut out = String::new();
+    for line in s.lines().take(10) {
+        let l = line.trim_end();
+        if !l.is_empty() {
+            out.push_str("  ");
+            out.push_str(l);
+            out.push('\n');
+        }
+        if out.len() > 800 {
+            break;
+        }
+    }
+    if out.is_empty() {
+        "(no body)".to_string()
+    } else {
+        out.trim_end().to_string()
+    }
+}
+
 fn http_client() -> Result<reqwest::Client> {
     Ok(reqwest::Client::new())
 }
@@ -469,6 +495,17 @@ async fn main() -> Result<()> {
             let resp: PairResponse = expect_json(client.get(url).send().await?).await?;
             println!("pair:");
             println!("  {} {}", resp.left, resp.right);
+            println!();
+            if let Some(b) = &resp.left_body {
+                println!("{}:", resp.left);
+                println!("{}", preview_body(b));
+                println!();
+            }
+            if let Some(b) = &resp.right_body {
+                println!("{}:", resp.right);
+                println!("{}", preview_body(b));
+                println!();
+            }
             println!();
             println!("next:");
             // Quote tags because `#` is a shell comment starter.
