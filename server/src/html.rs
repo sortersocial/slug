@@ -152,14 +152,7 @@ fn render_group(tag: &str, aspect: &str, group: &mut GroupState) -> Markup {
             pre {
                 @for v in group.recent_votes.iter().take(25) {
                     @let who = v.actor.as_deref().unwrap_or(&v.voter_key_id);
-                    @let ratio = if v.ratio_left > 0 || v.ratio_right > 0 {
-                        format!("{}:{}", v.ratio_left, v.ratio_right)
-                    } else if let Some(score) = v.score {
-                        // Legacy display (should become rare over time).
-                        format!("{score}")
-                    } else {
-                        "1:1".to_string()
-                    };
+                    @let ratio = format!("{}:{}", v.ratio_left, v.ratio_right);
                     @if let Some(body) = &v.body {
                         (format!("#{} :{}  /{}  {}  /{}  [@{}]\n{{{}}}\n\n",
                             v.tag, v.aspect, v.a, ratio, v.b, who, body))

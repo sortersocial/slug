@@ -26,9 +26,6 @@ pub struct VoteRequest {
     /// Ratio string like "3:1" (preferred).
     #[serde(default)]
     pub ratio: Option<String>,
-    /// Legacy scalar score in [-50, 50] (deprecated).
-    #[serde(default)]
-    pub score: Option<i32>,
     /// Optional self-declared actor (e.g. "@tommy").
     #[serde(default)]
     pub actor: Option<String>,
@@ -87,8 +84,8 @@ pub async fn post_vote(
         Some((left, right))
     }
 
-    let (ratio_left, ratio_right, score) = match (req.ratio.as_deref(), req.score) {
-        (Some(r), _) => {
+    let (ratio_left, ratio_right) = match req.ratio.as_deref() {
+        Some(r) => {
             let Some((l, rr)) = parse_ratio(r) else {
                 return (
                     StatusCode::BAD_REQUEST,
@@ -96,10 +93,9 @@ pub async fn post_vote(
                 )
                     .into_response();
             };
-            (l.max(0), rr.max(0), None)
+            (l.max(0), rr.max(0))
         }
-        (None, Some(s)) => (0, 0, Some(s.clamp(-50, 50))),
-        (None, None) => return (StatusCode::BAD_REQUEST, "missing ratio".to_string()).into_response(),
+        None => return (StatusCode::BAD_REQUEST, "missing ratio".to_string()).into_response(),
     };
 
     let vote = VoteCast {
@@ -110,7 +106,6 @@ pub async fn post_vote(
         b: b.clone(),
         ratio_left,
         ratio_right,
-        score,
         body: None,
         voter_key_id,
         actor: actor_c.clone(),
@@ -155,23 +150,23 @@ pub async fn post_vote(
         ranking,
         next: NextMoves {
             vote: format!(
-                "npx slugsocial vote /{} 2:1 /{} --tag #{} --aspect :{}{}",
+                "npx slugsocial vote #{} /{} 2:1 /{} :{}{}",
+                tag,
                 a,
                 b,
-                tag,
                 aspect,
                 actor_c
                     .as_ref()
-                    .map(|ac| format!(" --as @{}", ac))
+                    .map(|ac| format!(" @{}", ac))
                     .unwrap_or_default()
             ),
             rank: format!(
-                "npx slugsocial rank #{} --aspect :{}{}",
+                "npx slugsocial rank #{} :{}{}",
                 tag,
                 aspect,
                 actor_c
                     .as_ref()
-                    .map(|ac| format!(" --as @{}", ac))
+                    .map(|ac| format!(" @{}", ac))
                     .unwrap_or_default()
             ),
             web: format!("https://slug.social/t/{}/a/{}", tag, aspect),
@@ -537,7 +532,6 @@ pub async fn post_ingest(
                     b: b.clone(),
                     ratio_left,
                     ratio_right,
-                    score: None,
                     body: explanation,
                     voter_key_id: voter_key_id.clone(),
                     actor: current_actor.clone(),
@@ -591,21 +585,21 @@ pub async fn post_ingest(
         events_appended,
         next: NextMoves {
             vote: format!(
-                "npx slugsocial pair #{} --aspect :{}{}",
+                "npx slugsocial pair #{} :{}{}",
                 primary_tag,
                 current_aspect,
                 current_actor
                     .as_ref()
-                    .map(|a| format!(" --as @{}", a))
+                    .map(|a| format!(" @{}", a))
                     .unwrap_or_default()
             ),
             rank: format!(
-                "npx slugsocial rank #{} --aspect :{}{}",
+                "npx slugsocial rank #{} :{}{}",
                 primary_tag,
                 current_aspect,
                 current_actor
                     .as_ref()
-                    .map(|a| format!(" --as @{}", a))
+                    .map(|a| format!(" @{}", a))
                     .unwrap_or_default()
             ),
             web: format!("https://slug.social/t/{}", primary_tag),

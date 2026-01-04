@@ -42,15 +42,9 @@ pub struct VoteCast {
     /// Item B without leading '/'.
     pub b: String,
     /// Ratio numerator for `a` (left item). Example: `/a 3:1 /b` => `ratio_left=3`.
-    #[serde(default)]
     pub ratio_left: i32,
     /// Ratio numerator for `b` (right item). Example: `/a 3:1 /b` => `ratio_right=1`.
-    #[serde(default)]
     pub ratio_right: i32,
-    /// Legacy preference score in [-50, 50]. Positive means prefer `a`, negative means prefer `b`.
-    /// Kept for backward compatibility when loading old event logs.
-    #[serde(default)]
-    pub score: Option<i32>,
     /// Optional vote explanation/body (from DSL `{ ... }`).
     #[serde(default)]
     pub body: Option<String>,

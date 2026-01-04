@@ -79,9 +79,7 @@ impl GroupState {
         if vote.ratio_right < 0 {
             vote.ratio_right = 0;
         }
-        if let Some(score) = vote.score {
-            vote.score = Some(score.clamp(-50, 50));
-        }
+        // Ratios are the only supported vote representation.
 
         let a_idx = self.ensure_item(&vote.a);
         let b_idx = self.ensure_item(&vote.b);
@@ -91,21 +89,14 @@ impl GroupState {
         self.voted_pairs.insert((i, j));
 
         // Edge weights represent how much probability mass should flow from loser -> winner.
-        //
-        // Preferred form: ratios. For `/a 3:1 /b`, we add flow b->a by 3 and flow a->b by 1.
-        //
-        // Back-compat: legacy score in [-50, 50], mapped into weights in [0, 100].
-        let (w_a, w_b) = if vote.ratio_left > 0 || vote.ratio_right > 0 {
-            (vote.ratio_left as f64, vote.ratio_right as f64)
-        } else if let Some(score) = vote.score {
-            // score>0 means prefer a. Convert to weight for b->a (a wins) and a->b (b wins).
-            let s = score as f64;
-            let p_a = ((s + 50.0) / 100.0).clamp(0.0, 1.0);
-            let p_b = 1.0 - p_a;
-            (p_a * 100.0, p_b * 100.0)
-        } else {
-            (1.0, 1.0)
-        };
+        // For `/a 3:1 /b`, we add flow b->a by 3 and flow a->b by 1.
+        let mut w_a = vote.ratio_left.max(0) as f64;
+        let mut w_b = vote.ratio_right.max(0) as f64;
+        // Avoid 0:0 degenerate case.
+        if w_a == 0.0 && w_b == 0.0 {
+            w_a = 1.0;
+            w_b = 1.0;
+        }
 
         self.add_edge_weight(b_idx, a_idx, w_a);
         self.add_edge_weight(a_idx, b_idx, w_b);

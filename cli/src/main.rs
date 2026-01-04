@@ -8,10 +8,6 @@ use std::path::PathBuf;
 #[derive(Parser, Debug)]
 #[command(name = "slugsocial", version, about = "Slug Social CLI (thin client)")]
 struct Cli {
-    /// Optional self-declared actor (e.g. "@tommy") for attribution/signing.
-    #[arg(long = "as", env = "SLUG_AS")]
-    as_actor: Option<String>,
-
     /// API key secret (sent as x-slug-key)
     #[arg(long, env = "SLUG_KEY")]
     key: Option<String>,
@@ -25,8 +21,9 @@ enum Command {
     /// Fetch and print a ranking for a tag/aspect
     Rank {
         tag: String,
-        #[arg(long, default_value = ":default")]
-        aspect: String,
+        /// Optional additional sigil tokens: `:aspect` and/or `@actor`
+        #[arg(value_name = "TOKENS", trailing_var_arg = true)]
+        tokens: Vec<String>,
         #[arg(long, default_value_t = 25)]
         limit: usize,
     },
@@ -34,8 +31,9 @@ enum Command {
     /// Get a suggested pair of items to compare next
     Pair {
         tag: String,
-        #[arg(long, default_value = ":default")]
-        aspect: String,
+        /// Optional additional sigil tokens: `:aspect` and/or `@actor`
+        #[arg(value_name = "TOKENS", trailing_var_arg = true)]
+        tokens: Vec<String>,
         /// If true, ignore ranking and return a random pair (useful for “skip”)
         #[arg(long)]
         random: bool,
@@ -43,14 +41,14 @@ enum Command {
 
     /// Cast a vote (ratio like 3:1) for a vs b
     Vote {
+        tag: String,
         a: String,
         /// Ratio like "3:1" (prefer a over b).
         ratio: String,
         b: String,
-        #[arg(long)]
-        tag: String,
-        #[arg(long, default_value = ":default")]
-        aspect: String,
+        /// Optional additional sigil tokens: `:aspect` and/or `@actor`
+        #[arg(value_name = "TOKENS", trailing_var_arg = true)]
+        tokens: Vec<String>,
     },
 
     /// Ingest a DSL (and optional prose) document and emit events on the server
@@ -75,8 +73,6 @@ struct VoteRequest {
     b: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     ratio: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    score: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     actor: Option<String>,
 }
@@ -150,6 +146,35 @@ fn canonicalize_item(input: &str) -> String {
     canonicalize_sigiled(input, '/')
 }
 
+fn parse_sigils(tokens: &[String]) -> Result<(String, Option<String>)> {
+    let mut aspect: Option<String> = None;
+    let mut actor: Option<String> = None;
+    for t in tokens {
+        let tt = t.trim();
+        if tt.is_empty() {
+            continue;
+        }
+        if tt.starts_with(':') {
+            if aspect.is_some() {
+                return Err(anyhow!("multiple aspects provided"));
+            }
+            aspect = Some(format!(":{}", canonicalize_aspect(tt)));
+            continue;
+        }
+        if tt.starts_with('@') {
+            if actor.is_some() {
+                return Err(anyhow!("multiple actors provided"));
+            }
+            actor = Some(format!("@{}", canonicalize_actor(tt)));
+            continue;
+        }
+        return Err(anyhow!(
+            "unexpected token: {tt} (expected :aspect and/or @actor)"
+        ));
+    }
+    Ok((aspect.unwrap_or_else(|| ":default".to_string()), actor))
+}
+
 fn validate_ratio(r: &str) -> Result<(i32, i32)> {
     let t = r.trim();
     let (l, rr) = t
@@ -194,11 +219,7 @@ fn http_client(key: Option<&str>) -> Result<reqwest::Client> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let Cli {
-        as_actor,
-        key,
-        cmd,
-    } = Cli::parse();
+    let Cli { key, cmd } = Cli::parse();
     let base = "https://slug.social";
 
     match cmd {
@@ -209,9 +230,10 @@ async fn main() -> Result<()> {
             println!("{body}");
         }
 
-        Command::Rank { tag, aspect, limit } => {
+        Command::Rank { tag, tokens, limit } => {
             let client = http_client(key.as_deref())?;
             let tag_c = canonicalize_tag(&tag);
+            let (aspect, _actor) = parse_sigils(&tokens)?;
             let aspect_c = canonicalize_aspect(&aspect);
             let url = format!(
                 "{base}/api/v0/rank?tag={}&aspect={}&limit={}",
@@ -223,9 +245,10 @@ async fn main() -> Result<()> {
             print_ranking(&resp.tag, &resp.aspect, &resp.ranking);
         }
 
-        Command::Pair { tag, aspect, random } => {
+        Command::Pair { tag, tokens, random } => {
             let client = http_client(key.as_deref())?;
             let tag_c = canonicalize_tag(&tag);
+            let (aspect, _actor) = parse_sigils(&tokens)?;
             let aspect_c = canonicalize_aspect(&aspect);
             let url = format!(
                 "{base}/api/v0/pair?tag={}&aspect={}&random={}",
@@ -237,21 +260,27 @@ async fn main() -> Result<()> {
             println!("{} {}", resp.left, resp.right);
         }
 
-        Command::Vote { a, ratio, b, tag, aspect } => {
+        Command::Vote {
+            tag,
+            a,
+            ratio,
+            b,
+            tokens,
+        } => {
             let key = key
                 .as_deref()
                 .ok_or_else(|| anyhow!("missing --key or SLUG_KEY (required for voting)"))?;
 
             let client = http_client(Some(key))?;
             let _ = validate_ratio(&ratio)?;
+            let (aspect, actor) = parse_sigils(&tokens)?;
             let req = VoteRequest {
                 tag: format!("#{}", canonicalize_tag(&tag)),
-                aspect: format!(":{}", canonicalize_aspect(&aspect)),
+                aspect,
                 a: format!("/{}", canonicalize_item(&a)),
                 b: format!("/{}", canonicalize_item(&b)),
                 ratio: Some(ratio),
-                score: None,
-                actor: as_actor.clone(),
+                actor,
             };
             let url = format!("{base}/api/v0/vote");
             let resp: VoteResponse = client.post(url).json(&req).send().await?.json().await?;
@@ -286,14 +315,6 @@ async fn main() -> Result<()> {
 
             if text.trim().is_empty() {
                 return Err(anyhow!("no input provided (empty)"));
-            }
-
-            // If caller passed --as, prefix the document with an actor directive.
-            if let Some(a) = &as_actor {
-                let a = a.trim().trim_start_matches('@');
-                if !a.is_empty() {
-                    text = format!("@{}\n\n{}", a, text);
-                }
             }
 
             let req = IngestRequest {
