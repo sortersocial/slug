@@ -161,6 +161,10 @@ impl BlockMasker {
 
     fn extract_body(&self, token: &str) -> String {
         if let Some(original) = self.replacements.get(token) {
+            // Important: the stored original may itself contain other __BLOCK_* tokens
+            // from earlier masking passes (e.g. code fences inside braces). Always
+            // fully unmask before stripping delimiters.
+            let original = self.unmask(original);
             if original.starts_with("{{") && original.ends_with("}}") && original.len() >= 4 {
                 return original[2..original.len() - 2].trim().to_string();
             }
