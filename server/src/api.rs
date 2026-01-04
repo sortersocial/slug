@@ -17,6 +17,18 @@ use crate::{
     state::AppState,
 };
 
+#[derive(Debug, Serialize)]
+pub struct ApiError {
+    pub ok: bool,
+    pub error: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hint: Option<String>,
+}
+
+fn api_error(status: StatusCode, error: impl Into<String>, hint: Option<String>) -> axum::response::Response {
+    (status, Json(ApiError { ok: false, error: error.into(), hint })).into_response()
+}
+
 #[derive(Debug, Deserialize)]
 pub struct VoteRequest {
     /// Hashtag namespace (required).
@@ -88,16 +100,67 @@ pub async fn post_vote(
     let (ratio_left, ratio_right) = match req.ratio.as_deref() {
         Some(r) => {
             let Some((l, rr)) = parse_ratio(r) else {
-                return (
+                return api_error(
                     StatusCode::BAD_REQUEST,
-                    "invalid ratio (expected like 3:1)".to_string(),
-                )
-                    .into_response();
+                    "invalid ratio",
+                    Some("expected like `3:1` (e.g. `/a 3:1 /b`)".to_string()),
+                );
             };
             (l.max(0), rr.max(0))
         }
-        None => return (StatusCode::BAD_REQUEST, "missing ratio".to_string()).into_response(),
+        None => {
+            return api_error(
+                StatusCode::BAD_REQUEST,
+                "missing ratio",
+                Some("pass `ratio: \"3:1\"`".to_string()),
+            )
+        }
     };
+
+    // Enforce: items must already exist in the tag AND have bodies.
+    {
+        let reduced = state.reduced.read().await;
+        let Some(items) = reduced.tags.get(&tag) else {
+            return api_error(
+                StatusCode::BAD_REQUEST,
+                format!("unknown tag: #{tag}"),
+                Some("define items first via `npx slugsocial ingest <file>` containing `#tag` and `/item { body }`".to_string()),
+            );
+        };
+        let missing: Vec<String> = [a.clone(), b.clone()]
+            .into_iter()
+            .filter(|it| !items.contains(it))
+            .map(|it| format!("/{it}"))
+            .collect();
+        if !missing.is_empty() {
+            return api_error(
+                StatusCode::BAD_REQUEST,
+                "vote references undefined item(s) for this tag",
+                Some(format!(
+                    "missing under #{tag}: {}. Define them first like:\n#{}\n/{} {{ ... }}\n/{} {{ ... }}",
+                    missing.join(", "),
+                    tag,
+                    a,
+                    b
+                )),
+            );
+        }
+        let missing_body: Vec<String> = [a.clone(), b.clone()]
+            .into_iter()
+            .filter(|it| !reduced.item_bodies.contains_key(it))
+            .map(|it| format!("/{it}"))
+            .collect();
+        if !missing_body.is_empty() {
+            return api_error(
+                StatusCode::BAD_REQUEST,
+                "vote references item(s) without bodies",
+                Some(format!(
+                    "missing bodies: {}. Define each item with a body block: `/item {{ ... }}`",
+                    missing_body.join(", ")
+                )),
+            );
+        }
+    }
 
     let vote = VoteCast {
         ts: now_ms(),
@@ -114,7 +177,7 @@ pub async fn post_vote(
 
     let event = Event::VoteCast(vote.clone());
     if let Err(err) = state.event_log.append(&event).await {
-        return (StatusCode::INTERNAL_SERVER_ERROR, format!("{err}")).into_response();
+        return api_error(StatusCode::INTERNAL_SERVER_ERROR, format!("{err}"), None);
     }
 
     {
@@ -302,21 +365,21 @@ pub async fn get_pair(State(state): State<AppState>, Query(q): Query<PairQuery>)
     };
 
     if pool.len() < 2 {
-        return (
+        return api_error(
             StatusCode::BAD_REQUEST,
             format!("need at least 2 items under tag #{tag}"),
-        )
-            .into_response();
+            Some(format!("add items via ingest:\n#{}\n/item {{ ... }}", tag)),
+        );
     }
 
     // Random mode: ignore ranking and pick any distinct pair from pool.
     if force_random {
         let Some((left, right)) = pick_random_distinct(&pool) else {
-            return (
+            return api_error(
                 StatusCode::BAD_REQUEST,
                 format!("need at least 2 items under tag #{tag}"),
-            )
-                .into_response();
+                Some(format!("add items via ingest:\n#{}\n/item {{ ... }}", tag)),
+            );
         };
         return Json(PairResponse {
             tag: format!("#{tag}"),
@@ -401,11 +464,11 @@ pub async fn get_pair(State(state): State<AppState>, Query(q): Query<PairQuery>)
     };
 
     let Some((left, right)) = selected else {
-        return (
+        return api_error(
             StatusCode::BAD_REQUEST,
             format!("need at least 2 items under tag #{tag}"),
-        )
-            .into_response();
+            Some(format!("add items via ingest:\n#{}\n/item {{ ... }}", tag)),
+        );
     };
 
     Json(PairResponse {
@@ -666,7 +729,7 @@ pub async fn post_ingest(
 
     let doc = match doc {
         Ok(d) => d,
-        Err(e) => return (StatusCode::BAD_REQUEST, e).into_response(),
+        Err(e) => return api_error(StatusCode::BAD_REQUEST, e, None),
     };
 
     let mut current_actor: Option<String> = None;
@@ -676,6 +739,7 @@ pub async fn post_ingest(
 
     let mut events: Vec<Event> = Vec::new();
     let mut tags_seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut defined_in_doc: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for s in doc.statements {
         match s {
@@ -695,11 +759,26 @@ pub async fn post_ingest(
             }
             dsl::Stmt::Item { title, body } => {
                 let item = canonicalize_item(&title);
+                let Some(body) = body else {
+                    return api_error(
+                        StatusCode::BAD_REQUEST,
+                        format!("item missing body: /{item}"),
+                        Some("items must be declared with bodies, e.g. `/item { ... }`".to_string()),
+                    );
+                };
+                if body.trim().is_empty() {
+                    return api_error(
+                        StatusCode::BAD_REQUEST,
+                        format!("item body is empty: /{item}"),
+                        Some("write at least one sentence inside `{ ... }`".to_string()),
+                    );
+                }
                 events.push(Event::ItemUpsert(crate::events::ItemUpsert {
                     ts,
                     item: item.clone(),
-                    body,
+                    body: Some(body),
                 }));
+                defined_in_doc.insert(item.clone());
                 if let Some(tag) = current_tag.clone() {
                     events.push(Event::TagAdd(crate::events::TagAdd {
                         ts,
@@ -716,15 +795,59 @@ pub async fn post_ingest(
                 explanation,
             } => {
                 let Some(tag) = current_tag.clone() else {
-                    return (
+                    return api_error(
                         StatusCode::BAD_REQUEST,
-                        "vote requires an active #tag context".to_string(),
-                    )
-                        .into_response();
+                        "vote requires an active #tag context",
+                        Some("add a `#tag` line before any votes".to_string()),
+                    );
                 };
                 let aspect = current_aspect.clone();
                 let a = canonicalize_item(&item1);
                 let b = canonicalize_item(&item2);
+
+                // Enforce: items must already be defined (earlier in the doc or in existing state),
+                // and must have bodies.
+                {
+                    let reduced = state.reduced.read().await;
+                    let items_in_tag = reduced.tags.get(&tag);
+                    let mut missing: Vec<String> = Vec::new();
+                    for it in [&a, &b] {
+                        let ok_in_doc = defined_in_doc.contains(it);
+                        let ok_in_tag = items_in_tag.map(|s| s.contains(it)).unwrap_or(false);
+                        if !(ok_in_doc || ok_in_tag) {
+                            missing.push(format!("/{it}"));
+                        }
+                    }
+                    if !missing.is_empty() {
+                        return api_error(
+                            StatusCode::BAD_REQUEST,
+                            "vote references undefined item(s)",
+                            Some(format!(
+                                "define items with bodies before voting. missing: {}",
+                                missing.join(", ")
+                            )),
+                        );
+                    }
+                    let mut missing_body: Vec<String> = Vec::new();
+                    for it in [&a, &b] {
+                        let ok_body_in_doc = defined_in_doc.contains(it);
+                        let ok_body_in_state = reduced.item_bodies.contains_key(it);
+                        if !(ok_body_in_doc || ok_body_in_state) {
+                            missing_body.push(format!("/{it}"));
+                        }
+                    }
+                    if !missing_body.is_empty() {
+                        return api_error(
+                            StatusCode::BAD_REQUEST,
+                            "vote references item(s) without bodies",
+                            Some(format!(
+                                "missing bodies: {}. Declare each item as `/item {{ ... }}`",
+                                missing_body.join(", ")
+                            )),
+                        );
+                    }
+                }
+
                 events.push(Event::VoteCast(VoteCast {
                     ts,
                     tag: tag.clone(),
@@ -766,7 +889,7 @@ pub async fn post_ingest(
     // Persist then reduce.
     for ev in &events {
         if let Err(err) = state.event_log.append(ev).await {
-            return (StatusCode::INTERNAL_SERVER_ERROR, format!("{err}")).into_response();
+            return api_error(StatusCode::INTERNAL_SERVER_ERROR, format!("{err}"), None);
         }
     }
     {

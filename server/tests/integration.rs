@@ -60,6 +60,19 @@ async fn test_vote_endpoint() {
     let (addr, _tmp, _log, _handle) = create_test_server().await;
     let client = reqwest::Client::new();
 
+    // Define items first (required).
+    let ingest_payload = serde_json::json!({
+        "text": "#rust\n:default\n/clap {cli parser}\n/argh {cli parser}\n",
+        "mode": "dsl"
+    });
+    client
+        .post(&format!("http://{}/api/v0/ingest", addr))
+        .header("x-slug-key", "test-secret")
+        .json(&ingest_payload)
+        .send()
+        .await
+        .unwrap();
+
     let vote_payload = serde_json::json!({
         "tag": "#rust",
         "aspect": ":speed",
@@ -110,7 +123,19 @@ async fn test_rank_endpoint() {
     let (addr, _tmp, _log, _handle) = create_test_server().await;
     let client = reqwest::Client::new();
 
-    // First add a vote
+    // Define items then vote.
+    let ingest_payload = serde_json::json!({
+        "text": "#langs\n:default\n/rust {systems}\n/go {concurrency}\n",
+        "mode": "dsl"
+    });
+    client
+        .post(&format!("http://{}/api/v0/ingest", addr))
+        .header("x-slug-key", "test-secret")
+        .json(&ingest_payload)
+        .send()
+        .await
+        .unwrap();
+
     let vote_payload = serde_json::json!({
         "tag": "#langs",
         "aspect": ":speed",

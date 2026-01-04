@@ -5,6 +5,13 @@ use serde::{Deserialize, Serialize};
 use std::io::Read;
 use std::path::PathBuf;
 
+#[derive(Debug, Deserialize)]
+struct ApiError {
+    ok: bool,
+    error: String,
+    hint: Option<String>,
+}
+
 #[derive(Parser, Debug)]
 #[command(name = "slugsocial", version, about = "Slug Social CLI (thin client)")]
 struct Cli {
@@ -363,6 +370,22 @@ fn http_client(key: Option<&str>) -> Result<reqwest::Client> {
     Ok(reqwest::Client::builder().default_headers(headers).build()?)
 }
 
+async fn expect_json<T: for<'de> Deserialize<'de>>(resp: reqwest::Response) -> Result<T> {
+    let status = resp.status();
+    if status.is_success() {
+        return Ok(resp.json::<T>().await?);
+    }
+    let text = resp.text().await.unwrap_or_default();
+    if let Ok(e) = serde_json::from_str::<ApiError>(&text) {
+        let mut msg = format!("server error: {}", e.error);
+        if let Some(h) = e.hint {
+            msg.push_str(&format!("\n\nhint:\n{h}"));
+        }
+        return Err(anyhow!(msg));
+    }
+    Err(anyhow!("server error ({status}): {text}"))
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let Cli { key, cmd } = Cli::parse();
@@ -387,7 +410,7 @@ async fn main() -> Result<()> {
                 urlencoding::encode(&aspect_c),
                 limit
             );
-            let resp: RankResponse = client.get(url).send().await?.json().await?;
+            let resp: RankResponse = expect_json(client.get(url).send().await?).await?;
             print_ranking(&resp.tag, &resp.aspect, &resp.ranking);
         }
 
@@ -402,7 +425,7 @@ async fn main() -> Result<()> {
                 urlencoding::encode(&aspect_c),
                 if random { "true" } else { "false" }
             );
-            let resp: PairResponse = client.get(url).send().await?.json().await?;
+            let resp: PairResponse = expect_json(client.get(url).send().await?).await?;
             println!("{} {}", resp.left, resp.right);
         }
 
@@ -429,7 +452,7 @@ async fn main() -> Result<()> {
                 actor,
             };
             let url = format!("{base}/api/v0/vote");
-            let resp: VoteResponse = client.post(url).json(&req).send().await?.json().await?;
+            let resp: VoteResponse = expect_json(client.post(url).json(&req).send().await?).await?;
             if resp.ok {
                 println!("✓ vote recorded");
                 println!();
@@ -468,7 +491,7 @@ async fn main() -> Result<()> {
                 mode: Some(mode),
             };
             let url = format!("{base}/api/v0/ingest");
-            let resp: IngestResponse = client.post(url).json(&req).send().await?.json().await?;
+            let resp: IngestResponse = expect_json(client.post(url).json(&req).send().await?).await?;
             if resp.ok {
                 println!("✓ ingested");
                 println!("events: {}", resp.events_appended);
@@ -487,7 +510,7 @@ async fn main() -> Result<()> {
         Command::Tags => {
             let client = http_client(key.as_deref())?;
             let url = format!("{base}/api/v0/tags");
-            let resp: TagsResponse = client.get(url).send().await?.json().await?;
+            let resp: TagsResponse = expect_json(client.get(url).send().await?).await?;
             print_tags(&resp);
         }
 
@@ -495,7 +518,7 @@ async fn main() -> Result<()> {
             let client = http_client(key.as_deref())?;
             let tag_c = canonicalize_tag(&tag);
             let url = format!("{base}/api/v0/tag?tag={}", urlencoding::encode(&tag_c));
-            let resp: TagDetailResponse = client.get(url).send().await?.json().await?;
+            let resp: TagDetailResponse = expect_json(client.get(url).send().await?).await?;
             print_tag_detail(&resp);
         }
 
@@ -503,7 +526,7 @@ async fn main() -> Result<()> {
             let client = http_client(key.as_deref())?;
             let item_c = canonicalize_item(&item);
             let url = format!("{base}/api/v0/item?item={}", urlencoding::encode(&item_c));
-            let resp: ItemResponse = client.get(url).send().await?.json().await?;
+            let resp: ItemResponse = expect_json(client.get(url).send().await?).await?;
             print_item(&resp);
         }
 
@@ -517,7 +540,7 @@ async fn main() -> Result<()> {
                 urlencoding::encode(&tag_c),
                 urlencoding::encode(&aspect_c),
             );
-            let resp: RecentVotesResponse = client.get(url).send().await?.json().await?;
+            let resp: RecentVotesResponse = expect_json(client.get(url).send().await?).await?;
             print_recent_votes(&resp);
         }
     }
