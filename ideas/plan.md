@@ -28,11 +28,11 @@ Three interfaces:
 - 1M events: ~200MB, ~2 seconds cold load
 - Beyond: add checkpoints/snapshots
 
-The `adam.py` pattern proves this works: append events, reconstruct state on load.
+The event-log pattern proves this works: append events, reconstruct state on load.
 
 ### Server: Rust (Axum)
 
-**Decision**: Keep the Rust backend from `pagerank.rs`.
+**Decision**: Implement the backend in Rust.
 
 **Why**:
 - Already have working rank centrality with sparse matrices
@@ -143,12 +143,8 @@ How do rankings update live?
 
 ## What We Have
 
-| File | Purpose | Status |
-|------|---------|--------|
-| `root.tdsl` | Vision document | ✓ Complete |
-| `rank.py` | Reference rank centrality | ✓ Working |
-| `pagerank.rs` | Production ranking + tests | ✓ Working (needs JSONL migration) |
-| `adam.py` | Event log pattern example | ✓ Reference implementation |
+- Rust server with JSONL event log + ranking
+- Rust CLI shipped via `npx`/`uvx`
 
 ## Next Steps
 
@@ -159,4 +155,5 @@ Focus: **Rust server with JSONL storage**
 3. Wire up to existing rank centrality
 4. Add REST endpoints for CLI
 5. Add HTML rendering for web
+
 

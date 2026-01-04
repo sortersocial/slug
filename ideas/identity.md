@@ -22,7 +22,7 @@ This is the social guardrail. In a trusted community, you don't need complex cry
 
 ### 3. Sketching the Rust Logic
 
-Here’s how we’d extend `pagerank.rs` to handle this:
+Here’s how we’d extend the ranking layer to handle this:
 
 ```rust:reputation.rs
 use std::collections::HashMap;
@@ -69,4 +69,6 @@ impl VoterReputation {
 ### Does this feel like the right "American Commons" vibe? 
 It’s a meritocracy of judgment. You get a seat at the table by being right about what the community will value, and you keep it by acting in good faith. 
 
-Should we add `voter_id` to the `RelevantVote` struct in `pagerank.rs` and start tracking these "prescience" scores?
+Should we add `voter_id` to the vote model and start tracking these "prescience" scores?
+
+

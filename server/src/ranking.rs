@@ -9,7 +9,7 @@ pub struct RankedItem {
 }
 
 /// Compute rank centrality scores for a GroupState.
-/// This matches the approach in `pagerank.rs` but avoids dependencies by doing
+/// This matches the approach in the earlier standalone prototype but avoids dependencies by doing
 /// an O(E) multiply per iteration.
 pub fn compute_group_ranking(group: &mut GroupState, max_iters: usize, tol: f64) {
     if !group.dirty && !group.cached_scores.is_empty() {

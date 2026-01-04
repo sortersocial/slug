@@ -8,10 +8,6 @@ use std::path::PathBuf;
 #[derive(Parser, Debug)]
 #[command(name = "slugsocial", version, about = "Slug Social CLI (thin client)")]
 struct Cli {
-    /// Base URL of the server (e.g. https://slugsocial.fly.dev)
-    #[arg(long, env = "SLUG_BASE_URL", default_value = "https://slugsocial.fly.dev")]
-    base_url: String,
-
     /// API key secret (sent as x-slug-key)
     #[arg(long, env = "SLUG_KEY")]
     key: Option<String>,
@@ -174,7 +170,7 @@ fn http_client(key: Option<&str>) -> Result<reqwest::Client> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    let base = cli.base_url.trim_end_matches('/').to_string();
+    let base = "https://slug.social";
 
     match cli.cmd {
         Command::Healthz => {

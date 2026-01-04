@@ -33,7 +33,7 @@ pub enum DslError {
 
 /// Helper to mask balanced blocks to protect them during filtering/parsing.
 ///
-/// Matches `grammar.py` behavior:
+/// Matches the legacy Python parser behavior:
 /// - Supports toggle markers (open == close), e.g. ```...```
 /// - Supports nested markers (open != close), e.g. { ... { ... } ... }
 #[derive(Debug, Default, Clone)]

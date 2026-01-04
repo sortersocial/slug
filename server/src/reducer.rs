@@ -78,7 +78,7 @@ impl GroupState {
         let (i, j) = if a_idx < b_idx { (a_idx, b_idx) } else { (b_idx, a_idx) };
         self.voted_pairs.insert((i, j));
 
-        // We follow the pagerank.rs convention where a negative magnitude means
+        // We follow the convention where a negative magnitude means
         // left/a is preferred. Our VoteCast has positive score => prefer a, so
         // we negate it.
         let magnitude = (-(vote.score) as f64).clamp(-50.0, 50.0);

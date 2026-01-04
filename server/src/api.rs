@@ -396,7 +396,7 @@ fn ratio_to_score(left: i32, right: i32) -> i32 {
         return 0;
     }
     let p_left = l / denom; // 0..1
-    // Map to [-50, 50] to match server's convention (see rank.py).
+    // Map to [-50, 50] to match the server's score convention.
     let score = (p_left * 100.0 - 50.0).round() as i32;
     score.clamp(-50, 50)
 }

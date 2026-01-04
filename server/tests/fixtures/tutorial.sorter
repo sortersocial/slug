@@ -36,7 +36,7 @@ From this assertion we derive the ranking:
 2) /b
 
 If we were to send this email right now, we could view the ranking at
-https://index.sorter.social/hashtag/alphabet
+https://slug.social/t/alphabet
 Easy enough.
 
 /c
@@ -74,7 +74,7 @@ judgements.
 }
 
 /asynchronous {
-Sorter’s primary interface is email. You email vote@mail.sorter.social to
+Slug’s primary interface is the web + API. (Email ingestion is not implemented yet.)
 submit your items/votes/prose. All emails are public once sent, indexed on
 the website verbatim, and also deconstructed and compiled into the
 consensus graph.
