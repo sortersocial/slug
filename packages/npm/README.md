@@ -1,4 +1,4 @@
-# `npx slugsocial`
+# `npx @sortersocial/slugsocial`
 
 Ultra-thin shim that **execs the Rust `slugsocial` binary bundled via platform packages**.
 
@@ -7,7 +7,7 @@ Ultra-thin shim that **execs the Rust `slugsocial` binary bundled via platform p
 Install/run:
 
 ```bash
-npx slugsocial --help
+npx @sortersocial/slugsocial --help
 ```
 
 ## Publish checklist (npm)
