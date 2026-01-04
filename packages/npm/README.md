@@ -22,8 +22,6 @@ Packages to publish:
 - `@sortersocial/slugsocial-darwin-x64`
 - `@sortersocial/slugsocial-linux-arm64`
 - `@sortersocial/slugsocial-linux-x64`
-- `@sortersocial/slugsocial-win32-arm64`
-- `@sortersocial/slugsocial-win32-x64`
 - `slugsocial` (from `packages/npm`)
 
 

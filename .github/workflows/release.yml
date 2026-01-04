@@ -37,16 +37,6 @@ jobs:
             plat: linux
             arch: x64
             ext: ""
-          - os: windows-2022
-            target: aarch64-pc-windows-msvc
-            plat: win32
-            arch: arm64
-            ext: ".exe"
-          - os: windows-2022
-            target: x86_64-pc-windows-msvc
-            plat: win32
-            arch: x64
-            ext: ".exe"
 
     steps:
       - uses: actions/checkout@v4
@@ -93,12 +83,8 @@ jobs:
             mkdir -p "$pkg/bin"
             # Find the binary file
             bin="$(ls "$dir"/slugsocial-* | head -1)"
-            if [[ "$plat" == "win32" ]]; then
-              cp "$bin" "$pkg/bin/slugsocial.exe"
-            else
-              cp "$bin" "$pkg/bin/slugsocial"
-              chmod +x "$pkg/bin/slugsocial"
-            fi
+            cp "$bin" "$pkg/bin/slugsocial"
+            chmod +x "$pkg/bin/slugsocial"
           done
 
       - name: Build PyPI wheels (platform)
