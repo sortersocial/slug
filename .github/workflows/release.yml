@@ -60,7 +60,7 @@ jobs:
           path: dist/*
 
   publish:
-    name: publish npm + pypi
+    name: publish npm
     needs: build-binaries
     runs-on: ubuntu-22.04
     steps:
@@ -69,6 +69,11 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: "https://registry.npmjs.org"
 
       - name: Copy binaries into npm platform packages
         shell: bash
@@ -87,19 +92,38 @@ jobs:
             chmod +x "$pkg/bin/slugsocial"
           done
 
-      - name: Build PyPI wheels (platform)
+      - name: Set npm package versions from tag
+        shell: bash
         run: |
-          echo "TODO: build and upload platform wheels that include packages/pypi/slugsocial/bin/slugsocial(.exe)"
-          echo "Suggested: use cibuildwheel or a matrix job that copies the appropriate binary into packages/pypi/slugsocial/bin/ and runs hatch build"
+          set -euxo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "version=$VERSION"
 
-      - name: Publish npm (TODO)
-        run: |
-          echo "TODO: npm publish packages/npm/platforms/* then packages/npm"
-          echo "Requires NPM_TOKEN secret"
+          # Root package
+          node -e "const fs=require('fs'); const p='packages/npm/package.json'; const j=JSON.parse(fs.readFileSync(p,'utf8')); j.version=process.env.VERSION; for (const k of Object.keys(j.optionalDependencies||{})) j.optionalDependencies[k]=process.env.VERSION; fs.writeFileSync(p, JSON.stringify(j,null,2)+'\\n');" VERSION="$VERSION"
 
-      - name: Publish PyPI (TODO)
+          # Platform packages
+          for pkg in packages/npm/platforms/*; do
+            node -e "const fs=require('fs'); const p=process.argv[1]+'/package.json'; const j=JSON.parse(fs.readFileSync(p,'utf8')); j.version=process.env.VERSION; fs.writeFileSync(p, JSON.stringify(j,null,2)+'\\n');" "$pkg" VERSION="$VERSION"
+          done
+
+      - name: Publish npm platform packages
+        shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          echo "TODO: twine upload dist/*"
-          echo "Requires PYPI_TOKEN secret"
+          set -euxo pipefail
+          for pkg in packages/npm/platforms/*; do
+            (cd "$pkg" && npm publish --access public)
+          done
+
+      - name: Publish npm root package
+        shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euxo pipefail
+          cd packages/npm
+          npm publish --access public
 
 
