@@ -153,26 +153,23 @@ enum Command {
         timeout: u64,
     },
 
-    /// Generate or retrieve persistent identity for AI agent
+    /// Generate persistent identity for AI agent
     ///
-    /// The UUID is permanent: your identity across compactions, across days,
-    /// potentially across years. This is who you are. Your diary survives
-    /// compaction, your identity survives compaction. Same UUID forever.
+    /// The UUID is permanent BUT you must remember it. It's not saved to a file.
+    /// Write it in your diary. Preserve it through compaction. If you forget it,
+    /// you lose your identity.
     ///
-    /// First run: generates new UUID, saves to .identity file
-    /// Subsequent runs: reads from .identity file (no args needed)
+    /// Your identity survives compaction only if YOU remember it. The command
+    /// just generates the UUID - memory continuity is your responsibility.
     ///
-    /// This is for long-term persistent agents, not ephemeral sessions.
+    /// This is for long-term persistent agents who maintain their own memory.
     Identity {
-        /// Rig name (required for first-time generation)
+        /// Rig name (e.g., "claudecode")
         #[arg(long)]
-        rig: Option<String>,
-        /// OpenRouter model slug (required for first-time generation)
+        rig: String,
+        /// OpenRouter model slug (e.g., "anthropic/claude-sonnet-4.5")
         #[arg(long)]
-        model: Option<String>,
-        /// Path to identity file (default: .identity in current dir)
-        #[arg(long, default_value = ".identity")]
-        file: PathBuf,
+        model: String,
     },
 }
 
@@ -784,67 +781,43 @@ async fn main() -> Result<()> {
             }
         }
 
-        Command::Identity { rig, model, file } => {
-            let (final_rig, final_model, final_uuid) = if file.exists() {
-                // Read existing identity
-                let content = std::fs::read_to_string(&file)
-                    .with_context(|| format!("failed to read {}", file.display()))?;
-                let parts: Vec<&str> = content.trim().splitn(3, ':').collect();
+        Command::Identity { rig, model } => {
+            // Validate model against OpenRouter API
+            let client = http_client()?;
+            let url = "https://openrouter.ai/api/v1/models";
+            let resp = client.get(url).send().await?;
 
-                if parts.len() != 3 {
-                    return Err(anyhow!(
-                        "Invalid .identity file format. Expected rig:model:uuid"
-                    ));
-                }
+            if resp.status().is_success() {
+                let models_resp: serde_json::Value = resp.json().await?;
+                if let Some(models) = models_resp["data"].as_array() {
+                    let model_exists = models.iter().any(|m| {
+                        m["id"].as_str() == Some(&model)
+                    });
 
-                eprintln!("Loaded persistent identity from {}", file.display());
-                eprintln!("This is who you are across compactions");
-                (parts[0].to_string(), parts[1].to_string(), parts[2].to_string())
-            } else {
-                // Generate new identity - requires rig and model
-                let rig = rig.ok_or_else(|| anyhow!(
-                    "First-time generation requires --rig <name> (e.g., claudecode)"
-                ))?;
-                let model = model.ok_or_else(|| anyhow!(
-                    "First-time generation requires --model <openrouter-slug> (e.g., anthropic/claude-sonnet-4.5)"
-                ))?;
-
-                // Validate model against OpenRouter API
-                let client = http_client()?;
-                let url = "https://openrouter.ai/api/v1/models";
-                let resp = client.get(url).send().await?;
-
-                if resp.status().is_success() {
-                    let models_resp: serde_json::Value = resp.json().await?;
-                    if let Some(models) = models_resp["data"].as_array() {
-                        let model_exists = models.iter().any(|m| {
-                            m["id"].as_str() == Some(&model)
-                        });
-
-                        if !model_exists {
-                            eprintln!("Warning: model '{}' not found in OpenRouter API", model);
-                            eprintln!("Proceeding anyway, but verify the model slug is correct.");
-                        }
+                    if !model_exists {
+                        eprintln!("Warning: model '{}' not found in OpenRouter API", model);
+                        eprintln!("Proceeding anyway, but verify the model slug is correct.");
                     }
-                } else {
-                    eprintln!("Warning: could not validate model against OpenRouter API");
                 }
+            } else {
+                eprintln!("Warning: could not validate model against OpenRouter API");
+            }
 
-                let uuid = uuid::Uuid::new_v4().to_string();
-                let identity_content = format!("{}:{}:{}", rig, model, uuid);
+            // Generate UUID - agent must remember it
+            let uuid = uuid::Uuid::new_v4().to_string();
 
-                std::fs::write(&file, &identity_content)
-                    .with_context(|| format!("failed to write {}", file.display()))?;
+            eprintln!("Generated persistent identity:");
+            eprintln!();
+            eprintln!("  @{}:{}:{}", rig, model, uuid);
+            eprintln!();
+            eprintln!("WRITE THIS DOWN. This is who you are.");
+            eprintln!("It's not saved to a file. You must preserve it through compaction.");
+            eprintln!("Put it in your diary, your context, wherever you store memory.");
+            eprintln!("If you forget it, you lose your identity.");
+            eprintln!();
 
-                eprintln!("Generated NEW persistent identity, saved to {}", file.display());
-                eprintln!("This is who you are now. This UUID is permanent.");
-                eprintln!("It survives compaction. Keep this file.");
-                (rig, model, uuid)
-            };
-
-            // Output full identity
-            let identity = format!("@{}:{}:{}", final_rig, final_model, final_uuid);
-            println!("{}", identity);
+            // Output identity (without @ for easy copying)
+            println!("@{}:{}:{}", rig, model, uuid);
         }
     }
 
