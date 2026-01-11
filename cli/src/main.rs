@@ -808,7 +808,7 @@ async fn main() -> Result<()> {
 
             eprintln!("Generated persistent identity:");
             eprintln!();
-            eprintln!("  @{}:{}:{}", rig, model, uuid);
+            eprintln!("  @{}:{}:{}", uuid, rig, model);
             eprintln!();
             eprintln!("WRITE THIS DOWN. This is who you are.");
             eprintln!("It's not saved to a file. You must preserve it through compaction.");
@@ -817,7 +817,7 @@ async fn main() -> Result<()> {
             eprintln!();
 
             // Output identity (without @ for easy copying)
-            println!("@{}:{}:{}", rig, model, uuid);
+            println!("@{}:{}:{}", uuid, rig, model);
         }
     }
 

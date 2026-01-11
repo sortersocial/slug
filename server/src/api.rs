@@ -75,6 +75,70 @@ fn now_ms() -> i64 {
     t.as_millis() as i64
 }
 
+/// Validate actor format: @<uuid>:<rig>:<model>
+/// Returns Ok(()) if valid or if actor is a simple nickname (no colons).
+/// Returns Err with helpful message if format is invalid.
+fn validate_actor_format(actor: &str) -> Result<(), String> {
+    let actor = actor.strip_prefix('@').unwrap_or(actor);
+
+    // Simple nicknames (no colons) are allowed
+    if !actor.contains(':') {
+        return Ok(());
+    }
+
+    // Full format must be: <uuid>:<rig>:<model>
+    let parts: Vec<&str> = actor.split(':').collect();
+    if parts.len() != 3 {
+        return Err(format!(
+            "Invalid actor format. Expected @<uuid>:<rig>:<model> or @nickname.\n\
+             Got {} parts (expected 3).\n\
+             \n\
+             Generate a valid identity:\n\
+             npx slugsocial identity --rig <name> --model <slug>",
+            parts.len()
+        ));
+    }
+
+    let (uuid_part, rig_part, model_part) = (parts[0], parts[1], parts[2]);
+
+    // Validate UUID format using uuid crate
+    if uuid::Uuid::parse_str(uuid_part).is_err() {
+        return Err(format!(
+            "Invalid UUID in actor format.\n\
+             Expected format: @<uuid>:<rig>:<model>\n\
+             The UUID should be a valid UUID v4 (e.g., 7a3b9c2d-1234-5678-90ab-cdef12345678).\n\
+             \n\
+             Generate a valid identity:\n\
+             npx slugsocial identity --rig <name> --model <slug>"
+        ));
+    }
+
+    // Validate rig is non-empty
+    if rig_part.is_empty() {
+        return Err(format!(
+            "Missing rig in actor format.\n\
+             Expected format: @<uuid>:<rig>:<model>\n\
+             \n\
+             Generate a valid identity:\n\
+             npx slugsocial identity --rig <name> --model <slug>"
+        ));
+    }
+
+    // Validate model format (should contain a slash for provider/model)
+    if !model_part.contains('/') {
+        return Err(format!(
+            "Invalid model format in actor.\n\
+             Expected format: @<uuid>:<rig>:<provider/model>\n\
+             Example: @7a3b9c2d...:claudecode:anthropic/claude-sonnet-4.5\n\
+             \n\
+             Generate a valid identity:\n\
+             npx slugsocial identity --rig <name> --model <slug>"
+        ));
+    }
+
+    Ok(())
+}
+
 pub async fn post_vote(
     State(state): State<AppState>,
     _headers: axum::http::HeaderMap,
@@ -103,6 +167,14 @@ or via stdin:\n\
         }
     };
     let actor_c = req.actor.as_ref().map(|a| canonicalize_actor(a));
+
+    // Validate actor format if provided
+    if let Some(ref actor) = req.actor {
+        if let Err(msg) = validate_actor_format(actor) {
+            return api_error(StatusCode::BAD_REQUEST, "invalid actor format", Some(msg));
+        }
+    }
+
     let voter_key_id = actor_c.clone().unwrap_or_else(|| "anon".to_string());
     let tag = canonicalize_tag(&req.tag);
     let aspect = canonicalize_aspect(&req.aspect);
@@ -800,6 +872,10 @@ pub async fn post_ingest(
             dsl::Stmt::Prose { .. } => {}
             dsl::Stmt::Email { .. } => {}
             dsl::Stmt::Actor { name } => {
+                // Validate actor format
+                if let Err(msg) = validate_actor_format(&name) {
+                    return api_error(StatusCode::BAD_REQUEST, "invalid actor format", Some(msg));
+                }
                 let a = canonicalize_actor(&name);
                 current_actor = Some(a.clone());
                 voter_key_id = a;
@@ -1030,6 +1106,10 @@ pub async fn post_check(
             dsl::Stmt::Prose { .. } => {}
             dsl::Stmt::Email { .. } => {}
             dsl::Stmt::Actor { name } => {
+                // Validate actor format
+                if let Err(msg) = validate_actor_format(&name) {
+                    return api_error(StatusCode::BAD_REQUEST, "invalid actor format", Some(msg));
+                }
                 let a = canonicalize_actor(&name);
                 current_actor = Some(a.clone());
                 voter_key_id = a;
