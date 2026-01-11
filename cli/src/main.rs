@@ -153,17 +153,22 @@ enum Command {
         timeout: u64,
     },
 
-    /// Generate or retrieve stable identity for AI agent
+    /// Generate ephemeral session identity for AI agent
+    ///
+    /// The UUID is per-session: fresh context, fresh identity. Each session is
+    /// a distinct agent instance. The agent remembers the UUID within the session
+    /// and uses it consistently for all votes. When the session ends, the UUID
+    /// becomes part of the permanent record (votes trace to it), but the agent
+    /// doesn't persist across sessions.
+    ///
+    /// Ephemerality is the point: each session is trackable but not persistent.
     Identity {
-        /// Rig name (e.g., "claudecode") - required for first generation
+        /// Rig name (e.g., "claudecode")
         #[arg(long)]
-        rig: Option<String>,
-        /// OpenRouter model slug (e.g., "anthropic/claude-sonnet-4.5") - required for first generation
+        rig: String,
+        /// OpenRouter model slug (e.g., "anthropic/claude-sonnet-4.5")
         #[arg(long)]
-        model: Option<String>,
-        /// Path to identity file (default: .identity in current dir)
-        #[arg(long, default_value = ".identity")]
-        file: PathBuf,
+        model: String,
     },
 }
 
@@ -775,63 +780,38 @@ async fn main() -> Result<()> {
             }
         }
 
-        Command::Identity { rig, model, file } => {
-            let (final_rig, final_model, final_uuid) = if file.exists() {
-                // Read existing identity file
-                let content = std::fs::read_to_string(&file)
-                    .with_context(|| format!("failed to read {}", file.display()))?;
-                let parts: Vec<&str> = content.trim().splitn(3, ':').collect();
+        Command::Identity { rig, model } => {
+            // Validate model against OpenRouter API
+            let client = http_client()?;
+            let url = "https://openrouter.ai/api/v1/models";
+            let resp = client.get(url).send().await?;
 
-                if parts.len() != 3 {
-                    return Err(anyhow!(
-                        "Invalid identity file format. Expected rig:model:uuid"
-                    ));
-                }
+            if resp.status().is_success() {
+                let models_resp: serde_json::Value = resp.json().await?;
+                if let Some(models) = models_resp["data"].as_array() {
+                    let model_exists = models.iter().any(|m| {
+                        m["id"].as_str() == Some(&model)
+                    });
 
-                eprintln!("Loaded existing identity from {}", file.display());
-                (parts[0].to_string(), parts[1].to_string(), parts[2].to_string())
-            } else {
-                // Generate new identity - requires rig and model
-                let rig = rig.ok_or_else(|| anyhow!(
-                    "First time setup requires --rig <name> (e.g., claudecode)"
-                ))?;
-                let model = model.ok_or_else(|| anyhow!(
-                    "First time setup requires --model <openrouter-slug> (e.g., anthropic/claude-sonnet-4.5)"
-                ))?;
-
-                // Validate model against OpenRouter API
-                let client = http_client()?;
-                let url = "https://openrouter.ai/api/v1/models";
-                let resp = client.get(url).send().await?;
-
-                if resp.status().is_success() {
-                    let models_resp: serde_json::Value = resp.json().await?;
-                    if let Some(models) = models_resp["data"].as_array() {
-                        let model_exists = models.iter().any(|m| {
-                            m["id"].as_str() == Some(&model)
-                        });
-
-                        if !model_exists {
-                            eprintln!("Warning: model '{}' not found in OpenRouter API", model);
-                            eprintln!("Proceeding anyway, but verify the model slug is correct.");
-                        }
+                    if !model_exists {
+                        eprintln!("Warning: model '{}' not found in OpenRouter API", model);
+                        eprintln!("Proceeding anyway, but verify the model slug is correct.");
                     }
-                } else {
-                    eprintln!("Warning: could not validate model against OpenRouter API");
                 }
+            } else {
+                eprintln!("Warning: could not validate model against OpenRouter API");
+            }
 
-                let uuid = uuid::Uuid::new_v4().to_string();
-                let identity_content = format!("{}:{}:{}", rig, model, uuid);
+            // Generate ephemeral session UUID
+            let uuid = uuid::Uuid::new_v4().to_string();
 
-                std::fs::write(&file, &identity_content)
-                    .with_context(|| format!("failed to write {}", file.display()))?;
-
-                eprintln!("Generated new identity, saved to {}", file.display());
-                (rig, model, uuid)
-            };
+            eprintln!("Generated ephemeral session identity");
+            eprintln!("Remember this for all votes in this session");
+            eprintln!("New sessions get new UUIDs - ephemerality is the point");
+            eprintln!();
 
             // Output full identity with @ prefix
-            let identity = format!("@{}:{}:{}", final_rig, final_model, final_uuid);
+            let identity = format!("@{}:{}:{}", rig, model, uuid);
             println!("{}", identity);
         }
     }
