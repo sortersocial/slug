@@ -20,7 +20,7 @@ struct ApiError {
 )]
 struct Cli {
     #[command(subcommand)]
-    cmd: Command,
+    cmd: Option<Command>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -497,6 +497,13 @@ async fn expect_json<T: for<'de> Deserialize<'de>>(resp: reqwest::Response) -> R
 #[tokio::main]
 async fn main() -> Result<()> {
     let Cli { cmd } = Cli::parse();
+
+    // If no command provided, print the guide
+    let Some(cmd) = cmd else {
+        print!("{}", include_str!("../GUIDE.sorter"));
+        return Ok(());
+    };
+
     let base = "https://slug.social";
 
     match cmd {
