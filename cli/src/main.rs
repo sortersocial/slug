@@ -12,7 +12,12 @@ struct ApiError {
 }
 
 #[derive(Parser, Debug)]
-#[command(name = "slugsocial", version, about = "Slug Social CLI (thin client)")]
+#[command(
+    name = "slugsocial",
+    version,
+    about = "Slug Social - collective ranking via pairwise comparisons",
+    long_about = include_str!("../GUIDE.sorter")
+)]
 struct Cli {
     #[command(subcommand)]
     cmd: Command,
