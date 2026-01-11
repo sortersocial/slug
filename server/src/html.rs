@@ -109,11 +109,7 @@ pub async fn tag_page(State(state): State<AppState>, Path(tag): Path<String>) ->
                 p class="muted" { "none yet" }
             } @else {
                 @for ing in ingests.iter().take(5) {
-                    @if let Some(actor) = &ing.actor {
-                        p class="muted" { (format!("ts={} · @{} · key={}", ing.ts, actor, ing.voter_key_id)) }
-                    } @else {
-                        p class="muted" { (format!("ts={} · key={}", ing.ts, ing.voter_key_id)) }
-                    }
+                    p class="muted" { (format!("ts={} · @{} · key={}", ing.ts, ing.actor, ing.voter_key_id)) }
                     pre { (ing.raw) }
                 }
             }

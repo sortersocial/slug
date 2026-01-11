@@ -625,7 +625,7 @@ pub async fn get_tag(State(state): State<AppState>, Query(q): Query<TagDetailQue
                 .take(20)
                 .map(|ing| IngestRow {
                     ts: ing.ts,
-                    actor: ing.actor.as_ref().map(|a| format!("@{a}")),
+                    actor: Some(format!("@{}", ing.actor)),
                     voter_key_id: ing.voter_key_id.clone(),
                     snippet: ing.raw.chars().take(800).collect(),
                 })
@@ -940,13 +940,22 @@ pub async fn post_ingest(
         }
     }
 
+    // Require actor for threading/notifications.
+    let Some(actor) = current_actor.clone() else {
+        return api_error(
+            StatusCode::BAD_REQUEST,
+            "ingest requires @actor declaration",
+            Some("add `@yourname` at the start of your document".to_string()),
+        );
+    };
+
     let tags_vec: Vec<String> = tags_seen.into_iter().collect();
     events.push(Event::DslIngested(crate::events::DslIngested {
         ts,
+        id: uuid::Uuid::new_v4().to_string(),
         raw: req.text.clone(),
-        tags: tags_vec.clone(),
         voter_key_id: voter_key_id.clone(),
-        actor: current_actor.clone(),
+        actor,
     }));
 
     let events_appended = events.len();

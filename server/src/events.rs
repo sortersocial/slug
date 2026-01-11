@@ -79,15 +79,20 @@ pub struct TagAdd {
 pub struct DslIngested {
     /// Unix timestamp in milliseconds.
     pub ts: i64,
+    /// Unique identifier for this ingest (stable reference for threading).
+    #[serde(default = "generate_id")]
+    pub id: String,
     /// Raw DSL/prose that was ingested.
     pub raw: String,
-    /// Tags referenced/active during ingestion (without leading '#').
-    pub tags: Vec<String>,
     /// API key identifier (not secret), for attribution/rate limiting.
     pub voter_key_id: String,
-    /// Optional self-declared actor (from DSL `@name` or CLI `--as @name`).
-    #[serde(default)]
-    pub actor: Option<String>,
+    /// Self-declared actor (from DSL `@name` or CLI `--as @name`).
+    /// Required for notification and attribution.
+    pub actor: String,
+}
+
+fn generate_id() -> String {
+    uuid::Uuid::new_v4().to_string()
 }
 
 

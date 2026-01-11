@@ -144,12 +144,23 @@ impl ReducerState {
                 self.tags.entry(tag).or_default().insert(item);
             }
             Event::DslIngested(mut ing) => {
-                // Canonicalize tags for indexing.
-                ing.tags = ing.tags.into_iter().map(|t| canonicalize_tag(&t)).collect();
-                ing.actor = ing.actor.as_ref().map(|a| canonicalize_actor(a));
+                // Canonicalize actor for indexing.
+                ing.actor = canonicalize_actor(&ing.actor);
 
-                for tag in ing.tags.iter() {
-                    let q = self.ingests_by_tag.entry(tag.clone()).or_default();
+                // Extract tags by parsing raw content (single source of truth).
+                let doc = crate::dsl::parse_full(&ing.raw);
+                let extracted_tags: Vec<String> = doc
+                    .statements
+                    .iter()
+                    .filter_map(|s| match s {
+                        crate::dsl::Stmt::Hashtag { name } => Some(canonicalize_tag(name)),
+                        _ => None,
+                    })
+                    .collect();
+
+                // Index ingest by extracted tags.
+                for tag in extracted_tags {
+                    let q = self.ingests_by_tag.entry(tag).or_default();
                     q.push_front(ing.clone());
                     while q.len() > 25 {
                         q.pop_back();

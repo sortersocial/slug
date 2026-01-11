@@ -62,7 +62,7 @@ async fn test_vote_endpoint() {
 
     // Define items first (required).
     let ingest_payload = serde_json::json!({
-        "text": "#rust\n:default\n/clap {cli parser}\n/argh {cli parser}\n",
+        "text": "@test\n#rust\n:default\n/clap {cli parser}\n/argh {cli parser}\n",
         "mode": "dsl"
     });
     client
@@ -101,7 +101,7 @@ async fn test_rank_endpoint() {
 
     // Define items then vote.
     let ingest_payload = serde_json::json!({
-        "text": "#langs\n:default\n/rust {systems}\n/go {concurrency}\n",
+        "text": "@test\n#langs\n:default\n/rust {systems}\n/go {concurrency}\n",
         "mode": "dsl"
     });
     client
