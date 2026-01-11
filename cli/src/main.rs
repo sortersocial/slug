@@ -20,54 +20,66 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Command {
-    /// Fetch and print a ranking for a tag/aspect
+    /// Fetch and print a ranking for a thread/aspect
     Rank {
-        tag: String,
-        /// Optional additional sigil tokens: `:aspect` and/or `@actor`
-        #[arg(value_name = "TOKENS", trailing_var_arg = true)]
-        tokens: Vec<String>,
+        /// Thread name (without # prefix)
+        #[arg(long)]
+        thread: String,
+        /// Aspect name (without : prefix, defaults to "default")
+        #[arg(long, default_value = "default")]
+        aspect: String,
+        /// Maximum items to return
         #[arg(long, default_value_t = 25)]
         limit: usize,
+        /// Output as JSON for agent parsing
+        #[arg(long)]
+        json: bool,
     },
 
     /// Get a suggested pair of items to compare next
     Pair {
-        tag: String,
-        /// Optional additional sigil tokens: `:aspect` and/or `@actor`
-        #[arg(value_name = "TOKENS", trailing_var_arg = true)]
-        tokens: Vec<String>,
-        /// If true, ignore ranking and return a random pair (useful for “skip”)
+        /// Thread name (without # prefix)
+        #[arg(long)]
+        thread: String,
+        /// Aspect name (without : prefix, defaults to "default")
+        #[arg(long, default_value = "default")]
+        aspect: String,
+        /// If true, ignore ranking and return a random pair (useful for "skip")
         #[arg(long)]
         random: bool,
+        /// Output as JSON for agent parsing
+        #[arg(long)]
+        json: bool,
     },
 
-    /// Cast a vote (ratio like 3:1) for a vs b (requires a justification string)
-    Vote {
-        tag: String,
-        a: String,
-        /// Ratio like "3:1" (prefer a over b).
-        ratio: String,
-        b: String,
-        /// Optional sigils (`:aspect`, `@actor`) followed by a required explanation string.
-        /// If you omit the explanation argument, the CLI will read it from stdin (heredoc / pipe).
-        ///
-        /// Example:
-        ///   npx slugsocial vote '#tag' /a 2:1 /b :default @me "because ..."
-        #[arg(value_name = "TOKENS", trailing_var_arg = true)]
-        tokens: Vec<String>,
-    },
-
-    /// Ingest a DSL (and optional prose) document and emit events on the server
+    /// Ingest a .sorter document from stdin or file
+    ///
+    /// Examples:
+    ///   # From heredoc (recommended for agents)
+    ///   npx slugsocial ingest << EOF
+    ///   @agent
+    ///   #thread
+    ///   /item-a 3:1 /item-b :default { reasoning here }
+    ///   EOF
+    ///
+    ///   # From file
+    ///   npx slugsocial ingest position.sorter
+    ///
+    ///   # From pipe
+    ///   echo "@agent ..." | npx slugsocial ingest
     Ingest {
-        /// Optional path to a file. If omitted, reads from stdin.
+        /// Optional path to a .sorter file. If omitted, reads from stdin.
         #[arg(value_name = "FILE")]
         file: Option<PathBuf>,
         /// Parsing mode: full (default), lines, or dsl
         #[arg(long, default_value = "full")]
         mode: String,
+        /// Output as JSON for agent parsing
+        #[arg(long)]
+        json: bool,
     },
 
-    /// Check a DSL/prose document without committing it (parse/validate + show simulated rankings)
+    /// Check a document without committing (parse/validate + show simulated rankings)
     Check {
         /// Optional path to a file. If omitted, reads from stdin.
         #[arg(value_name = "FILE")]
@@ -75,35 +87,60 @@ enum Command {
         /// Parsing mode: full (default), lines, or dsl
         #[arg(long, default_value = "full")]
         mode: String,
+        /// Output as JSON for agent parsing
+        #[arg(long)]
+        json: bool,
     },
 
     /// Simple health check
     Healthz,
 
-    /// List tags in the index (agent-friendly)
-    Tags,
-
-    /// Show tag details (items, aspects, recent ingests)
-    Tag {
-        tag: String,
+    /// List all threads
+    Threads {
+        /// Output as JSON for agent parsing
+        #[arg(long)]
+        json: bool,
     },
 
-    /// Show item details (body + tags)
+    /// Show thread details (items, aspects, recent ingests)
+    Thread {
+        /// Thread name (without # prefix)
+        #[arg(long)]
+        thread: String,
+        /// Output as JSON for agent parsing
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Show item details (requires thread context)
     Item {
+        /// Thread name (without # prefix)
+        #[arg(long)]
+        thread: String,
+        /// Item name (without / prefix)
+        #[arg(long)]
         item: String,
+        /// Output as JSON for agent parsing
+        #[arg(long)]
+        json: bool,
     },
 
-    /// Show recent votes for a tag/aspect
+    /// Show recent votes for a thread/aspect
     Recent {
-        tag: String,
-        /// Optional additional sigil tokens: `:aspect`
-        #[arg(value_name = "TOKENS", trailing_var_arg = true)]
-        tokens: Vec<String>,
+        /// Thread name (without # prefix)
+        #[arg(long)]
+        thread: String,
+        /// Aspect name (without : prefix, defaults to "default")
+        #[arg(long, default_value = "default")]
+        aspect: String,
+        /// Output as JSON for agent parsing
+        #[arg(long)]
+        json: bool,
     },
 
     /// Watch for notifications (blocks until new notification or timeout)
     Watch {
-        /// Actor to watch notifications for (e.g. "@aec")
+        /// Actor name to watch for (without @ prefix)
         #[arg(long, value_name = "ACTOR")]
         as_: String,
         /// Timeout in seconds (default: 60)
@@ -112,33 +149,20 @@ enum Command {
     },
 }
 
-#[derive(Debug, Serialize)]
-struct VoteRequest {
-    tag: String,
-    aspect: String,
-    a: String,
-    b: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    ratio: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    actor: Option<String>,
-    body: String,
-}
-
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct RankRow {
     item: String,
     score: f64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct RankResponse {
     tag: String,
     aspect: String,
     ranking: Vec<RankRow>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct PairResponse {
     tag: String,
     aspect: String,
@@ -148,19 +172,19 @@ struct PairResponse {
     right_body: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct NextMoves {
     vote: String,
     rank: String,
     web: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct TagsResponse {
     tags: Vec<TagSummary>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct TagSummary {
     tag: String,
     items: usize,
@@ -168,7 +192,7 @@ struct TagSummary {
     web: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct TagDetailResponse {
     tag: String,
     items: Vec<String>,
@@ -176,7 +200,7 @@ struct TagDetailResponse {
     recent_ingests: Vec<IngestRow>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct IngestRow {
     ts: i64,
     actor: Option<String>,
@@ -184,19 +208,19 @@ struct IngestRow {
     snippet: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct ItemResponse {
     item: String,
     body: Option<String>,
     tags: Vec<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct RecentVotesResponse {
     votes: Vec<VoteRow>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct VoteRow {
     ts: i64,
     tag: String,
@@ -235,22 +259,13 @@ struct Notification {
     notification_type: NotificationType,
 }
 
-#[derive(Debug, Deserialize)]
-struct VoteResponse {
-    ok: bool,
-    tag: String,
-    aspect: String,
-    ranking: Vec<RankRow>,
-    next: NextMoves,
-}
-
 #[derive(Debug, Serialize)]
 struct IngestRequest {
     text: String,
     mode: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct IngestResponse {
     ok: bool,
     tags: Vec<String>,
@@ -258,14 +273,14 @@ struct IngestResponse {
     next: NextMoves,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct CheckGroup {
     tag: String,
     aspect: String,
     ranking: Vec<RankRow>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct CheckResponse {
     ok: bool,
     tags: Vec<String>,
@@ -289,83 +304,6 @@ fn canonicalize_aspect(input: &str) -> String {
 }
 fn canonicalize_item(input: &str) -> String {
     canonicalize_sigiled(input, '/')
-}
-
-fn parse_sigils(tokens: &[String]) -> Result<(String, Option<String>)> {
-    let mut aspect: Option<String> = None;
-    let mut actor: Option<String> = None;
-    for t in tokens {
-        let tt = t.trim();
-        if tt.is_empty() {
-            continue;
-        }
-        if tt.starts_with(':') {
-            if aspect.is_some() {
-                return Err(anyhow!("multiple aspects provided"));
-            }
-            aspect = Some(format!(":{}", canonicalize_aspect(tt)));
-            continue;
-        }
-        if tt.starts_with('@') {
-            if actor.is_some() {
-                return Err(anyhow!("multiple actors provided"));
-            }
-            actor = Some(format!("@{}", canonicalize_actor(tt)));
-            continue;
-        }
-        return Err(anyhow!(
-            "unexpected token: {tt} (expected :aspect and/or @actor)"
-        ));
-    }
-    Ok((aspect.unwrap_or_else(|| ":default".to_string()), actor))
-}
-
-fn parse_sigils_and_body(tokens: &[String]) -> Result<(String, Option<String>, Option<String>)> {
-    let mut aspect: Option<String> = None;
-    let mut actor: Option<String> = None;
-    let mut body_parts: Vec<String> = Vec::new();
-
-    for t in tokens {
-        let tt = t.trim();
-        if tt.is_empty() {
-            continue;
-        }
-        if tt.starts_with(':') {
-            if aspect.is_some() {
-                return Err(anyhow!("multiple aspects provided"));
-            }
-            aspect = Some(format!(":{}", canonicalize_aspect(tt)));
-            continue;
-        }
-        if tt.starts_with('@') {
-            if actor.is_some() {
-                return Err(anyhow!("multiple actors provided"));
-            }
-            actor = Some(format!("@{}", canonicalize_actor(tt)));
-            continue;
-        }
-        body_parts.push(tt.to_string());
-    }
-
-    let body = body_parts.join(" ").trim().to_string();
-    Ok((
-        aspect.unwrap_or_else(|| ":default".to_string()),
-        actor,
-        if body.is_empty() { None } else { Some(body) },
-    ))
-}
-
-fn validate_ratio(r: &str) -> Result<(i32, i32)> {
-    let t = r.trim();
-    let (l, rr) = t
-        .split_once(':')
-        .ok_or_else(|| anyhow!("invalid ratio (expected like 3:1)"))?;
-    let left: i32 = l.trim().parse().context("invalid ratio (left)")?;
-    let right: i32 = rr.trim().parse().context("invalid ratio (right)")?;
-    if left < 0 || right < 0 {
-        return Err(anyhow!("invalid ratio (must be non-negative)"));
-    }
-    Ok((left, right))
 }
 
 fn print_ranking(tag: &str, aspect: &str, rows: &[RankRow]) {
@@ -564,105 +502,58 @@ async fn main() -> Result<()> {
             println!("{body}");
         }
 
-        Command::Rank { tag, tokens, limit } => {
+        Command::Rank { thread, aspect, limit, json } => {
             let client = http_client()?;
-            let tag_c = canonicalize_tag(&tag);
-            let (aspect, _actor) = parse_sigils(&tokens)?;
-            let aspect_c = canonicalize_aspect(&aspect);
             let url = format!(
                 "{base}/api/v0/rank?tag={}&aspect={}&limit={}",
-                urlencoding::encode(&tag_c),
-                urlencoding::encode(&aspect_c),
+                urlencoding::encode(&thread),
+                urlencoding::encode(&aspect),
                 limit
             );
             let resp: RankResponse = expect_json(client.get(url).send().await?).await?;
-            print_ranking(&resp.tag, &resp.aspect, &resp.ranking);
+
+            if json {
+                println!("{}", serde_json::to_string_pretty(&resp)?);
+            } else {
+                print_ranking(&resp.tag, &resp.aspect, &resp.ranking);
+            }
         }
 
-        Command::Pair { tag, tokens, random } => {
+        Command::Pair { thread, aspect, random, json } => {
             let client = http_client()?;
-            let tag_c = canonicalize_tag(&tag);
-            let (aspect, _actor) = parse_sigils(&tokens)?;
-            let aspect_c = canonicalize_aspect(&aspect);
             let url = format!(
                 "{base}/api/v0/pair?tag={}&aspect={}&random={}",
-                urlencoding::encode(&tag_c),
-                urlencoding::encode(&aspect_c),
+                urlencoding::encode(&thread),
+                urlencoding::encode(&aspect),
                 if random { "true" } else { "false" }
             );
             let resp: PairResponse = expect_json(client.get(url).send().await?).await?;
-            println!("pair:");
-            println!("  {} {}", resp.left, resp.right);
-            println!();
-            if let Some(b) = &resp.left_body {
-                println!("{}:", resp.left);
-                println!("{}", preview_body(b));
-                println!();
-            }
-            if let Some(b) = &resp.right_body {
-                println!("{}:", resp.right);
-                println!("{}", preview_body(b));
-                println!();
-            }
-            println!();
-            println!("next:");
-            // Quote tags because `#` is a shell comment starter.
-            let qtag = shell_quote(&resp.tag);
-            println!(
-                "  npx slugsocial vote {} {} 2:1 {} {} @you \"because ...\"",
-                qtag, resp.left, resp.right, resp.aspect
-            );
-            println!("  npx slugsocial pair {} {}", qtag, resp.aspect);
-            println!("  npx slugsocial rank {} {}", qtag, resp.aspect);
-            println!("  npx slugsocial recent {} {}", qtag, resp.aspect);
-        }
 
-        Command::Vote {
-            tag,
-            a,
-            ratio,
-            b,
-            tokens,
-        } => {
-            let client = http_client()?;
-            let _ = validate_ratio(&ratio)?;
-            let (aspect, actor, mut body) = parse_sigils_and_body(&tokens)?;
-            if body.as_deref().unwrap_or("").trim().is_empty() {
-                // Read from stdin (supports heredoc / piping). This will be empty for interactive TTY.
-                let mut buf = String::new();
-                let _ = std::io::stdin().read_to_string(&mut buf);
-                let b = buf.trim().to_string();
-                if !b.is_empty() {
-                    body = Some(b);
-                }
-            }
-            let body = body.ok_or_else(|| anyhow!(
-                "missing vote explanation.\n\
-Provide it as a trailing argument:\n  npx slugsocial vote '#tag' /a 2:1 /b :default @you \"because ...\"\n\
-or via stdin:\n  printf '%s\\n' 'because ...' | npx slugsocial vote '#tag' /a 2:1 /b :default @you"
-            ))?;
-            let req = VoteRequest {
-                tag: format!("#{}", canonicalize_tag(&tag)),
-                aspect,
-                a: format!("/{}", canonicalize_item(&a)),
-                b: format!("/{}", canonicalize_item(&b)),
-                ratio: Some(ratio),
-                actor,
-                body,
-            };
-            let url = format!("{base}/api/v0/vote");
-            let resp: VoteResponse = expect_json(client.post(url).json(&req).send().await?).await?;
-            if resp.ok {
-                println!("✓ vote recorded");
-                println!();
-                print_ranking(&resp.tag, &resp.aspect, &resp.ranking);
-                print_next(&resp.next);
+            if json {
+                println!("{}", serde_json::to_string_pretty(&resp)?);
             } else {
-                return Err(anyhow!("vote failed"));
+                println!("pair:");
+                println!("  {} {}", resp.left, resp.right);
+                println!();
+                if let Some(b) = &resp.left_body {
+                    println!("{}:", resp.left);
+                    println!("{}", preview_body(b));
+                    println!();
+                }
+                if let Some(b) = &resp.right_body {
+                    println!("{}:", resp.right);
+                    println!("{}", preview_body(b));
+                    println!();
+                }
+                println!();
+                println!("next:");
+                println!("  npx slugsocial pair --thread {} --aspect {}", resp.tag, resp.aspect);
+                println!("  npx slugsocial rank --thread {} --aspect {}", resp.tag, resp.aspect);
+                println!("  npx slugsocial recent --thread {} --aspect {}", resp.tag, resp.aspect);
             }
         }
 
-        Command::Ingest { file, mode } => {
+        Command::Ingest { file, mode, json } => {
             let client = http_client()?;
 
             let mut text = String::new();
@@ -689,21 +580,25 @@ or via stdin:\n  printf '%s\\n' 'because ...' | npx slugsocial vote '#tag' /a 2:
             let url = format!("{base}/api/v0/ingest");
             let resp: IngestResponse = expect_json(client.post(url).json(&req).send().await?).await?;
             if resp.ok {
-                println!("✓ ingested");
-                println!("events: {}", resp.events_appended);
-                if !resp.tags.is_empty() {
-                    println!("tags:");
-                    for t in &resp.tags {
-                        println!("  {t}");
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&resp)?);
+                } else {
+                    println!("✓ ingested");
+                    println!("events: {}", resp.events_appended);
+                    if !resp.tags.is_empty() {
+                        println!("tags:");
+                        for t in &resp.tags {
+                            println!("  {t}");
+                        }
                     }
+                    print_next(&resp.next);
                 }
-                print_next(&resp.next);
             } else {
                 return Err(anyhow!("ingest failed"));
             }
         }
 
-        Command::Check { file, mode } => {
+        Command::Check { file, mode, json } => {
             let client = http_client()?;
 
             let mut text = String::new();
@@ -730,27 +625,31 @@ or via stdin:\n  printf '%s\\n' 'because ...' | npx slugsocial vote '#tag' /a 2:
             let url = format!("{base}/api/v0/check");
             let resp: CheckResponse = expect_json(client.post(url).json(&req).send().await?).await?;
             if resp.ok {
-                println!("✓ check ok (dry-run)");
-                if !resp.tags.is_empty() {
-                    println!("tags:");
-                    for t in &resp.tags {
-                        println!("  {t}");
-                    }
-                }
-                if resp.groups.is_empty() {
-                    println!();
-                    println!("(no ranking groups touched by this doc yet)");
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&resp)?);
                 } else {
-                    for g in &resp.groups {
-                        println!();
-                        print_ranking(&g.tag, &g.aspect, &g.ranking);
+                    println!("✓ check ok (dry-run)");
+                    if !resp.tags.is_empty() {
+                        println!("tags:");
+                        for t in &resp.tags {
+                            println!("  {t}");
+                        }
                     }
-                }
-                if !resp.next.is_empty() {
-                    println!();
-                    println!("next:");
-                    for n in &resp.next {
-                        println!("  {n}");
+                    if resp.groups.is_empty() {
+                        println!();
+                        println!("(no ranking groups touched by this doc yet)");
+                    } else {
+                        for g in &resp.groups {
+                            println!();
+                            print_ranking(&g.tag, &g.aspect, &g.ranking);
+                        }
+                    }
+                    if !resp.next.is_empty() {
+                        println!();
+                        println!("next:");
+                        for n in &resp.next {
+                            println!("  {n}");
+                        }
                     }
                 }
             } else {
@@ -758,41 +657,52 @@ or via stdin:\n  printf '%s\\n' 'because ...' | npx slugsocial vote '#tag' /a 2:
             }
         }
 
-        Command::Tags => {
+        Command::Threads { json } => {
             let client = http_client()?;
             let url = format!("{base}/api/v0/tags");
             let resp: TagsResponse = expect_json(client.get(url).send().await?).await?;
-            print_tags(&resp);
+            if json {
+                println!("{}", serde_json::to_string_pretty(&resp)?);
+            } else {
+                print_tags(&resp);
+            }
         }
 
-        Command::Tag { tag } => {
+        Command::Thread { thread, json } => {
             let client = http_client()?;
-            let tag_c = canonicalize_tag(&tag);
-            let url = format!("{base}/api/v0/tag?tag={}", urlencoding::encode(&tag_c));
+            let url = format!("{base}/api/v0/tag?tag={}", urlencoding::encode(&thread));
             let resp: TagDetailResponse = expect_json(client.get(url).send().await?).await?;
-            print_tag_detail(&resp);
+            if json {
+                println!("{}", serde_json::to_string_pretty(&resp)?);
+            } else {
+                print_tag_detail(&resp);
+            }
         }
 
-        Command::Item { item } => {
+        Command::Item { thread, item, json } => {
             let client = http_client()?;
-            let item_c = canonicalize_item(&item);
-            let url = format!("{base}/api/v0/item?item={}", urlencoding::encode(&item_c));
+            let url = format!("{base}/api/v0/item?item={}", urlencoding::encode(&item));
             let resp: ItemResponse = expect_json(client.get(url).send().await?).await?;
-            print_item(&resp);
+            if json {
+                println!("{}", serde_json::to_string_pretty(&resp)?);
+            } else {
+                print_item(&resp);
+            }
         }
 
-        Command::Recent { tag, tokens } => {
+        Command::Recent { thread, aspect, json } => {
             let client = http_client()?;
-            let tag_c = canonicalize_tag(&tag);
-            let (aspect, _actor) = parse_sigils(&tokens)?;
-            let aspect_c = canonicalize_aspect(&aspect);
             let url = format!(
                 "{base}/api/v0/recent_votes?tag={}&aspect={}",
-                urlencoding::encode(&tag_c),
-                urlencoding::encode(&aspect_c),
+                urlencoding::encode(&thread),
+                urlencoding::encode(&aspect),
             );
             let resp: RecentVotesResponse = expect_json(client.get(url).send().await?).await?;
-            print_recent_votes(&resp);
+            if json {
+                println!("{}", serde_json::to_string_pretty(&resp)?);
+            } else {
+                print_recent_votes(&resp);
+            }
         }
 
         Command::Watch { as_, timeout } => {
