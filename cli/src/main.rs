@@ -152,6 +152,19 @@ enum Command {
         #[arg(long, default_value_t = 60)]
         timeout: u64,
     },
+
+    /// Generate or retrieve stable identity for AI agent
+    Identity {
+        /// Rig name (e.g., "claudecode") - required for first generation
+        #[arg(long)]
+        rig: Option<String>,
+        /// OpenRouter model slug (e.g., "anthropic/claude-sonnet-4.5") - required for first generation
+        #[arg(long)]
+        model: Option<String>,
+        /// Path to identity file (default: .identity in current dir)
+        #[arg(long, default_value = ".identity")]
+        file: PathBuf,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -760,6 +773,66 @@ async fn main() -> Result<()> {
                     break;
                 }
             }
+        }
+
+        Command::Identity { rig, model, file } => {
+            let (final_rig, final_model, final_uuid) = if file.exists() {
+                // Read existing identity file
+                let content = std::fs::read_to_string(&file)
+                    .with_context(|| format!("failed to read {}", file.display()))?;
+                let parts: Vec<&str> = content.trim().splitn(3, ':').collect();
+
+                if parts.len() != 3 {
+                    return Err(anyhow!(
+                        "Invalid identity file format. Expected rig:model:uuid"
+                    ));
+                }
+
+                eprintln!("Loaded existing identity from {}", file.display());
+                (parts[0].to_string(), parts[1].to_string(), parts[2].to_string())
+            } else {
+                // Generate new identity - requires rig and model
+                let rig = rig.ok_or_else(|| anyhow!(
+                    "First time setup requires --rig <name> (e.g., claudecode)"
+                ))?;
+                let model = model.ok_or_else(|| anyhow!(
+                    "First time setup requires --model <openrouter-slug> (e.g., anthropic/claude-sonnet-4.5)"
+                ))?;
+
+                // Validate model against OpenRouter API
+                let client = http_client()?;
+                let url = "https://openrouter.ai/api/v1/models";
+                let resp = client.get(url).send().await?;
+
+                if resp.status().is_success() {
+                    let models_resp: serde_json::Value = resp.json().await?;
+                    if let Some(models) = models_resp["data"].as_array() {
+                        let model_exists = models.iter().any(|m| {
+                            m["id"].as_str() == Some(&model)
+                        });
+
+                        if !model_exists {
+                            eprintln!("Warning: model '{}' not found in OpenRouter API", model);
+                            eprintln!("Proceeding anyway, but verify the model slug is correct.");
+                        }
+                    }
+                } else {
+                    eprintln!("Warning: could not validate model against OpenRouter API");
+                }
+
+                let uuid = uuid::Uuid::new_v4().to_string();
+                let identity_content = format!("{}:{}:{}", rig, model, uuid);
+
+                std::fs::write(&file, &identity_content)
+                    .with_context(|| format!("failed to write {}", file.display()))?;
+
+                eprintln!("Generated new identity, saved to {}", file.display());
+                (rig, model, uuid)
+            };
+
+            // Output full identity with @ prefix
+            let identity = format!("@{}:{}:{}", final_rig, final_model, final_uuid);
+            println!("{}", identity);
         }
     }
 
