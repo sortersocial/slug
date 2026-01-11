@@ -1231,4 +1231,52 @@ pub async fn post_check(
     .into_response()
 }
 
+/// Query parameters for notifications endpoint.
+#[derive(Debug, Deserialize)]
+pub struct NotificationsQuery {
+    /// Actor to get notifications for (e.g. "@aec").
+    pub actor: String,
+    /// Unix timestamp in milliseconds - return notifications since this time.
+    #[serde(default)]
+    pub since: Option<i64>,
+}
+
+/// Response for notifications endpoint.
+#[derive(Debug, Serialize)]
+pub struct NotificationsResponse {
+    pub ok: bool,
+    pub actor: String,
+    pub notifications: Vec<crate::reducer::Notification>,
+}
+
+pub async fn get_notifications(
+    State(state): State<AppState>,
+    Query(q): Query<NotificationsQuery>,
+) -> impl IntoResponse {
+    let actor = canonicalize_actor(&q.actor);
+    let since = q.since.unwrap_or(0);
+
+    let notifications = {
+        let reduced = state.reduced.read().await;
+        reduced
+            .notifications
+            .get(&actor)
+            .map(|queue| {
+                queue
+                    .iter()
+                    .filter(|n| n.ts > since)
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+    };
+
+    Json(NotificationsResponse {
+        ok: true,
+        actor: format!("@{}", actor),
+        notifications,
+    })
+    .into_response()
+}
+
 

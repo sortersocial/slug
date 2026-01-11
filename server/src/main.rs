@@ -91,6 +91,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/v0/check", axum::routing::post(api::post_check))
         .route("/api/v0/pair", get(api::get_pair))
         .route("/api/v0/rank", get(api::get_rank))
+        .route("/api/v0/notifications", get(api::get_notifications))
         .with_state(state)
         .layer(TraceLayer::new_for_http());
 
