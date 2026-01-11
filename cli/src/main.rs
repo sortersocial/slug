@@ -100,6 +100,16 @@ enum Command {
         #[arg(value_name = "TOKENS", trailing_var_arg = true)]
         tokens: Vec<String>,
     },
+
+    /// Watch for notifications (blocks until new notification or timeout)
+    Watch {
+        /// Actor to watch notifications for (e.g. "@aec")
+        #[arg(long, value_name = "ACTOR")]
+        as_: String,
+        /// Timeout in seconds (default: 60)
+        #[arg(long, default_value_t = 60)]
+        timeout: u64,
+    },
 }
 
 #[derive(Debug, Serialize)]
@@ -196,6 +206,30 @@ struct VoteRow {
     ratio: String,
     actor: Option<String>,
     body: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct NotificationsResponse {
+    ok: bool,
+    actor: String,
+    notifications: Vec<Notification>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum NotificationType {
+    ItemVotedOn { item: String },
+    ItemCountered { item: String },
+    IngestQuoted { ingest_id: String },
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct Notification {
+    ts: i64,
+    ingest_id: String,
+    actor: String,
+    #[serde(flatten)]
+    notification_type: NotificationType,
 }
 
 #[derive(Debug, Deserialize)]
@@ -756,6 +790,54 @@ or via stdin:\n  printf '%s\\n' 'because ...' | npx slugsocial vote '#tag' /a 2:
             );
             let resp: RecentVotesResponse = expect_json(client.get(url).send().await?).await?;
             print_recent_votes(&resp);
+        }
+
+        Command::Watch { as_, timeout } => {
+            let client = http_client()?;
+            let actor_c = canonicalize_actor(&as_);
+
+            // Get current notifications to establish baseline
+            let url = format!(
+                "{base}/api/v0/notifications?actor={}&since=0",
+                urlencoding::encode(&actor_c)
+            );
+            let initial: NotificationsResponse = expect_json(client.get(url).send().await?).await?;
+            let initial_count = initial.notifications.len();
+
+            // Poll until new notification or timeout
+            let start = std::time::Instant::now();
+            let timeout_duration = std::time::Duration::from_secs(timeout);
+
+            eprintln!("watching {} for notifications (timeout: {}s)...", as_, timeout);
+
+            loop {
+                if start.elapsed() >= timeout_duration {
+                    eprintln!("timeout reached, no new notifications");
+                    std::process::exit(1);
+                }
+
+                // Poll every 2 seconds
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+                let url = format!(
+                    "{base}/api/v0/notifications?actor={}&since=0",
+                    urlencoding::encode(&actor_c)
+                );
+                let current: NotificationsResponse = expect_json(client.get(url).send().await?).await?;
+
+                if current.notifications.len() > initial_count {
+                    // New notifications!
+                    let new_notifications: Vec<&Notification> = current.notifications
+                        .iter()
+                        .take(current.notifications.len() - initial_count)
+                        .collect();
+
+                    for notif in new_notifications {
+                        println!("{}", serde_json::to_string_pretty(notif)?);
+                    }
+                    break;
+                }
+            }
         }
     }
 
