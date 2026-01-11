@@ -114,15 +114,13 @@ impl GroupState {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum NotificationType {
-    /// Someone voted against your position on an item (THE HOOK).
-    ItemCountered {
-        item: String,
-        opponent: String,
-        body: String,
-        ratio: String,
+    /// Activity in a thread you're subscribed to.
+    ThreadActivity {
+        thread: String,
+        activity: String, // "vote" or "ingest"
+        actor: String,
+        details: String, // vote body or ingest snippet
     },
-    /// Someone referenced your ingest in their document.
-    IngestQuoted { ingest_id: String },
 }
 
 /// A notification for an actor about activity related to their contributions.
@@ -147,10 +145,9 @@ pub struct ReducerState {
     pub item_bodies: HashMap<String, String>,
     pub ingests_by_tag: HashMap<String, VecDeque<DslIngested>>,
 
-    /// Track edge stances for counter-detection: (item_a, item_b) -> (actor -> direction)
-    /// where item_a < item_b lexicographically (normalized).
-    /// direction: 1 = prefers item_a, -1 = prefers item_b, 0 = tie
-    pub edge_stances: HashMap<(String, String), HashMap<String, i8>>,
+    /// Track thread subscriptions: thread -> set(actor)
+    /// Actors are subscribed when they vote or ingest in a thread.
+    pub thread_subscriptions: HashMap<String, HashSet<String>>,
 
     /// Pending notifications per actor (last 100 per actor).
     pub notifications: HashMap<String, VecDeque<Notification>>, // actor -> queue
@@ -162,47 +159,34 @@ impl ReducerState {
             Event::VoteCast(v) => {
                 let tag = canonicalize_tag(&v.tag);
                 let aspect = canonicalize_aspect(&v.aspect);
-                let a_canon = canonicalize_item(&v.a);
-                let b_canon = canonicalize_item(&v.b);
 
-                // Counter-detection: normalize edge and determine direction
+                // Thread subscription and notification
                 if let Some(actor) = &v.actor {
                     let actor_canon = canonicalize_actor(actor);
 
-                    // Normalize: ensure u < w lexicographically
-                    let (u, w, sign) = if a_canon < b_canon {
-                        (a_canon.clone(), b_canon.clone(), 1i8) // prefers a
-                    } else {
-                        (b_canon.clone(), a_canon.clone(), -1i8) // prefers b
-                    };
+                    // Get current subscribers before adding this one
+                    let subscribers = self
+                        .thread_subscriptions
+                        .get(&tag)
+                        .cloned()
+                        .unwrap_or_default();
 
-                    // Check for existing stances on this edge
-                    let stances = self.edge_stances.entry((u.clone(), w.clone())).or_default();
-
-                    for (other_actor, other_sign) in stances.iter() {
-                        // If they voted opposite to us, notify them (THE HOOK)
-                        if *other_sign == -sign && other_actor != &actor_canon {
-                            let countered_item = if *other_sign == 1 {
-                                u.clone()
-                            } else {
-                                w.clone()
-                            };
-
-                            let ratio_str = format!("{}:{}", v.ratio_left, v.ratio_right);
-
+                    // Notify all current subscribers (except self)
+                    for subscriber in subscribers.iter() {
+                        if subscriber != &actor_canon {
                             let notification = Notification {
                                 ts: v.ts,
                                 ingest_id: String::new(),
                                 actor: actor_canon.clone(),
-                                notification_type: NotificationType::ItemCountered {
-                                    item: countered_item,
-                                    opponent: actor_canon.clone(),
-                                    body: v.body.clone(),
-                                    ratio: ratio_str,
+                                notification_type: NotificationType::ThreadActivity {
+                                    thread: format!("#{}", tag),
+                                    activity: "vote".to_string(),
+                                    actor: actor_canon.clone(),
+                                    details: v.body.clone(),
                                 },
                             };
 
-                            let queue = self.notifications.entry(other_actor.clone()).or_default();
+                            let queue = self.notifications.entry(subscriber.clone()).or_default();
                             queue.push_front(notification);
                             while queue.len() > 100 {
                                 queue.pop_back();
@@ -210,8 +194,11 @@ impl ReducerState {
                         }
                     }
 
-                    // Record this actor's stance
-                    stances.insert(actor_canon, sign);
+                    // Subscribe this actor to the thread
+                    self.thread_subscriptions
+                        .entry(tag.clone())
+                        .or_default()
+                        .insert(actor_canon);
                 }
 
                 let key = GroupKey { tag, aspect };
@@ -248,6 +235,48 @@ impl ReducerState {
                         _ => None,
                     })
                     .collect();
+
+                // Create ingest snippet for notifications
+                let snippet = ing.raw.chars().take(200).collect::<String>();
+
+                // Thread subscription and notification for each tag
+                for tag in &extracted_tags {
+                    // Get current subscribers before adding this one
+                    let subscribers = self
+                        .thread_subscriptions
+                        .get(tag)
+                        .cloned()
+                        .unwrap_or_default();
+
+                    // Notify all current subscribers (except self)
+                    for subscriber in subscribers.iter() {
+                        if subscriber != &ing.actor {
+                            let notification = Notification {
+                                ts: ing.ts,
+                                ingest_id: ing.id.clone(),
+                                actor: ing.actor.clone(),
+                                notification_type: NotificationType::ThreadActivity {
+                                    thread: format!("#{}", tag),
+                                    activity: "ingest".to_string(),
+                                    actor: ing.actor.clone(),
+                                    details: snippet.clone(),
+                                },
+                            };
+
+                            let queue = self.notifications.entry(subscriber.clone()).or_default();
+                            queue.push_front(notification);
+                            while queue.len() > 100 {
+                                queue.pop_back();
+                            }
+                        }
+                    }
+
+                    // Subscribe this actor to the thread
+                    self.thread_subscriptions
+                        .entry(tag.clone())
+                        .or_default()
+                        .insert(ing.actor.clone());
+                }
 
                 // Index ingest by extracted tags.
                 for tag in extracted_tags {

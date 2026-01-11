@@ -218,14 +218,11 @@ struct NotificationsResponse {
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum NotificationType {
-    ItemCountered {
-        item: String,
-        opponent: String,
-        body: String,
-        ratio: String,
-    },
-    IngestQuoted {
-        ingest_id: String,
+    ThreadActivity {
+        thread: String,
+        activity: String,
+        actor: String,
+        details: String,
     },
 }
 
