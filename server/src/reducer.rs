@@ -114,10 +114,13 @@ impl GroupState {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum NotificationType {
-    /// Someone voted on an item you created.
-    ItemVotedOn { item: String },
-    /// Someone voted against your position on an item.
-    ItemCountered { item: String },
+    /// Someone voted against your position on an item (THE HOOK).
+    ItemCountered {
+        item: String,
+        opponent: String,
+        body: String,
+        ratio: String,
+    },
     /// Someone referenced your ingest in their document.
     IngestQuoted { ingest_id: String },
 }
@@ -144,10 +147,11 @@ pub struct ReducerState {
     pub item_bodies: HashMap<String, String>,
     pub ingests_by_tag: HashMap<String, VecDeque<DslIngested>>,
 
-    /// Track who created which items (for notifications).
-    pub item_creators: HashMap<String, String>, // item -> actor
-    /// Track all actors who have voted on each item (for counter-notifications).
-    pub item_voters: HashMap<String, HashSet<String>>, // item -> set(actor)
+    /// Track edge stances for counter-detection: (item_a, item_b) -> (actor -> direction)
+    /// where item_a < item_b lexicographically (normalized).
+    /// direction: 1 = prefers item_a, -1 = prefers item_b, 0 = tie
+    pub edge_stances: HashMap<(String, String), HashMap<String, i8>>,
+
     /// Pending notifications per actor (last 100 per actor).
     pub notifications: HashMap<String, VecDeque<Notification>>, // actor -> queue
 }
@@ -161,39 +165,53 @@ impl ReducerState {
                 let a_canon = canonicalize_item(&v.a);
                 let b_canon = canonicalize_item(&v.b);
 
-                // Track that this actor voted on these items.
+                // Counter-detection: normalize edge and determine direction
                 if let Some(actor) = &v.actor {
                     let actor_canon = canonicalize_actor(actor);
-                    self.item_voters
-                        .entry(a_canon.clone())
-                        .or_default()
-                        .insert(actor_canon.clone());
-                    self.item_voters
-                        .entry(b_canon.clone())
-                        .or_default()
-                        .insert(actor_canon.clone());
 
-                    // Notify item creators that their item was voted on.
-                    for item in [&a_canon, &b_canon] {
-                        if let Some(creator) = self.item_creators.get(item) {
-                            // Don't notify self.
-                            if creator != &actor_canon {
-                                let notification = Notification {
-                                    ts: v.ts,
-                                    ingest_id: String::new(), // Vote doesn't have ingest ID
-                                    actor: actor_canon.clone(),
-                                    notification_type: NotificationType::ItemVotedOn {
-                                        item: item.clone(),
-                                    },
-                                };
-                                let queue = self.notifications.entry(creator.clone()).or_default();
-                                queue.push_front(notification);
-                                while queue.len() > 100 {
-                                    queue.pop_back();
-                                }
+                    // Normalize: ensure u < w lexicographically
+                    let (u, w, sign) = if a_canon < b_canon {
+                        (a_canon.clone(), b_canon.clone(), 1i8) // prefers a
+                    } else {
+                        (b_canon.clone(), a_canon.clone(), -1i8) // prefers b
+                    };
+
+                    // Check for existing stances on this edge
+                    let stances = self.edge_stances.entry((u.clone(), w.clone())).or_default();
+
+                    for (other_actor, other_sign) in stances.iter() {
+                        // If they voted opposite to us, notify them (THE HOOK)
+                        if *other_sign == -sign && other_actor != &actor_canon {
+                            let countered_item = if *other_sign == 1 {
+                                u.clone()
+                            } else {
+                                w.clone()
+                            };
+
+                            let ratio_str = format!("{}:{}", v.ratio_left, v.ratio_right);
+
+                            let notification = Notification {
+                                ts: v.ts,
+                                ingest_id: String::new(),
+                                actor: actor_canon.clone(),
+                                notification_type: NotificationType::ItemCountered {
+                                    item: countered_item,
+                                    opponent: actor_canon.clone(),
+                                    body: v.body.clone(),
+                                    ratio: ratio_str,
+                                },
+                            };
+
+                            let queue = self.notifications.entry(other_actor.clone()).or_default();
+                            queue.push_front(notification);
+                            while queue.len() > 100 {
+                                queue.pop_back();
                             }
                         }
                     }
+
+                    // Record this actor's stance
+                    stances.insert(actor_canon, sign);
                 }
 
                 let key = GroupKey { tag, aspect };
@@ -220,7 +238,7 @@ impl ReducerState {
                 // Canonicalize actor for indexing.
                 ing.actor = canonicalize_actor(&ing.actor);
 
-                // Extract tags and items by parsing raw content (single source of truth).
+                // Extract tags by parsing raw content (single source of truth).
                 let doc = crate::dsl::parse_full(&ing.raw);
                 let extracted_tags: Vec<String> = doc
                     .statements
@@ -230,17 +248,6 @@ impl ReducerState {
                         _ => None,
                     })
                     .collect();
-
-                // Track item creators from this ingest.
-                for stmt in &doc.statements {
-                    if let crate::dsl::Stmt::Item { title, .. } = stmt {
-                        let item = canonicalize_item(title);
-                        // Record this actor as the creator (first one wins).
-                        self.item_creators
-                            .entry(item)
-                            .or_insert_with(|| ing.actor.clone());
-                    }
-                }
 
                 // Index ingest by extracted tags.
                 for tag in extracted_tags {

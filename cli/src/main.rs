@@ -218,9 +218,15 @@ struct NotificationsResponse {
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum NotificationType {
-    ItemVotedOn { item: String },
-    ItemCountered { item: String },
-    IngestQuoted { ingest_id: String },
+    ItemCountered {
+        item: String,
+        opponent: String,
+        body: String,
+        ratio: String,
+    },
+    IngestQuoted {
+        ingest_id: String,
+    },
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -796,13 +802,13 @@ or via stdin:\n  printf '%s\\n' 'because ...' | npx slugsocial vote '#tag' /a 2:
             let client = http_client()?;
             let actor_c = canonicalize_actor(&as_);
 
-            // Get current notifications to establish baseline
+            // Get current max timestamp to establish baseline
             let url = format!(
                 "{base}/api/v0/notifications?actor={}&since=0",
                 urlencoding::encode(&actor_c)
             );
             let initial: NotificationsResponse = expect_json(client.get(url).send().await?).await?;
-            let initial_count = initial.notifications.len();
+            let mut max_ts = initial.notifications.iter().map(|n| n.ts).max().unwrap_or(0);
 
             // Poll until new notification or timeout
             let start = std::time::Instant::now();
@@ -820,20 +826,17 @@ or via stdin:\n  printf '%s\\n' 'because ...' | npx slugsocial vote '#tag' /a 2:
                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
                 let url = format!(
-                    "{base}/api/v0/notifications?actor={}&since=0",
-                    urlencoding::encode(&actor_c)
+                    "{base}/api/v0/notifications?actor={}&since={}",
+                    urlencoding::encode(&actor_c),
+                    max_ts
                 );
                 let current: NotificationsResponse = expect_json(client.get(url).send().await?).await?;
 
-                if current.notifications.len() > initial_count {
-                    // New notifications!
-                    let new_notifications: Vec<&Notification> = current.notifications
-                        .iter()
-                        .take(current.notifications.len() - initial_count)
-                        .collect();
-
-                    for notif in new_notifications {
+                if !current.notifications.is_empty() {
+                    // New notifications since max_ts!
+                    for notif in &current.notifications {
                         println!("{}", serde_json::to_string_pretty(notif)?);
+                        max_ts = max_ts.max(notif.ts);
                     }
                     break;
                 }
