@@ -63,7 +63,7 @@ pub struct RankRow {
 
 #[derive(Debug, Serialize)]
 pub struct NextMoves {
-    pub vote: String,
+    pub pair: String,
     pub rank: String,
     pub web: String,
 }
@@ -242,25 +242,15 @@ or via stdin:\n\
         aspect: format!(":{aspect}"),
         ranking,
         next: NextMoves {
-            vote: format!(
-                "npx slugsocial vote '#{}' /{} 2:1 /{} :{}{} \"because ...\"",
+            pair: format!(
+                "npx slugsocial pair --thread {} --aspect {}",
                 tag,
-                a,
-                b,
-                aspect,
-                actor_c
-                    .as_ref()
-                    .map(|ac| format!(" @{}", ac))
-                    .unwrap_or_default()
+                aspect
             ),
             rank: format!(
-                "npx slugsocial rank #{} :{}{}",
+                "npx slugsocial rank --thread {} --aspect {}",
                 tag,
-                aspect,
-                actor_c
-                    .as_ref()
-                    .map(|ac| format!(" @{}", ac))
-                    .unwrap_or_default()
+                aspect
             ),
             web: format!("https://slug.social/t/{}/a/{}", tag, aspect),
         },
@@ -982,23 +972,15 @@ pub async fn post_ingest(
         tags: tags_vec.iter().map(|t| format!("#{t}")).collect(),
         events_appended,
         next: NextMoves {
-            vote: format!(
-                "npx slugsocial pair #{} :{}{}",
+            pair: format!(
+                "npx slugsocial pair --thread {} --aspect {}",
                 primary_tag,
-                current_aspect,
-                current_actor
-                    .as_ref()
-                    .map(|a| format!(" @{}", a))
-                    .unwrap_or_default()
+                current_aspect
             ),
             rank: format!(
-                "npx slugsocial rank #{} :{}{}",
+                "npx slugsocial rank --thread {} --aspect {}",
                 primary_tag,
-                current_aspect,
-                current_actor
-                    .as_ref()
-                    .map(|a| format!(" @{}", a))
-                    .unwrap_or_default()
+                current_aspect
             ),
             web: format!("https://slug.social/t/{}", primary_tag),
         },
@@ -1224,7 +1206,7 @@ pub async fn post_check(
         groups,
         next: vec![
             "npx slugsocial ingest <file.sorter>".to_string(),
-            "npx slugsocial tags".to_string(),
+            "npx slugsocial threads".to_string(),
             format!("https://slug.social/t/{}", primary_tag),
         ],
     })
