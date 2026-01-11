@@ -3,14 +3,27 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use serde::{Deserialize, Serialize};
 
 use crate::events::{
-    canonicalize_actor, canonicalize_aspect, canonicalize_item, canonicalize_tag, DslIngested, Event,
-    VoteCast,
+    canonicalize_actor, canonicalize_aspect, canonicalize_item, canonicalize_tag, Event, Ingest,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct GroupKey {
     pub tag: String,
     pub aspect: String,
+}
+
+/// Parsed vote data (not an event - just internal representation).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct VoteData {
+    pub ts: i64,
+    pub tag: String,
+    pub aspect: String,
+    pub a: String,
+    pub b: String,
+    pub ratio_left: i32,
+    pub ratio_right: i32,
+    pub body: String,
+    pub actor: String,
 }
 
 #[derive(Debug, Clone)]
@@ -32,7 +45,7 @@ pub struct GroupState {
     pub dirty: bool,
     pub cached_scores: Vec<f64>,
 
-    pub recent_votes: VecDeque<VoteCast>,
+    pub recent_votes: VecDeque<VoteData>,
 }
 
 impl GroupState {
@@ -68,13 +81,13 @@ impl GroupState {
         self.dirty = true;
     }
 
-    pub fn apply_vote(&mut self, mut vote: VoteCast) {
+    pub fn apply_vote(&mut self, mut vote: VoteData) {
         // Canonicalize identifiers.
         vote.tag = canonicalize_tag(&vote.tag);
         vote.aspect = canonicalize_aspect(&vote.aspect);
         vote.a = canonicalize_item(&vote.a);
         vote.b = canonicalize_item(&vote.b);
-        vote.actor = vote.actor.as_ref().map(|a| canonicalize_actor(a));
+        vote.actor = canonicalize_actor(&vote.actor);
         if vote.ratio_left < 0 {
             vote.ratio_left = 0;
         }
@@ -143,7 +156,7 @@ pub struct ReducerState {
     pub items: HashSet<String>,
     pub tags: HashMap<String, HashSet<String>>, // tag -> set(item)
     pub item_bodies: HashMap<String, String>,
-    pub ingests_by_tag: HashMap<String, VecDeque<DslIngested>>,
+    pub ingests_by_tag: HashMap<String, VecDeque<Ingest>>,
 
     /// Track thread subscriptions: thread -> set(actor)
     /// Actors are subscribed when they vote or ingest in a thread.
@@ -156,77 +169,19 @@ pub struct ReducerState {
 impl ReducerState {
     pub fn apply_event(&mut self, event: Event) {
         match event {
-            Event::VoteCast(v) => {
-                let tag = canonicalize_tag(&v.tag);
-                let aspect = canonicalize_aspect(&v.aspect);
-
-                // Thread subscription and notification
-                if let Some(actor) = &v.actor {
-                    let actor_canon = canonicalize_actor(actor);
-
-                    // Get current subscribers before adding this one
-                    let subscribers = self
-                        .thread_subscriptions
-                        .get(&tag)
-                        .cloned()
-                        .unwrap_or_default();
-
-                    // Notify all current subscribers (except self)
-                    for subscriber in subscribers.iter() {
-                        if subscriber != &actor_canon {
-                            let notification = Notification {
-                                ts: v.ts,
-                                ingest_id: String::new(),
-                                actor: actor_canon.clone(),
-                                notification_type: NotificationType::ThreadActivity {
-                                    thread: format!("#{}", tag),
-                                    activity: "vote".to_string(),
-                                    actor: actor_canon.clone(),
-                                    details: v.body.clone(),
-                                },
-                            };
-
-                            let queue = self.notifications.entry(subscriber.clone()).or_default();
-                            queue.push_front(notification);
-                            while queue.len() > 100 {
-                                queue.pop_back();
-                            }
-                        }
-                    }
-
-                    // Subscribe this actor to the thread
-                    self.thread_subscriptions
-                        .entry(tag.clone())
-                        .or_default()
-                        .insert(actor_canon);
-                }
-
-                let key = GroupKey { tag, aspect };
-                let group = self
-                    .groups
-                    .entry(key.clone())
-                    .or_insert_with(|| GroupState::new(key.tag.clone(), key.aspect.clone()));
-                group.apply_vote(v);
-            }
-            Event::ItemUpsert(item) => {
-                let item_id = canonicalize_item(&item.item);
-                self.items.insert(item_id.clone());
-                if let Some(body) = item.body {
-                    self.item_bodies.insert(item_id, body);
-                }
-            }
-            Event::TagAdd(t) => {
-                let tag = canonicalize_tag(&t.tag);
-                let item = canonicalize_item(&t.item);
-                self.items.insert(item.clone());
-                self.tags.entry(tag).or_default().insert(item);
-            }
-            Event::DslIngested(mut ing) => {
+            Event::Ingest(mut ing) => {
                 // Canonicalize actor for indexing.
                 ing.actor = canonicalize_actor(&ing.actor);
 
-                // Extract tags by parsing raw content (single source of truth).
+                // Parse DSL to extract all statements.
                 let doc = crate::dsl::parse_full(&ing.raw);
+
+                // Track current context for parsing.
+                let mut current_tag: Option<String> = None;
+                let mut current_aspect: String = "default".to_string();
+                let mut current_actor: Option<String> = Some(ing.actor.clone());
+
+                // Extract tags for notification/indexing.
                 let extracted_tags: Vec<String> = doc
                     .statements
                     .iter()
@@ -236,19 +191,98 @@ impl ReducerState {
                     })
                     .collect();
 
-                // Create ingest snippet for notifications
-                let snippet = ing.raw.chars().take(200).collect::<String>();
+                // Process each statement.
+                for stmt in doc.statements {
+                    match stmt {
+                        crate::dsl::Stmt::Hashtag { name } => {
+                            current_tag = Some(canonicalize_tag(&name));
+                        }
+                        crate::dsl::Stmt::Attribute { name } => {
+                            current_aspect = canonicalize_aspect(&name);
+                        }
+                        crate::dsl::Stmt::Actor { name } => {
+                            current_actor = Some(canonicalize_actor(&name));
+                        }
+                        crate::dsl::Stmt::Item { title, body } => {
+                            let item = canonicalize_item(&title);
+                            self.items.insert(item.clone());
 
-                // Thread subscription and notification for each tag
+                            // Store body if provided.
+                            if let Some(body_text) = body {
+                                if !body_text.trim().is_empty() {
+                                    self.item_bodies.insert(item.clone(), body_text);
+                                }
+                            }
+
+                            // Add to tag if context exists.
+                            if let Some(ref tag) = current_tag {
+                                self.tags
+                                    .entry(tag.clone())
+                                    .or_default()
+                                    .insert(item.clone());
+                            }
+                        }
+                        crate::dsl::Stmt::Vote {
+                            item1,
+                            item2,
+                            ratio_left,
+                            ratio_right,
+                            explanation,
+                        } => {
+                            if let Some(ref tag) = current_tag {
+                                let actor = current_actor.clone().unwrap_or_else(|| ing.actor.clone());
+                                let vote = VoteData {
+                                    ts: ing.ts,
+                                    tag: tag.clone(),
+                                    aspect: current_aspect.clone(),
+                                    a: canonicalize_item(&item1),
+                                    b: canonicalize_item(&item2),
+                                    ratio_left,
+                                    ratio_right,
+                                    body: explanation,
+                                    actor,
+                                };
+
+                                // Ensure items exist under tag.
+                                self.items.insert(vote.a.clone());
+                                self.items.insert(vote.b.clone());
+                                self.tags
+                                    .entry(tag.clone())
+                                    .or_default()
+                                    .insert(vote.a.clone());
+                                self.tags
+                                    .entry(tag.clone())
+                                    .or_default()
+                                    .insert(vote.b.clone());
+
+                                // Apply to group.
+                                let key = GroupKey {
+                                    tag: tag.clone(),
+                                    aspect: current_aspect.clone(),
+                                };
+                                let group = self.groups.entry(key.clone()).or_insert_with(|| {
+                                    GroupState::new(key.tag.clone(), key.aspect.clone())
+                                });
+                                group.apply_vote(vote);
+                            }
+                        }
+                        crate::dsl::Stmt::Prose { .. } | crate::dsl::Stmt::Email { .. } => {
+                            // Ignore prose and email.
+                        }
+                    }
+                }
+
+                // Thread subscription and notification for each extracted tag.
+                let snippet = ing.raw.chars().take(200).collect::<String>();
                 for tag in &extracted_tags {
-                    // Get current subscribers before adding this one
+                    // Get current subscribers before adding this one.
                     let subscribers = self
                         .thread_subscriptions
                         .get(tag)
                         .cloned()
                         .unwrap_or_default();
 
-                    // Notify all current subscribers (except self)
+                    // Notify all current subscribers (except self).
                     for subscriber in subscribers.iter() {
                         if subscriber != &ing.actor {
                             let notification = Notification {
@@ -271,7 +305,7 @@ impl ReducerState {
                         }
                     }
 
-                    // Subscribe this actor to the thread
+                    // Subscribe this actor to the thread.
                     self.thread_subscriptions
                         .entry(tag.clone())
                         .or_default()

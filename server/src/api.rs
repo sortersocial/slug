@@ -1,5 +1,4 @@
 use axum::{
-    extract::rejection::JsonRejection,
     extract::{Query, State},
     http::StatusCode,
     response::IntoResponse,
@@ -11,7 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
     dsl,
-    events::{canonicalize_actor, canonicalize_aspect, canonicalize_item, canonicalize_tag, Event, VoteCast},
+    events::{canonicalize_actor, canonicalize_aspect, canonicalize_item, canonicalize_tag, Event},
     ranking::ranked_items,
     reducer::GroupKey,
     state::AppState,
@@ -139,6 +138,9 @@ fn validate_actor_format(actor: &str) -> Result<(), String> {
     Ok(())
 }
 
+// REMOVED: post_vote endpoint - use ingest instead.
+// All votes should be submitted via npx slugsocial ingest with .sorter documents.
+/*
 pub async fn post_vote(
     State(state): State<AppState>,
     _headers: axum::http::HeaderMap,
@@ -330,6 +332,7 @@ or via stdin:\n\
 
     Json(resp).into_response()
 }
+*/
 
 #[derive(Debug, Deserialize)]
 pub struct RankQuery {
@@ -785,7 +788,7 @@ pub async fn get_recent_votes(
             a: format!("/{}", v.a),
             b: format!("/{}", v.b),
             ratio: format!("{}:{}", v.ratio_left, v.ratio_right),
-            actor: v.actor.as_ref().map(|a| format!("@{a}")),
+            actor: Some(format!("@{}", v.actor)),
             body: v.body.clone(),
         });
     }
@@ -863,16 +866,14 @@ pub async fn post_ingest(
     let mut current_aspect: String = "default".to_string();
     let ts = now_ms();
 
-    let mut events: Vec<Event> = Vec::new();
     let mut tags_seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     let mut defined_in_doc: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-    for s in doc.statements {
+    // Parse once for validation and metadata extraction.
+    for s in &doc.statements {
         match s {
-            dsl::Stmt::Prose { .. } => {}
-            dsl::Stmt::Email { .. } => {}
             dsl::Stmt::Actor { name } => {
-                // Validate actor format
+                // Validate actor format.
                 if let Err(msg) = validate_actor_format(&name) {
                     return api_error(StatusCode::BAD_REQUEST, "invalid actor format", Some(msg));
                 }
@@ -890,57 +891,41 @@ pub async fn post_ingest(
             }
             dsl::Stmt::Item { title, body } => {
                 let item = canonicalize_item(&title);
-                let Some(body) = body else {
+                let Some(body_text) = body else {
                     return api_error(
                         StatusCode::BAD_REQUEST,
                         format!("item missing body: /{item}"),
                         Some("items must be declared with bodies, e.g. `/item { ... }`".to_string()),
                     );
                 };
-                if body.trim().is_empty() {
+                if body_text.trim().is_empty() {
                     return api_error(
                         StatusCode::BAD_REQUEST,
                         format!("item body is empty: /{item}"),
                         Some("write at least one sentence inside `{ ... }`".to_string()),
                     );
                 }
-                events.push(Event::ItemUpsert(crate::events::ItemUpsert {
-                    ts,
-                    item: item.clone(),
-                    body: Some(body),
-                }));
                 defined_in_doc.insert(item.clone());
-                if let Some(tag) = current_tag.clone() {
-                    events.push(Event::TagAdd(crate::events::TagAdd {
-                        ts,
-                        tag: tag.clone(),
-                        item: item.clone(),
-                    }));
-                }
             }
             dsl::Stmt::Vote {
                 item1,
                 item2,
-                ratio_left,
-                ratio_right,
-                explanation,
+                ..
             } => {
-                let Some(tag) = current_tag.clone() else {
+                let Some(ref tag) = current_tag else {
                     return api_error(
                         StatusCode::BAD_REQUEST,
                         "vote requires an active #tag context",
                         Some("add a `#tag` line before any votes".to_string()),
                     );
                 };
-                let aspect = current_aspect.clone();
                 let a = canonicalize_item(&item1);
                 let b = canonicalize_item(&item2);
 
-                // Enforce: items must already be defined (earlier in the doc or in existing state),
-                // and must have bodies.
+                // Validate items exist and have bodies.
                 {
                     let reduced = state.reduced.read().await;
-                    let items_in_tag = reduced.tags.get(&tag);
+                    let items_in_tag = reduced.tags.get(tag);
                     let mut missing: Vec<String> = Vec::new();
                     for it in [&a, &b] {
                         let ok_in_doc = defined_in_doc.contains(it);
@@ -978,31 +963,8 @@ pub async fn post_ingest(
                         );
                     }
                 }
-
-                events.push(Event::VoteCast(VoteCast {
-                    ts,
-                    tag: tag.clone(),
-                    aspect,
-                    a: a.clone(),
-                    b: b.clone(),
-                    ratio_left,
-                    ratio_right,
-                    body: explanation,
-                    voter_key_id: voter_key_id.clone(),
-                    actor: current_actor.clone(),
-                }));
-                // Ensure both items exist under the tag (helps /pair pool).
-                events.push(Event::TagAdd(crate::events::TagAdd {
-                    ts,
-                    tag: tag.clone(),
-                    item: a.clone(),
-                }));
-                events.push(Event::TagAdd(crate::events::TagAdd {
-                    ts,
-                    tag,
-                    item: b.clone(),
-                }));
             }
+            _ => {}
         }
     }
 
@@ -1016,27 +978,23 @@ pub async fn post_ingest(
     };
 
     let tags_vec: Vec<String> = tags_seen.into_iter().collect();
-    events.push(Event::DslIngested(crate::events::DslIngested {
+
+    // Create single Ingest event - all parsing happens in reducer.
+    let event = Event::Ingest(crate::events::Ingest {
         ts,
         id: uuid::Uuid::new_v4().to_string(),
         raw: req.text.clone(),
         voter_key_id: voter_key_id.clone(),
         actor,
-    }));
-
-    let events_appended = events.len();
+    });
 
     // Persist then reduce.
-    for ev in &events {
-        if let Err(err) = state.event_log.append(ev).await {
-            return api_error(StatusCode::INTERNAL_SERVER_ERROR, format!("{err}"), None);
-        }
+    if let Err(err) = state.event_log.append(&event).await {
+        return api_error(StatusCode::INTERNAL_SERVER_ERROR, format!("{err}"), None);
     }
     {
         let mut reduced = state.reduced.write().await;
-        for ev in events.into_iter() {
-            reduced.apply_event(ev);
-        }
+        reduced.apply_event(event);
     }
 
     let primary_tag = tags_vec
@@ -1046,7 +1004,7 @@ pub async fn post_ingest(
     Json(IngestResponse {
         ok: true,
         tags: tags_vec.iter().map(|t| format!("#{t}")).collect(),
-        events_appended,
+        events_appended: 1, // Single Ingest event
         next: NextMoves {
             pair: format!(
                 "npx slugsocial pair --thread {} --aspect {}",
@@ -1096,17 +1054,15 @@ pub async fn post_check(
     let mut current_aspect: String = "default".to_string();
     let ts = now_ms();
 
-    let mut events: Vec<Event> = Vec::new();
     let mut tags_seen: BTreeSet<String> = BTreeSet::new();
     let mut defined_in_doc: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut groups_touched: BTreeSet<(String, String)> = BTreeSet::new(); // (tag, aspect)
 
-    for s in doc.statements {
+    // Parse once for validation and metadata.
+    for s in &doc.statements {
         match s {
-            dsl::Stmt::Prose { .. } => {}
-            dsl::Stmt::Email { .. } => {}
             dsl::Stmt::Actor { name } => {
-                // Validate actor format
+                // Validate actor format.
                 if let Err(msg) = validate_actor_format(&name) {
                     return api_error(StatusCode::BAD_REQUEST, "invalid actor format", Some(msg));
                 }
@@ -1124,42 +1080,28 @@ pub async fn post_check(
             }
             dsl::Stmt::Item { title, body } => {
                 let item = canonicalize_item(&title);
-                let Some(body) = body else {
+                let Some(body_text) = body else {
                     return api_error(
                         StatusCode::BAD_REQUEST,
                         format!("item missing body: /{item}"),
                         Some("items must be declared with bodies, e.g. `/item { ... }`".to_string()),
                     );
                 };
-                if body.trim().is_empty() {
+                if body_text.trim().is_empty() {
                     return api_error(
                         StatusCode::BAD_REQUEST,
                         format!("item body is empty: /{item}"),
                         Some("write at least one sentence inside `{ ... }`".to_string()),
                     );
                 }
-                events.push(Event::ItemUpsert(crate::events::ItemUpsert {
-                    ts,
-                    item: item.clone(),
-                    body: Some(body),
-                }));
                 defined_in_doc.insert(item.clone());
-                if let Some(tag) = current_tag.clone() {
-                    events.push(Event::TagAdd(crate::events::TagAdd {
-                        ts,
-                        tag: tag.clone(),
-                        item: item.clone(),
-                    }));
-                }
             }
             dsl::Stmt::Vote {
                 item1,
                 item2,
-                ratio_left,
-                ratio_right,
-                explanation,
+                ..
             } => {
-                let Some(tag) = current_tag.clone() else {
+                let Some(ref tag) = current_tag else {
                     return api_error(
                         StatusCode::BAD_REQUEST,
                         "vote requires an active #tag context",
@@ -1170,11 +1112,10 @@ pub async fn post_check(
                 let a = canonicalize_item(&item1);
                 let b = canonicalize_item(&item2);
 
-                // Enforce: items must already be defined (earlier in the doc or in existing state),
-                // and must have bodies.
+                // Validate items exist and have bodies.
                 {
                     let reduced = state.reduced.read().await;
-                    let items_in_tag = reduced.tags.get(&tag);
+                    let items_in_tag = reduced.tags.get(tag);
                     let mut missing: Vec<String> = Vec::new();
                     for it in [&a, &b] {
                         let ok_in_doc = defined_in_doc.contains(it);
@@ -1213,40 +1154,33 @@ pub async fn post_check(
                     }
                 }
 
-                events.push(Event::VoteCast(VoteCast {
-                    ts,
-                    tag: tag.clone(),
-                    aspect: aspect.clone(),
-                    a: a.clone(),
-                    b: b.clone(),
-                    ratio_left,
-                    ratio_right,
-                    body: explanation,
-                    voter_key_id: voter_key_id.clone(),
-                    actor: current_actor.clone(),
-                }));
-                // Ensure both items exist under the tag (helps /pair pool).
-                events.push(Event::TagAdd(crate::events::TagAdd {
-                    ts,
-                    tag: tag.clone(),
-                    item: a.clone(),
-                }));
-                events.push(Event::TagAdd(crate::events::TagAdd {
-                    ts,
-                    tag: tag.clone(),
-                    item: b.clone(),
-                }));
-
-                groups_touched.insert((tag, aspect));
+                groups_touched.insert((tag.clone(), aspect));
             }
+            _ => {}
         }
     }
 
+    // Require actor for threading/notifications.
+    let Some(actor) = current_actor.clone() else {
+        return api_error(
+            StatusCode::BAD_REQUEST,
+            "check requires @actor declaration",
+            Some("add `@yourname` at the start of your document".to_string()),
+        );
+    };
+
+    // Create Ingest event for dry-run.
+    let event = Event::Ingest(crate::events::Ingest {
+        ts,
+        id: uuid::Uuid::new_v4().to_string(),
+        raw: req.text.clone(),
+        voter_key_id: voter_key_id.clone(),
+        actor,
+    });
+
     // Apply to a clone (dry-run).
     let mut simulated = { state.reduced.read().await.clone() };
-    for ev in events.into_iter() {
-        simulated.apply_event(ev);
-    }
+    simulated.apply_event(event);
 
     let mut groups: Vec<CheckGroup> = Vec::new();
     for (tag, aspect) in groups_touched.into_iter() {

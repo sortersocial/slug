@@ -147,10 +147,9 @@ fn render_group(tag: &str, aspect: &str, group: &mut GroupState) -> Markup {
         } @else {
             pre {
                 @for v in group.recent_votes.iter().take(25) {
-                    @let who = v.actor.as_deref().unwrap_or(&v.voter_key_id);
                     @let ratio = format!("{}:{}", v.ratio_left, v.ratio_right);
                     (format!("#{} :{}  /{}  {}  /{}  [@{}]\n{{{}}}\n\n",
-                        v.tag, v.aspect, v.a, ratio, v.b, who, v.body))
+                        v.tag, v.aspect, v.a, ratio, v.b, v.actor, v.body))
                 }
             }
         }
