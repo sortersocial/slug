@@ -1,0 +1,90 @@
+:root {
+  color-scheme: light dark;
+  /* Palette */
+  --bg: Canvas;
+  --fg: CanvasText;
+  --muted: color-mix(in srgb, CanvasText 65%, transparent);
+  --faint: color-mix(in srgb, CanvasText 35%, transparent);
+  --border: color-mix(in srgb, CanvasText 18%, transparent);
+  --panel: color-mix(in srgb, CanvasText 6%, transparent);
+  
+  /* Typography System */
+  --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+  --serif: ui-serif, Iowan Old Style, Palatino, Georgia, serif;
+}
+
+body {
+  font-family: var(--sans);
+  max-width: 880px;
+  margin: 24px auto;
+  padding: 0 16px;
+  line-height: 1.45;
+  color: var(--fg);
+  background: var(--bg);
+  padding-bottom: 80px; /* Space for the switcher */
+}
+
+/* Scaffolding Layer (Sans) */
+a { text-decoration: none; color: inherit; }
+a:hover { text-decoration: underline; }
+.muted { color: var(--muted); }
+.faint { color: var(--faint); }
+.row { display: flex; justify-content: space-between; gap: 16px; }
+
+/* Addressing Layer (Mono) */
+code, .slug, .component-meta, .ratio-label {
+  font-family: var(--mono);
+}
+h1 .slug, h2 .slug { font-size: 0.9em; }
+
+/* Prose Layer (Serif) */
+.prose, .vote-body {
+  font-family: var(--serif);
+  line-height: 1.6;
+  font-size: 1.05rem;
+  max-width: 65ch;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Components */
+pre { padding: 12px; border: 1px solid var(--border); border-radius: 10px; overflow-x: auto; background: var(--panel); font-family: var(--mono); }
+table { width: 100%; border-collapse: collapse; }
+td, th { padding: 6px 0; border-bottom: 1px solid var(--border); }
+th { text-align: left; }
+h1,h2 { margin: 0 0 12px 0; }
+h3 { margin: 18px 0 8px 0; }
+
+.vote { border: 1px solid var(--border); border-radius: 12px; padding: 12px; margin: 10px 0; background: var(--panel); }
+.vote-header { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; flex-wrap: wrap; }
+.vote-items { display: flex; gap: 10px; flex-wrap: wrap; font-family: var(--mono); }
+.vote-meta { color: var(--muted); font-size: 0.9em; }
+.ratio-wrap { margin-top: 8px; }
+.ratio-label { color: var(--muted); font-size: 0.9em; margin-bottom: 6px; }
+.ratio-bar { display: flex; height: 12px; border-radius: 999px; overflow: hidden; border: 1px solid var(--border); background: color-mix(in srgb, CanvasText 3%, transparent); }
+.ratio-left { background: rgba(46, 160, 67, 0.75); }
+.ratio-right { background: rgba(248, 81, 73, 0.70); }
+.vote-body { margin-top: 10px; }
+
+.component { border: 1px solid var(--border); border-radius: 14px; padding: 12px; margin: 12px 0; background: var(--panel); }
+.component-meta { font-size: 0.85em; color: var(--faint); margin-top: -2px; }
+
+/* Theme Switcher Widget */
+#theme-switcher {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    padding: 8px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-family: var(--sans);
+    opacity: 0.3;
+    transition: opacity 0.2s;
+    user-select: none;
+    cursor: pointer;
+    z-index: 9999;
+}
+#theme-switcher:hover { opacity: 1.0; }

@@ -21,62 +21,35 @@ fn layout(title: &str, body: Markup) -> Markup {
                 meta charset="utf-8";
                 meta name="viewport" content="width=device-width, initial-scale=1";
                 title { (title) }
-                style { (r#"
-                    :root {
-                      color-scheme: light dark;
-                      --bg: Canvas;
-                      --fg: CanvasText;
-                      --muted: color-mix(in srgb, CanvasText 65%, transparent);
-                      --faint: color-mix(in srgb, CanvasText 35%, transparent);
-                      --border: color-mix(in srgb, CanvasText 18%, transparent);
-                      --panel: color-mix(in srgb, CanvasText 6%, transparent);
-                      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-                      --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
-                      --serif: ui-serif, Iowan Old Style, Palatino, "Palatino Linotype", Georgia, Times, "Times New Roman", serif;
-                    }
-                    body {
-                      font-family: var(--sans);
-                      max-width: 880px;
-                      margin: 24px auto;
-                      padding: 0 16px;
-                      line-height: 1.45;
-                      color: var(--fg);
-                      background: var(--bg);
-                    }
-                    a { text-decoration: none; }
-                    a:hover { text-decoration: underline; }
-                    h1,h2 { margin: 0 0 12px 0; }
-                    h3 { margin: 18px 0 8px 0; }
-                    .muted { color: var(--muted); }
-                    .faint { color: var(--faint); }
-                    .row { display: flex; justify-content: space-between; gap: 16px; }
-                    pre { padding: 12px; border: 1px solid var(--border); border-radius: 10px; overflow-x: auto; background: var(--panel); }
-                    table { width: 100%; border-collapse: collapse; }
-                    td, th { padding: 6px 0; border-bottom: 1px solid var(--border); }
-                    th { text-align: left; }
-                    code { font-family: var(--mono); }
-                    .slug { font-family: var(--mono); }
-                    .prose { font-family: var(--serif); }
-
-                    /* Votes: structured rendering */
-                    .vote { border: 1px solid var(--border); border-radius: 12px; padding: 12px; margin: 10px 0; background: var(--panel); }
-                    .vote-header { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; flex-wrap: wrap; }
-                    .vote-items { display: flex; gap: 10px; flex-wrap: wrap; }
-                    .vote-meta { color: var(--muted); font-size: 0.9em; }
-                    .ratio-wrap { margin-top: 8px; }
-                    .ratio-label { color: var(--muted); font-size: 0.9em; margin-bottom: 6px; font-family: var(--mono); }
-                    .ratio-bar { display: flex; height: 12px; border-radius: 999px; overflow: hidden; border: 1px solid var(--border); background: color-mix(in srgb, CanvasText 3%, transparent); }
-                    .ratio-left { background: rgba(46, 160, 67, 0.75); }
-                    .ratio-right { background: rgba(248, 81, 73, 0.70); }
-                    .vote-body { margin-top: 10px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.4; font-family: var(--serif); }
-
-                    /* Component boxes */
-                    .component { border: 1px solid var(--border); border-radius: 14px; padding: 12px; margin: 12px 0; background: var(--panel); }
-                    .component-meta { font-size: 0.85em; color: var(--faint); font-family: var(--mono); margin-top: -2px; }
-                "#) }
+                link rel="stylesheet" href="/static/theme_default.css" id="theme-stylesheet";
             }
             body {
                 (body)
+                div id="theme-switcher" { "theme" }
+                script { (r#"
+                    (function() {
+                        const themes = ['default', 'retro'];
+                        const stored = localStorage.getItem('slug-theme') || 'default';
+                        const switcher = document.getElementById('theme-switcher');
+                        const stylesheet = document.getElementById('theme-stylesheet');
+                        
+                        function setTheme(name) {
+                            stylesheet.href = `/static/theme_${name}.css`;
+                            localStorage.setItem('slug-theme', name);
+                            switcher.textContent = `theme: ${name}`;
+                        }
+                        
+                        // Initialize from storage
+                        setTheme(stored);
+                        
+                        // Cycle on click
+                        switcher.addEventListener('click', function() {
+                            const current = themes.indexOf(localStorage.getItem('slug-theme') || 'default');
+                            const next = (current + 1) % themes.length;
+                            setTheme(themes[next]);
+                        });
+                    })();
+                "#) }
             }
         }
     }
@@ -233,7 +206,7 @@ pub async fn thread_page(
     let page = layout(
         &format!("#{tag}"),
         html! {
-            h1 { "#" (tag) }
+            h1 { span class="slug" { "#" (tag) } }
             p { a href="/" { "← index" } }
             h2 { "aspects" }
             @if aspects.is_empty() {
