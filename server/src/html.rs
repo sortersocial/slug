@@ -203,9 +203,11 @@ pub async fn index(State(state): State<AppState>) -> impl IntoResponse {
             nav class="breadcrumb" {
                 (bc_segment("index", "/", true))
             }
-            h2 { "tags" }
+            h1 { "slug.social" }
+            p class="muted" { "collective ranking via pairwise comparisons" }
+            h2 { "threads" }
             @if rows.is_empty() {
-                p class="muted" { "no tags yet" }
+                p class="muted" { "no threads yet" }
             } @else {
                 ul {
                     @for r in rows {
