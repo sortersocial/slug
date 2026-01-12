@@ -224,31 +224,36 @@ ol.ranking li::before {
   text-decoration: none;
 }
 
-/* Selected/expanded item */
-ol.ranking li.selected {
-  display: block;
+/* Item card (expanded view) */
+.item-card {
   background: var(--panel);
-  margin: 4px -8px;
-  padding: 8px;
-  border-radius: 3px;
   border: 1px solid var(--border);
-}
-ol.ranking li.selected .item-link {
-  color: var(--signal);
-}
-ol.ranking li.selected .score {
-  display: block;
-  margin-left: 0;
-  margin-top: 4px;
+  border-radius: 3px;
+  padding: 10px;
+  margin: 8px 0;
 }
 
-.item-body {
+.item-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.item-card-header code {
+  color: var(--signal);
+  font-size: var(--text-lg);
+}
+
+.item-card-body {
   font-family: var(--serif);
   color: var(--prose);
-  font-size: var(--text-lg);
+  font-size: var(--text-base);
+  line-height: 1.6;
   margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px solid var(--border);
+  white-space: pre-wrap;
 }
 
 .vote {

@@ -361,13 +361,19 @@ async fn render_aspect_view(
                             @for r in ranked.iter() {
                                 @let is_selected = selected_item.as_ref() == Some(&r.item);
                                 @let item_url = format!("/~/{tag}?aspect={aspect}&item={}", r.item);
-                                li class=(if is_selected { "selected" } else { "" }) {
+                                li {
                                     a class="item-link" href=(item_url) {
                                         code { "/" (r.item) }
                                     }
                                     span class="score" { (format!("{:.4}", r.score)) }
-                                    @if is_selected {
-                                        div class="item-body" {
+                                }
+                                @if is_selected {
+                                    div class="item-card" {
+                                        div class="item-card-header" {
+                                            code { "/" (r.item) }
+                                            span class="score" { (format!("{:.4}", r.score)) }
+                                        }
+                                        div class="item-card-body" {
                                             "/" (r.item)
                                         }
                                     }
