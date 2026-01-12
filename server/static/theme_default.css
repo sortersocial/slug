@@ -106,6 +106,23 @@ code, .slug, .address {
    LAYER 3: UI / SCAFFOLDING (Mid Gray)
    Headers, navigation labels. Structural.
    ============================================ */
+
+/* Breadcrumb navigation */
+.breadcrumb {
+  font-size: var(--text-sm);
+  color: var(--meta);
+  margin-bottom: 16px;
+}
+.breadcrumb a {
+  color: var(--ui);
+}
+.breadcrumb a:hover {
+  color: var(--link-hover);
+}
+.breadcrumb .slug {
+  color: var(--graph);
+}
+
 h1 {
   color: var(--ui);
   font-weight: 400;

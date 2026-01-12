@@ -256,8 +256,11 @@ pub async fn thread_page(
     let page = layout(
         &format!("#{tag}"),
         html! {
-            h1 { span class="slug" { "#" (tag) } }
-            p { a href="/" { "← index" } }
+            nav class="breadcrumb" {
+                a href="/" { "index" }
+                " / "
+                span class="slug" { "#" (tag) }
+            }
             h2 { "aspects" }
             @if aspects.is_empty() {
                 p class="muted" { "no aspects yet" }
@@ -301,12 +304,18 @@ pub async fn item_page(
         return render_aspect_view(state, tag, aspect, Some(item)).await;
     }
 
-    // If no aspect specified, redirect to tag page
+    // If no aspect specified, show item without ranking context
     let page = layout(
-        "item",
+        &format!("/{item}"),
         html! {
-            p { "Select an aspect to view this item's ranking" }
-            p { a href={(format!("/~/{}", tag))} { "← back to #" (tag) } }
+            nav class="breadcrumb" {
+                a href="/" { "index" }
+                " / "
+                a href={(format!("/~/{tag}"))} class="slug" { "#" (tag) }
+                " / "
+                span class="slug" { "/" (item) }
+            }
+            p class="muted" { "select an aspect to view ranking" }
         },
     );
     Html(page.into_string()).into_response()
@@ -328,8 +337,10 @@ async fn render_aspect_view(
             let page = layout(
                 "not found",
                 html! {
+                    nav class="breadcrumb" {
+                        a href="/" { "index" }
+                    }
                     h1 { "not found" }
-                    p { a href="/" { "← index" } }
                 },
             );
             return (StatusCode::NOT_FOUND, Html(page.into_string())).into_response();
@@ -366,7 +377,19 @@ async fn render_aspect_view(
                 " "
                 span class="slug" { ":" (aspect) }
             }
-            p { a href={(format!("/~/{tag}"))} { "← #" (tag) } " · " a href="/" { "index" } }
+            nav class="breadcrumb" {
+                a href="/" { "index" }
+                " / "
+                a href={(format!("/~/{tag}"))} class="slug" { "#" (tag) }
+                " / "
+                @if selected_item.is_some() {
+                    a href={(format!("/~/{tag}?aspect={aspect}"))} class="slug" { ":" (aspect) }
+                    " / "
+                    span class="slug" { "/" (selected_item.as_ref().unwrap()) }
+                } @else {
+                    span class="slug" { ":" (aspect) }
+                }
+            }
 
             h2 { "orderings" }
             @if comps.is_empty() {
