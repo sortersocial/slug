@@ -561,7 +561,9 @@ async fn render_aspect_view(
                         ol class="ranking" {
                             @for r in ranked.iter() {
                                 @let is_selected = selected_item.as_ref() == Some(&r.item);
-                                @let item_url = format!("/~/{tag}/{}?aspect={aspect}", r.item);
+                                // Item slug links to the item page (not the aspect view).
+                                // The "selected" aspect/item state is represented in breadcrumbs.
+                                @let item_url = format!("/~/{tag}/{}", r.item);
                                 li {
                                     a class="item-link" href=(item_url) {
                                         code { "/" (r.item) }
