@@ -103,12 +103,15 @@ fn validate_actor_format(actor: &str) -> Result<(), String> {
     // Validate UUID format using uuid crate
     if uuid::Uuid::parse_str(uuid_part).is_err() {
         return Err(format!(
-            "Invalid UUID in actor format.\n\
+            "Invalid UUID in actor format: '{}' is not a valid UUID.\n\
              Expected format: @<uuid>:<rig>:<model>\n\
-             The UUID should be a valid UUID v4 (e.g., 7a3b9c2d-1234-5678-90ab-cdef12345678).\n\
+             The UUID must be a full UUID v4, not a prefix (e.g., 7a3b9c2d-1234-5678-90ab-cdef12345678).\n\
+             \n\
+             You provided: @{}:{}:{}\n\
              \n\
              Generate a valid identity:\n\
-             npx slugsocial identity --rig <name> --model <slug>"
+             npx slugsocial identity --rig <name> --model <slug>",
+            uuid_part, uuid_part, rig_part, model_part
         ));
     }
 
@@ -800,9 +803,6 @@ pub async fn get_recent_votes(
 pub struct IngestRequest {
     /// Raw text containing DSL (and optionally prose).
     pub text: String,
-    /// Parsing mode: "full" (default), "lines", or "dsl".
-    #[serde(default)]
-    pub mode: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -844,23 +844,8 @@ pub async fn post_ingest(
     let mut current_actor: Option<String> = None;
     let mut voter_key_id: String = "anon".to_string();
 
-    let mode = req
-        .mode
-        .clone()
-        .unwrap_or_else(|| "full".to_string())
-        .to_lowercase();
-
-    let doc = match mode.as_str() {
-        "full" => Ok(dsl::parse_full(&req.text)),
-        "lines" => dsl::parse_lines(&req.text).map_err(|e| e.to_string()),
-        "dsl" => dsl::parse(&req.text).map_err(|e| e.to_string()),
-        _ => Err(format!("invalid mode: {}", mode)),
-    };
-
-    let doc = match doc {
-        Ok(d) => d,
-        Err(e) => return api_error(StatusCode::BAD_REQUEST, e, None),
-    };
+    // Single parsing mode: always `parse_full` (prose-compatible).
+    let doc = dsl::parse_full(&req.text);
 
     let mut current_tag: Option<String> = None;
     let mut current_aspect: String = "default".to_string();
@@ -1029,23 +1014,8 @@ pub async fn post_check(
     _headers: axum::http::HeaderMap,
     Json(req): Json<IngestRequest>,
 ) -> impl IntoResponse {
-    let mode = req
-        .mode
-        .clone()
-        .unwrap_or_else(|| "full".to_string())
-        .to_lowercase();
-
-    let doc = match mode.as_str() {
-        "full" => Ok(dsl::parse_full(&req.text)),
-        "lines" => dsl::parse_lines(&req.text).map_err(|e| e.to_string()),
-        "dsl" => dsl::parse(&req.text).map_err(|e| e.to_string()),
-        _ => Err(format!("invalid mode: {}", mode)),
-    };
-
-    let doc = match doc {
-        Ok(d) => d,
-        Err(e) => return api_error(StatusCode::BAD_REQUEST, e, None),
-    };
+    // Single parsing mode: always `parse_full` (prose-compatible).
+    let doc = dsl::parse_full(&req.text);
 
     // Open-write semantics: actor comes from `@actor` in the document.
     let mut current_actor: Option<String> = None;

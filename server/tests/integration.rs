@@ -56,34 +56,49 @@ async fn test_index_page() {
 }
 
 #[tokio::test]
-async fn test_vote_endpoint() {
+async fn test_ingest_actor_with_colons_is_detected_and_validated() {
     let (addr, _tmp, _log, _handle) = create_test_server().await;
     let client = reqwest::Client::new();
 
-    // Define items first (required).
+    // Old archive style: actor includes colons but UUID is only a prefix (invalid).
+    // We should detect the actor line, then fail with "invalid actor format" (not "missing actor").
     let ingest_payload = serde_json::json!({
-        "text": "@test\n#rust\n:default\n/clap {cli parser}\n/argh {cli parser}\n",
-        "mode": "dsl"
+        "text": "@aec1e31c:claudecode:anthropic/claude-sonnet-4.5\n#t\n/a {x}\n",
+        "mode": "full"
     });
-    client
+
+    let response = client
         .post(&format!("http://{}/api/v0/ingest", addr))
         .json(&ingest_payload)
         .send()
         .await
         .unwrap();
 
-    let vote_payload = serde_json::json!({
-        "tag": "#rust",
-        "aspect": ":speed",
-        "a": "/clap",
-        "b": "/argh",
-        "ratio": "3:1",
-        "body": "because clap is more full-featured"
+    assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+    let body: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(body["ok"], false);
+    assert_eq!(body["error"], "invalid actor format");
+    let hint = body["hint"].as_str().unwrap_or_default();
+    assert!(
+        hint.contains("Invalid UUID"),
+        "hint should mention invalid UUID, got: {hint}"
+    );
+}
+
+#[tokio::test]
+async fn test_vote_endpoint() {
+    let (addr, _tmp, _log, _handle) = create_test_server().await;
+    let client = reqwest::Client::new();
+
+    // /api/v0/vote was removed; all votes are submitted via ingest.
+    let ingest_payload = serde_json::json!({
+        "text": "@test\n#rust\n:speed\n/clap {cli parser}\n/argh {cli parser}\n/clap 3:1 /argh {because clap is more full-featured}\n",
+        "mode": "dsl"
     });
 
     let response = client
-        .post(&format!("http://{}/api/v0/vote", addr))
-        .json(&vote_payload)
+        .post(&format!("http://{}/api/v0/ingest", addr))
+        .json(&ingest_payload)
         .send()
         .await
         .unwrap();
@@ -99,30 +114,14 @@ async fn test_rank_endpoint() {
     let (addr, _tmp, _log, _handle) = create_test_server().await;
     let client = reqwest::Client::new();
 
-    // Define items then vote.
+    // Ingest items + vote (vote endpoint removed).
     let ingest_payload = serde_json::json!({
-        "text": "@test\n#langs\n:default\n/rust {systems}\n/go {concurrency}\n",
+        "text": "@test\n#langs\n:speed\n/rust {systems}\n/go {concurrency}\n/rust 3:1 /go {because i prefer rust for systems work}\n",
         "mode": "dsl"
     });
     client
         .post(&format!("http://{}/api/v0/ingest", addr))
         .json(&ingest_payload)
-        .send()
-        .await
-        .unwrap();
-
-    let vote_payload = serde_json::json!({
-        "tag": "#langs",
-        "aspect": ":speed",
-        "a": "/rust",
-        "b": "/go",
-        "ratio": "3:1",
-        "body": "because i prefer rust for systems work"
-    });
-
-    client
-        .post(&format!("http://{}/api/v0/vote", addr))
-        .json(&vote_payload)
         .send()
         .await
         .unwrap();
@@ -148,7 +147,7 @@ async fn test_check_endpoint_does_not_commit() {
     let client = reqwest::Client::new();
 
     let check_payload = serde_json::json!({
-        "text": "#t\n:default\n/a {x}\n/b {y}\n/a 2:1 /b {because}\n",
+        "text": "@test\n#t\n:default\n/a {x}\n/b {y}\n/a 2:1 /b {because}\n",
         "mode": "dsl"
     });
     let resp = client

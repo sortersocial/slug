@@ -76,9 +76,6 @@ enum Command {
         /// Optional path to a .sorter file. If omitted, reads from stdin.
         #[arg(value_name = "FILE")]
         file: Option<PathBuf>,
-        /// Parsing mode: full (default), lines, or dsl
-        #[arg(long, default_value = "full")]
-        mode: String,
         /// Output as JSON for agent parsing
         #[arg(long)]
         json: bool,
@@ -89,9 +86,6 @@ enum Command {
         /// Optional path to a file. If omitted, reads from stdin.
         #[arg(value_name = "FILE")]
         file: Option<PathBuf>,
-        /// Parsing mode: full (default), lines, or dsl
-        #[arg(long, default_value = "full")]
-        mode: String,
         /// Output as JSON for agent parsing
         #[arg(long)]
         json: bool,
@@ -286,7 +280,6 @@ struct Notification {
 #[derive(Debug, Serialize)]
 struct IngestRequest {
     text: String,
-    mode: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -584,7 +577,7 @@ async fn main() -> Result<()> {
             }
         }
 
-        Command::Ingest { file, mode, json } => {
+        Command::Ingest { file, json } => {
             let client = http_client()?;
 
             let mut text = String::new();
@@ -606,7 +599,6 @@ async fn main() -> Result<()> {
 
             let req = IngestRequest {
                 text,
-                mode: Some(mode),
             };
             let url = format!("{base}/api/v0/ingest");
             let resp: IngestResponse = expect_json(client.post(url).json(&req).send().await?).await?;
@@ -629,7 +621,7 @@ async fn main() -> Result<()> {
             }
         }
 
-        Command::Check { file, mode, json } => {
+        Command::Check { file, json } => {
             let client = http_client()?;
 
             let mut text = String::new();
@@ -651,7 +643,6 @@ async fn main() -> Result<()> {
 
             let req = IngestRequest {
                 text,
-                mode: Some(mode),
             };
             let url = format!("{base}/api/v0/check");
             let resp: CheckResponse = expect_json(client.post(url).json(&req).send().await?).await?;

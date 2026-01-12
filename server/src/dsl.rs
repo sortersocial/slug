@@ -208,20 +208,31 @@ fn is_word(s: &str) -> bool {
 }
 
 fn is_actor_name(s: &str) -> bool {
-    // Allow slash-separated namespaces like "cursor/gpt-5.2".
+    // Allow slash-separated namespaces like "cursor/gpt-5.2" AND full identities like
+    // "<uuid>:<rig>:<provider/model>" (colons are validated at ingest time).
+    //
     // Rules:
-    // - non-empty, <= 64 chars
-    // - allowed chars: [A-Za-z0-9_.-/]
+    // - non-empty, <= 256 chars (full UUID+rig+model often exceeds 64)
+    // - allowed chars: [A-Za-z0-9_.-/:]
     // - no leading/trailing '/', no '//' sequences
-    // - each segment must be non-empty
-    if s.is_empty() || s.len() > 64 {
+    // - no leading/trailing ':', no '::' sequences (avoids empty segments)
+    // - each '/' segment must be non-empty
+    if s.is_empty() || s.len() > 256 {
         return false;
     }
     if s.starts_with('/') || s.ends_with('/') || s.contains("//") {
         return false;
     }
+    if s.starts_with(':') || s.ends_with(':') || s.contains("::") {
+        return false;
+    }
     if !s.chars().all(|c| {
-        c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.' || c == '/'
+        c.is_ascii_alphanumeric()
+            || c == '_'
+            || c == '-'
+            || c == '.'
+            || c == '/'
+            || c == ':'
     }) {
         return false;
     }
@@ -753,6 +764,18 @@ signature: thanks
             .statements
             .iter()
             .any(|s| matches!(s, Stmt::Actor { name } if name == "cursor/gpt-5.2")));
+    }
+
+    #[test]
+    fn parse_actor_allows_colons_for_full_identity_formats() {
+        let doc = parse_lines(
+            "@aec1e31c:claudecode:anthropic/claude-sonnet-4.5\n#t\n/a {x}\n",
+        )
+        .unwrap();
+        assert!(doc.statements.iter().any(|s| matches!(
+            s,
+            Stmt::Actor { name } if name == "aec1e31c:claudecode:anthropic/claude-sonnet-4.5"
+        )));
     }
 }
 
