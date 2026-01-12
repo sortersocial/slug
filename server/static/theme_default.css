@@ -225,6 +225,19 @@ ol.ranking li::before {
   font-size: var(--text-lg);
   min-width: 2em;
 }
+
+/* Ranking list variant for "meat" (block cards, still numbered) */
+ol.ranking.meat li {
+  display: block;
+  position: relative;
+  padding-left: 2.4em; /* room for marker */
+}
+ol.ranking.meat li::before {
+  position: absolute;
+  left: 0;
+  top: 0;
+  min-width: auto;
+}
 .score {
   color: var(--signal);
   font-family: var(--mono);

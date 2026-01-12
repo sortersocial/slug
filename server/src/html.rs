@@ -726,17 +726,21 @@ async fn render_aspect_view(
                         div class="component-header" {
                             (format!("ordering {} items={} pairs={}", ci + 1, ranked.len(), pairs))
                         }
-                        @for r in ranked.iter() {
-                            @let item_url = format!("/~/{tag}/{}", r.item);
-                            div class="item-card" {
-                                div class="item-card-header" {
-                                    a class="item-link" href=(item_url) { code { "/" (r.item) } }
-                                    span class="score" { (format!("{:.4}", r.score)) }
-                                }
-                                @if let Some(body) = bodies.get(&r.item) {
-                                    div class="item-card-body" { (body) }
-                                } @else {
-                                    div class="item-card-body muted" { "no body yet" }
+                        ol class="ranking meat" {
+                            @for r in ranked.iter() {
+                                @let item_url = format!("/~/{tag}/{}", r.item);
+                                li {
+                                    div class="item-card" {
+                                        div class="item-card-header" {
+                                            a class="item-link" href=(item_url) { code { "/" (r.item) } }
+                                            span class="score" { (format!("{:.4}", r.score)) }
+                                        }
+                                        @if let Some(body) = bodies.get(&r.item) {
+                                            div class="item-card-body" { (body) }
+                                        } @else {
+                                            div class="item-card-body muted" { "no body yet" }
+                                        }
+                                    }
                                 }
                             }
                         }
