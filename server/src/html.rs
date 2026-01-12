@@ -202,10 +202,8 @@ pub async fn index(State(state): State<AppState>) -> impl IntoResponse {
         "slug.social",
         html! {
             nav class="breadcrumb" {
-                (bc_segment("index", "/", true))
+                (bc_segment("slug.social", "/", true))
             }
-            h1 { "slug.social" }
-            p class="muted" { "collective ranking via pairwise comparisons" }
             h2 { "threads" }
             @if rows.is_empty() {
                 p class="muted" { "no threads yet" }
@@ -281,7 +279,7 @@ pub async fn thread_page(
         &format!("#{tag}"),
         html! {
             nav class="breadcrumb" {
-                (bc_segment("index", "/", false))
+                (bc_segment("slug.social", "/", false))
                 @let tag_label = format!("#{tag}");
                 @let tag_href = format!("/~/{tag}");
                 (bc_segment(&tag_label, &tag_href, true))
@@ -384,7 +382,7 @@ pub async fn item_page(
         &format!("/{item}"),
         html! {
             nav class="breadcrumb" {
-                (bc_segment("index", "/", false))
+                (bc_segment("slug.social", "/", false))
                 (bc_segment(&tag_label, &tag_href, false))
                 (bc_segment(&item_label, &item_href, true))
             }
@@ -495,7 +493,7 @@ async fn render_aspect_view(
                 "not found",
                 html! {
                     nav class="breadcrumb" {
-                        (bc_segment("index", "/", false))
+                        (bc_segment("slug.social", "/", false))
                     }
                     h1 { "not found" }
                 },
@@ -537,7 +535,7 @@ async fn render_aspect_view(
         &format!("#{tag} :{aspect}"),
         html! {
             nav class="breadcrumb" {
-                (bc_segment("index", "/", false))
+                (bc_segment("slug.social", "/", false))
                 (bc_segment(&tag_label, &tag_href, false))
                 @if let Some(ref it_label) = item_label {
                     (bc_segment(&aspect_label, &aspect_href, false))
