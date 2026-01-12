@@ -252,7 +252,9 @@ pub async fn thread_page(
                 @for ing in ingests.iter().take(5) {
                     @let hover = timeago::rfc3339_utc(ing.ts);
                     @let ago = timeago::timeago(now, ing.ts);
-                    p class="muted" title=(hover) { (format!("{} · @{}", ago, ing.actor)) }
+                    p class="muted" title=(hover) {
+                        (ago) " · " span class="address" { "@" (ing.actor) }
+                    }
                     pre { (ing.raw) }
                 }
             }
@@ -378,7 +380,7 @@ async fn render_aspect_view(
                                 code { "/" (v.b) }
                             }
                             div class="vote-meta" title=(hover) {
-                                (ago) " · @" (v.actor)
+                                (ago) " · " span class="address" { "@" (v.actor) }
                             }
                         }
                         div class="ratio-wrap" {

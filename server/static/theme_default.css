@@ -8,6 +8,10 @@
   --border: color-mix(in srgb, CanvasText 18%, transparent);
   --panel: color-mix(in srgb, CanvasText 6%, transparent);
   
+  /* Link Colors - Web 1.0 Style */
+  --link: #ff00ff;         /* Hot Magenta */
+  --link-visited: #b300b3; /* Darker Magenta */
+  
   /* Typography System */
   --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
@@ -26,19 +30,25 @@ body {
 }
 
 /* Scaffolding Layer (Sans) */
-a { text-decoration: none; color: inherit; }
-a:hover { text-decoration: underline; }
+/* Invisible structure, labels, counts */
 .muted { color: var(--muted); }
 .faint { color: var(--faint); }
 .row { display: flex; justify-content: space-between; gap: 16px; }
 
+/* Links: The Navigation Layer */
+a { text-decoration: none; color: var(--link); }
+a:visited { color: var(--link-visited); }
+a:hover { text-decoration: underline; }
+
 /* Addressing Layer (Mono) */
-code, .slug, .component-meta, .ratio-label {
+/* Slugs, IDs, coordinates in the graph */
+code, .slug, .component-meta, .ratio-label, .address {
   font-family: var(--mono);
 }
 h1 .slug, h2 .slug { font-size: 0.9em; }
 
 /* Prose Layer (Serif) */
+/* Human argument and reasoning */
 .prose, .vote-body {
   font-family: var(--serif);
   line-height: 1.6;
