@@ -7,6 +7,7 @@ pub mod html;
 pub mod ranking;
 pub mod reducer;
 pub mod state;
+pub mod timeago;
 
 use axum::Router;
 use tower_http::trace::TraceLayer;

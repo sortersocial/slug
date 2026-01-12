@@ -10,6 +10,7 @@ use crate::{
     ranking::ranked_items,
     reducer::{GroupKey, GroupState},
     state::AppState,
+    timeago,
 };
 
 fn layout(title: &str, body: Markup) -> Markup {
@@ -42,11 +43,75 @@ fn layout(title: &str, body: Markup) -> Markup {
     }
 }
 
+fn now_ms() -> i64 {
+    let t = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    t.as_millis() as i64
+}
+
 pub async fn index(State(state): State<AppState>) -> impl IntoResponse {
-    let keys = state.group_keys().await;
-    let mut tags: Vec<String> = keys.into_iter().map(|k| k.tag).collect();
-    tags.sort();
-    tags.dedup();
+    #[derive(Clone)]
+    struct TagRow {
+        tag: String,
+        last_ts: i64,
+        items: usize,
+        aspects: usize,
+        recent_votes: usize,
+    }
+
+    let now = now_ms();
+    let rows: Vec<TagRow> = {
+        let reduced = state.reduced.read().await;
+
+        // Union of all "existing" tags we know about.
+        let mut all_tags: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        all_tags.extend(reduced.ingests_by_tag.keys().cloned());
+        all_tags.extend(reduced.tags.keys().cloned());
+        all_tags.extend(reduced.groups.keys().map(|k| k.tag.clone()));
+
+        let mut out = Vec::new();
+        for tag in all_tags.into_iter() {
+            // Recency: prefer newest ingest timestamp; fallback to newest vote timestamp if present.
+            let last_ingest_ts = reduced
+                .ingests_by_tag
+                .get(&tag)
+                .and_then(|q| q.front())
+                .map(|ing| ing.ts)
+                .unwrap_or(0);
+
+            let mut aspects = 0usize;
+            let mut recent_votes = 0usize;
+            let mut last_vote_ts = 0i64;
+            for (k, g) in reduced.groups.iter() {
+                if k.tag != tag {
+                    continue;
+                }
+                aspects += 1;
+                recent_votes += g.recent_votes.len();
+                if let Some(v) = g.recent_votes.front() {
+                    if v.ts > last_vote_ts {
+                        last_vote_ts = v.ts;
+                    }
+                }
+            }
+
+            let last_ts = last_ingest_ts.max(last_vote_ts);
+            let items = reduced.tags.get(&tag).map(|s| s.len()).unwrap_or(0);
+            out.push(TagRow {
+                tag,
+                last_ts,
+                items,
+                aspects,
+                recent_votes,
+            });
+        }
+
+        out
+    };
+
+    let mut rows = rows;
+    rows.sort_by_key(|r| std::cmp::Reverse(r.last_ts));
 
     let page = layout(
         "slug.social",
@@ -54,12 +119,23 @@ pub async fn index(State(state): State<AppState>) -> impl IntoResponse {
             h1 { "slug.social" }
             p class="muted" { "collective ranking via pairwise comparisons" }
             h2 { "tags" }
-            @if tags.is_empty() {
-                p class="muted" { "no votes yet" }
+            @if rows.is_empty() {
+                p class="muted" { "no tags yet" }
             } @else {
                 ul {
-                    @for t in tags {
-                        li { a href={(format!("/~/{t}"))} { "#" (t) } }
+                    @for r in rows {
+                        @let href = format!("/~/{}", r.tag);
+                        @let hover = timeago::rfc3339_utc(r.last_ts);
+                        @let ago = timeago::timeago(now, r.last_ts);
+                        li {
+                            a href=(href) { "#" (r.tag) }
+                            " "
+                            span class="muted" title=(hover) {
+                                (ago)
+                                " · "
+                                (format!("items={} · aspects={} · recent_votes={}", r.items, r.aspects, r.recent_votes))
+                            }
+                        }
                     }
                 }
             }
@@ -71,7 +147,6 @@ pub async fn index(State(state): State<AppState>) -> impl IntoResponse {
 #[derive(Deserialize)]
 pub struct ThreadQuery {
     aspect: Option<String>,
-    view: Option<String>,
 }
 
 pub async fn thread_page(
