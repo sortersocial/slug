@@ -138,7 +138,6 @@ h1 .slug, h2 .slug {
 .muted { color: var(--ui); }
 .faint { color: var(--meta); }
 .vote-meta { color: var(--meta); font-size: var(--text-xs); }
-.component-meta { color: var(--meta); font-size: var(--text-xs); font-family: var(--mono); margin-top: 2px; }
 .ratio-label { color: var(--meta); font-size: var(--text-xs); font-family: var(--mono); margin-bottom: 4px; }
 
 /* ============================================
@@ -256,10 +255,32 @@ ol.ranking li::marker {
 
 .component {
   border: 1px solid var(--border);
-  border-radius: 3px;
-  padding: 10px;
-  margin: 8px 0;
+  border-radius: 2px;
+  padding: 6px 8px;
+  margin: 4px 0;
   background: var(--panel);
+}
+
+.component-header {
+  color: var(--meta);
+  font-family: var(--mono);
+  font-size: var(--text-xs);
+  margin-bottom: 4px;
+}
+
+.component.unsorted {
+  border-style: dotted;
+  background: transparent;
+}
+
+.component ul {
+  margin: 0;
+  padding-left: 1em;
+  border-left: none;
+}
+
+.component ol.ranking {
+  margin: 0;
 }
 
 /* ============================================

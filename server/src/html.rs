@@ -351,8 +351,9 @@ async fn render_aspect_view(
                     @let ranked = ranked_items_subset(&group, comp, 10000, 1e-8);
                     @let pairs = group.voted_pairs.iter().filter(|(i,j)| comp.binary_search(i).is_ok() && comp.binary_search(j).is_ok()).count();
                     div class="component" {
-                        h3 { (format!("component {}", ci + 1)) }
-                        div class="component-meta" { (format!("items={} · pairs={}", comp.len(), pairs)) }
+                        div class="component-header" {
+                            (format!("component {} · items={} · pairs={}", ci + 1, comp.len(), pairs))
+                        }
                         ol class="ranking" {
                             @for r in ranked.iter() {
                                 li {
@@ -366,20 +367,24 @@ async fn render_aspect_view(
             }
 
             @if !isolate_idxs.is_empty() {
-                h2 { "isolates (in graph, but no voted pair)" }
-                ul {
-                    @for idx in isolate_idxs {
-                        @let name = group.idx_to_item.get(idx).cloned().unwrap_or_default();
-                        li { code { "/" (name) } }
+                div class="component unsorted" {
+                    div class="component-header" { "isolates" }
+                    ul {
+                        @for idx in isolate_idxs {
+                            @let name = group.idx_to_item.get(idx).cloned().unwrap_or_default();
+                            li { code { "/" (name) } }
+                        }
                     }
                 }
             }
 
             @if !no_vote_items.is_empty() {
-                h2 { "not yet compared" }
-                ul {
-                    @for it in no_vote_items {
-                        li { code { "/" (it) } }
+                div class="component unsorted" {
+                    div class="component-header" { "not yet compared" }
+                    ul {
+                        @for it in no_vote_items {
+                            li { code { "/" (it) } }
+                        }
                     }
                 }
             }
