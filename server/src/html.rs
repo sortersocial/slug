@@ -439,41 +439,41 @@ pub async fn item_page(
                 (bc_segment(&item_label, &item_href, true))
             }
 
+            @if aspects.is_empty() {
+                p class="muted" { "no votes yet for this item" }
+            } @else {
+                h2 { "aspects" }
+                ul {
+                    @for (aspect, (count, last_ts)) in aspects.iter() {
+                        // Aspect link goes to the aspect ranking page.
+                        @let href = format!("/~/{tag}?aspect={aspect}");
+                        @let hover = timeago::rfc3339_utc(*last_ts);
+                        @let ago = timeago::timeago(now, *last_ts);
+                        @let rank = aspect_ranks.get(aspect).cloned().flatten();
+                        li {
+                            @if selected_aspect.as_deref() == Some(aspect.as_str()) {
+                                a href=(href) class="bc-current" { ":" (aspect) }
+                            } @else {
+                                a href=(href) { ":" (aspect) }
+                            }
+                            " "
+                            span class="muted" title=(hover) {
+                                @if let Some((pos, n, score)) = rank {
+                                    (format!("votes={count} · rank={pos}/{n} · score={score:.4} · last {ago}"))
+                                } @else {
+                                    (format!("votes={count} · rank=— · last {ago}"))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             div class="item-card" {
                 div class="item-card-header" {
                     code { "/" (item) }
                     span class="muted" {
                         (format!("votes={} · attributes={} · snippets={}", votes.len(), aspects.len(), snippet_total))
-                    }
-                }
-                
-                // Attributes selector lives above the item body.
-                @if aspects.is_empty() {
-                    p class="muted" { "no votes yet for this item" }
-                } @else {
-                    ul {
-                        @for (aspect, (count, last_ts)) in aspects.iter() {
-                            // Aspect link goes to the aspect ranking page.
-                            @let href = format!("/~/{tag}?aspect={aspect}");
-                            @let hover = timeago::rfc3339_utc(*last_ts);
-                            @let ago = timeago::timeago(now, *last_ts);
-                            @let rank = aspect_ranks.get(aspect).cloned().flatten();
-                            li {
-                                @if selected_aspect.as_deref() == Some(aspect.as_str()) {
-                                    a href=(href) class="bc-current" { ":" (aspect) }
-                                } @else {
-                                    a href=(href) { ":" (aspect) }
-                                }
-                                " "
-                                span class="muted" title=(hover) {
-                                    @if let Some((pos, n, score)) = rank {
-                                        (format!("votes={count} · rank={pos}/{n} · score={score:.4} · last {ago}"))
-                                    } @else {
-                                        (format!("votes={count} · rank=— · last {ago}"))
-                                    }
-                                }
-                            }
-                        }
                     }
                 }
 
