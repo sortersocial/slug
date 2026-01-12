@@ -359,7 +359,7 @@ pub async fn item_page(
         let reduced = state.reduced.read().await;
         snippet_refs
             .iter()
-            .filter_map(|s| reduced.ingests_by_id.get(&s.ingest_id).cloned())
+            .filter_map(|ingest_id| reduced.ingests_by_id.get(ingest_id).cloned())
             .collect::<Vec<_>>()
     };
 

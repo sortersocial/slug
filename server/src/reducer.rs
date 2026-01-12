@@ -54,13 +54,6 @@ pub struct GroupState {
     pub recent_votes: VecDeque<VoteData>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ItemSnippetRef {
-    pub ts: i64,
-    pub ingest_id: String,
-    pub actor: String,
-}
-
 impl GroupState {
     pub fn new(tag: String, aspect: String) -> Self {
         Self {
@@ -179,7 +172,7 @@ pub struct ReducerState {
 
     /// Per-(tag,item) ingest references (most recent first).
     /// This is *unbounded* by design; memory usage is dominated by `ingests_by_id`.
-    pub item_snippets: HashMap<ItemKey, VecDeque<ItemSnippetRef>>,
+    pub item_snippets: HashMap<ItemKey, VecDeque<String>>,
 
     /// Track thread subscriptions: thread -> set(actor)
     /// Actors are subscribed when they vote or ingest in a thread.
@@ -331,11 +324,7 @@ impl ReducerState {
                             item: item.clone(),
                         };
                         let q = self.item_snippets.entry(ik).or_default();
-                        q.push_front(ItemSnippetRef {
-                            ts: ing.ts,
-                            ingest_id: ing.id.clone(),
-                            actor: canonicalize_actor(&ing.actor),
-                        });
+                        q.push_front(ing.id.clone());
                     }
                 }
 
