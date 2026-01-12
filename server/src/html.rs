@@ -7,8 +7,8 @@ use maud::{html, Markup, DOCTYPE};
 use serde::Deserialize;
 
 use crate::{
-    ranking::ranked_items,
-    reducer::{GroupKey, GroupState},
+    ranking::{connected_components_from_voted_pairs, ranked_items_subset},
+    reducer::GroupKey,
     state::AppState,
     timeago,
 };
@@ -201,8 +201,11 @@ pub async fn thread_page(
             @if ingests.is_empty() {
                 p class="muted" { "none yet" }
             } @else {
+                @let now = now_ms();
                 @for ing in ingests.iter().take(5) {
-                    p class="muted" { (format!("ts={} · @{} · key={}", ing.ts, ing.actor, ing.voter_key_id)) }
+                    @let hover = timeago::rfc3339_utc(ing.ts);
+                    @let ago = timeago::timeago(now, ing.ts);
+                    p class="muted" title=(hover) { (format!("{} · @{}", ago, ing.actor)) }
                     pre { (ing.raw) }
                 }
             }
@@ -211,56 +214,18 @@ pub async fn thread_page(
     Html(page.into_string()).into_response()
 }
 
-fn render_group(tag: &str, aspect: &str, group: &mut GroupState) -> Markup {
-    let ranking = ranked_items(group, 10000, 1e-8);
-    html! {
-        h1 { "#" (tag) " " ":" (aspect) }
-        p { a href={(format!("/~/{tag}"))} { "← #" (tag) } " · " a href="/" { "index" } }
-
-        h2 { "ranking" }
-        @if ranking.is_empty() {
-            p class="muted" { "no items yet" }
-        } @else {
-            table {
-                thead { tr { th { "item" } th { "score" } } }
-                tbody {
-                    @for r in ranking.iter().take(50) {
-                        tr {
-                            td { code { "/" (r.item) } }
-                            td { (format!("{:.6}", r.score)) }
-                        }
-                    }
-                }
-            }
-        }
-
-        h2 { "recent votes" }
-        @if group.recent_votes.is_empty() {
-            p class="muted" { "none yet" }
-        } @else {
-            pre {
-                @for v in group.recent_votes.iter().take(25) {
-                    @let ratio = format!("{}:{}", v.ratio_left, v.ratio_right);
-                    (format!("#{} :{}  /{}  {}  /{}  [@{}]\n{{{}}}\n\n",
-                        v.tag, v.aspect, v.a, ratio, v.b, v.actor, v.body))
-                }
-            }
-        }
-    }
-}
-
 async fn render_aspect_view(
     state: AppState,
     tag: String,
     aspect: String,
 ) -> axum::response::Response {
-    let page = {
-        let mut reduced = state.reduced.write().await;
+    let (group, items_in_tag): (crate::reducer::GroupState, Vec<String>) = {
+        let reduced = state.reduced.read().await;
         let key = GroupKey {
             tag: tag.clone(),
             aspect: aspect.clone(),
         };
-        let Some(group) = reduced.groups.get_mut(&key) else {
+        let Some(group) = reduced.groups.get(&key) else {
             let page = layout(
                 "not found",
                 html! {
@@ -270,8 +235,92 @@ async fn render_aspect_view(
             );
             return (StatusCode::NOT_FOUND, Html(page.into_string())).into_response();
         };
-        layout(&format!("#{tag} :{aspect}"), render_group(&tag, &aspect, group))
+        let items_in_tag = reduced
+            .tags
+            .get(&tag)
+            .map(|s| s.iter().cloned().collect())
+            .unwrap_or_else(Vec::new);
+        (group.clone(), items_in_tag)
     };
+
+    // Build connected components from recorded voted pairs.
+    let n = group.idx_to_item.len();
+    let (comps, isolate_idxs) =
+        connected_components_from_voted_pairs(n, group.voted_pairs.iter().copied());
+
+    // Items in the tag that have no votes at all in this aspect (not even present in group).
+    let mut no_vote_items: Vec<String> = items_in_tag
+        .into_iter()
+        .filter(|it| !group.item_to_idx.contains_key(it))
+        .collect();
+    no_vote_items.sort();
+
+    // Sort components by size descending, then by item name for stability.
+    let mut comps = comps;
+    comps.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
+
+    let page = layout(
+        &format!("#{tag} :{aspect}"),
+        html! {
+            h1 { "#" (tag) " " ":" (aspect) }
+            p { a href={(format!("/~/{tag}"))} { "← #" (tag) } " · " a href="/" { "index" } }
+
+            h2 { "ranking groups (connected components)" }
+            @if comps.is_empty() {
+                p class="muted" { "no voted pairs yet in this aspect" }
+            } @else {
+                @for (ci, comp) in comps.iter().enumerate() {
+                    @let ranked = ranked_items_subset(&group, comp, 10000, 1e-8);
+                    @let pairs = group.voted_pairs.iter().filter(|(i,j)| comp.binary_search(i).is_ok() && comp.binary_search(j).is_ok()).count();
+                    h3 { (format!("component {} · items={} · pairs={}", ci + 1, comp.len(), pairs)) }
+                    table {
+                        thead { tr { th { "item" } th { "score" } } }
+                        tbody {
+                            @for r in ranked.iter() {
+                                tr {
+                                    td { code { "/" (r.item) } }
+                                    td { (format!("{:.6}", r.score)) }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            @if !isolate_idxs.is_empty() {
+                h2 { "isolates (in graph, but no voted pair)" }
+                ul {
+                    @for idx in isolate_idxs {
+                        @let name = group.idx_to_item.get(idx).cloned().unwrap_or_default();
+                        li { code { "/" (name) } }
+                    }
+                }
+            }
+
+            @if !no_vote_items.is_empty() {
+                h2 { "no votes in this aspect" }
+                p class="muted" { "items exist in the thread, but have not been compared under this aspect yet" }
+                ul {
+                    @for it in no_vote_items {
+                        li { code { "/" (it) } }
+                    }
+                }
+            }
+
+            h2 { "recent votes" }
+            @if group.recent_votes.is_empty() {
+                p class="muted" { "none yet" }
+            } @else {
+                pre {
+                    @for v in group.recent_votes.iter().take(50) {
+                        @let ratio = format!("{}:{}", v.ratio_left, v.ratio_right);
+                        (format!("#{} :{}  /{}  {}  /{}  [@{}]\n{{{}}}\n\n",
+                            v.tag, v.aspect, v.a, ratio, v.b, v.actor, v.body))
+                    }
+                }
+            }
+        },
+    );
 
     Html(page.into_string()).into_response()
 }
