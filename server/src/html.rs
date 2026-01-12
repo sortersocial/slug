@@ -1,9 +1,10 @@
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::{Html, IntoResponse},
 };
 use maud::{html, Markup, DOCTYPE};
+use serde::Deserialize;
 
 use crate::{
     ranking::ranked_items,
@@ -58,7 +59,7 @@ pub async fn index(State(state): State<AppState>) -> impl IntoResponse {
             } @else {
                 ul {
                     @for t in tags {
-                        li { a href={(format!("/t/{t}"))} { "#" (t) } }
+                        li { a href={(format!("/~/{t}"))} { "#" (t) } }
                     }
                 }
             }
@@ -67,8 +68,26 @@ pub async fn index(State(state): State<AppState>) -> impl IntoResponse {
     Html(page.into_string())
 }
 
-pub async fn tag_page(State(state): State<AppState>, Path(tag): Path<String>) -> impl IntoResponse {
+#[derive(Deserialize)]
+pub struct ThreadQuery {
+    aspect: Option<String>,
+    view: Option<String>,
+}
+
+pub async fn thread_page(
+    State(state): State<AppState>,
+    Path(tag): Path<String>,
+    Query(query): Query<ThreadQuery>,
+) -> impl IntoResponse {
     let tag = tag.trim_start_matches('#').to_string();
+
+    // If aspect is specified, render the aspect ranking view
+    if let Some(aspect) = query.aspect {
+        let aspect = aspect.trim_start_matches(':').to_string();
+        return render_aspect_view(state, tag, aspect).await;
+    }
+
+    // Otherwise render the thread overview
     let (mut aspects, ingests) = {
         let reduced = state.reduced.read().await;
         let aspects: Vec<String> = reduced
@@ -76,8 +95,7 @@ pub async fn tag_page(State(state): State<AppState>, Path(tag): Path<String>) ->
             .keys()
             .filter(|k| k.tag == tag)
             .map(|k| k.aspect.clone())
-            .collect()
-            ;
+            .collect();
         let ingests = reduced
             .ingests_by_tag
             .get(&tag)
@@ -99,7 +117,7 @@ pub async fn tag_page(State(state): State<AppState>, Path(tag): Path<String>) ->
             } @else {
                 ul {
                     @for a in aspects {
-                        li { a href={(format!("/t/{tag}/a/{a}"))} { ":" (a) } }
+                        li { a href={(format!("/~/{tag}?aspect={a}"))} { ":" (a) } }
                     }
                 }
             }
@@ -115,14 +133,14 @@ pub async fn tag_page(State(state): State<AppState>, Path(tag): Path<String>) ->
             }
         },
     );
-    Html(page.into_string())
+    Html(page.into_string()).into_response()
 }
 
 fn render_group(tag: &str, aspect: &str, group: &mut GroupState) -> Markup {
     let ranking = ranked_items(group, 10000, 1e-8);
     html! {
         h1 { "#" (tag) " " ":" (aspect) }
-        p { a href={(format!("/t/{tag}"))} { "← #" (tag) } " · " a href="/" { "index" } }
+        p { a href={(format!("/~/{tag}"))} { "← #" (tag) } " · " a href="/" { "index" } }
 
         h2 { "ranking" }
         @if ranking.is_empty() {
@@ -156,13 +174,11 @@ fn render_group(tag: &str, aspect: &str, group: &mut GroupState) -> Markup {
     }
 }
 
-pub async fn tag_aspect_page(
-    State(state): State<AppState>,
-    Path((tag, aspect)): Path<(String, String)>,
-) -> impl IntoResponse {
-    let tag = tag.trim_start_matches('#').to_string();
-    let aspect = aspect.trim_start_matches(':').to_string();
-
+async fn render_aspect_view(
+    state: AppState,
+    tag: String,
+    aspect: String,
+) -> axum::response::Response {
     let page = {
         let mut reduced = state.reduced.write().await;
         let key = GroupKey {

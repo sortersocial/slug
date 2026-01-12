@@ -277,7 +277,7 @@ or via stdin:\n\
                 tag,
                 aspect
             ),
-            web: format!("https://slug.social/t/{}/a/{}", tag, aspect),
+            web: format!("https://slug.social/~/{}?aspect={}", tag, aspect),
         },
     };
 
@@ -587,7 +587,7 @@ pub async fn get_tags(State(state): State<AppState>) -> impl IntoResponse {
             tag: format!("#{t}"),
             items,
             aspects,
-            web: format!("https://slug.social/t/{t}"),
+            web: format!("https://slug.social/~/{}", t),
         });
     }
 
@@ -958,7 +958,7 @@ pub async fn post_ingest(
                 primary_tag,
                 current_aspect
             ),
-            web: format!("https://slug.social/t/{}", primary_tag),
+            web: format!("https://slug.social/~/{}", primary_tag),
         },
     })
     .into_response()
@@ -1157,7 +1157,7 @@ pub async fn post_check(
         next: vec![
             "npx slugsocial ingest <file.sorter>".to_string(),
             "npx slugsocial threads".to_string(),
-            format!("https://slug.social/t/{}", primary_tag),
+            format!("https://slug.social/~/{}", primary_tag),
         ],
     })
     .into_response()
