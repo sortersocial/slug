@@ -1,18 +1,45 @@
 :root {
-  color-scheme: light dark;
-  /* Palette */
-  --bg: Canvas;
-  --fg: CanvasText;
-  --muted: color-mix(in srgb, CanvasText 65%, transparent);
-  --faint: color-mix(in srgb, CanvasText 35%, transparent);
-  --border: color-mix(in srgb, CanvasText 18%, transparent);
-  --panel: color-mix(in srgb, CanvasText 6%, transparent);
+  color-scheme: dark;
   
-  /* Link Colors - Web 1.0 Style */
-  --link: #ff00ff;         /* Hot Magenta */
-  --link-visited: #b300b3; /* Darker Magenta */
+  /* 
+     OKLCH COLOR CALCULATIONS
+     L = Lightness (0-100%)
+     C = Chroma (0-0.37, 0 = gray)
+     H = Hue (0-360)
+     
+     The Luminance Hierarchy:
+     - Graph nodes are WHITE. They are the signal.
+     - Prose is light gray. It is human context.
+     - UI is mid gray. It should be invisible.
+     - Meta is dark gray. Barely there.
+  */
+
+  /* === THE VOID === */
+  --bg: oklch(0% 0 0);              /* Pure black */
+  --panel: oklch(8% 0 0);           /* Subtle lift */
+  --border: oklch(20% 0 0);         /* Faint lines */
+
+  /* === THE LUMINANCE STACK === */
+  --L-graph: 100%;    /* White: The signal */
+  --L-prose: 75%;     /* Light: Human content */
+  --L-ui: 50%;        /* Mid: Navigation, headers */
+  --L-meta: 32%;      /* Dark: Timestamps, counts */
   
-  /* Typography System */
+  /* Derived colors (all gray, C=0) */
+  --graph: oklch(var(--L-graph) 0 0);
+  --prose: oklch(var(--L-prose) 0 0);
+  --ui: oklch(var(--L-ui) 0 0);
+  --meta: oklch(var(--L-meta) 0 0);
+  
+  /* Links get color (the only chroma in the system) */
+  --link: oklch(65% 0.20 330);           /* Pink */
+  --link-visited: oklch(50% 0.18 310);   /* Darker purple-pink */
+  --link-hover: oklch(80% 0.25 330);     /* Bright pink */
+  
+  /* Default text inherits prose level */
+  --fg: var(--prose);
+  
+  /* Typography */
   --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
   --serif: ui-serif, Iowan Old Style, Palatino, Georgia, serif;
@@ -26,31 +53,32 @@ body {
   line-height: 1.45;
   color: var(--fg);
   background: var(--bg);
-  padding-bottom: 80px; /* Space for the switcher */
+  padding-bottom: 80px;
 }
 
-/* Scaffolding Layer (Sans) */
-/* Invisible structure, labels, counts */
-.muted { color: var(--muted); }
-.faint { color: var(--faint); }
-.row { display: flex; justify-content: space-between; gap: 16px; }
-
-/* Links: The Navigation Layer */
-a { text-decoration: none; color: var(--link); }
-a:visited { color: var(--link-visited); }
-a:hover { text-decoration: underline; }
-
-/* Addressing Layer (Mono) */
-/* Slugs, IDs, coordinates in the graph */
-code, .slug, .component-meta, .ratio-label, .address {
+/* ============================================
+   LAYER 1: THE GRAPH (White)
+   These are the NODES. The things that exist.
+   #tags, :aspects, /items, @actors
+   ============================================ */
+code, .slug, .address {
   font-family: var(--mono);
+  color: var(--graph);
 }
-h1 .slug, h2 .slug { font-size: 0.9em; }
 
-/* Prose Layer (Serif) */
-/* Human argument and reasoning */
+/* Items in vote comparisons are graph nodes */
+.vote-items {
+  font-family: var(--mono);
+  color: var(--graph);
+}
+
+/* ============================================
+   LAYER 2: PROSE (Light Gray ~75%)
+   Human reasoning, vote bodies, explanations.
+   ============================================ */
 .prose, .vote-body {
   font-family: var(--serif);
+  color: var(--prose);
   line-height: 1.6;
   font-size: 1.05rem;
   max-width: 65ch;
@@ -58,43 +86,116 @@ h1 .slug, h2 .slug { font-size: 0.9em; }
   overflow-wrap: anywhere;
 }
 
-/* Components */
-pre { padding: 12px; border: 1px solid var(--border); border-radius: 10px; overflow-x: auto; background: var(--panel); font-family: var(--mono); }
-table { width: 100%; border-collapse: collapse; }
-td, th { padding: 6px 0; border-bottom: 1px solid var(--border); }
-th { text-align: left; }
-h1,h2 { margin: 0 0 12px 0; }
+/* ============================================
+   LAYER 3: UI / SCAFFOLDING (Mid Gray ~50%)
+   Headers, navigation labels. Structural.
+   ============================================ */
+h1, h2, h3 {
+  color: var(--ui);
+  font-weight: 400;
+  margin: 0 0 12px 0;
+}
 h3 { margin: 18px 0 8px 0; }
 
-.vote { border: 1px solid var(--border); border-radius: 12px; padding: 12px; margin: 10px 0; background: var(--panel); }
+/* But slugs INSIDE headers are still white */
+h1 .slug, h2 .slug {
+  color: var(--graph);
+  font-size: 0.95em;
+}
+
+/* ============================================
+   LAYER 4: META (Dark Gray ~32%)
+   Timestamps, counts, secondary info.
+   Barely visible unless you look.
+   ============================================ */
+.muted { color: var(--ui); }
+.faint { color: var(--meta); }
+.vote-meta { color: var(--meta); font-size: 0.9em; }
+.component-meta { color: var(--meta); font-size: 0.85em; font-family: var(--mono); margin-top: -2px; }
+.ratio-label { color: var(--meta); font-size: 0.85em; font-family: var(--mono); margin-bottom: 6px; }
+
+/* ============================================
+   LINKS: The only color in the system
+   Pink stands out against the gray scale.
+   ============================================ */
+a {
+  text-decoration: none;
+  color: var(--link);
+  transition: color 0.1s;
+}
+a:visited { color: var(--link-visited); }
+a:hover { 
+  text-decoration: underline; 
+  color: var(--link-hover);
+}
+
+/* ============================================
+   COMPONENTS
+   ============================================ */
+.row { display: flex; justify-content: space-between; gap: 16px; }
+
+pre {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow-x: auto;
+  background: var(--panel);
+  font-family: var(--mono);
+  color: var(--graph); /* Code is graph-level */
+}
+
+table { width: 100%; border-collapse: collapse; }
+td, th { padding: 6px 0; border-bottom: 1px solid var(--border); }
+th { text-align: left; color: var(--meta); font-weight: normal; }
+
+.vote {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+  margin: 10px 0;
+  background: var(--panel);
+}
 .vote-header { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; flex-wrap: wrap; }
-.vote-items { display: flex; gap: 10px; flex-wrap: wrap; font-family: var(--mono); }
-.vote-meta { color: var(--muted); font-size: 0.9em; }
-.ratio-wrap { margin-top: 8px; }
-.ratio-label { color: var(--muted); font-size: 0.9em; margin-bottom: 6px; }
-.ratio-bar { display: flex; height: 12px; border-radius: 999px; overflow: hidden; border: 1px solid var(--border); background: color-mix(in srgb, CanvasText 3%, transparent); }
-.ratio-left { background: rgba(46, 160, 67, 0.75); }
-.ratio-right { background: rgba(248, 81, 73, 0.70); }
+.vote-items { display: flex; gap: 10px; flex-wrap: wrap; }
 .vote-body { margin-top: 10px; }
 
-.component { border: 1px solid var(--border); border-radius: 14px; padding: 12px; margin: 12px 0; background: var(--panel); }
-.component-meta { font-size: 0.85em; color: var(--faint); margin-top: -2px; }
-
-/* Theme Switcher Widget */
-#theme-switcher {
-    position: fixed;
-    bottom: 20px;
-    right: 20px;
-    background: var(--panel);
-    border: 1px solid var(--border);
-    padding: 8px;
-    border-radius: 8px;
-    font-size: 12px;
-    font-family: var(--sans);
-    opacity: 0.3;
-    transition: opacity 0.2s;
-    user-select: none;
-    cursor: pointer;
-    z-index: 9999;
+.ratio-wrap { margin-top: 8px; }
+.ratio-bar {
+  display: flex;
+  height: 6px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--border);
 }
-#theme-switcher:hover { opacity: 1.0; }
+.ratio-left { background: oklch(60% 0.15 145); }  /* Muted green */
+.ratio-right { background: oklch(50% 0.12 25); }  /* Muted red */
+
+.component {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+  margin: 12px 0;
+  background: var(--panel);
+}
+
+/* Theme Switcher */
+#theme-switcher {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  color: var(--meta);
+  border: 1px solid var(--border);
+  padding: 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: var(--mono);
+  opacity: 0.5;
+  transition: opacity 0.15s, color 0.15s;
+  user-select: none;
+  cursor: pointer;
+  z-index: 9999;
+}
+#theme-switcher:hover {
+  opacity: 1.0;
+  color: var(--graph);
+}
