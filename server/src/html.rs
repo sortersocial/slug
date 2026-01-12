@@ -356,11 +356,8 @@ async fn render_aspect_view(
                         }
                         ol class="ranking" {
                             @for r in ranked.iter() {
-                                @let item_id = format!("item-{}", r.item);
-                                li id=(item_id) {
-                                    a class="item-link" href={(format!("#{}", item_id))} {
-                                        code { "/" (r.item) }
-                                    }
+                                li {
+                                    code { "/" (r.item) }
                                     span class="score" { (format!("{:.4}", r.score)) }
                                 }
                             }

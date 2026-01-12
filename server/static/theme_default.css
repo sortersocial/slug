@@ -212,30 +212,6 @@ ol.ranking li::before {
   margin-left: auto;
 }
 
-/* Item links in rankings */
-.item-link {
-  color: var(--graph);
-  transition: color 0.1s;
-}
-.item-link:visited {
-  color: var(--graph);
-}
-.item-link:hover {
-  color: var(--signal);
-  text-decoration: none;
-}
-
-/* Targeted/selected item */
-ol.ranking li:target {
-  background: var(--panel);
-  margin: 0 -8px;
-  padding: 4px 8px;
-  border-radius: 3px;
-}
-ol.ranking li:target .item-link {
-  color: var(--signal);
-}
-
 .vote {
   border: 1px solid var(--border);
   border-radius: 3px;
