@@ -270,6 +270,8 @@ summary {
 
 /* Item card (expanded view) */
 .item-card {
+  width: 100%;
+  box-sizing: border-box;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 3px;
@@ -284,6 +286,8 @@ summary {
   gap: 12px;
   padding-bottom: 8px;
   border-bottom: 1px solid var(--border);
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .item-card-header code {
@@ -298,6 +302,8 @@ summary {
   line-height: 1.6;
   margin-top: 8px;
   white-space: pre-wrap;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .vote {
