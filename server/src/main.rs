@@ -1,5 +1,5 @@
 use axum::{routing::get, Router};
-use tower_http::{services::ServeDir, trace::TraceLayer};
+use tower_http::trace::TraceLayer;
 use tracing_subscriber::EnvFilter;
 
 use slugsocial_server::{
@@ -91,7 +91,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/v0/pair", get(api::get_pair))
         .route("/api/v0/rank", get(api::get_rank))
         .route("/api/v0/notifications", get(api::get_notifications))
-        .nest_service("/static", ServeDir::new("static"))
+        .route("/static/theme_:theme.css", get(html::serve_theme_css))
         .with_state(state)
         .layer(TraceLayer::new_for_http());
 

@@ -1,7 +1,7 @@
 use axum::{
     extract::{Path, Query, State},
-    http::StatusCode,
-    response::{Html, IntoResponse},
+    http::{header, StatusCode},
+    response::{Html, IntoResponse, Response},
 };
 use maud::{html, Markup, DOCTYPE};
 use serde::Deserialize;
@@ -12,6 +12,26 @@ use crate::{
     state::AppState,
     timeago,
 };
+
+// Embed CSS files at compile time
+const THEME_DEFAULT_CSS: &str = include_str!("../static/theme_default.css");
+const THEME_RETRO_CSS: &str = include_str!("../static/theme_retro.css");
+
+pub async fn serve_theme_css(Path(theme): Path<String>) -> impl IntoResponse {
+    let css = match theme.as_str() {
+        "default" => THEME_DEFAULT_CSS,
+        "retro" => THEME_RETRO_CSS,
+        _ => return (StatusCode::NOT_FOUND, "theme not found").into_response(),
+    };
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/css; charset=utf-8")
+        .header(header::CACHE_CONTROL, "public, max-age=3600")
+        .body(css.to_string())
+        .unwrap()
+        .into_response()
+}
 
 fn layout(title: &str, body: Markup) -> Markup {
     html! {
