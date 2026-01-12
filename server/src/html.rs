@@ -188,8 +188,9 @@ pub async fn index(State(state): State<AppState>) -> impl IntoResponse {
     let page = layout(
         "slug.social",
         html! {
-            h1 { "slug.social" }
-            p class="muted" { "collective ranking via pairwise comparisons" }
+            nav class="breadcrumb" {
+                span { "index" }
+            }
             h2 { "tags" }
             @if rows.is_empty() {
                 p class="muted" { "no tags yet" }
@@ -372,11 +373,6 @@ async fn render_aspect_view(
     let page = layout(
         &format!("#{tag} :{aspect}"),
         html! {
-            h1 {
-                span class="slug" { "#" (tag) }
-                " "
-                span class="slug" { ":" (aspect) }
-            }
             nav class="breadcrumb" {
                 a href="/" { "index" }
                 " / "
