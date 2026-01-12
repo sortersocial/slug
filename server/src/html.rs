@@ -5,8 +5,10 @@ use axum::{
 };
 use maud::{html, Markup, DOCTYPE};
 use serde::Deserialize;
+use tokio::io::{AsyncBufReadExt, BufReader};
 
 use crate::{
+    events::{canonicalize_actor, canonicalize_aspect, canonicalize_item, canonicalize_tag, Event},
     ranking::{connected_components_from_voted_pairs, ranked_items_subset},
     reducer::GroupKey,
     state::AppState,
@@ -132,6 +134,139 @@ fn bc_segment(label: &str, href: &str, is_current: bool) -> Markup {
         }
         " "
     }
+}
+
+#[derive(Debug, Clone)]
+struct MentionSnippet {
+    ts: i64,
+    actor: String,
+    ingest_id: String,
+    snippet: String,
+}
+
+async fn scan_item_activity(
+    state: &AppState,
+    tag: &str,
+    item: &str,
+) -> (Vec<crate::reducer::VoteData>, Vec<MentionSnippet>, usize) {
+    let tag = canonicalize_tag(tag);
+    let item = canonicalize_item(item);
+    let needle = format!("/{item}");
+
+    let mut votes: Vec<crate::reducer::VoteData> = Vec::new();
+    let mut mentions: Vec<MentionSnippet> = Vec::new();
+    let mut mention_total: usize = 0;
+
+    let path = state.event_log.path().to_path_buf();
+    let Ok(exists) = tokio::fs::try_exists(&path).await else {
+        return (votes, mentions, mention_total);
+    };
+    if !exists {
+        return (votes, mentions, mention_total);
+    }
+
+    let Ok(f) = tokio::fs::File::open(&path).await else {
+        return (votes, mentions, mention_total);
+    };
+    let mut reader = BufReader::new(f).lines();
+
+    while let Ok(Some(line)) = reader.next_line().await {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let Ok(ev) = serde_json::from_str::<Event>(trimmed) else {
+            continue;
+        };
+        let Event::Ingest(ing) = ev;
+
+        // Snippets: any ingest line(s) that mention this item (case-insensitive).
+        let raw_lower = ing.raw.to_lowercase();
+        if raw_lower.contains(&needle) {
+            mention_total += 1;
+            if mentions.len() < 50 {
+                let mut hit_lines: Vec<&str> = ing
+                    .raw
+                    .lines()
+                    .filter(|ln| ln.to_lowercase().contains(&needle))
+                    .take(3)
+                    .collect();
+                if hit_lines.is_empty() {
+                    // Fallback: include a short prefix of the raw ingest.
+                    hit_lines = ing.raw.lines().take(3).collect();
+                }
+                let snippet = hit_lines.join("\n");
+                mentions.push(MentionSnippet {
+                    ts: ing.ts,
+                    actor: canonicalize_actor(&ing.actor),
+                    ingest_id: ing.id.clone(),
+                    snippet,
+                });
+            }
+        }
+
+        // Votes over time: parse DSL and collect votes involving this item in this tag.
+        let doc = match crate::dsl::parse_full(&ing.raw) {
+            Ok(d) => d,
+            Err(_) => continue,
+        };
+
+        let mut current_tag: Option<String> = None;
+        let mut current_aspect: String = "default".to_string();
+        let mut current_actor: Option<String> = Some(ing.actor.clone());
+
+        for stmt in doc.statements {
+            match stmt {
+                crate::dsl::Stmt::Hashtag { name } => {
+                    current_tag = Some(canonicalize_tag(&name));
+                }
+                crate::dsl::Stmt::Attribute { name } => {
+                    current_aspect = canonicalize_aspect(&name);
+                }
+                crate::dsl::Stmt::Actor { name } => {
+                    current_actor = Some(canonicalize_actor(&name));
+                }
+                crate::dsl::Stmt::Vote {
+                    item1,
+                    item2,
+                    ratio_left,
+                    ratio_right,
+                    explanation,
+                } => {
+                    let Some(ref cur_tag) = current_tag else {
+                        continue;
+                    };
+                    if cur_tag != &tag {
+                        continue;
+                    }
+                    let a = canonicalize_item(&item1);
+                    let b = canonicalize_item(&item2);
+                    if a != item && b != item {
+                        continue;
+                    }
+                    let actor = current_actor
+                        .clone()
+                        .unwrap_or_else(|| canonicalize_actor(&ing.actor));
+                    votes.push(crate::reducer::VoteData {
+                        ts: ing.ts,
+                        tag: tag.clone(),
+                        aspect: current_aspect.clone(),
+                        a,
+                        b,
+                        ratio_left,
+                        ratio_right,
+                        body: explanation,
+                        actor,
+                    });
+                }
+                _ => {}
+            }
+        }
+    }
+
+    votes.sort_by_key(|v| std::cmp::Reverse(v.ts));
+    mentions.sort_by_key(|m| std::cmp::Reverse(m.ts));
+    (votes, mentions, mention_total)
 }
 
 pub async fn index(State(state): State<AppState>) -> impl IntoResponse {
@@ -312,19 +447,37 @@ pub async fn item_page(
     Path((tag, item)): Path<(String, String)>,
     Query(query): Query<ThreadQuery>,
 ) -> impl IntoResponse {
-    let tag = tag.trim_start_matches('#').to_string();
-    let item = item.trim_start_matches('/').to_string();
+    let tag = canonicalize_tag(&tag);
+    let item = canonicalize_item(&item);
 
     if let Some(aspect) = query.aspect {
-        let aspect = aspect.trim_start_matches(':').to_string();
+        let aspect = canonicalize_aspect(&aspect);
         return render_aspect_view(state, tag, aspect, Some(item)).await;
     }
 
-    // If no aspect specified, show item without ranking context
+    let (votes, mentions, mention_total) = scan_item_activity(&state, &tag, &item).await;
+
+    let mut aspects: std::collections::BTreeMap<String, (usize, i64)> = std::collections::BTreeMap::new();
+    for v in votes.iter() {
+        let e = aspects.entry(v.aspect.clone()).or_insert((0, 0));
+        e.0 += 1;
+        if v.ts > e.1 {
+            e.1 = v.ts;
+        }
+    }
+
+    let body = {
+        let reduced = state.reduced.read().await;
+        reduced.item_bodies.get(&item).cloned()
+    };
+
+    let now = now_ms();
+
     let tag_label = format!("#{tag}");
     let tag_href = format!("/~/{tag}");
     let item_label = format!("/{item}");
     let item_href = format!("/~/{tag}/{item}");
+
     let page = layout(
         &format!("/{item}"),
         html! {
@@ -333,7 +486,91 @@ pub async fn item_page(
                 (bc_segment(&tag_label, &tag_href, false))
                 (bc_segment(&item_label, &item_href, true))
             }
-            p class="muted" { "select an aspect to view ranking" }
+
+            div class="item-card" {
+                div class="item-card-header" {
+                    code { "/" (item) }
+                    span class="muted" {
+                        (format!("votes={} · attributes={} · mentions={}", votes.len(), aspects.len(), mention_total))
+                    }
+                }
+                @if let Some(body) = body {
+                    div class="item-card-body" { (body) }
+                } @else {
+                    div class="item-card-body muted" { "no body yet (add one via ingest)" }
+                }
+            }
+
+            h2 { "attributes" }
+            @if aspects.is_empty() {
+                p class="muted" { "no votes yet for this item" }
+            } @else {
+                ul {
+                    @for (aspect, (count, last_ts)) in aspects.iter() {
+                        @let href = format!("/~/{tag}/{item}?aspect={aspect}");
+                        @let hover = timeago::rfc3339_utc(*last_ts);
+                        @let ago = timeago::timeago(now, *last_ts);
+                        li {
+                            a href=(href) { ":" (aspect) }
+                            " "
+                            span class="muted" title=(hover) {
+                                (format!("votes={count} · last {ago}"))
+                            }
+                        }
+                    }
+                }
+            }
+
+            h2 { "votes over time" }
+            @if votes.is_empty() {
+                p class="muted" { "none yet" }
+            } @else {
+                @for v in votes.iter().take(200) {
+                    @let pct = ratio_pct(v.ratio_left, v.ratio_right);
+                    @let hover = timeago::rfc3339_utc(v.ts);
+                    @let ago = timeago::timeago(now, v.ts);
+                    div class="vote" {
+                        div class="vote-header" {
+                            span class="muted" { ":" (v.aspect) }
+                            " "
+                            code class="vote-left" { "/" (v.a) }
+                            span class="vote-ratio" { (format!("{}:{}", v.ratio_left, v.ratio_right)) }
+                            code class="vote-right" { "/" (v.b) }
+                        }
+                        div class="ratio-bar" aria-label={(format!("ratio {}:{}", v.ratio_left, v.ratio_right))} {
+                            div class="ratio-left" style={(format!("width: {:.3}%;", pct))} {}
+                            div class="ratio-right" style={(format!("width: {:.3}%;", 100.0 - pct))} {}
+                        }
+                        div class="vote-body" { (v.body) }
+                        div class="vote-meta" title=(hover) {
+                            span class="address" { "@" (v.actor) }
+                            " · "
+                            (ago)
+                        }
+                    }
+                }
+            }
+
+            h2 { "mentions" }
+            @if mention_total == 0 {
+                p class="muted" { "none yet" }
+            } @else {
+                p class="muted" { (format!("showing most recent {} (total={})", mentions.len(), mention_total)) }
+                @for m in mentions.iter() {
+                    @let hover = timeago::rfc3339_utc(m.ts);
+                    @let ago = timeago::timeago(now, m.ts);
+                    div class="vote" {
+                        div class="vote-meta" title=(hover) {
+                            span class="address" { "@" (m.actor) }
+                            " · "
+                            (ago)
+                            " · "
+                            code class="muted" { (m.ingest_id) }
+                        }
+                        pre { (m.snippet) }
+                    }
+                }
+            }
         },
     );
     Html(page.into_string()).into_response()
