@@ -127,7 +127,7 @@ fn ratio_pct(left: i32, right: i32) -> f64 {
 fn bc_segment(label: &str, href: &str, is_current: bool) -> Markup {
     html! {
         @if is_current {
-            a href=(href) class="bc-current" { "_" (label) "_" }
+            a href=(href) class="bc-current" { (label) }
         } @else {
             a href=(href) { (label) }
         }

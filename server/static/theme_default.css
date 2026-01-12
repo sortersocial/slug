@@ -122,7 +122,8 @@ code, .slug, .address {
   color: var(--link-hover);
 }
 .breadcrumb a.bc-current {
-  /* Same styling, clickable, but with brackets which are added in HTML */
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
 }
 
 h1 {
