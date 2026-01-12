@@ -185,25 +185,30 @@ li { margin: 4px 0; }
 
 /* Ranking list */
 ol.ranking {
-  padding-left: 1.8em;
-  margin: 8px 0;
-  border-left: 1px solid var(--border);
+  padding-left: 0;
+  margin: 0;
+  list-style: none;
+  counter-reset: rank;
 }
 ol.ranking li {
-  margin: 3px 0;
+  margin: 2px 0;
   display: flex;
-  justify-content: space-between;
   align-items: baseline;
+  gap: 6px;
+  counter-increment: rank;
 }
-ol.ranking li::marker {
+ol.ranking li::before {
+  content: counter(rank) ".";
   color: var(--meta);
   font-size: var(--text-xs);
+  min-width: 1.5em;
 }
 .score {
   color: var(--signal);
   font-family: var(--mono);
   font-size: var(--text-lg);
   font-weight: 500;
+  margin-left: auto;
 }
 
 .vote {
@@ -281,9 +286,6 @@ ol.ranking li::marker {
   border-left: none;
 }
 
-.component ol.ranking {
-  margin: 0;
-}
 
 /* ============================================
    CONTROLS
