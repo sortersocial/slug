@@ -109,18 +109,20 @@ code, .slug, .address {
 
 /* Breadcrumb navigation */
 .breadcrumb {
+  font-family: var(--mono);
   font-size: var(--text-sm);
   color: var(--meta);
   margin-bottom: 16px;
 }
 .breadcrumb a {
-  color: var(--ui);
+  color: var(--graph);
+  text-decoration: none;
 }
 .breadcrumb a:hover {
   color: var(--link-hover);
 }
-.breadcrumb .slug {
-  color: var(--graph);
+.breadcrumb a.bc-current {
+  /* Same styling, clickable, but with brackets which are added in HTML */
 }
 
 h1 {

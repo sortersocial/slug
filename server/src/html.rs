@@ -122,6 +122,18 @@ fn ratio_pct(left: i32, right: i32) -> f64 {
     (l / denom) * 100.0
 }
 
+/// Render a single breadcrumb segment
+fn bc_segment(label: &str, href: &str, is_current: bool) -> Markup {
+    html! {
+        @if is_current {
+            a href=(href) class="bc-current" { "[" (label) "]" }
+        } @else {
+            a href=(href) { (label) }
+        }
+        " "
+    }
+}
+
 pub async fn index(State(state): State<AppState>) -> impl IntoResponse {
     #[derive(Clone)]
     struct TagRow {
@@ -189,7 +201,7 @@ pub async fn index(State(state): State<AppState>) -> impl IntoResponse {
         "slug.social",
         html! {
             nav class="breadcrumb" {
-                span { "index" }
+                (bc_segment("index", "/", true))
             }
             h2 { "tags" }
             @if rows.is_empty() {
@@ -258,9 +270,10 @@ pub async fn thread_page(
         &format!("#{tag}"),
         html! {
             nav class="breadcrumb" {
-                a href="/" { "index" }
-                " / "
-                span class="slug" { "#" (tag) }
+                (bc_segment("index", "/", false))
+                @let tag_label = format!("#{tag}");
+                @let tag_href = format!("/~/{tag}");
+                (bc_segment(&tag_label, &tag_href, true))
             }
             h2 { "aspects" }
             @if aspects.is_empty() {
@@ -306,15 +319,17 @@ pub async fn item_page(
     }
 
     // If no aspect specified, show item without ranking context
+    let tag_label = format!("#{tag}");
+    let tag_href = format!("/~/{tag}");
+    let item_label = format!("/{item}");
+    let item_href = format!("/~/{tag}/{item}");
     let page = layout(
         &format!("/{item}"),
         html! {
             nav class="breadcrumb" {
-                a href="/" { "index" }
-                " / "
-                a href={(format!("/~/{tag}"))} class="slug" { "#" (tag) }
-                " / "
-                span class="slug" { "/" (item) }
+                (bc_segment("index", "/", false))
+                (bc_segment(&tag_label, &tag_href, false))
+                (bc_segment(&item_label, &item_href, true))
             }
             p class="muted" { "select an aspect to view ranking" }
         },
@@ -339,7 +354,7 @@ async fn render_aspect_view(
                 "not found",
                 html! {
                     nav class="breadcrumb" {
-                        a href="/" { "index" }
+                        (bc_segment("index", "/", false))
                     }
                     h1 { "not found" }
                 },
@@ -370,20 +385,24 @@ async fn render_aspect_view(
     let mut comps = comps;
     comps.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
 
+    let tag_label = format!("#{tag}");
+    let tag_href = format!("/~/{tag}");
+    let aspect_label = format!(":{aspect}");
+    let aspect_href = format!("/~/{tag}?aspect={aspect}");
+    let item_label = selected_item.as_ref().map(|it| format!("/{it}"));
+    let item_href = selected_item.as_ref().map(|it| format!("/~/{tag}/{it}?aspect={aspect}"));
+    
     let page = layout(
         &format!("#{tag} :{aspect}"),
         html! {
             nav class="breadcrumb" {
-                a href="/" { "index" }
-                " / "
-                a href={(format!("/~/{tag}"))} class="slug" { "#" (tag) }
-                " / "
-                @if selected_item.is_some() {
-                    a href={(format!("/~/{tag}?aspect={aspect}"))} class="slug" { ":" (aspect) }
-                    " / "
-                    span class="slug" { "/" (selected_item.as_ref().unwrap()) }
+                (bc_segment("index", "/", false))
+                (bc_segment(&tag_label, &tag_href, false))
+                @if let Some(ref it_label) = item_label {
+                    (bc_segment(&aspect_label, &aspect_href, false))
+                    (bc_segment(it_label, item_href.as_ref().unwrap(), true))
                 } @else {
-                    span class="slug" { ":" (aspect) }
+                    (bc_segment(&aspect_label, &aspect_href, true))
                 }
             }
 
