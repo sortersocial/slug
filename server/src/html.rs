@@ -371,6 +371,46 @@ pub async fn item_page(
         }
     }
 
+    // For each aspect where this item has votes, compute its rank position by running
+    // rank-centrality (PageRank-like) on the *largest connected component* in that aspect.
+    //
+    // value: Some((rank_1_based, component_size, score)) or None if item is not in the largest component.
+    let aspect_ranks: std::collections::HashMap<String, Option<(usize, usize, f64)>> = {
+        let reduced = state.reduced.read().await;
+        let mut out: std::collections::HashMap<String, Option<(usize, usize, f64)>> =
+            std::collections::HashMap::new();
+        for aspect in aspects.keys() {
+            let key = GroupKey {
+                tag: tag.clone(),
+                aspect: aspect.clone(),
+            };
+            let Some(group) = reduced.groups.get(&key) else {
+                out.insert(aspect.clone(), None);
+                continue;
+            };
+            let n = group.idx_to_item.len();
+            let (mut comps, _) =
+                connected_components_from_voted_pairs(n, group.voted_pairs.iter().copied());
+            if comps.is_empty() {
+                out.insert(aspect.clone(), None);
+                continue;
+            }
+            comps.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
+            let largest = &comps[0];
+
+            let ranked = ranked_items_subset(group, largest, 10_000, 1e-8);
+            let mut found: Option<(usize, usize, f64)> = None;
+            for (i, r) in ranked.iter().enumerate() {
+                if r.item == item {
+                    found = Some((i + 1, ranked.len(), r.score));
+                    break;
+                }
+            }
+            out.insert(aspect.clone(), found);
+        }
+        out
+    };
+
     let now = now_ms();
 
     let tag_label = format!("#{tag}");
@@ -410,11 +450,16 @@ pub async fn item_page(
                         @let href = format!("/~/{tag}/{item}?aspect={aspect}");
                         @let hover = timeago::rfc3339_utc(*last_ts);
                         @let ago = timeago::timeago(now, *last_ts);
+                        @let rank = aspect_ranks.get(aspect).cloned().flatten();
                         li {
                             a href=(href) { ":" (aspect) }
                             " "
                             span class="muted" title=(hover) {
-                                (format!("votes={count} · last {ago}"))
+                                @if let Some((pos, n, score)) = rank {
+                                    (format!("votes={count} · rank={pos}/{n} · score={score:.4} · last {ago}"))
+                                } @else {
+                                    (format!("votes={count} · rank=— · last {ago}"))
+                                }
                             }
                         }
                     }
@@ -451,23 +496,26 @@ pub async fn item_page(
                 }
             }
 
-            h2 { "snippets" }
-            @if snippet_total == 0 {
-                p class="muted" { "none yet" }
-            } @else {
-                p class="muted" { (format!("showing {} (total={})", snippets.len(), snippet_total)) }
-                @for ing in snippets.iter() {
-                    @let hover = timeago::rfc3339_utc(ing.ts);
-                    @let ago = timeago::timeago(now, ing.ts);
-                    div class="vote" {
-                        div class="vote-meta" title=(hover) {
-                            span class="address" { "@" (ing.actor) }
-                            " · "
-                            (ago)
-                            " · "
-                            code class="muted" { (ing.id) }
+            @if snippet_total > 0 {
+                details {
+                    summary { "snippets " span class="muted" { (format!("({})", snippet_total)) } }
+                    p class="muted" { "full ingests that mention this item (collapsed by default)" }
+                    @for ing in snippets.iter().take(10) {
+                        @let hover = timeago::rfc3339_utc(ing.ts);
+                        @let ago = timeago::timeago(now, ing.ts);
+                        details {
+                            summary class="muted" title=(hover) {
+                                span class="address" { "@" (ing.actor) }
+                                " · "
+                                (ago)
+                                " · "
+                                code { (ing.id) }
+                            }
+                            pre { (ing.raw) }
                         }
-                        pre { (ing.raw) }
+                    }
+                    @if snippet_total > 10 {
+                        p class="muted" { "…" }
                     }
                 }
             }
