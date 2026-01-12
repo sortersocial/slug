@@ -1,11 +1,9 @@
-use axum::{routing::get, Router};
-use tower_http::trace::TraceLayer;
+use axum::Router;
 use tracing_subscriber::EnvFilter;
 
 use slugsocial_server::{
-    api,
     event_log::EventLog,
-    html,
+    create_app,
     state::{AppConfig, AppState, KeyRecord},
 };
 
@@ -77,24 +75,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    let app = Router::new()
-        .route("/healthz", get(|| async { "ok" }))
-        .route("/", get(html::index))
-        .route("/~/:tag", get(html::thread_page))
-        .route("/~/:tag/:item", get(html::item_page))
-        .route("/api/v0/tags", get(api::get_tags))
-        .route("/api/v0/tag", get(api::get_tag))
-        .route("/api/v0/item", get(api::get_item))
-        .route("/api/v0/recent_votes", get(api::get_recent_votes))
-        // REMOVED: /api/v0/vote - use /api/v0/ingest instead
-        .route("/api/v0/ingest", axum::routing::post(api::post_ingest))
-        .route("/api/v0/check", axum::routing::post(api::post_check))
-        .route("/api/v0/pair", get(api::get_pair))
-        .route("/api/v0/rank", get(api::get_rank))
-        .route("/api/v0/notifications", get(api::get_notifications))
-        .route("/static/:filename", get(html::serve_theme_css))
-        .with_state(state)
-        .layer(TraceLayer::new_for_http());
+    // Single source of truth for routing lives in the library (`create_app`).
+    let app: Router = create_app(state);
 
     let port: u16 = env_var("PORT")
         .and_then(|s| s.parse().ok())

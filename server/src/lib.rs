@@ -29,6 +29,8 @@ pub fn create_app(state: AppState) -> Router {
         .route("/api/v0/check", axum::routing::post(api::post_check))
         .route("/api/v0/pair", axum::routing::get(api::get_pair))
         .route("/api/v0/rank", axum::routing::get(api::get_rank))
+        .route("/api/v0/notifications", axum::routing::get(api::get_notifications))
+        .route("/static/:filename", axum::routing::get(html::serve_theme_css))
         .with_state(state)
         .layer(TraceLayer::new_for_http())
 }
