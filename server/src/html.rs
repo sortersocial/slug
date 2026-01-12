@@ -50,28 +50,53 @@ fn layout(title: &str, body: Markup) -> Markup {
             }
             body {
                 (body)
-                div id="theme-switcher" { "theme" }
+                div id="controls" {
+                    div id="spread-control" {
+                        span { "spread" }
+                        input type="range" id="spread-slider" min="0" max="1" step="0.05" value="1";
+                    }
+                    div id="theme-switcher" { "theme" }
+                }
                 script { (r#"
                     (function() {
+                        // Theme switching
                         const themes = ['default', 'retro'];
-                        const stored = localStorage.getItem('slug-theme') || 'default';
+                        const storedTheme = localStorage.getItem('slug-theme') || 'default';
                         const switcher = document.getElementById('theme-switcher');
                         const stylesheet = document.getElementById('theme-stylesheet');
                         
                         function setTheme(name) {
                             stylesheet.href = `/static/theme_${name}.css`;
                             localStorage.setItem('slug-theme', name);
-                            switcher.textContent = `theme: ${name}`;
+                            switcher.textContent = name;
+                            // Re-apply spread after theme change
+                            setTimeout(() => setSpread(parseFloat(slider.value)), 50);
                         }
                         
-                        // Initialize from storage
-                        setTheme(stored);
+                        setTheme(storedTheme);
                         
-                        // Cycle on click
                         switcher.addEventListener('click', function() {
                             const current = themes.indexOf(localStorage.getItem('slug-theme') || 'default');
                             const next = (current + 1) % themes.length;
                             setTheme(themes[next]);
+                        });
+                        
+                        // Spread control
+                        const slider = document.getElementById('spread-slider');
+                        const storedSpread = localStorage.getItem('slug-spread');
+                        
+                        function setSpread(value) {
+                            document.documentElement.style.setProperty('--spread', value);
+                            localStorage.setItem('slug-spread', value);
+                        }
+                        
+                        if (storedSpread !== null) {
+                            slider.value = storedSpread;
+                            setSpread(parseFloat(storedSpread));
+                        }
+                        
+                        slider.addEventListener('input', function() {
+                            setSpread(parseFloat(this.value));
                         });
                     })();
                 "#) }
@@ -353,8 +378,7 @@ async fn render_aspect_view(
             }
 
             @if !no_vote_items.is_empty() {
-                h2 { "no votes in this aspect" }
-                p class="muted" { "items exist in the thread, but have not been compared under this aspect yet" }
+                h2 { "not yet compared" }
                 ul {
                     @for it in no_vote_items {
                         li { code { "/" (it) } }

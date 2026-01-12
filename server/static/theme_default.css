@@ -12,29 +12,37 @@
      - Prose is light gray. It is human context.
      - UI is mid gray. It should be invisible.
      - Meta is dark gray. Barely there.
+     
+     --spread controls the range (0 = flat gray, 1 = full contrast)
   */
 
+  /* === CONTROL === */
+  --spread: 1;  /* 0 to 1: controls luminance range */
+  --base: 50%;  /* Center point when spread=0 */
+
   /* === THE VOID === */
-  --bg: oklch(0% 0 0);              /* Pure black */
-  --panel: oklch(8% 0 0);           /* Subtle lift */
-  --border: oklch(20% 0 0);         /* Faint lines */
+  --bg: oklch(0% 0 0);
+  --panel: oklch(6% 0 0);
+  --border: oklch(18% 0 0);
 
   /* === THE LUMINANCE STACK === */
-  --L-graph: 100%;    /* White: The signal */
-  --L-prose: 75%;     /* Light: Human content */
-  --L-ui: 50%;        /* Mid: Navigation, headers */
-  --L-meta: 32%;      /* Dark: Timestamps, counts */
+  /* Target values at full spread */
+  --L-graph-target: 100;
+  --L-prose-target: 72;
+  --L-ui-target: 45;
+  --L-meta-target: 28;
+  --L-base: 50;
   
-  /* Derived colors (all gray, C=0) */
-  --graph: oklch(var(--L-graph) 0 0);
-  --prose: oklch(var(--L-prose) 0 0);
-  --ui: oklch(var(--L-ui) 0 0);
-  --meta: oklch(var(--L-meta) 0 0);
+  /* Computed: base + (target - base) * spread */
+  --graph: oklch(calc(var(--L-base) * 1% + (var(--L-graph-target) - var(--L-base)) * var(--spread) * 1%) 0 0);
+  --prose: oklch(calc(var(--L-base) * 1% + (var(--L-prose-target) - var(--L-base)) * var(--spread) * 1%) 0 0);
+  --ui: oklch(calc(var(--L-base) * 1% + (var(--L-ui-target) - var(--L-base)) * var(--spread) * 1%) 0 0);
+  --meta: oklch(calc(var(--L-base) * 1% + (var(--L-meta-target) - var(--L-base)) * var(--spread) * 1%) 0 0);
   
   /* Links: Purple (the only chroma in the system) */
-  --link: oklch(60% 0.20 280);           /* Purple */
-  --link-visited: oklch(45% 0.15 270);   /* Darker purple */
-  --link-hover: oklch(75% 0.25 285);     /* Bright purple */
+  --link: oklch(58% 0.18 280);
+  --link-visited: oklch(42% 0.14 270);
+  --link-hover: oklch(72% 0.22 285);
   
   /* Default text inherits prose level */
   --fg: var(--prose);
@@ -60,7 +68,7 @@ body {
   line-height: 1.45;
   color: var(--fg);
   background: var(--bg);
-  padding-bottom: 80px;
+  padding-bottom: 100px;
 }
 
 /* ============================================
@@ -73,14 +81,13 @@ code, .slug, .address {
   color: var(--graph);
 }
 
-/* Items in vote comparisons are graph nodes */
 .vote-items {
   font-family: var(--mono);
   color: var(--graph);
 }
 
 /* ============================================
-   LAYER 2: PROSE (Light Gray ~75%)
+   LAYER 2: PROSE (Light Gray)
    Human reasoning, vote bodies, explanations.
    ============================================ */
 .prose, .vote-body {
@@ -94,7 +101,7 @@ code, .slug, .address {
 }
 
 /* ============================================
-   LAYER 3: UI / SCAFFOLDING (Mid Gray ~50%)
+   LAYER 3: UI / SCAFFOLDING (Mid Gray)
    Headers, navigation labels. Structural.
    ============================================ */
 h1 {
@@ -120,15 +127,13 @@ h3 {
   text-transform: lowercase;
 }
 
-/* But slugs INSIDE headers are still white */
 h1 .slug, h2 .slug {
   color: var(--graph);
 }
 
 /* ============================================
-   LAYER 4: META (Dark Gray ~32%)
+   LAYER 4: META (Dark Gray)
    Timestamps, counts, secondary info.
-   Barely visible unless you look.
    ============================================ */
 .muted { color: var(--ui); }
 .faint { color: var(--meta); }
@@ -138,7 +143,6 @@ h1 .slug, h2 .slug {
 
 /* ============================================
    LINKS: The only color in the system
-   Purple stands out against the gray scale.
    ============================================ */
 a {
   text-decoration: none;
@@ -159,7 +163,7 @@ a:hover {
 pre {
   padding: 12px;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: 3px;
   overflow-x: auto;
   background: var(--panel);
   font-family: var(--mono);
@@ -171,9 +175,16 @@ table { width: 100%; border-collapse: collapse; }
 td, th { padding: 4px 0; border-bottom: 1px solid var(--border); }
 th { text-align: left; color: var(--meta); font-weight: normal; font-size: var(--text-xs); }
 
+ul { 
+  padding-left: 1.2em; 
+  border-left: 1px solid var(--border);
+  margin: 8px 0;
+}
+li { margin: 4px 0; }
+
 .vote {
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: 3px;
   padding: 10px;
   margin: 8px 0;
   background: var(--panel);
@@ -185,41 +196,92 @@ th { text-align: left; color: var(--meta); font-weight: normal; font-size: var(-
 .ratio-wrap { margin-top: 6px; }
 .ratio-bar {
   display: flex;
-  height: 4px;
-  border-radius: 2px;
+  height: 3px;
+  border-radius: 1px;
   overflow: hidden;
   background: var(--border);
 }
-/* Grayscale ratio: lighter = left wins, darker = right wins */
-.ratio-left { background: oklch(55% 0 0); }
-.ratio-right { background: oklch(25% 0 0); }
+.ratio-left { background: oklch(50% 0 0); }
+.ratio-right { background: oklch(22% 0 0); }
 
 .component {
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: 3px;
   padding: 10px;
   margin: 8px 0;
   background: var(--panel);
 }
 
-/* Theme Switcher */
-#theme-switcher {
+/* ============================================
+   CONTROLS
+   ============================================ */
+#controls {
   position: fixed;
   bottom: 20px;
   right: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-end;
+  font-family: var(--mono);
+  font-size: var(--text-xs);
+  z-index: 9999;
+}
+
+#theme-switcher {
   color: var(--meta);
   border: 1px solid var(--border);
   padding: 6px 8px;
-  border-radius: 3px;
-  font-size: var(--text-xs);
-  font-family: var(--mono);
+  border-radius: 2px;
+  background: var(--panel);
   opacity: 0.4;
   transition: opacity 0.15s, color 0.15s;
   user-select: none;
   cursor: pointer;
-  z-index: 9999;
 }
 #theme-switcher:hover {
   opacity: 1.0;
   color: var(--graph);
+}
+
+#spread-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--meta);
+  border: 1px solid var(--border);
+  padding: 6px 8px;
+  border-radius: 2px;
+  background: var(--panel);
+  opacity: 0.4;
+  transition: opacity 0.15s;
+}
+#spread-control:hover {
+  opacity: 1.0;
+}
+
+#spread-slider {
+  width: 80px;
+  height: 4px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: var(--border);
+  border-radius: 2px;
+  cursor: pointer;
+}
+#spread-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  background: var(--ui);
+  border-radius: 50%;
+  cursor: pointer;
+}
+#spread-slider::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  background: var(--ui);
+  border-radius: 50%;
+  cursor: pointer;
+  border: none;
 }
