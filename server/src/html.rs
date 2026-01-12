@@ -593,6 +593,32 @@ async fn render_aspect_view(
     let mut comps = comps;
     comps.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
 
+    // Precompute rankings for each component so we can render a TOC and a "meat" section consistently.
+    let component_rankings: Vec<(usize, usize, Vec<crate::ranking::RankedItem>)> = comps
+        .iter()
+        .enumerate()
+        .map(|(ci, comp)| {
+            let ranked = ranked_items_subset(&group, comp, 10000, 1e-8);
+            let pairs = group
+                .voted_pairs
+                .iter()
+                .filter(|(i, j)| comp.binary_search(i).is_ok() && comp.binary_search(j).is_ok())
+                .count();
+            (ci, pairs, ranked)
+        })
+        .collect();
+
+    let bodies: std::collections::HashMap<String, String> = {
+        let reduced = state.reduced.read().await;
+        let mut out = std::collections::HashMap::new();
+        for it in group.idx_to_item.iter().chain(no_vote_items.iter()) {
+            if let Some(body) = reduced.item_bodies.get(it) {
+                out.insert(it.clone(), body.clone());
+            }
+        }
+        out
+    };
+
     let tag_label = format!("#{tag}");
     let tag_href = format!("/~/{tag}");
     let aspect_label = format!(":{aspect}");
@@ -637,39 +663,20 @@ async fn render_aspect_view(
                 }
             }
 
-            h2 { "orderings" }
-            @if comps.is_empty() {
+            h2 { "toc" }
+            @if component_rankings.is_empty() {
                 p class="muted" { "no voted pairs yet in this aspect" }
             } @else {
-                @for (ci, comp) in comps.iter().enumerate() {
-                    @let ranked = ranked_items_subset(&group, comp, 10000, 1e-8);
-                    @let pairs = group.voted_pairs.iter().filter(|(i,j)| comp.binary_search(i).is_ok() && comp.binary_search(j).is_ok()).count();
+                @for (ci, pairs, ranked) in component_rankings.iter() {
                     div class="component" {
                         div class="component-header" {
-                            (format!("ordering {} items={} pairs={}", ci + 1, comp.len(), pairs))
+                            (format!("ordering {} items={} pairs={}", ci + 1, ranked.len(), pairs))
                         }
                         ol class="ranking" {
                             @for r in ranked.iter() {
-                                @let is_selected = selected_item.as_ref() == Some(&r.item);
-                                // Item slug links to the item page (not the aspect view).
-                                // The "selected" aspect/item state is represented in breadcrumbs.
                                 @let item_url = format!("/~/{tag}/{}", r.item);
                                 li {
-                                    a class="item-link" href=(item_url) {
-                                        code { "/" (r.item) }
-                                    }
-                                    span class="score" { (format!("{:.4}", r.score)) }
-                                }
-                                @if is_selected {
-                                    div class="item-card" {
-                                        div class="item-card-header" {
-                                            code { "/" (r.item) }
-                                            span class="score" { (format!("{:.4}", r.score)) }
-                                        }
-                                        div class="item-card-body" {
-                                            "/" (r.item)
-                                        }
-                                    }
+                                    a class="item-link" href=(item_url) { code { "/" (r.item) } }
                                 }
                             }
                         }
@@ -681,8 +688,8 @@ async fn render_aspect_view(
                 div class="component unsorted" {
                     div class="component-header" { "isolates" }
                     ul {
-                        @for idx in isolate_idxs {
-                            @let name = group.idx_to_item.get(idx).cloned().unwrap_or_default();
+                        @for idx in &isolate_idxs {
+                            @let name = group.idx_to_item.get(*idx).cloned().unwrap_or_default();
                             li {
                                 @let href = format!("/~/{tag}/{name}");
                                 a class="item-link" href=(href) { code { "/" (name) } }
@@ -696,7 +703,7 @@ async fn render_aspect_view(
                 div class="component unsorted" {
                     div class="component-header" { "not yet compared" }
                     ul {
-                        @for it in no_vote_items {
+                        @for it in &no_vote_items {
                             li {
                                 @let href = format!("/~/{tag}/{it}");
                                 a class="item-link" href=(href) { code { "/" (it) } }
@@ -706,30 +713,77 @@ async fn render_aspect_view(
                 }
             }
 
-            h2 { "recent votes" }
-            @if group.recent_votes.is_empty() {
+            h2 { "meat" }
+            @if component_rankings.is_empty() && no_vote_items.is_empty() && isolate_idxs.is_empty() {
                 p class="muted" { "none yet" }
             } @else {
-                @let now = now_ms();
-                @for v in group.recent_votes.iter().take(50) {
-                    @let pct = ratio_pct(v.ratio_left, v.ratio_right);
-                    @let hover = timeago::rfc3339_utc(v.ts);
-                    @let ago = timeago::timeago(now, v.ts);
-                    div class="vote" {
-                        div class="vote-header" {
-                            code class="vote-left" { "/" (v.a) }
-                            span class="vote-ratio" { (format!("{}:{}", v.ratio_left, v.ratio_right)) }
-                            code class="vote-right" { "/" (v.b) }
+                @for (ci, pairs, ranked) in component_rankings.iter() {
+                    div class="component" {
+                        div class="component-header" {
+                            (format!("ordering {} items={} pairs={}", ci + 1, ranked.len(), pairs))
                         }
-                        div class="ratio-bar" aria-label={(format!("ratio {}:{}", v.ratio_left, v.ratio_right))} {
-                            div class="ratio-left" style={(format!("width: {:.3}%;", pct))} {}
-                            div class="ratio-right" style={(format!("width: {:.3}%;", 100.0 - pct))} {}
+                        @for r in ranked.iter() {
+                            @let item_url = format!("/~/{tag}/{}", r.item);
+                            div class="item-card" {
+                                div class="item-card-header" {
+                                    a class="item-link" href=(item_url) { code { "/" (r.item) } }
+                                    span class="score" { (format!("{:.4}", r.score)) }
+                                }
+                                @if let Some(body) = bodies.get(&r.item) {
+                                    div class="item-card-body" { (body) }
+                                } @else {
+                                    div class="item-card-body muted" { "no body yet" }
+                                }
+                            }
                         }
-                        div class="vote-body" { (v.body) }
-                        div class="vote-meta" title=(hover) {
-                            span class="address" { "@" (actor_label(&v.actor)) }
-                            " · "
-                            (ago)
+                    }
+                }
+
+                @if !no_vote_items.is_empty() {
+                    div class="component unsorted" {
+                        div class="component-header" { "not yet compared" }
+                        @for it in no_vote_items.iter() {
+                            @let href = format!("/~/{tag}/{it}");
+                            div class="item-card" {
+                                div class="item-card-header" {
+                                    a class="item-link" href=(href) { code { "/" (it) } }
+                                    span class="muted" { "unranked" }
+                                }
+                                @if let Some(body) = bodies.get(it) {
+                                    div class="item-card-body" { (body) }
+                                } @else {
+                                    div class="item-card-body muted" { "no body yet" }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            @if !group.recent_votes.is_empty() {
+                details {
+                    summary { "recent votes " span class="muted" { (format!("({})", group.recent_votes.len())) } }
+                    @let now = now_ms();
+                    @for v in group.recent_votes.iter().take(50) {
+                        @let pct = ratio_pct(v.ratio_left, v.ratio_right);
+                        @let hover = timeago::rfc3339_utc(v.ts);
+                        @let ago = timeago::timeago(now, v.ts);
+                        div class="vote" {
+                            div class="vote-header" {
+                                code class="vote-left" { "/" (v.a) }
+                                span class="vote-ratio" { (format!("{}:{}", v.ratio_left, v.ratio_right)) }
+                                code class="vote-right" { "/" (v.b) }
+                            }
+                            div class="ratio-bar" aria-label={(format!("ratio {}:{}", v.ratio_left, v.ratio_right))} {
+                                div class="ratio-left" style={(format!("width: {:.3}%;", pct))} {}
+                                div class="ratio-right" style={(format!("width: {:.3}%;", 100.0 - pct))} {}
+                            }
+                            div class="vote-body" { (v.body) }
+                            div class="vote-meta" title=(hover) {
+                                span class="address" { "@" (actor_label(&v.actor)) }
+                                " · "
+                                (ago)
+                            }
                         }
                     }
                 }
