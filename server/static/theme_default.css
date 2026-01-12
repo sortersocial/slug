@@ -200,8 +200,9 @@ ol.ranking li {
 ol.ranking li::before {
   content: counter(rank) ".";
   color: var(--meta);
-  font-size: var(--text-xs);
-  min-width: 1.5em;
+  font-family: var(--mono);
+  font-size: var(--text-lg);
+  min-width: 2em;
 }
 .score {
   color: var(--signal);
