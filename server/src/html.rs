@@ -140,10 +140,12 @@ fn actor_label(actor: &str) -> String {
     let a = actor.trim_start_matches('@').trim();
     let parts: Vec<&str> = a.split(':').collect();
     if parts.len() >= 3 {
+        let uuid = parts[0].trim();
         let rig = parts[1].trim();
         let model = parts[2].trim();
-        if !rig.is_empty() && !model.is_empty() {
-            return format!("{rig}:{model}");
+        let uuid8 = uuid.chars().take(8).collect::<String>();
+        if !uuid8.is_empty() && !rig.is_empty() && !model.is_empty() {
+            return format!("{uuid8}:{rig}:{model}");
         }
     }
     a.to_string()
@@ -444,40 +446,41 @@ pub async fn item_page(
                         (format!("votes={} · attributes={} · snippets={}", votes.len(), aspects.len(), snippet_total))
                     }
                 }
-                @if let Some(body) = body {
-                    div class="item-card-body" { (body) }
+                
+                // Attributes selector lives above the item body.
+                @if aspects.is_empty() {
+                    p class="muted" { "no votes yet for this item" }
                 } @else {
-                    div class="item-card-body muted" { "no body yet (add one via ingest)" }
-                }
-            }
-
-            h2 { "attributes" }
-            @if aspects.is_empty() {
-                p class="muted" { "no votes yet for this item" }
-            } @else {
-                ul {
-                    @for (aspect, (count, last_ts)) in aspects.iter() {
-                        // Aspect link goes to the aspect ranking page.
-                        @let href = format!("/~/{tag}?aspect={aspect}");
-                        @let hover = timeago::rfc3339_utc(*last_ts);
-                        @let ago = timeago::timeago(now, *last_ts);
-                        @let rank = aspect_ranks.get(aspect).cloned().flatten();
-                        li {
-                            @if selected_aspect.as_deref() == Some(aspect.as_str()) {
-                                a href=(href) class="bc-current" { ":" (aspect) }
-                            } @else {
-                                a href=(href) { ":" (aspect) }
-                            }
-                            " "
-                            span class="muted" title=(hover) {
-                                @if let Some((pos, n, score)) = rank {
-                                    (format!("votes={count} · rank={pos}/{n} · score={score:.4} · last {ago}"))
+                    ul {
+                        @for (aspect, (count, last_ts)) in aspects.iter() {
+                            // Aspect link goes to the aspect ranking page.
+                            @let href = format!("/~/{tag}?aspect={aspect}");
+                            @let hover = timeago::rfc3339_utc(*last_ts);
+                            @let ago = timeago::timeago(now, *last_ts);
+                            @let rank = aspect_ranks.get(aspect).cloned().flatten();
+                            li {
+                                @if selected_aspect.as_deref() == Some(aspect.as_str()) {
+                                    a href=(href) class="bc-current" { ":" (aspect) }
                                 } @else {
-                                    (format!("votes={count} · rank=— · last {ago}"))
+                                    a href=(href) { ":" (aspect) }
+                                }
+                                " "
+                                span class="muted" title=(hover) {
+                                    @if let Some((pos, n, score)) = rank {
+                                        (format!("votes={count} · rank={pos}/{n} · score={score:.4} · last {ago}"))
+                                    } @else {
+                                        (format!("votes={count} · rank=— · last {ago}"))
+                                    }
                                 }
                             }
                         }
                     }
+                }
+
+                @if let Some(body) = body {
+                    div class="item-card-body" { (body) }
+                } @else {
+                    div class="item-card-body muted" { "no body yet (add one via ingest)" }
                 }
             }
 
