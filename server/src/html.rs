@@ -17,10 +17,15 @@ use crate::{
 const THEME_DEFAULT_CSS: &str = include_str!("../static/theme_default.css");
 const THEME_RETRO_CSS: &str = include_str!("../static/theme_retro.css");
 
-pub async fn serve_theme_css(Path(theme): Path<String>) -> impl IntoResponse {
-    let css = match theme.as_str() {
-        "default" => THEME_DEFAULT_CSS,
-        "retro" => THEME_RETRO_CSS,
+pub async fn serve_theme_css(Path(filename): Path<String>) -> impl IntoResponse {
+    // Extract theme name from filename like "theme_default.css" or "theme_retro.css"
+    let theme = filename
+        .strip_prefix("theme_")
+        .and_then(|s| s.strip_suffix(".css"));
+    
+    let css = match theme {
+        Some("default") => THEME_DEFAULT_CSS,
+        Some("retro") => THEME_RETRO_CSS,
         _ => return (StatusCode::NOT_FOUND, "theme not found").into_response(),
     };
 
