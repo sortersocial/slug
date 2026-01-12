@@ -352,7 +352,7 @@ async fn render_aspect_view(
                     @let pairs = group.voted_pairs.iter().filter(|(i,j)| comp.binary_search(i).is_ok() && comp.binary_search(j).is_ok()).count();
                     div class="component" {
                         div class="component-header" {
-                            (format!("ordering {} · items={} · pairs={}", ci + 1, comp.len(), pairs))
+                            (format!("ordering {} items={} pairs={}", ci + 1, comp.len(), pairs))
                         }
                         ol class="ranking" {
                             @for r in ranked.iter() {
