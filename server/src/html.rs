@@ -22,31 +22,57 @@ fn layout(title: &str, body: Markup) -> Markup {
                 meta name="viewport" content="width=device-width, initial-scale=1";
                 title { (title) }
                 style { (r#"
-                    :root { color-scheme: light dark; }
-                    body { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-                           max-width: 820px; margin: 24px auto; padding: 0 16px; line-height: 1.4; }
+                    :root {
+                      color-scheme: light dark;
+                      --bg: Canvas;
+                      --fg: CanvasText;
+                      --muted: color-mix(in srgb, CanvasText 65%, transparent);
+                      --faint: color-mix(in srgb, CanvasText 35%, transparent);
+                      --border: color-mix(in srgb, CanvasText 18%, transparent);
+                      --panel: color-mix(in srgb, CanvasText 6%, transparent);
+                      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+                      --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+                      --serif: ui-serif, Iowan Old Style, Palatino, "Palatino Linotype", Georgia, Times, "Times New Roman", serif;
+                    }
+                    body {
+                      font-family: var(--sans);
+                      max-width: 880px;
+                      margin: 24px auto;
+                      padding: 0 16px;
+                      line-height: 1.45;
+                      color: var(--fg);
+                      background: var(--bg);
+                    }
                     a { text-decoration: none; }
                     a:hover { text-decoration: underline; }
                     h1,h2 { margin: 0 0 12px 0; }
                     h3 { margin: 18px 0 8px 0; }
-                    .muted { opacity: 0.7; }
+                    .muted { color: var(--muted); }
+                    .faint { color: var(--faint); }
                     .row { display: flex; justify-content: space-between; gap: 16px; }
-                    pre { padding: 12px; border: 1px solid rgba(127,127,127,0.25); border-radius: 8px; overflow-x: auto; }
+                    pre { padding: 12px; border: 1px solid var(--border); border-radius: 10px; overflow-x: auto; background: var(--panel); }
                     table { width: 100%; border-collapse: collapse; }
-                    td, th { padding: 6px 0; border-bottom: 1px solid rgba(127,127,127,0.2); }
+                    td, th { padding: 6px 0; border-bottom: 1px solid var(--border); }
                     th { text-align: left; }
+                    code { font-family: var(--mono); }
+                    .slug { font-family: var(--mono); }
+                    .prose { font-family: var(--serif); }
 
                     /* Votes: structured rendering */
-                    .vote { border: 1px solid rgba(127,127,127,0.25); border-radius: 10px; padding: 12px; margin: 10px 0; }
+                    .vote { border: 1px solid var(--border); border-radius: 12px; padding: 12px; margin: 10px 0; background: var(--panel); }
                     .vote-header { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; flex-wrap: wrap; }
                     .vote-items { display: flex; gap: 10px; flex-wrap: wrap; }
-                    .vote-meta { opacity: 0.7; font-size: 0.92em; }
+                    .vote-meta { color: var(--muted); font-size: 0.9em; }
                     .ratio-wrap { margin-top: 8px; }
-                    .ratio-label { opacity: 0.8; font-size: 0.92em; margin-bottom: 6px; }
-                    .ratio-bar { display: flex; height: 12px; border-radius: 999px; overflow: hidden; border: 1px solid rgba(127,127,127,0.25); }
+                    .ratio-label { color: var(--muted); font-size: 0.9em; margin-bottom: 6px; font-family: var(--mono); }
+                    .ratio-bar { display: flex; height: 12px; border-radius: 999px; overflow: hidden; border: 1px solid var(--border); background: color-mix(in srgb, CanvasText 3%, transparent); }
                     .ratio-left { background: rgba(46, 160, 67, 0.75); }
                     .ratio-right { background: rgba(248, 81, 73, 0.70); }
-                    .vote-body { margin-top: 10px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.35; }
+                    .vote-body { margin-top: 10px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.4; font-family: var(--serif); }
+
+                    /* Component boxes */
+                    .component { border: 1px solid var(--border); border-radius: 14px; padding: 12px; margin: 12px 0; background: var(--panel); }
+                    .component-meta { font-size: 0.85em; color: var(--faint); font-family: var(--mono); margin-top: -2px; }
                 "#) }
             }
             body {
@@ -285,7 +311,11 @@ async fn render_aspect_view(
     let page = layout(
         &format!("#{tag} :{aspect}"),
         html! {
-            h1 { "#" (tag) " " ":" (aspect) }
+            h1 {
+                span class="slug" { "#" (tag) }
+                " "
+                span class="slug" { ":" (aspect) }
+            }
             p { a href={(format!("/~/{tag}"))} { "← #" (tag) } " · " a href="/" { "index" } }
 
             h2 { "ranking groups (connected components)" }
@@ -295,14 +325,17 @@ async fn render_aspect_view(
                 @for (ci, comp) in comps.iter().enumerate() {
                     @let ranked = ranked_items_subset(&group, comp, 10000, 1e-8);
                     @let pairs = group.voted_pairs.iter().filter(|(i,j)| comp.binary_search(i).is_ok() && comp.binary_search(j).is_ok()).count();
-                    h3 { (format!("component {} · items={} · pairs={}", ci + 1, comp.len(), pairs)) }
-                    table {
-                        thead { tr { th { "item" } th { "score" } } }
-                        tbody {
-                            @for r in ranked.iter() {
-                                tr {
-                                    td { code { "/" (r.item) } }
-                                    td { (format!("{:.6}", r.score)) }
+                    div class="component" {
+                        h3 { (format!("component {}", ci + 1)) }
+                        div class="component-meta" { (format!("items={} · pairs={}", comp.len(), pairs)) }
+                        table {
+                            thead { tr { th { "item" } th { "score" } } }
+                            tbody {
+                                @for r in ranked.iter() {
+                                    tr {
+                                        td { code { "/" (r.item) } }
+                                        td { (format!("{:.6}", r.score)) }
+                                    }
                                 }
                             }
                         }
