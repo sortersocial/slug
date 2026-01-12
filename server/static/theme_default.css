@@ -117,6 +117,7 @@ code, .slug, .address {
 .breadcrumb a {
   color: var(--graph);
   text-decoration: none;
+  cursor: pointer;
 }
 .breadcrumb a:hover {
   color: var(--link-hover);
@@ -235,6 +236,7 @@ ol.ranking li::before {
 /* Item links in rankings */
 .item-link {
   color: var(--graph);
+  cursor: pointer;
 }
 .item-link:visited {
   color: var(--graph);
@@ -243,6 +245,10 @@ ol.ranking li::before {
   /* Subtle darkening (less bright) to indicate hover without screaming */
   color: var(--ui);
   text-decoration: none;
+}
+
+summary {
+  cursor: pointer;
 }
 
 /* Item card (expanded view) */

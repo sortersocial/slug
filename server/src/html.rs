@@ -135,6 +135,20 @@ fn bc_segment(label: &str, href: &str, is_current: bool) -> Markup {
     }
 }
 
+fn actor_label(actor: &str) -> String {
+    // Input is canonicalized without leading '@' (usually uuid:rig:provider/model).
+    let a = actor.trim_start_matches('@').trim();
+    let parts: Vec<&str> = a.split(':').collect();
+    if parts.len() >= 3 {
+        let rig = parts[1].trim();
+        let model = parts[2].trim();
+        if !rig.is_empty() && !model.is_empty() {
+            return format!("{rig}:{model}");
+        }
+    }
+    a.to_string()
+}
+
 pub async fn index(State(state): State<AppState>) -> impl IntoResponse {
     #[derive(Clone)]
     struct TagRow {
@@ -488,7 +502,7 @@ pub async fn item_page(
                         }
                         div class="vote-body" { (v.body) }
                         div class="vote-meta" title=(hover) {
-                            span class="address" { "@" (v.actor) }
+                            span class="address" { "@" (actor_label(&v.actor)) }
                             " · "
                             (ago)
                         }
@@ -505,11 +519,9 @@ pub async fn item_page(
                         @let ago = timeago::timeago(now, ing.ts);
                         details {
                             summary class="muted" title=(hover) {
-                                span class="address" { "@" (ing.actor) }
-                                " · "
                                 (ago)
                                 " · "
-                                code { (ing.id) }
+                                span class="address" { "@" (actor_label(&ing.actor)) }
                             }
                             pre { (ing.raw) }
                         }
@@ -714,7 +726,7 @@ async fn render_aspect_view(
                         }
                         div class="vote-body" { (v.body) }
                         div class="vote-meta" title=(hover) {
-                            span class="address" { "@" (v.actor) }
+                            span class="address" { "@" (actor_label(&v.actor)) }
                             " · "
                             (ago)
                         }
