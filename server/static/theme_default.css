@@ -251,6 +251,10 @@ ol.ranking.meat li::before {
   color: var(--graph);
   cursor: pointer;
 }
+.item-link code {
+  /* `code` has its own color, so force it to follow the link state */
+  color: inherit;
+}
 .item-link:visited {
   color: var(--graph);
 }
