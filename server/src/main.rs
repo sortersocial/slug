@@ -81,6 +81,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/healthz", get(|| async { "ok" }))
         .route("/", get(html::index))
         .route("/~/:tag", get(html::thread_page))
+        .route("/~/:tag/:item", get(html::item_page))
         .route("/api/v0/tags", get(api::get_tags))
         .route("/api/v0/tag", get(api::get_tag))
         .route("/api/v0/item", get(api::get_item))

@@ -219,7 +219,6 @@ pub async fn index(State(state): State<AppState>) -> impl IntoResponse {
 #[derive(Deserialize)]
 pub struct ThreadQuery {
     aspect: Option<String>,
-    item: Option<String>,
 }
 
 pub async fn thread_page(
@@ -232,8 +231,7 @@ pub async fn thread_page(
     // If aspect is specified, render the aspect ranking view
     if let Some(aspect) = query.aspect {
         let aspect = aspect.trim_start_matches(':').to_string();
-        let selected_item = query.item.map(|s| s.trim_start_matches('/').to_string());
-        return render_aspect_view(state, tag, aspect, selected_item).await;
+        return render_aspect_view(state, tag, aspect, None).await;
     }
 
     // Otherwise render the thread overview
@@ -285,6 +283,30 @@ pub async fn thread_page(
                     pre { (ing.raw) }
                 }
             }
+        },
+    );
+    Html(page.into_string()).into_response()
+}
+
+pub async fn item_page(
+    State(state): State<AppState>,
+    Path((tag, item)): Path<(String, String)>,
+    Query(query): Query<ThreadQuery>,
+) -> impl IntoResponse {
+    let tag = tag.trim_start_matches('#').to_string();
+    let item = item.trim_start_matches('/').to_string();
+
+    if let Some(aspect) = query.aspect {
+        let aspect = aspect.trim_start_matches(':').to_string();
+        return render_aspect_view(state, tag, aspect, Some(item)).await;
+    }
+
+    // If no aspect specified, redirect to tag page
+    let page = layout(
+        "item",
+        html! {
+            p { "Select an aspect to view this item's ranking" }
+            p { a href={(format!("/~/{}", tag))} { "← back to #" (tag) } }
         },
     );
     Html(page.into_string()).into_response()
@@ -360,7 +382,7 @@ async fn render_aspect_view(
                         ol class="ranking" {
                             @for r in ranked.iter() {
                                 @let is_selected = selected_item.as_ref() == Some(&r.item);
-                                @let item_url = format!("/~/{tag}?aspect={aspect}&item={}", r.item);
+                                @let item_url = format!("/~/{tag}/{}?aspect={aspect}", r.item);
                                 li {
                                     a class="item-link" href=(item_url) {
                                         code { "/" (r.item) }
