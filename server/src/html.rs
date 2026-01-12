@@ -329,7 +329,6 @@ async fn render_aspect_view(
                         h3 { (format!("component {}", ci + 1)) }
                         div class="component-meta" { (format!("items={} · pairs={}", comp.len(), pairs)) }
                         table {
-                            thead { tr { th { "item" } th { "score" } } }
                             tbody {
                                 @for r in ranked.iter() {
                                     tr {
