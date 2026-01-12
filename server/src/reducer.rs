@@ -12,6 +12,12 @@ pub struct GroupKey {
     pub aspect: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ItemKey {
+    pub tag: String,
+    pub item: String,
+}
+
 /// Parsed vote data (not an event - just internal representation).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct VoteData {
@@ -46,6 +52,14 @@ pub struct GroupState {
     pub cached_scores: Vec<f64>,
 
     pub recent_votes: VecDeque<VoteData>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ItemSnippet {
+    pub ts: i64,
+    pub ingest_id: String,
+    pub actor: String,
+    pub raw: String,
 }
 
 impl GroupState {
@@ -158,6 +172,15 @@ pub struct ReducerState {
     pub item_bodies: HashMap<String, String>,
     pub ingests_by_tag: HashMap<String, VecDeque<Ingest>>,
 
+    /// Per-(tag,item) vote history (most recent first), across all aspects.
+    pub item_votes: HashMap<ItemKey, VecDeque<VoteData>>,
+
+    /// Per-(tag,item) ingests/snippets that reference the item (most recent first).
+    pub item_snippets: HashMap<ItemKey, VecDeque<ItemSnippet>>,
+
+    /// Total snippet count per (tag,item), including those not retained in `item_snippets`.
+    pub item_snippet_counts: HashMap<ItemKey, usize>,
+
     /// Track thread subscriptions: thread -> set(actor)
     /// Actors are subscribed when they vote or ingest in a thread.
     pub thread_subscriptions: HashMap<String, HashSet<String>>,
@@ -199,6 +222,7 @@ impl ReducerState {
                     .collect();
 
                 // Process each statement.
+                let mut ingest_items: HashSet<String> = HashSet::new();
                 for stmt in doc.statements {
                     match stmt {
                         crate::dsl::Stmt::Hashtag { name } => {
@@ -213,6 +237,7 @@ impl ReducerState {
                         crate::dsl::Stmt::Item { title, body } => {
                             let item = canonicalize_item(&title);
                             self.items.insert(item.clone());
+                            ingest_items.insert(item.clone());
 
                             // Store body if provided.
                             if let Some(body_text) = body {
@@ -250,6 +275,9 @@ impl ReducerState {
                                     actor,
                                 };
 
+                                ingest_items.insert(vote.a.clone());
+                                ingest_items.insert(vote.b.clone());
+
                                 // Ensure items exist under tag.
                                 self.items.insert(vote.a.clone());
                                 self.items.insert(vote.b.clone());
@@ -270,11 +298,68 @@ impl ReducerState {
                                 let group = self.groups.entry(key.clone()).or_insert_with(|| {
                                     GroupState::new(key.tag.clone(), key.aspect.clone())
                                 });
-                                group.apply_vote(vote);
+                                group.apply_vote(vote.clone());
+
+                                // Index vote by (tag,item) for both items.
+                                for it in [&vote.a, &vote.b] {
+                                    let ik = ItemKey {
+                                        tag: tag.clone(),
+                                        item: it.clone(),
+                                    };
+                                    let q = self.item_votes.entry(ik).or_default();
+                                    q.push_front(vote.clone());
+                                    while q.len() > 500 {
+                                        q.pop_back();
+                                    }
+                                }
                             }
                         }
-                        crate::dsl::Stmt::Prose { .. } => {
-                            // Ignore prose and email.
+                        crate::dsl::Stmt::Prose { text } => {
+                            // Prose can reference items; treat the full ingest as a snippet
+                            // if it references explicit `/item` tokens.
+                            //
+                            // This is intentionally conservative: we index only explicit `/...`
+                            // tokens, not fuzzy matching.
+                            for tok in text.split_whitespace() {
+                                let Some(rest) = tok.strip_prefix('/') else {
+                                    continue;
+                                };
+                                // Trim common punctuation.
+                                let cleaned = rest.trim_matches(|c: char| {
+                                    c.is_whitespace()
+                                        || matches!(
+                                            c,
+                                            ',' | '.' | ';' | ':' | ')' | ']' | '}' | '"' | '\'' | '!' | '?'
+                                        )
+                                });
+                                if cleaned.is_empty() {
+                                    continue;
+                                }
+                                ingest_items.insert(canonicalize_item(cleaned));
+                            }
+                        }
+                    }
+                }
+
+                // Index full snippets by (tag,item) for this ingest.
+                if let Some(ref tag) = current_tag {
+                    let tag = canonicalize_tag(tag);
+                    for item in ingest_items.into_iter() {
+                        let ik = ItemKey {
+                            tag: tag.clone(),
+                            item: item.clone(),
+                        };
+                        *self.item_snippet_counts.entry(ik.clone()).or_insert(0) += 1;
+
+                        let q = self.item_snippets.entry(ik).or_default();
+                        q.push_front(ItemSnippet {
+                            ts: ing.ts,
+                            ingest_id: ing.id.clone(),
+                            actor: canonicalize_actor(&ing.actor),
+                            raw: ing.raw.clone(),
+                        });
+                        while q.len() > 50 {
+                            q.pop_back();
                         }
                     }
                 }
