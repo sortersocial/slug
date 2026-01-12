@@ -529,7 +529,7 @@ pub fn parse_lines(text: &str) -> Result<Document, DslError> {
 }
 
 /// Parse EmailDSL preserving prose for rendering; interleaves `Prose` with DSL nodes.
-pub fn parse_full(text: &str) -> Document {
+pub fn parse_full(text: &str) -> Result<Document, DslError> {
     let (masker, masked) = mask_all(BlockMasker::new(), text);
     let mut statements: Vec<Stmt> = Vec::new();
     let mut prose_buffer: Vec<&str> = Vec::new();
@@ -550,11 +550,8 @@ pub fn parse_full(text: &str) -> Document {
             // Flush prose buffer first
             flush_prose(&mut prose_buffer, &mut statements, &masker);
 
-            // Parse DSL line; if parsing fails, treat as prose (matches Python behavior).
-            match parse_line(line, &masker) {
-                Ok(line_stmts) => statements.extend(line_stmts),
-                Err(_) => prose_buffer.push(line),
-            }
+            // Parse DSL line; DSL statements are not prose, so errors should propagate.
+            statements.extend(parse_line(line, &masker)?);
         } else {
             prose_buffer.push(line);
         }
@@ -563,7 +560,7 @@ pub fn parse_full(text: &str) -> Document {
     // Final flush
     flush_prose(&mut prose_buffer, &mut statements, &masker);
 
-    Document { statements }
+    Ok(Document { statements })
 }
 
 #[cfg(test)]
@@ -658,7 +655,7 @@ signature: thanks
     #[test]
     fn parse_full_interleaves_prose() {
         let input = "hello\n#tag\nworld";
-        let doc = parse_full(input);
+        let doc = parse_full(input).unwrap();
         assert_eq!(
             doc.statements,
             vec![
@@ -714,6 +711,15 @@ signature: thanks
             s,
             Stmt::Actor { name } if name == "00000000-0000-0000-0000-000000000000:test:local/test"
         )));
+    }
+
+    #[test]
+    fn parse_full_rejects_vote_without_explanation() {
+        let input = "@test\n#test\n/a {item a}\n/b {item b}\n/a 2:1 /b\n";
+        let result = parse_full(input);
+        assert!(result.is_err(), "vote without explanation should fail");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("missing vote explanation"), "error: {}", err_msg);
     }
 }
 

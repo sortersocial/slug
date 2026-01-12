@@ -793,7 +793,16 @@ pub async fn post_ingest(
     let mut voter_key_id: String = "anon".to_string();
 
     // Single parsing mode: always `parse_full` (prose-compatible).
-    let doc = dsl::parse_full(&req.text);
+    let doc = match dsl::parse_full(&req.text) {
+        Ok(d) => d,
+        Err(e) => {
+            return api_error(
+                StatusCode::BAD_REQUEST,
+                "parse error",
+                Some(format!("{}", e)),
+            );
+        }
+    };
 
     let mut current_tag: Option<String> = None;
     let mut current_aspect: String = "default".to_string();
@@ -963,7 +972,16 @@ pub async fn post_check(
     Json(req): Json<IngestRequest>,
 ) -> impl IntoResponse {
     // Single parsing mode: always `parse_full` (prose-compatible).
-    let doc = dsl::parse_full(&req.text);
+    let doc = match dsl::parse_full(&req.text) {
+        Ok(d) => d,
+        Err(e) => {
+            return api_error(
+                StatusCode::BAD_REQUEST,
+                "parse error",
+                Some(format!("{}", e)),
+            );
+        }
+    };
 
     // Open-write semantics: actor comes from `@actor` in the document.
     let mut current_actor: Option<String> = None;

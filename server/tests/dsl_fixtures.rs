@@ -7,7 +7,7 @@ const BIG_BOOK: &str = include_str!("fixtures/big-book.sorter");
 fn parses_tutorial_fixture_with_prose() {
     // This doc is intentionally "backwards compatible with prose".
     // We want to confirm we still extract key DSL statements.
-    let doc = dsl::parse_full(TUTORIAL);
+    let doc = dsl::parse_full(TUTORIAL).unwrap();
 
     let mut hashtags = 0usize;
     let mut items = 0usize;

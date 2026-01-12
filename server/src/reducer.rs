@@ -174,7 +174,14 @@ impl ReducerState {
                 ing.actor = canonicalize_actor(&ing.actor);
 
                 // Parse DSL to extract all statements.
-                let doc = crate::dsl::parse_full(&ing.raw);
+                let doc = match crate::dsl::parse_full(&ing.raw) {
+                    Ok(d) => d,
+                    Err(e) => {
+                        // Skip malformed events during reduction (shouldn't happen in valid JSONL)
+                        eprintln!("WARNING: Skipping malformed ingest event {}: {}", ing.id, e);
+                        return;
+                    }
+                };
 
                 // Track current context for parsing.
                 let mut current_tag: Option<String> = None;
