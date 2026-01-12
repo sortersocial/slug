@@ -162,7 +162,7 @@ pub async fn index(State(state): State<AppState>) -> impl IntoResponse {
                 .ingests_by_tag
                 .get(&tag)
                 .and_then(|q| q.front())
-                .map(|ing| ing.ts)
+                .and_then(|ing_id| reduced.ingests_by_id.get(ing_id).map(|ing| ing.ts))
                 .unwrap_or(0);
 
             let mut aspects = 0usize;
@@ -251,7 +251,7 @@ pub async fn thread_page(
     }
 
     // Otherwise render the thread overview
-    let (mut aspects, ingests) = {
+    let (mut aspects, ingest_ids) = {
         let reduced = state.reduced.read().await;
         let aspects: Vec<String> = reduced
             .groups
@@ -259,15 +259,23 @@ pub async fn thread_page(
             .filter(|k| k.tag == tag)
             .map(|k| k.aspect.clone())
             .collect();
-        let ingests = reduced
+        let ingest_ids = reduced
             .ingests_by_tag
             .get(&tag)
             .cloned()
             .unwrap_or_default();
-        (aspects, ingests)
+        (aspects, ingest_ids)
     };
     aspects.sort();
     aspects.dedup();
+
+    let ingests = {
+        let reduced = state.reduced.read().await;
+        ingest_ids
+            .iter()
+            .filter_map(|id| reduced.ingests_by_id.get(id).cloned())
+            .collect::<Vec<_>>()
+    };
 
     let page = layout(
         &format!("#{tag}"),
@@ -326,7 +334,7 @@ pub async fn item_page(
         item: item.clone(),
     };
 
-    let (votes, snippets, snippet_total, body) = {
+    let (votes, snippet_refs, body) = {
         let reduced = state.reduced.read().await;
         let votes = reduced
             .item_votes
@@ -335,16 +343,24 @@ pub async fn item_page(
             .unwrap_or_default()
             .into_iter()
             .collect::<Vec<_>>();
-        let snippets = reduced
+        let snippet_refs = reduced
             .item_snippets
             .get(&key)
             .cloned()
             .unwrap_or_default()
             .into_iter()
             .collect::<Vec<_>>();
-        let snippet_total = reduced.item_snippet_counts.get(&key).copied().unwrap_or(0);
         let body = reduced.item_bodies.get(&item).cloned();
-        (votes, snippets, snippet_total, body)
+        (votes, snippet_refs, body)
+    };
+
+    let snippet_total = snippet_refs.len();
+    let snippets = {
+        let reduced = state.reduced.read().await;
+        snippet_refs
+            .iter()
+            .filter_map(|s| reduced.ingests_by_id.get(&s.ingest_id).cloned())
+            .collect::<Vec<_>>()
     };
 
     let mut aspects: std::collections::BTreeMap<String, (usize, i64)> =
@@ -441,19 +457,19 @@ pub async fn item_page(
             @if snippet_total == 0 {
                 p class="muted" { "none yet" }
             } @else {
-                p class="muted" { (format!("showing most recent {} (total={})", snippets.len(), snippet_total)) }
-                @for s in snippets.iter() {
-                    @let hover = timeago::rfc3339_utc(s.ts);
-                    @let ago = timeago::timeago(now, s.ts);
+                p class="muted" { (format!("showing {} (total={})", snippets.len(), snippet_total)) }
+                @for ing in snippets.iter() {
+                    @let hover = timeago::rfc3339_utc(ing.ts);
+                    @let ago = timeago::timeago(now, ing.ts);
                     div class="vote" {
                         div class="vote-meta" title=(hover) {
-                            span class="address" { "@" (s.actor) }
+                            span class="address" { "@" (ing.actor) }
                             " · "
                             (ago)
                             " · "
-                            code class="muted" { (s.ingest_id) }
+                            code class="muted" { (ing.id) }
                         }
-                        pre { (s.raw) }
+                        pre { (ing.raw) }
                     }
                 }
             }

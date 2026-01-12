@@ -16,6 +16,7 @@ use crate::{
     reducer::GroupKey,
     state::AppState,
 };
+use crate::events::Ingest;
 
 fn api_error(status: StatusCode, error: impl Into<String>, hint: Option<String>) -> axum::response::Response {
     (status, Json(ApiError { ok: false, error: error.into(), hint })).into_response()
@@ -639,7 +640,8 @@ pub async fn get_tag(State(state): State<AppState>, Query(q): Query<TagDetailQue
         .map(|q| {
             q.iter()
                 .take(20)
-                .map(|ing| IngestRow {
+                .filter_map(|ing_id| reduced.ingests_by_id.get(ing_id))
+                .map(|ing: &Ingest| IngestRow {
                     ts: ing.ts,
                     actor: Some(format!("@{}", ing.actor)),
                     voter_key_id: ing.voter_key_id.clone(),

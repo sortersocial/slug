@@ -55,11 +55,10 @@ pub struct GroupState {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ItemSnippet {
+pub struct ItemSnippetRef {
     pub ts: i64,
     pub ingest_id: String,
     pub actor: String,
-    pub raw: String,
 }
 
 impl GroupState {
@@ -170,16 +169,17 @@ pub struct ReducerState {
     pub items: HashSet<String>,
     pub tags: HashMap<String, HashSet<String>>, // tag -> set(item)
     pub item_bodies: HashMap<String, String>,
-    pub ingests_by_tag: HashMap<String, VecDeque<Ingest>>,
+    /// Store ingests by id so we can render snippets without duplicating raw text in indexes.
+    pub ingests_by_id: HashMap<String, Ingest>,
+    /// Recent ingest ids per tag (most recent first).
+    pub ingests_by_tag: HashMap<String, VecDeque<String>>,
 
     /// Per-(tag,item) vote history (most recent first), across all aspects.
     pub item_votes: HashMap<ItemKey, VecDeque<VoteData>>,
 
-    /// Per-(tag,item) ingests/snippets that reference the item (most recent first).
-    pub item_snippets: HashMap<ItemKey, VecDeque<ItemSnippet>>,
-
-    /// Total snippet count per (tag,item), including those not retained in `item_snippets`.
-    pub item_snippet_counts: HashMap<ItemKey, usize>,
+    /// Per-(tag,item) ingest references (most recent first).
+    /// This is *unbounded* by design; memory usage is dominated by `ingests_by_id`.
+    pub item_snippets: HashMap<ItemKey, VecDeque<ItemSnippetRef>>,
 
     /// Track thread subscriptions: thread -> set(actor)
     /// Actors are subscribed when they vote or ingest in a thread.
@@ -195,6 +195,9 @@ impl ReducerState {
             Event::Ingest(mut ing) => {
                 // Canonicalize actor for indexing.
                 ing.actor = canonicalize_actor(&ing.actor);
+
+                // Keep full ingest once (indexed by id). Other indexes should reference this id.
+                self.ingests_by_id.insert(ing.id.clone(), ing.clone());
 
                 // Parse DSL to extract all statements.
                 let doc = match crate::dsl::parse_full(&ing.raw) {
@@ -222,6 +225,8 @@ impl ReducerState {
                     .collect();
 
                 // Process each statement.
+                // We only index snippets for items that appear in explicit DSL (`! /item` or votes).
+                // (No prose-token matching.)
                 let mut ingest_items: HashSet<String> = HashSet::new();
                 for stmt in doc.statements {
                     match stmt {
@@ -308,35 +313,11 @@ impl ReducerState {
                                     };
                                     let q = self.item_votes.entry(ik).or_default();
                                     q.push_front(vote.clone());
-                                    while q.len() > 500 {
-                                        q.pop_back();
-                                    }
                                 }
                             }
                         }
-                        crate::dsl::Stmt::Prose { text } => {
-                            // Prose can reference items; treat the full ingest as a snippet
-                            // if it references explicit `/item` tokens.
-                            //
-                            // This is intentionally conservative: we index only explicit `/...`
-                            // tokens, not fuzzy matching.
-                            for tok in text.split_whitespace() {
-                                let Some(rest) = tok.strip_prefix('/') else {
-                                    continue;
-                                };
-                                // Trim common punctuation.
-                                let cleaned = rest.trim_matches(|c: char| {
-                                    c.is_whitespace()
-                                        || matches!(
-                                            c,
-                                            ',' | '.' | ';' | ':' | ')' | ']' | '}' | '"' | '\'' | '!' | '?'
-                                        )
-                                });
-                                if cleaned.is_empty() {
-                                    continue;
-                                }
-                                ingest_items.insert(canonicalize_item(cleaned));
-                            }
+                        crate::dsl::Stmt::Prose { .. } => {
+                            // Ignore prose for indexing purposes.
                         }
                     }
                 }
@@ -349,18 +330,12 @@ impl ReducerState {
                             tag: tag.clone(),
                             item: item.clone(),
                         };
-                        *self.item_snippet_counts.entry(ik.clone()).or_insert(0) += 1;
-
                         let q = self.item_snippets.entry(ik).or_default();
-                        q.push_front(ItemSnippet {
+                        q.push_front(ItemSnippetRef {
                             ts: ing.ts,
                             ingest_id: ing.id.clone(),
                             actor: canonicalize_actor(&ing.actor),
-                            raw: ing.raw.clone(),
                         });
-                        while q.len() > 50 {
-                            q.pop_back();
-                        }
                     }
                 }
 
@@ -407,7 +382,7 @@ impl ReducerState {
                 // Index ingest by extracted tags.
                 for tag in extracted_tags {
                     let q = self.ingests_by_tag.entry(tag).or_default();
-                    q.push_front(ing.clone());
+                    q.push_front(ing.id.clone());
                     while q.len() > 25 {
                         q.pop_back();
                     }
