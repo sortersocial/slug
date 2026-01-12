@@ -240,7 +240,8 @@ ol.ranking li::before {
   color: var(--graph);
 }
 .item-link:hover {
-  color: var(--signal);
+  /* Subtle darkening (less bright) to indicate hover without screaming */
+  color: var(--ui);
   text-decoration: none;
 }
 

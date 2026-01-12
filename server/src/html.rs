@@ -670,7 +670,10 @@ async fn render_aspect_view(
                     ul {
                         @for idx in isolate_idxs {
                             @let name = group.idx_to_item.get(idx).cloned().unwrap_or_default();
-                            li { code { "/" (name) } }
+                            li {
+                                @let href = format!("/~/{tag}/{name}");
+                                a class="item-link" href=(href) { code { "/" (name) } }
+                            }
                         }
                     }
                 }
@@ -681,7 +684,10 @@ async fn render_aspect_view(
                     div class="component-header" { "not yet compared" }
                     ul {
                         @for it in no_vote_items {
-                            li { code { "/" (it) } }
+                            li {
+                                @let href = format!("/~/{tag}/{it}");
+                                a class="item-link" href=(href) { code { "/" (it) } }
+                            }
                         }
                     }
                 }
