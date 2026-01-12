@@ -353,13 +353,11 @@ async fn render_aspect_view(
                     div class="component" {
                         h3 { (format!("component {}", ci + 1)) }
                         div class="component-meta" { (format!("items={} · pairs={}", comp.len(), pairs)) }
-                        table {
-                            tbody {
-                                @for r in ranked.iter() {
-                                    tr {
-                                        td { code { "/" (r.item) } }
-                                        td { (format!("{:.6}", r.score)) }
-                                    }
+                        ol class="ranking" {
+                            @for r in ranked.iter() {
+                                li {
+                                    code { "/" (r.item) }
+                                    span class="score" { (format!("{:.4}", r.score)) }
                                 }
                             }
                         }
