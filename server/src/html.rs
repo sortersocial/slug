@@ -343,7 +343,7 @@ async fn render_aspect_view(
             }
             p { a href={(format!("/~/{tag}"))} { "← #" (tag) } " · " a href="/" { "index" } }
 
-            h2 { "ranking groups (connected components)" }
+            h2 { "components" }
             @if comps.is_empty() {
                 p class="muted" { "no voted pairs yet in this aspect" }
             } @else {
