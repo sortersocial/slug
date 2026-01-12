@@ -6,6 +6,7 @@ use axum::{
 };
 use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
+use slug_types::*;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
@@ -16,55 +17,8 @@ use crate::{
     state::AppState,
 };
 
-#[derive(Debug, Serialize)]
-pub struct ApiError {
-    pub ok: bool,
-    pub error: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub hint: Option<String>,
-}
-
 fn api_error(status: StatusCode, error: impl Into<String>, hint: Option<String>) -> axum::response::Response {
     (status, Json(ApiError { ok: false, error: error.into(), hint })).into_response()
-}
-
-#[derive(Debug, Deserialize)]
-pub struct VoteRequest {
-    /// Hashtag namespace (required).
-    pub tag: String,
-    pub aspect: String,
-    pub a: String,
-    pub b: String,
-    /// Ratio string like "3:1" (preferred).
-    #[serde(default)]
-    pub ratio: Option<String>,
-    /// Required human explanation for the vote (non-empty).
-    pub body: String,
-    /// Optional self-declared actor (e.g. "@tommy").
-    #[serde(default)]
-    pub actor: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct VoteResponse {
-    pub ok: bool,
-    pub tag: String,
-    pub aspect: String,
-    pub ranking: Vec<RankRow>,
-    pub next: NextMoves,
-}
-
-#[derive(Debug, Serialize)]
-pub struct RankRow {
-    pub item: String,
-    pub score: f64,
-}
-
-#[derive(Debug, Serialize)]
-pub struct NextMoves {
-    pub pair: String,
-    pub rank: String,
-    pub web: String,
 }
 
 fn now_ms() -> i64 {

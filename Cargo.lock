@@ -1384,6 +1384,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a2ae44ef20feb57a68b23d846850f861394c2e02dc425a50098ae8c90267589"
 
 [[package]]
+name = "slug-types"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "slugsocial"
 version = "0.0.1"
 dependencies = [
@@ -1392,6 +1399,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "slug-types",
  "tokio",
  "urlencoding",
  "uuid",
@@ -1408,6 +1416,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "slug-types",
  "tempfile",
  "thiserror 1.0.69",
  "time",

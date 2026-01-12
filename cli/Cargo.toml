@@ -17,4 +17,5 @@ serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 urlencoding = "2"
 uuid = { version = "1", features = ["v4"] }
+slug-types = { path = "../types" }
 

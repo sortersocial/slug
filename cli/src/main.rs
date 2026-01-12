@@ -1,15 +1,9 @@
 use anyhow::{anyhow, Context, Result};
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
+use slug_types::*;
 use std::io::Read;
 use std::path::PathBuf;
-
-#[derive(Debug, Deserialize)]
-struct ApiError {
-    ok: bool,
-    error: String,
-    hint: Option<String>,
-}
 
 #[derive(Parser, Debug)]
 #[command(
@@ -167,144 +161,6 @@ enum Command {
     },
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-struct RankRow {
-    item: String,
-    score: f64,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct RankResponse {
-    tag: String,
-    aspect: String,
-    ranking: Vec<RankRow>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct PairResponse {
-    tag: String,
-    aspect: String,
-    left: String,
-    right: String,
-    left_body: Option<String>,
-    right_body: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct NextMoves {
-    vote: String,
-    rank: String,
-    web: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct TagsResponse {
-    tags: Vec<TagSummary>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct TagSummary {
-    tag: String,
-    items: usize,
-    aspects: usize,
-    web: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct TagDetailResponse {
-    tag: String,
-    items: Vec<String>,
-    aspects: Vec<String>,
-    recent_ingests: Vec<IngestRow>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct IngestRow {
-    ts: i64,
-    actor: Option<String>,
-    voter_key_id: String,
-    snippet: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct ItemResponse {
-    item: String,
-    body: Option<String>,
-    tags: Vec<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct RecentVotesResponse {
-    votes: Vec<VoteRow>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct VoteRow {
-    ts: i64,
-    tag: String,
-    aspect: String,
-    a: String,
-    b: String,
-    ratio: String,
-    actor: Option<String>,
-    body: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct NotificationsResponse {
-    ok: bool,
-    actor: String,
-    notifications: Vec<Notification>,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-enum NotificationType {
-    ThreadActivity {
-        thread: String,
-        activity: String,
-        actor: String,
-        details: String,
-    },
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-struct Notification {
-    ts: i64,
-    ingest_id: String,
-    actor: String,
-    #[serde(flatten)]
-    notification_type: NotificationType,
-}
-
-#[derive(Debug, Serialize)]
-struct IngestRequest {
-    text: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct IngestResponse {
-    ok: bool,
-    tags: Vec<String>,
-    events_appended: usize,
-    next: NextMoves,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct CheckGroup {
-    tag: String,
-    aspect: String,
-    ranking: Vec<RankRow>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct CheckResponse {
-    ok: bool,
-    tags: Vec<String>,
-    groups: Vec<CheckGroup>,
-    next: Vec<String>,
-}
-
 fn canonicalize_sigiled(input: &str, sigil: char) -> String {
     let trimmed = input.trim();
     trimmed.strip_prefix(sigil).unwrap_or(trimmed).to_string()
@@ -346,7 +202,7 @@ fn print_ranking(tag: &str, aspect: &str, rows: &[RankRow]) {
 fn print_next(next: &NextMoves) {
     println!();
     println!("next:");
-    println!("  {}", next.vote);
+    println!("  {}", next.pair);
     println!("  {}", next.rank);
     println!("  {}", next.web);
 }
