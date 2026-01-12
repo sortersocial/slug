@@ -304,7 +304,7 @@ pub async fn thread_page(
                     @let hover = timeago::rfc3339_utc(ing.ts);
                     @let ago = timeago::timeago(now, ing.ts);
                     p class="muted" title=(hover) {
-                        (ago) " · " span class="address" { "@" (ing.actor) }
+                        (ago)
                     }
                     pre { (ing.raw) }
                 }
