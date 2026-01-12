@@ -335,11 +335,7 @@ pub async fn item_page(
 ) -> impl IntoResponse {
     let tag = canonicalize_tag(&tag);
     let item = canonicalize_item(&item);
-
-    if let Some(aspect) = query.aspect {
-        let aspect = canonicalize_aspect(&aspect);
-        return render_aspect_view(state, tag, aspect, Some(item)).await;
-    }
+    let selected_aspect = query.aspect.map(|a| canonicalize_aspect(&a));
 
     let key = ItemKey {
         tag: tag.clone(),
@@ -461,12 +457,17 @@ pub async fn item_page(
             } @else {
                 ul {
                     @for (aspect, (count, last_ts)) in aspects.iter() {
-                        @let href = format!("/~/{tag}/{item}?aspect={aspect}");
+                        // Aspect link goes to the aspect ranking page.
+                        @let href = format!("/~/{tag}?aspect={aspect}");
                         @let hover = timeago::rfc3339_utc(*last_ts);
                         @let ago = timeago::timeago(now, *last_ts);
                         @let rank = aspect_ranks.get(aspect).cloned().flatten();
                         li {
-                            a href=(href) { ":" (aspect) }
+                            @if selected_aspect.as_deref() == Some(aspect.as_str()) {
+                                a href=(href) class="bc-current" { ":" (aspect) }
+                            } @else {
+                                a href=(href) { ":" (aspect) }
+                            }
                             " "
                             span class="muted" title=(hover) {
                                 @if let Some((pos, n, score)) = rank {
