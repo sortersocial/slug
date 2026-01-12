@@ -12,7 +12,7 @@ pub struct Document {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Stmt {
     Hashtag { name: String },
-    /// Actor signature / namespace. Example: `@tommy`
+    /// Actor signature. Canonical validation is enforced at ingest time.
     Actor { name: String },
     Item { title: String, body: Option<String> },
     Vote {
@@ -24,7 +24,6 @@ pub enum Stmt {
         explanation: String,
     },
     Attribute { name: String },
-    Email { address: String },
     Prose { text: String },
 }
 
@@ -208,35 +207,19 @@ fn is_word(s: &str) -> bool {
 }
 
 fn is_actor_name(s: &str) -> bool {
-    // Allow slash-separated namespaces like "cursor/gpt-5.2" AND full identities like
-    // "<uuid>:<rig>:<provider/model>" (colons are validated at ingest time).
+    // Actor token parser guardrail (NOT full validation).
+    //
+    // We purposely keep this permissive so `@...` lines become `Stmt::Actor`
+    // and can be validated with helpful error messages at ingest time
+    // (see `validate_actor_format` in the API).
     //
     // Rules:
-    // - non-empty, <= 256 chars (full UUID+rig+model often exceeds 64)
-    // - allowed chars: [A-Za-z0-9_.-/:]
-    // - no leading/trailing '/', no '//' sequences
-    // - no leading/trailing ':', no '::' sequences (avoids empty segments)
-    // - each '/' segment must be non-empty
+    // - non-empty, <= 256 chars
+    // - ASCII + no whitespace
     if s.is_empty() || s.len() > 256 {
         return false;
     }
-    if s.starts_with('/') || s.ends_with('/') || s.contains("//") {
-        return false;
-    }
-    if s.starts_with(':') || s.ends_with(':') || s.contains("::") {
-        return false;
-    }
-    if !s.chars().all(|c| {
-        c.is_ascii_alphanumeric()
-            || c == '_'
-            || c == '-'
-            || c == '.'
-            || c == '/'
-            || c == ':'
-    }) {
-        return false;
-    }
-    s.split('/').all(|seg| !seg.is_empty())
+    s.chars().all(|c| c.is_ascii() && !c.is_whitespace())
 }
 
 fn is_block_token(s: &str) -> bool {
@@ -246,36 +229,6 @@ fn is_block_token(s: &str) -> bool {
     }
     let mid = &s["__BLOCK_".len()..s.len() - 2];
     mid.len() == 8 && mid.chars().all(|c| matches!(c, 'a'..='f' | '0'..='9'))
-}
-
-fn looks_like_email(s: &str) -> bool {
-    // Lightweight approximation of Python regex:
-    // /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/
-    let (local, domain) = match s.split_once('@') {
-        Some(x) => x,
-        None => return false,
-    };
-    if local.is_empty() || domain.is_empty() {
-        return false;
-    }
-    if !local
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || "._%+-".contains(c))
-    {
-        return false;
-    }
-    if !domain
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
-    {
-        return false;
-    }
-    let parts: Vec<&str> = domain.split('.').collect();
-    if parts.len() < 2 {
-        return false;
-    }
-    let tld = parts[parts.len() - 1];
-    tld.len() >= 2 && tld.chars().all(|c| c.is_ascii_alphabetic())
 }
 
 fn is_ws_byte(b: u8) -> bool {
@@ -521,21 +474,15 @@ fn parse_line(masked_line: &str, masker: &BlockMasker) -> Result<Vec<Stmt>, DslE
             Ok(out)
         }
         '@' => {
-            // Either an actor signature (`@name`) or an email address statement.
+            // Actor signature (`@name`). Email addresses are not part of the DSL.
             let tok = stripped.trim();
-            if looks_like_email(tok) {
-                Ok(vec![Stmt::Email {
-                    address: tok.to_string(),
-                }])
-            } else {
-                let name = tok.trim_start_matches('@').trim();
-                if !is_actor_name(name) {
-                    return Err(DslError::Parse(format!("invalid actor: {tok}")));
-                }
-                Ok(vec![Stmt::Actor {
-                    name: name.to_string(),
-                }])
+            let name = tok.trim_start_matches('@').trim();
+            if !is_actor_name(name) {
+                return Err(DslError::Parse(format!("invalid actor: {tok}")));
             }
+            Ok(vec![Stmt::Actor {
+                name: name.to_string(),
+            }])
         }
         '/' => {
             Ok(vec![parse_slash_statement(stripped, masker)?])
@@ -758,23 +705,14 @@ signature: thanks
     }
 
     #[test]
-    fn parse_actor_allows_slashes_and_dots() {
-        let doc = parse_lines("@cursor/gpt-5.2\n#t\n/a {x}\n/b {y}\n/a 2:1 /b {because}\n").unwrap();
-        assert!(doc
-            .statements
-            .iter()
-            .any(|s| matches!(s, Stmt::Actor { name } if name == "cursor/gpt-5.2")));
-    }
-
-    #[test]
     fn parse_actor_allows_colons_for_full_identity_formats() {
         let doc = parse_lines(
-            "@aec1e31c:claudecode:anthropic/claude-sonnet-4.5\n#t\n/a {x}\n",
+            "@00000000-0000-0000-0000-000000000000:test:local/test\n#t\n/a {x}\n",
         )
         .unwrap();
         assert!(doc.statements.iter().any(|s| matches!(
             s,
-            Stmt::Actor { name } if name == "aec1e31c:claudecode:anthropic/claude-sonnet-4.5"
+            Stmt::Actor { name } if name == "00000000-0000-0000-0000-000000000000:test:local/test"
         )));
     }
 }

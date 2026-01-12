@@ -23,7 +23,6 @@ fn parses_tutorial_fixture_with_prose() {
             dsl::Stmt::Vote { .. } => votes += 1,
             dsl::Stmt::Attribute { .. } => attrs += 1,
             dsl::Stmt::Prose { .. } => prose += 1,
-            dsl::Stmt::Email { .. } => {}
         }
     }
 

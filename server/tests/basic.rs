@@ -21,7 +21,7 @@ fn ingest_event(ts: i64, raw: &str) -> Event {
 
 fn vote_doc(tag: &str, aspect: &str, a: &str, b: &str, left: i32, right: i32) -> String {
     format!(
-        "@test\n#{tag}\n:{aspect}\n/{a} {{body a}}\n/{b} {{body b}}\n/{a} {left}:{right} /{b} {{because test}}\n"
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n#{tag}\n:{aspect}\n/{a} {{body a}}\n/{b} {{body b}}\n/{a} {left}:{right} /{b} {{because test}}\n"
     )
 }
 
@@ -35,9 +35,9 @@ fn reducer_and_ranking_linear_chain() {
     let mut state = ReducerState::default();
 
     // First ingest: define items + vote a > b.
-    state.apply_event(ingest_event(1, "@test\n#t\n:x\n/a {a}\n/b {b}\n/a 3:1 /b {because}\n"));
+    state.apply_event(ingest_event(1, "@00000000-0000-0000-0000-000000000000:test:local/test\n#t\n:x\n/a {a}\n/b {b}\n/a 3:1 /b {because}\n"));
     // Second ingest: define c + vote b > c.
-    state.apply_event(ingest_event(2, "@test\n#t\n:x\n/c {c}\n/b 3:1 /c {because}\n"));
+    state.apply_event(ingest_event(2, "@00000000-0000-0000-0000-000000000000:test:local/test\n#t\n:x\n/c {c}\n/b 3:1 /c {because}\n"));
 
     let key = GroupKey {
         tag: "t".to_string(),
@@ -59,15 +59,15 @@ fn reducer_canonicalizes_identifiers() {
     // Mix of formats across ingests (case + sigils).
     state.apply_event(ingest_event(
         1,
-        "@test\n#Tag\n:Aspect\n/Item-A {x}\n/Item-B {y}\n/Item-A 2:1 /Item-B {because}\n",
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n#Tag\n:Aspect\n/Item-A {x}\n/Item-B {y}\n/Item-A 2:1 /Item-B {because}\n",
     ));
     state.apply_event(ingest_event(
         2,
-        "@test\nTAG\nASPECT\nITEM-A 2:1 ITEM-B {because}\n",
+        "@00000000-0000-0000-0000-000000000000:test:local/test\nTAG\nASPECT\nITEM-A 2:1 ITEM-B {because}\n",
     ));
     state.apply_event(ingest_event(
         3,
-        "@test\n#tag\n:aspect\n/item-a 2:1 /item-b {because}\n",
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n#tag\n:aspect\n/item-a 2:1 /item-b {because}\n",
     ));
 
     let key = GroupKey {
@@ -84,7 +84,7 @@ fn reducer_handles_item_and_body_from_ingest() {
     let mut state = ReducerState::default();
     state.apply_event(ingest_event(
         1,
-        "@test\n#t\n/test-item {Description here}\n",
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n#t\n/test-item {Description here}\n",
     ));
 
     assert!(state.items.contains("test-item"));
@@ -122,11 +122,11 @@ fn reducer_clamps_score_bounds() {
     let mut state = ReducerState::default();
     state.apply_event(ingest_event(
         1,
-        "@test\n#t\n:x\n/a {a}\n/b {b}\n/a 1000:1 /b {huge}\n",
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n#t\n:x\n/a {a}\n/b {b}\n/a 1000:1 /b {huge}\n",
     ));
     state.apply_event(ingest_event(
         2,
-        "@test\n#t\n:x\n/a 1:1000 /b {huge}\n",
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n#t\n:x\n/a 1:1000 /b {huge}\n",
     ));
 
     let key = GroupKey {
@@ -148,15 +148,15 @@ fn ranking_cycle_is_nearly_equal() {
     let mut state = ReducerState::default();
     state.apply_event(ingest_event(
         1,
-        "@test\n#rps\n:x\n/rock {r}\n/scissors {s}\n/rock 3:1 /scissors {because}\n",
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n#rps\n:x\n/rock {r}\n/scissors {s}\n/rock 3:1 /scissors {because}\n",
     ));
     state.apply_event(ingest_event(
         2,
-        "@test\n#rps\n:x\n/scissors 3:1 /paper {because}\n",
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n#rps\n:x\n/scissors 3:1 /paper {because}\n",
     ));
     state.apply_event(ingest_event(
         3,
-        "@test\n#rps\n:x\n/paper 3:1 /rock {because}\n",
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n#rps\n:x\n/paper 3:1 /rock {because}\n",
     ));
 
     let key = GroupKey {
@@ -191,7 +191,7 @@ fn ranking_dominant_item_wins() {
     let mut state = ReducerState::default();
     state.apply_event(ingest_event(
         1,
-        "@test\n#t\n:x\n/champion {c}\n/b {b}\n/c {c}\n/d {d}\n/champion 10:1 /b {because}\n/champion 10:1 /c {because}\n/champion 10:1 /d {because}\n/b 2:1 /c {because}\n/c 2:1 /d {because}\n",
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n#t\n:x\n/champion {c}\n/b {b}\n/c {c}\n/d {d}\n/champion 10:1 /b {because}\n/champion 10:1 /c {because}\n/champion 10:1 /d {because}\n/b 2:1 /c {because}\n/c 2:1 /d {because}\n",
     ));
 
     let key = GroupKey {
@@ -210,7 +210,7 @@ fn ranking_neutral_votes_produce_equal_scores() {
     let mut state = ReducerState::default();
     state.apply_event(ingest_event(
         1,
-        "@test\n#t\n:x\n/a {a}\n/b {b}\n/c {c}\n/a 1:1 /b {neutral}\n/b 1:1 /c {neutral}\n/c 1:1 /a {neutral}\n",
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n#t\n:x\n/a {a}\n/b {b}\n/c {c}\n/a 1:1 /b {neutral}\n/b 1:1 /c {neutral}\n/c 1:1 /a {neutral}\n",
     ));
 
     let key = GroupKey {
@@ -271,8 +271,8 @@ async fn event_log_append_and_load() {
     let log = EventLog::new(log_path);
 
     let events = vec![
-        ingest_event(1, "@test\n#t\n:x\n/a {x}\n/b {y}\n/a 2:1 /b {because}\n"),
-        ingest_event(2, "@test\n#t\n:x\n/b 3:1 /c {because}\n"),
+        ingest_event(1, "@00000000-0000-0000-0000-000000000000:test:local/test\n#t\n:x\n/a {x}\n/b {y}\n/a 2:1 /b {because}\n"),
+        ingest_event(2, "@00000000-0000-0000-0000-000000000000:test:local/test\n#t\n:x\n/b 3:1 /c {because}\n"),
     ];
 
     for ev in &events {
@@ -293,7 +293,7 @@ async fn event_log_handles_corrupt_lines() {
     let log = EventLog::new(&log_path);
 
     // Write valid events using the log itself, then manually corrupt one line.
-    log.append(&ingest_event(1, "@test\n#t\n:x\n/a {x}\n/b {y}\n/a 2:1 /b {because}\n"))
+    log.append(&ingest_event(1, "@00000000-0000-0000-0000-000000000000:test:local/test\n#t\n:x\n/a {x}\n/b {y}\n/a 2:1 /b {because}\n"))
         .await
         .unwrap();
 
@@ -302,7 +302,7 @@ async fn event_log_handles_corrupt_lines() {
     let mut f = fs::OpenOptions::new().append(true).open(&log_path).unwrap();
     writeln!(f, "not json at all").unwrap();
 
-    log.append(&ingest_event(2, "@test\n#t\n:x\n/b 3:1 /c {because}\n"))
+    log.append(&ingest_event(2, "@00000000-0000-0000-0000-000000000000:test:local/test\n#t\n:x\n/b 3:1 /c {because}\n"))
         .await
         .unwrap();
 
@@ -321,7 +321,7 @@ async fn event_log_creates_parent_dirs() {
     let log_path = tmp.path().join("subdir").join("nested").join("events.jsonl");
     let log = EventLog::new(&log_path);
 
-    log.append(&ingest_event(1, "@test\n#t\n:x\n/a {x}\n/b {y}\n/a 2:1 /b {because}\n"))
+    log.append(&ingest_event(1, "@00000000-0000-0000-0000-000000000000:test:local/test\n#t\n:x\n/a {x}\n/b {y}\n/a 2:1 /b {because}\n"))
         .await
         .unwrap();
     assert!(log_path.exists());
@@ -349,7 +349,7 @@ async fn full_workflow_reducer_and_ranking() {
 
     state.apply_event(ingest_event(
         1,
-        "@test\n#langs\n:speed\n/rust {Systems language}\n/go {Simple concurrency}\n/rust 3:1 /go {because}\n",
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n#langs\n:speed\n/rust {Systems language}\n/go {Simple concurrency}\n/rust 3:1 /go {because}\n",
     ));
 
     let key = GroupKey {

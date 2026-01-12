@@ -75,21 +75,15 @@ fn now_ms() -> i64 {
 }
 
 /// Validate actor format: @<uuid>:<rig>:<model>
-/// Returns Ok(()) if valid or if actor is a simple nickname (no colons).
 /// Returns Err with helpful message if format is invalid.
 fn validate_actor_format(actor: &str) -> Result<(), String> {
     let actor = actor.strip_prefix('@').unwrap_or(actor);
-
-    // Simple nicknames (no colons) are allowed
-    if !actor.contains(':') {
-        return Ok(());
-    }
 
     // Full format must be: <uuid>:<rig>:<model>
     let parts: Vec<&str> = actor.split(':').collect();
     if parts.len() != 3 {
         return Err(format!(
-            "Invalid actor format. Expected @<uuid>:<rig>:<model> or @nickname.\n\
+            "Invalid actor format. Expected @<uuid>:<rig>:<model>.\n\
              Got {} parts (expected 3).\n\
              \n\
              Generate a valid identity:\n\

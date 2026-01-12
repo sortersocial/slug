@@ -266,7 +266,7 @@ impl ReducerState {
                                 group.apply_vote(vote);
                             }
                         }
-                        crate::dsl::Stmt::Prose { .. } | crate::dsl::Stmt::Email { .. } => {
+                        crate::dsl::Stmt::Prose { .. } => {
                             // Ignore prose and email.
                         }
                     }
