@@ -205,7 +205,7 @@ pub async fn index(State(state): State<AppState>) -> impl IntoResponse {
                             span class="muted" title=(hover) {
                                 (ago)
                                 " · "
-                                (format!("items={} · aspects={} · recent_votes={}", r.items, r.aspects, r.recent_votes))
+                                (format!("items={} aspects={} recent_votes={}", r.items, r.aspects, r.recent_votes))
                             }
                         }
                     }
