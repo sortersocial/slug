@@ -530,7 +530,7 @@ async fn render_aspect_view(
     aspect: String,
     selected_item: Option<String>,
 ) -> axum::response::Response {
-    let (group, items_in_tag): (crate::reducer::GroupState, Vec<String>) = {
+    let (group, items_in_tag, mut aspects_for_tag): (crate::reducer::GroupState, Vec<String>, Vec<String>) = {
         let reduced = state.reduced.read().await;
         let key = GroupKey {
             tag: tag.clone(),
@@ -553,7 +553,15 @@ async fn render_aspect_view(
             .get(&tag)
             .map(|s| s.iter().cloned().collect())
             .unwrap_or_else(Vec::new);
-        (group.clone(), items_in_tag)
+        let mut aspects: Vec<String> = reduced
+            .groups
+            .keys()
+            .filter(|k| k.tag == tag)
+            .map(|k| k.aspect.clone())
+            .collect();
+        aspects.sort();
+        aspects.dedup();
+        (group.clone(), items_in_tag, aspects)
     };
 
     // Build connected components from recorded voted pairs.
@@ -578,6 +586,14 @@ async fn render_aspect_view(
     let aspect_href = format!("/~/{tag}?aspect={aspect}");
     let item_label = selected_item.as_ref().map(|it| format!("/{it}"));
     let item_href = selected_item.as_ref().map(|it| format!("/~/{tag}/{it}?aspect={aspect}"));
+
+    // Always show aspect selector, even when a specific aspect is selected.
+    // Keep item context (path) if we're in item-focused mode.
+    let aspect_base = if let Some(ref it) = selected_item {
+        format!("/~/{tag}/{it}")
+    } else {
+        format!("/~/{tag}")
+    };
     
     let page = layout(
         &format!("#{tag} :{aspect}"),
@@ -590,6 +606,21 @@ async fn render_aspect_view(
                     (bc_segment(it_label, item_href.as_ref().unwrap(), true))
                 } @else {
                     (bc_segment(&aspect_label, &aspect_href, true))
+                }
+            }
+
+            @if !aspects_for_tag.is_empty() {
+                ul {
+                    @for a in aspects_for_tag.drain(..) {
+                        @let href = format!("{aspect_base}?aspect={a}");
+                        li {
+                            @if a == aspect {
+                                a href=(href) class="bc-current" { ":" (a) }
+                            } @else {
+                                a href=(href) { ":" (a) }
+                            }
+                        }
+                    }
                 }
             }
 
