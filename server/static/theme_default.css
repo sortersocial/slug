@@ -189,11 +189,38 @@ li { margin: 4px 0; }
   margin: 8px 0;
   background: var(--panel);
 }
-.vote-header { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; flex-wrap: wrap; }
-.vote-items { display: flex; gap: 8px; flex-wrap: wrap; font-size: var(--text-sm); }
+
+.vote-header {
+  display: flex;
+  justify-content: center;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.vote-left, .vote-right {
+  font-family: var(--mono);
+  color: var(--graph);
+  font-size: var(--text-sm);
+}
+
+.vote-ratio {
+  font-family: var(--mono);
+  color: var(--graph);
+  font-size: var(--text-lg);
+  font-weight: 500;
+}
+
 .vote-body { margin-top: 8px; }
 
-.ratio-wrap { margin-top: 6px; }
+.vote-meta {
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+  font-size: var(--text-xs);
+  color: var(--meta);
+}
+
 .ratio-bar {
   display: flex;
   height: 3px;

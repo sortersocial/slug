@@ -397,25 +397,20 @@ async fn render_aspect_view(
                     @let ago = timeago::timeago(now, v.ts);
                     div class="vote" {
                         div class="vote-header" {
-                            div class="vote-items" {
-                                code { "/" (v.a) }
-                                span { "vs" }
-                                code { "/" (v.b) }
-                            }
-                            div class="vote-meta" title=(hover) {
-                                (ago) " · " span class="address" { "@" (v.actor) }
-                            }
+                            code class="vote-left" { "/" (v.a) }
+                            span class="vote-ratio" { (format!("{}:{}", v.ratio_left, v.ratio_right)) }
+                            code class="vote-right" { "/" (v.b) }
                         }
-                        div class="ratio-wrap" {
-                            div class="ratio-label" {
-                                (format!("ratio {}:{} (left {})", v.ratio_left, v.ratio_right, format!("{:.1}%", pct)))
-                            }
-                            div class="ratio-bar" aria-label={(format!("ratio {}:{} (left {:.1}%)", v.ratio_left, v.ratio_right, pct))} {
-                                div class="ratio-left" style={(format!("width: {:.3}%;", pct))} {}
-                                div class="ratio-right" style={(format!("width: {:.3}%;", 100.0 - pct))} {}
-                            }
+                        div class="ratio-bar" aria-label={(format!("ratio {}:{}", v.ratio_left, v.ratio_right))} {
+                            div class="ratio-left" style={(format!("width: {:.3}%;", pct))} {}
+                            div class="ratio-right" style={(format!("width: {:.3}%;", 100.0 - pct))} {}
                         }
                         div class="vote-body" { (v.body) }
+                        div class="vote-meta" title=(hover) {
+                            span class="address" { "@" (v.actor) }
+                            " · "
+                            (ago)
+                        }
                     }
                 }
             }
