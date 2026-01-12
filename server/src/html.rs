@@ -652,6 +652,7 @@ async fn render_aspect_view(
             }
 
             @if !aspects_for_tag.is_empty() {
+                h2 { "aspects" }
                 ul {
                     @for a in aspects_for_tag.drain(..) {
                         @let href = format!("{aspect_base}?aspect={a}");
@@ -666,7 +667,7 @@ async fn render_aspect_view(
                 }
             }
 
-            h2 { "toc" }
+            h2 { "titles" }
             @if component_rankings.is_empty() {
                 p class="muted" { "no voted pairs yet in this aspect" }
             } @else {
@@ -716,7 +717,7 @@ async fn render_aspect_view(
                 }
             }
 
-            h2 { "meat" }
+            h2 { "titles + bodies" }
             @if component_rankings.is_empty() && no_vote_items.is_empty() && isolate_idxs.is_empty() {
                 p class="muted" { "none yet" }
             } @else {
