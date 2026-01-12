@@ -219,6 +219,7 @@ pub async fn index(State(state): State<AppState>) -> impl IntoResponse {
 #[derive(Deserialize)]
 pub struct ThreadQuery {
     aspect: Option<String>,
+    item: Option<String>,
 }
 
 pub async fn thread_page(
@@ -231,7 +232,8 @@ pub async fn thread_page(
     // If aspect is specified, render the aspect ranking view
     if let Some(aspect) = query.aspect {
         let aspect = aspect.trim_start_matches(':').to_string();
-        return render_aspect_view(state, tag, aspect).await;
+        let selected_item = query.item.map(|s| s.trim_start_matches('/').to_string());
+        return render_aspect_view(state, tag, aspect, selected_item).await;
     }
 
     // Otherwise render the thread overview
@@ -292,6 +294,7 @@ async fn render_aspect_view(
     state: AppState,
     tag: String,
     aspect: String,
+    selected_item: Option<String>,
 ) -> axum::response::Response {
     let (group, items_in_tag): (crate::reducer::GroupState, Vec<String>) = {
         let reduced = state.reduced.read().await;
@@ -356,9 +359,18 @@ async fn render_aspect_view(
                         }
                         ol class="ranking" {
                             @for r in ranked.iter() {
-                                li {
-                                    code { "/" (r.item) }
+                                @let is_selected = selected_item.as_ref() == Some(&r.item);
+                                @let item_url = format!("/~/{tag}?aspect={aspect}&item={}", r.item);
+                                li class=(if is_selected { "selected" } else { "" }) {
+                                    a class="item-link" href=(item_url) {
+                                        code { "/" (r.item) }
+                                    }
                                     span class="score" { (format!("{:.4}", r.score)) }
+                                    @if is_selected {
+                                        div class="item-body" {
+                                            "/" (r.item)
+                                        }
+                                    }
                                 }
                             }
                         }
