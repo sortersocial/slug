@@ -27,13 +27,15 @@
 
   /* === THE LUMINANCE STACK === */
   /* Target values at full spread */
-  --L-graph-target: 100;
-  --L-prose-target: 72;
-  --L-ui-target: 45;
-  --L-meta-target: 28;
+  --L-signal-target: 100;  /* Pure white: scores, the output */
+  --L-graph-target: 88;    /* Off-white: slugs, addresses */
+  --L-prose-target: 68;    /* Light: human reasoning */
+  --L-ui-target: 42;       /* Mid: headers, navigation */
+  --L-meta-target: 26;     /* Dark: timestamps, counts */
   --L-base: 50;
   
   /* Computed: base + (target - base) * spread */
+  --signal: oklch(calc(var(--L-base) * 1% + (var(--L-signal-target) - var(--L-base)) * var(--spread) * 1%) 0 0);
   --graph: oklch(calc(var(--L-base) * 1% + (var(--L-graph-target) - var(--L-base)) * var(--spread) * 1%) 0 0);
   --prose: oklch(calc(var(--L-base) * 1% + (var(--L-prose-target) - var(--L-base)) * var(--spread) * 1%) 0 0);
   --ui: oklch(calc(var(--L-base) * 1% + (var(--L-ui-target) - var(--L-base)) * var(--spread) * 1%) 0 0);
@@ -198,10 +200,10 @@ ol.ranking li::marker {
   font-size: var(--text-xs);
 }
 .score {
-  color: var(--meta);
+  color: var(--signal);
   font-family: var(--mono);
-  font-size: var(--text-xs);
-  opacity: 0.6;
+  font-size: var(--text-lg);
+  font-weight: 500;
 }
 
 .vote {
@@ -228,7 +230,7 @@ ol.ranking li::marker {
 
 .vote-ratio {
   font-family: var(--mono);
-  color: var(--graph);
+  color: var(--signal);
   font-size: var(--text-lg);
   font-weight: 500;
 }
