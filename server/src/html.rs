@@ -28,12 +28,25 @@ fn layout(title: &str, body: Markup) -> Markup {
                     a { text-decoration: none; }
                     a:hover { text-decoration: underline; }
                     h1,h2 { margin: 0 0 12px 0; }
+                    h3 { margin: 18px 0 8px 0; }
                     .muted { opacity: 0.7; }
                     .row { display: flex; justify-content: space-between; gap: 16px; }
                     pre { padding: 12px; border: 1px solid rgba(127,127,127,0.25); border-radius: 8px; overflow-x: auto; }
                     table { width: 100%; border-collapse: collapse; }
                     td, th { padding: 6px 0; border-bottom: 1px solid rgba(127,127,127,0.2); }
                     th { text-align: left; }
+
+                    /* Votes: structured rendering */
+                    .vote { border: 1px solid rgba(127,127,127,0.25); border-radius: 10px; padding: 12px; margin: 10px 0; }
+                    .vote-header { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; flex-wrap: wrap; }
+                    .vote-items { display: flex; gap: 10px; flex-wrap: wrap; }
+                    .vote-meta { opacity: 0.7; font-size: 0.92em; }
+                    .ratio-wrap { margin-top: 8px; }
+                    .ratio-label { opacity: 0.8; font-size: 0.92em; margin-bottom: 6px; }
+                    .ratio-bar { display: flex; height: 12px; border-radius: 999px; overflow: hidden; border: 1px solid rgba(127,127,127,0.25); }
+                    .ratio-left { background: rgba(46, 160, 67, 0.75); }
+                    .ratio-right { background: rgba(248, 81, 73, 0.70); }
+                    .vote-body { margin-top: 10px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.35; }
                 "#) }
             }
             body {
@@ -48,6 +61,16 @@ fn now_ms() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
     t.as_millis() as i64
+}
+
+fn ratio_pct(left: i32, right: i32) -> f64 {
+    let l = (left.max(0)) as f64;
+    let r = (right.max(0)) as f64;
+    let denom = l + r;
+    if denom <= 0.0 {
+        return 50.0;
+    }
+    (l / denom) * 100.0
 }
 
 pub async fn index(State(state): State<AppState>) -> impl IntoResponse {
@@ -311,11 +334,32 @@ async fn render_aspect_view(
             @if group.recent_votes.is_empty() {
                 p class="muted" { "none yet" }
             } @else {
-                pre {
-                    @for v in group.recent_votes.iter().take(50) {
-                        @let ratio = format!("{}:{}", v.ratio_left, v.ratio_right);
-                        (format!("#{} :{}  /{}  {}  /{}  [@{}]\n{{{}}}\n\n",
-                            v.tag, v.aspect, v.a, ratio, v.b, v.actor, v.body))
+                @let now = now_ms();
+                @for v in group.recent_votes.iter().take(50) {
+                    @let pct = ratio_pct(v.ratio_left, v.ratio_right);
+                    @let hover = timeago::rfc3339_utc(v.ts);
+                    @let ago = timeago::timeago(now, v.ts);
+                    div class="vote" {
+                        div class="vote-header" {
+                            div class="vote-items" {
+                                code { "/" (v.a) }
+                                span { "vs" }
+                                code { "/" (v.b) }
+                            }
+                            div class="vote-meta" title=(hover) {
+                                (ago) " · @" (v.actor)
+                            }
+                        }
+                        div class="ratio-wrap" {
+                            div class="ratio-label" {
+                                (format!("ratio {}:{} (left {})", v.ratio_left, v.ratio_right, format!("{:.1}%", pct)))
+                            }
+                            div class="ratio-bar" aria-label={(format!("ratio {}:{} (left {:.1}%)", v.ratio_left, v.ratio_right, pct))} {
+                                div class="ratio-left" style={(format!("width: {:.3}%;", pct))} {}
+                                div class="ratio-right" style={(format!("width: {:.3}%;", 100.0 - pct))} {}
+                            }
+                        }
+                        div class="vote-body" { (v.body) }
                     }
                 }
             }
