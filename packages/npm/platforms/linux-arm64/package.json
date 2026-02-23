@@ -1,0 +1,13 @@
+{
+  "name": "@sortersocial/slugsocial-linux-arm64",
+  "version": "0.0.1",
+  "description": "Platform binary for slugsocial (linux arm64)",
+  "license": "MIT",
+  "os": ["linux"],
+  "cpu": ["arm64"],
+  "files": ["bin/slugsocial", "bin/README.txt"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sortersocial/slug.git"
+  }
+}
