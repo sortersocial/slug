@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use clap::{Parser, Subcommand};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use slug_types::*;
 use std::io::Read;
 use std::path::PathBuf;
@@ -27,6 +27,9 @@ enum Command {
         /// Aspect name (without : prefix, defaults to "default")
         #[arg(long, default_value = "default")]
         aspect: String,
+        /// Optional parent path scope (defaults to thread root)
+        #[arg(long)]
+        parent: Option<String>,
         /// Maximum items to return
         #[arg(long, default_value_t = 25)]
         limit: usize,
@@ -43,6 +46,9 @@ enum Command {
         /// Aspect name (without : prefix, defaults to "default")
         #[arg(long, default_value = "default")]
         aspect: String,
+        /// Optional parent path scope (defaults to thread root)
+        #[arg(long)]
+        parent: Option<String>,
         /// If true, ignore ranking and return a random pair (useful for "skip")
         #[arg(long)]
         random: bool,
@@ -57,8 +63,10 @@ enum Command {
     ///   # From heredoc (recommended for agents)
     ///   npx slugsocial ingest << EOF
     ///   @agent
-    ///   #thread
-    ///   /item-a 3:1 /item-b :default { reasoning here }
+    ///   :default
+    ///   ~/thread/item-a { body }
+    ///   ~/thread/item-b { body }
+    ///   ~/thread/item-a 3:1 ~/thread/item-b { reasoning here }
     ///   EOF
     ///
     ///   # From file
@@ -107,10 +115,7 @@ enum Command {
 
     /// Show item details (requires thread context)
     Item {
-        /// Thread name (without # prefix)
-        #[arg(long)]
-        thread: String,
-        /// Item name (without / prefix)
+        /// Full item path, e.g. ~/whitepaper/architectural-choices
         #[arg(long)]
         item: String,
         /// Output as JSON for agent parsing
@@ -166,17 +171,8 @@ fn canonicalize_sigiled(input: &str, sigil: char) -> String {
     trimmed.strip_prefix(sigil).unwrap_or(trimmed).to_string()
 }
 
-fn canonicalize_tag(input: &str) -> String {
-    canonicalize_sigiled(input, '#')
-}
 fn canonicalize_actor(input: &str) -> String {
     canonicalize_sigiled(input, '@').to_lowercase()
-}
-fn canonicalize_aspect(input: &str) -> String {
-    canonicalize_sigiled(input, ':')
-}
-fn canonicalize_item(input: &str) -> String {
-    canonicalize_sigiled(input, '/')
 }
 
 fn print_ranking(tag: &str, aspect: &str, rows: &[RankRow]) {
@@ -312,12 +308,6 @@ fn print_recent_votes(resp: &RecentVotesResponse) {
     println!("  npx slugsocial rank '<#tag>' :default");
 }
 
-fn shell_quote(s: &str) -> String {
-    // Minimal POSIX-ish single-quote escaping: wrap in '...' and escape embedded ' as '\''.
-    let escaped = s.replace('\'', "'\\''");
-    format!("'{escaped}'")
-}
-
 fn preview_body(body: &str) -> String {
     let s = body.trim();
     if s.is_empty() {
@@ -382,14 +372,24 @@ async fn main() -> Result<()> {
             println!("{body}");
         }
 
-        Command::Rank { thread, aspect, limit, json } => {
+        Command::Rank {
+            thread,
+            aspect,
+            parent,
+            limit,
+            json,
+        } => {
             let client = http_client()?;
-            let url = format!(
+            let mut url = format!(
                 "{base}/api/v0/rank?tag={}&aspect={}&limit={}",
                 urlencoding::encode(&thread),
                 urlencoding::encode(&aspect),
                 limit
             );
+            if let Some(parent) = parent {
+                url.push_str("&parent=");
+                url.push_str(&urlencoding::encode(&parent));
+            }
             let resp: RankResponse = expect_json(client.get(url).send().await?).await?;
 
             if json {
@@ -399,14 +399,24 @@ async fn main() -> Result<()> {
             }
         }
 
-        Command::Pair { thread, aspect, random, json } => {
+        Command::Pair {
+            thread,
+            aspect,
+            parent,
+            random,
+            json,
+        } => {
             let client = http_client()?;
-            let url = format!(
+            let mut url = format!(
                 "{base}/api/v0/pair?tag={}&aspect={}&random={}",
                 urlencoding::encode(&thread),
                 urlencoding::encode(&aspect),
                 if random { "true" } else { "false" }
             );
+            if let Some(parent) = parent {
+                url.push_str("&parent=");
+                url.push_str(&urlencoding::encode(&parent));
+            }
             let resp: PairResponse = expect_json(client.get(url).send().await?).await?;
 
             if json {
@@ -557,7 +567,7 @@ async fn main() -> Result<()> {
             }
         }
 
-        Command::Item { thread, item, json } => {
+        Command::Item { item, json } => {
             let client = http_client()?;
             let url = format!("{base}/api/v0/item?item={}", urlencoding::encode(&item));
             let resp: ItemResponse = expect_json(client.get(url).send().await?).await?;

@@ -19,7 +19,7 @@ pub fn create_app(state: AppState) -> Router {
         .route("/healthz", axum::routing::get(|| async { "ok" }))
         .route("/", axum::routing::get(html::index))
         .route("/~/:tag", axum::routing::get(html::thread_page))
-        .route("/~/:tag/:item", axum::routing::get(html::item_page))
+        .route("/~/:tag/*item", axum::routing::get(html::item_page))
         .route("/api/v0/tags", axum::routing::get(api::get_tags))
         .route("/api/v0/tag", axum::routing::get(api::get_tag))
         .route("/api/v0/item", axum::routing::get(api::get_item))

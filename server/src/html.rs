@@ -7,7 +7,7 @@ use maud::{html, Markup, DOCTYPE};
 use serde::Deserialize;
 
 use crate::{
-    events::{canonicalize_aspect, canonicalize_item, canonicalize_tag},
+    events::{canonicalize_aspect, canonicalize_item, canonicalize_tag, item_parent_path},
     ranking::{connected_components_from_voted_pairs, ranked_items_subset},
     reducer::{GroupKey, ItemKey},
     state::AppState,
@@ -151,6 +151,26 @@ fn actor_label(actor: &str) -> String {
     a.to_string()
 }
 
+fn qualify_item_for_tag(tag: &str, item: &str) -> String {
+    let c = canonicalize_item(item);
+    if c == tag || c.starts_with(&format!("{tag}/")) {
+        c
+    } else {
+        format!("{tag}/{c}")
+    }
+}
+
+fn item_suffix_for_tag(tag: &str, item: &str) -> String {
+    let c = canonicalize_item(item);
+    c.strip_prefix(&format!("{tag}/"))
+        .unwrap_or(c.as_str())
+        .to_string()
+}
+
+fn item_href_for_tag(tag: &str, item: &str) -> String {
+    format!("/~/{}/{}", tag, item_suffix_for_tag(tag, item))
+}
+
 pub async fn index(State(state): State<AppState>) -> impl IntoResponse {
     #[derive(Clone)]
     struct TagRow {
@@ -249,6 +269,7 @@ pub async fn index(State(state): State<AppState>) -> impl IntoResponse {
 #[derive(Deserialize)]
 pub struct ThreadQuery {
     aspect: Option<String>,
+    parent: Option<String>,
 }
 
 pub async fn thread_page(
@@ -261,7 +282,8 @@ pub async fn thread_page(
     // If aspect is specified, render the aspect ranking view
     if let Some(aspect) = query.aspect {
         let aspect = aspect.trim_start_matches(':').to_string();
-        return render_aspect_view(state, tag, aspect, None).await;
+        let parent = query.parent.as_deref().map(|p| qualify_item_for_tag(&tag, p));
+        return render_aspect_view(state, tag, aspect, None, parent).await;
     }
 
     // Otherwise render the thread overview
@@ -336,7 +358,7 @@ pub async fn item_page(
     Query(query): Query<ThreadQuery>,
 ) -> impl IntoResponse {
     let tag = canonicalize_tag(&tag);
-    let item = canonicalize_item(&item);
+    let item = qualify_item_for_tag(&tag, &item);
     let selected_aspect = query.aspect.map(|a| canonicalize_aspect(&a));
 
     let key = ItemKey {
@@ -425,10 +447,12 @@ pub async fn item_page(
 
     let now = now_ms();
 
+    let parent_scope = item_parent_path(&item).unwrap_or_else(|| tag.clone());
     let tag_label = format!("#{tag}");
     let tag_href = format!("/~/{tag}");
-    let item_label = format!("/{item}");
-    let item_href = format!("/~/{tag}/{item}");
+    let item_suffix = item_suffix_for_tag(&tag, &item);
+    let item_label = format!("/{item_suffix}");
+    let item_href = item_href_for_tag(&tag, &item);
 
     let page = layout(
         &format!("/{item}"),
@@ -446,7 +470,7 @@ pub async fn item_page(
                 ul {
                     @for (aspect, (count, last_ts)) in aspects.iter() {
                         // Aspect link goes to the aspect ranking page.
-                        @let href = format!("/~/{tag}?aspect={aspect}");
+                        @let href = format!("/~/{tag}?aspect={aspect}&parent={}", parent_scope);
                         @let hover = timeago::rfc3339_utc(*last_ts);
                         @let ago = timeago::timeago(now, *last_ts);
                         @let rank = aspect_ranks.get(aspect).cloned().flatten();
@@ -545,8 +569,10 @@ async fn render_aspect_view(
     tag: String,
     aspect: String,
     selected_item: Option<String>,
+    selected_parent: Option<String>,
 ) -> axum::response::Response {
-    let (group, items_in_tag, mut aspects_for_tag): (crate::reducer::GroupState, Vec<String>, Vec<String>) = {
+    let parent_scope = selected_parent.unwrap_or_else(|| tag.clone());
+    let (group, items_in_scope, mut aspects_for_tag): (crate::reducer::GroupState, Vec<String>, Vec<String>) = {
         let reduced = state.reduced.read().await;
         let key = GroupKey {
             tag: tag.clone(),
@@ -564,9 +590,9 @@ async fn render_aspect_view(
             );
             return (StatusCode::NOT_FOUND, Html(page.into_string())).into_response();
         };
-        let items_in_tag = reduced
-            .tags
-            .get(&tag)
+        let items_in_scope = reduced
+            .item_children
+            .get(&parent_scope)
             .map(|s| s.iter().cloned().collect())
             .unwrap_or_else(Vec::new);
         let mut aspects: Vec<String> = reduced
@@ -577,38 +603,61 @@ async fn render_aspect_view(
             .collect();
         aspects.sort();
         aspects.dedup();
-        (group.clone(), items_in_tag, aspects)
+        (group.clone(), items_in_scope, aspects)
     };
 
-    // Build connected components from recorded voted pairs.
-    let n = group.idx_to_item.len();
-    let (comps, isolate_idxs) =
-        connected_components_from_voted_pairs(n, group.voted_pairs.iter().copied());
+    // Build scoped components for direct children under parent_scope only.
+    let scoped_idxs: Vec<usize> = items_in_scope
+        .iter()
+        .filter_map(|it| group.item_to_idx.get(it).copied())
+        .collect();
+    let local_to_global: Vec<usize> = scoped_idxs.clone();
+    let global_to_local: std::collections::HashMap<usize, usize> = scoped_idxs
+        .iter()
+        .enumerate()
+        .map(|(local, global)| (*global, local))
+        .collect();
+    let (mut comps_local, isolate_local_idxs) = connected_components_from_voted_pairs(
+        scoped_idxs.len(),
+        group.voted_pairs.iter().filter_map(|(i, j)| {
+            let li = global_to_local.get(i).copied()?;
+            let lj = global_to_local.get(j).copied()?;
+            Some((li, lj))
+        }),
+    );
 
-    // Items in the tag that have no votes at all in this aspect (not even present in group).
-    let mut no_vote_items: Vec<String> = items_in_tag
+    // Items in the scope that have no votes at all in this aspect.
+    let mut no_vote_items: Vec<String> = items_in_scope
         .into_iter()
         .filter(|it| !group.item_to_idx.contains_key(it))
         .collect();
     no_vote_items.sort();
 
     // Sort components by size descending, then by item name for stability.
-    let mut comps = comps;
-    comps.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
+    comps_local.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
 
     // Precompute rankings for each component so we can render a TOC and a "meat" section consistently.
-    let component_rankings: Vec<(usize, usize, Vec<crate::ranking::RankedItem>)> = comps
+    let component_rankings: Vec<(usize, usize, Vec<crate::ranking::RankedItem>)> = comps_local
         .iter()
         .enumerate()
-        .map(|(ci, comp)| {
-            let ranked = ranked_items_subset(&group, comp, 10000, 1e-8);
+        .map(|(ci, comp_local)| {
+            let comp_global: Vec<usize> = comp_local
+                .iter()
+                .filter_map(|li| local_to_global.get(*li).copied())
+                .collect();
+            let comp_set: std::collections::HashSet<usize> = comp_global.iter().copied().collect();
+            let ranked = ranked_items_subset(&group, &comp_global, 10000, 1e-8);
             let pairs = group
                 .voted_pairs
                 .iter()
-                .filter(|(i, j)| comp.binary_search(i).is_ok() && comp.binary_search(j).is_ok())
+                .filter(|(i, j)| comp_set.contains(i) && comp_set.contains(j))
                 .count();
             (ci, pairs, ranked)
         })
+        .collect();
+    let isolate_idxs: Vec<usize> = isolate_local_idxs
+        .into_iter()
+        .filter_map(|li| local_to_global.get(li).copied())
         .collect();
 
     let bodies: std::collections::HashMap<String, String> = {
@@ -625,14 +674,18 @@ async fn render_aspect_view(
     let tag_label = format!("#{tag}");
     let tag_href = format!("/~/{tag}");
     let aspect_label = format!(":{aspect}");
-    let aspect_href = format!("/~/{tag}?aspect={aspect}");
-    let item_label = selected_item.as_ref().map(|it| format!("/{it}"));
-    let item_href = selected_item.as_ref().map(|it| format!("/~/{tag}/{it}?aspect={aspect}"));
+    let aspect_href = format!("/~/{tag}?aspect={aspect}&parent={}", parent_scope);
+    let item_label = selected_item
+        .as_ref()
+        .map(|it| format!("/{}", item_suffix_for_tag(&tag, it)));
+    let item_href = selected_item
+        .as_ref()
+        .map(|it| format!("{}?aspect={aspect}", item_href_for_tag(&tag, it)));
 
     // Always show aspect selector, even when a specific aspect is selected.
     // Keep item context (path) if we're in item-focused mode.
     let aspect_base = if let Some(ref it) = selected_item {
-        format!("/~/{tag}/{it}")
+        item_href_for_tag(&tag, it)
     } else {
         format!("/~/{tag}")
     };
@@ -655,7 +708,7 @@ async fn render_aspect_view(
                 h2 { "aspects" }
                 ul {
                     @for a in aspects_for_tag.drain(..) {
-                        @let href = format!("{aspect_base}?aspect={a}");
+                        @let href = format!("{aspect_base}?aspect={a}&parent={}", parent_scope);
                         li {
                             @if a == aspect {
                                 a href=(href) class="bc-current" { ":" (a) }
@@ -678,9 +731,9 @@ async fn render_aspect_view(
                         }
                         ol class="ranking" {
                             @for r in ranked.iter() {
-                                @let item_url = format!("/~/{tag}/{}", r.item);
+                                @let item_url = item_href_for_tag(&tag, &r.item);
                                 li {
-                                    a class="item-link" href=(item_url) { code { "/" (r.item) } }
+                                    a class="item-link" href=(item_url) { code { "/" (item_suffix_for_tag(&tag, &r.item)) } }
                                 }
                             }
                         }
@@ -695,8 +748,8 @@ async fn render_aspect_view(
                         @for idx in &isolate_idxs {
                             @let name = group.idx_to_item.get(*idx).cloned().unwrap_or_default();
                             li {
-                                @let href = format!("/~/{tag}/{name}");
-                                a class="item-link" href=(href) { code { "/" (name) } }
+                                @let href = item_href_for_tag(&tag, &name);
+                                a class="item-link" href=(href) { code { "/" (item_suffix_for_tag(&tag, &name)) } }
                             }
                         }
                     }
@@ -709,8 +762,8 @@ async fn render_aspect_view(
                     ul {
                         @for it in &no_vote_items {
                             li {
-                                @let href = format!("/~/{tag}/{it}");
-                                a class="item-link" href=(href) { code { "/" (it) } }
+                                @let href = item_href_for_tag(&tag, it);
+                                a class="item-link" href=(href) { code { "/" (item_suffix_for_tag(&tag, it)) } }
                             }
                         }
                     }
@@ -728,11 +781,11 @@ async fn render_aspect_view(
                         }
                         ol class="ranking meat" {
                             @for r in ranked.iter() {
-                                @let item_url = format!("/~/{tag}/{}", r.item);
+                                @let item_url = item_href_for_tag(&tag, &r.item);
                                 li {
                                     div class="item-card" {
                                         div class="item-card-header" {
-                                            a class="item-link" href=(item_url) { code { "/" (r.item) } }
+                                            a class="item-link" href=(item_url) { code { "/" (item_suffix_for_tag(&tag, &r.item)) } }
                                             span class="score" { (format!("{:.4}", r.score)) }
                                         }
                                         @if let Some(body) = bodies.get(&r.item) {
@@ -751,10 +804,10 @@ async fn render_aspect_view(
                     div class="component unsorted" {
                         div class="component-header" { "not yet compared" }
                         @for it in no_vote_items.iter() {
-                            @let href = format!("/~/{tag}/{it}");
+                            @let href = item_href_for_tag(&tag, it);
                             div class="item-card" {
                                 div class="item-card-header" {
-                                    a class="item-link" href=(href) { code { "/" (it) } }
+                                    a class="item-link" href=(href) { code { "/" (item_suffix_for_tag(&tag, it)) } }
                                     span class="muted" { "unranked" }
                                 }
                                 @if let Some(body) = bodies.get(it) {

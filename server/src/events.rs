@@ -13,7 +13,44 @@ pub fn canonicalize_aspect(input: &str) -> String {
 }
 
 pub fn canonicalize_item(input: &str) -> String {
-    input.trim().trim_start_matches('/').to_lowercase()
+    let mut s = input.trim();
+    if let Some(rest) = s.strip_prefix("~/") {
+        s = rest;
+    } else if let Some(rest) = s.strip_prefix('/') {
+        s = rest;
+    }
+
+    s.split('/')
+        .filter_map(|seg| {
+            let t = seg.trim();
+            if t.is_empty() {
+                None
+            } else {
+                Some(t.to_lowercase())
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+pub fn item_path_segments(input: &str) -> Vec<String> {
+    canonicalize_item(input)
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .collect()
+}
+
+pub fn item_thread(input: &str) -> Option<String> {
+    item_path_segments(input).into_iter().next()
+}
+
+pub fn item_parent_path(input: &str) -> Option<String> {
+    let segs = item_path_segments(input);
+    if segs.len() <= 1 {
+        return None;
+    }
+    Some(segs[..segs.len() - 1].join("/"))
 }
 
 pub fn canonicalize_actor(input: &str) -> String {

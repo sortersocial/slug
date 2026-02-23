@@ -3,7 +3,8 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use serde::{Deserialize, Serialize};
 
 use crate::events::{
-    canonicalize_actor, canonicalize_aspect, canonicalize_item, canonicalize_tag, Event, Ingest,
+    canonicalize_actor, canonicalize_aspect, canonicalize_item, canonicalize_tag, item_parent_path,
+    item_thread, Event, Ingest,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -162,6 +163,8 @@ pub struct ReducerState {
     pub items: HashSet<String>,
     pub tags: HashMap<String, HashSet<String>>, // tag -> set(item)
     pub item_bodies: HashMap<String, String>,
+    /// Parent -> direct children index for nested item paths.
+    pub item_children: HashMap<String, HashSet<String>>,
     /// Store ingests by id so we can render snippets without duplicating raw text in indexes.
     pub ingests_by_id: HashMap<String, Ingest>,
     /// Recent ingest ids per tag (most recent first).
@@ -183,6 +186,27 @@ pub struct ReducerState {
 }
 
 impl ReducerState {
+    fn add_child_edge(&mut self, tag: &str, item: &str) {
+        let parent = item_parent_path(item).unwrap_or_else(|| tag.to_string());
+        self.item_children
+            .entry(parent)
+            .or_default()
+            .insert(item.to_string());
+    }
+
+    fn normalize_item_for_context(item: &str, current_tag: &Option<String>) -> Option<(String, String)> {
+        let c = canonicalize_item(item);
+        if c.is_empty() {
+            return None;
+        }
+        if let Some(tag) = item_thread(&c) {
+            return Some((tag, c));
+        }
+        current_tag
+            .as_ref()
+            .map(|t| (t.clone(), format!("{}/{}", t, c)))
+    }
+
     pub fn apply_event(&mut self, event: Event) {
         match event {
             Event::Ingest(mut ing) => {
@@ -207,15 +231,7 @@ impl ReducerState {
                 let mut current_aspect: String = "default".to_string();
                 let mut current_actor: Option<String> = Some(ing.actor.clone());
 
-                // Extract tags for notification/indexing.
-                let extracted_tags: Vec<String> = doc
-                    .statements
-                    .iter()
-                    .filter_map(|s| match s {
-                        crate::dsl::Stmt::Hashtag { name } => Some(canonicalize_tag(name)),
-                        _ => None,
-                    })
-                    .collect();
+                let mut extracted_tags: HashSet<String> = HashSet::new();
 
                 // Process each statement.
                 // We only index snippets for items that appear in explicit DSL (`! /item` or votes).
@@ -233,9 +249,14 @@ impl ReducerState {
                             current_actor = Some(canonicalize_actor(&name));
                         }
                         crate::dsl::Stmt::Item { title, body } => {
-                            let item = canonicalize_item(&title);
+                            let Some((tag, item)) =
+                                Self::normalize_item_for_context(&title, &current_tag)
+                            else {
+                                continue;
+                            };
                             self.items.insert(item.clone());
                             ingest_items.insert(item.clone());
+                            extracted_tags.insert(tag.clone());
 
                             // Store body if provided.
                             if let Some(body_text) = body {
@@ -244,13 +265,8 @@ impl ReducerState {
                                 }
                             }
 
-                            // Add to tag if context exists.
-                            if let Some(ref tag) = current_tag {
-                                self.tags
-                                    .entry(tag.clone())
-                                    .or_default()
-                                    .insert(item.clone());
-                            }
+                            self.tags.entry(tag.clone()).or_default().insert(item.clone());
+                            self.add_child_edge(&tag, &item);
                         }
                         crate::dsl::Stmt::Vote {
                             item1,
@@ -259,54 +275,69 @@ impl ReducerState {
                             ratio_right,
                             explanation,
                         } => {
-                            if let Some(ref tag) = current_tag {
-                                let actor = current_actor.clone().unwrap_or_else(|| ing.actor.clone());
-                                let vote = VoteData {
-                                    ts: ing.ts,
+                            let Some((tag_a, item_a)) =
+                                Self::normalize_item_for_context(&item1, &current_tag)
+                            else {
+                                continue;
+                            };
+                            let Some((tag_b, item_b)) =
+                                Self::normalize_item_for_context(&item2, &current_tag)
+                            else {
+                                continue;
+                            };
+                            if tag_a != tag_b {
+                                continue;
+                            }
+                            let tag = tag_a;
+                            extracted_tags.insert(tag.clone());
+                            let actor = current_actor.clone().unwrap_or_else(|| ing.actor.clone());
+                            let vote = VoteData {
+                                ts: ing.ts,
+                                tag: tag.clone(),
+                                aspect: current_aspect.clone(),
+                                a: item_a,
+                                b: item_b,
+                                ratio_left,
+                                ratio_right,
+                                body: explanation,
+                                actor,
+                            };
+
+                            ingest_items.insert(vote.a.clone());
+                            ingest_items.insert(vote.b.clone());
+
+                            // Ensure items exist under tag.
+                            self.items.insert(vote.a.clone());
+                            self.items.insert(vote.b.clone());
+                            self.tags
+                                .entry(tag.clone())
+                                .or_default()
+                                .insert(vote.a.clone());
+                            self.tags
+                                .entry(tag.clone())
+                                .or_default()
+                                .insert(vote.b.clone());
+                            self.add_child_edge(&tag, &vote.a);
+                            self.add_child_edge(&tag, &vote.b);
+
+                            // Apply to group.
+                            let key = GroupKey {
+                                tag: tag.clone(),
+                                aspect: current_aspect.clone(),
+                            };
+                            let group = self.groups.entry(key.clone()).or_insert_with(|| {
+                                GroupState::new(key.tag.clone(), key.aspect.clone())
+                            });
+                            group.apply_vote(vote.clone());
+
+                            // Index vote by (tag,item) for both items.
+                            for it in [&vote.a, &vote.b] {
+                                let ik = ItemKey {
                                     tag: tag.clone(),
-                                    aspect: current_aspect.clone(),
-                                    a: canonicalize_item(&item1),
-                                    b: canonicalize_item(&item2),
-                                    ratio_left,
-                                    ratio_right,
-                                    body: explanation,
-                                    actor,
+                                    item: it.clone(),
                                 };
-
-                                ingest_items.insert(vote.a.clone());
-                                ingest_items.insert(vote.b.clone());
-
-                                // Ensure items exist under tag.
-                                self.items.insert(vote.a.clone());
-                                self.items.insert(vote.b.clone());
-                                self.tags
-                                    .entry(tag.clone())
-                                    .or_default()
-                                    .insert(vote.a.clone());
-                                self.tags
-                                    .entry(tag.clone())
-                                    .or_default()
-                                    .insert(vote.b.clone());
-
-                                // Apply to group.
-                                let key = GroupKey {
-                                    tag: tag.clone(),
-                                    aspect: current_aspect.clone(),
-                                };
-                                let group = self.groups.entry(key.clone()).or_insert_with(|| {
-                                    GroupState::new(key.tag.clone(), key.aspect.clone())
-                                });
-                                group.apply_vote(vote.clone());
-
-                                // Index vote by (tag,item) for both items.
-                                for it in [&vote.a, &vote.b] {
-                                    let ik = ItemKey {
-                                        tag: tag.clone(),
-                                        item: it.clone(),
-                                    };
-                                    let q = self.item_votes.entry(ik).or_default();
-                                    q.push_front(vote.clone());
-                                }
+                                let q = self.item_votes.entry(ik).or_default();
+                                q.push_front(vote.clone());
                             }
                         }
                         crate::dsl::Stmt::Prose { .. } => {

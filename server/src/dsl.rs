@@ -186,17 +186,30 @@ fn mask_all(mut masker: BlockMasker, text: &str) -> (BlockMasker, String) {
 }
 
 fn is_item_name(s: &str) -> bool {
-    // Matches Python: /[a-zA-Z0-9_]+([-][a-zA-Z0-9_]+)*/
-    let mut parts = s.split('-');
-    let Some(first) = parts.next() else {
-        return false;
-    };
-    if first.is_empty() || !first.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+    let mut name = s.trim();
+    if let Some(rest) = name.strip_prefix("~/") {
+        name = rest;
+    } else if let Some(rest) = name.strip_prefix('/') {
+        name = rest;
+    }
+    if name.is_empty() {
         return false;
     }
-    for p in parts {
-        if p.is_empty() || !p.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+    for seg in name.split('/') {
+        if seg.is_empty() {
             return false;
+        }
+        let mut parts = seg.split('-');
+        let Some(first) = parts.next() else {
+            return false;
+        };
+        if first.is_empty() || !first.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+            return false;
+        }
+        for p in parts {
+            if p.is_empty() || !p.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+                return false;
+            }
         }
     }
     true
@@ -249,53 +262,38 @@ fn parse_item_name_at(s: &str, i: usize) -> Option<(String, usize)> {
         return None;
     }
 
-    // ITEM_NAME: [a-zA-Z0-9_]+([-][a-zA-Z0-9_]+)*
+    // ITEM_REF: ("/" | "~/") ITEM_NAME
     let mut j = i;
-    let mut saw = false;
+    if bytes[j] == b'~' {
+        j += 1;
+        if j >= bytes.len() || bytes[j] != b'/' {
+            return None;
+        }
+        j += 1;
+    } else if bytes[j] == b'/' {
+        j += 1;
+    } else {
+        return None;
+    }
+    let start = j;
     while j < bytes.len() {
-        // After masking, block tokens can be adjacent to the item name
-        // (e.g. "/arrived{...}" => "/arrived__BLOCK_deadbeef__").
-        // Treat the "__BLOCK_" prefix as a hard boundary so we can parse
-        // ITEM_NAME + BLOCK_TOKEN even without whitespace.
         if bytes[j..].starts_with(b"__BLOCK_") {
             break;
         }
         let c = bytes[j] as char;
-        if c.is_ascii_alphanumeric() || c == '_' {
-            saw = true;
+        if c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '/' {
             j += 1;
             continue;
         }
         break;
     }
-    if !saw {
+    if j <= start {
         return None;
     }
-
-    while j < bytes.len() && bytes[j] == b'-' {
-        let dash = j;
-        j += 1;
-        let mut seg = false;
-        while j < bytes.len() {
-            if bytes[j..].starts_with(b"__BLOCK_") {
-                break;
-            }
-            let c = bytes[j] as char;
-            if c.is_ascii_alphanumeric() || c == '_' {
-                seg = true;
-                j += 1;
-                continue;
-            }
-            break;
-        }
-        if !seg {
-            // Trailing '-' or empty segment is not allowed; stop before dash.
-            j = dash;
-            break;
-        }
+    let name = &s[start..j];
+    if !is_item_name(name) {
+        return None;
     }
-
-    let name = &s[i..j];
     Some((name.to_string(), j))
 }
 
@@ -359,28 +357,27 @@ fn parse_comparison_at(s: &str, i: usize) -> Option<((i32, i32), usize)> {
     Some(((left, right), j))
 }
 
-fn parse_slash_statement(stripped: &str, masker: &BlockMasker) -> Result<Stmt, DslError> {
-    // item: "/" item_ref body?
-    // vote: "/" item_ref comparison "/" item_ref body?
+fn parse_item_statement(stripped: &str, masker: &BlockMasker) -> Result<Stmt, DslError> {
+    // item: ("/" | "~/") item_ref body?
+    // vote: ("/" | "~/") item_ref comparison ("/" | "~/") item_ref body?
     //
     // Important: body token can be adjacent to the item name (no whitespace),
     // e.g. "/arrived{...}" -> "/arrived__BLOCK_x__".
     let s = stripped;
     let bytes = s.as_bytes();
-    if bytes.is_empty() || bytes[0] != b'/' {
-        return Err(DslError::Parse("missing leading '/'".to_string()));
+    if bytes.is_empty() {
+        return Err(DslError::Parse("missing item statement".to_string()));
     }
 
-    let mut i = 1;
     let (item1, j) =
-        parse_item_name_at(s, i).ok_or_else(|| DslError::Parse("invalid item name".to_string()))?;
+        parse_item_name_at(s, 0).ok_or_else(|| DslError::Parse("invalid item name".to_string()))?;
 
     // Either we have:
     // - immediate/whitespace block token => Item
     // - comparison => Vote
     // - whitespace then block token => Item
     // - whitespace then comparison => Vote
-    i = skip_ws(s, j);
+    let i = skip_ws(s, j);
 
     // If next is end or a block token => Item.
     if i >= s.len() {
@@ -405,10 +402,6 @@ fn parse_slash_statement(stripped: &str, masker: &BlockMasker) -> Result<Stmt, D
     let ((ratio_left, ratio_right), mut k) = parse_comparison_at(s, i)
         .ok_or_else(|| DslError::Parse(format!("invalid comparison near: {}", &s[i..])))?;
     k = skip_ws(s, k);
-    if k >= s.len() || s.as_bytes()[k] != b'/' {
-        return Err(DslError::Parse("missing '/' for rhs item".to_string()));
-    }
-    k += 1;
     let (item2, mut m) = parse_item_name_at(s, k)
         .ok_or_else(|| DslError::Parse("invalid rhs item name".to_string()))?;
     m = skip_ws(s, m);
@@ -485,7 +478,10 @@ fn parse_line(masked_line: &str, masker: &BlockMasker) -> Result<Vec<Stmt>, DslE
             }])
         }
         '/' => {
-            Ok(vec![parse_slash_statement(stripped, masker)?])
+            Ok(vec![parse_item_statement(stripped, masker)?])
+        }
+        '~' => {
+            Ok(vec![parse_item_statement(stripped, masker)?])
         }
         '!' => {
             // Reserved / future use in Python filter; treat as parse error for now.
@@ -520,7 +516,7 @@ pub fn parse_lines(text: &str) -> Result<Document, DslError> {
             continue;
         }
         let first = stripped.chars().next().unwrap();
-        if "#:/@!".contains(first) {
+        if "#:/@!~".contains(first) {
             let line_stmts = parse_line(line, &masker)?;
             statements.extend(line_stmts);
         }
@@ -546,7 +542,7 @@ pub fn parse_full(text: &str) -> Result<Document, DslError> {
 
     for line in masked.split('\n') {
         let stripped = line.trim_start();
-        if !stripped.is_empty() && "#:/@!".contains(stripped.chars().next().unwrap()) {
+        if !stripped.is_empty() && "#:/@!~".contains(stripped.chars().next().unwrap()) {
             // Flush prose buffer first
             flush_prose(&mut prose_buffer, &mut statements, &masker);
 
@@ -695,6 +691,35 @@ signature: thanks
                 item1: "a".to_string(),
                 item2: "b".to_string(),
                 ratio_left: 2,
+                ratio_right: 1,
+                explanation: "because".to_string()
+            }]
+        );
+    }
+
+    #[test]
+    fn parse_nested_path_item() {
+        let input = "~/whitepaper/architectural-choices { Body }";
+        let doc = parse(input).unwrap();
+        assert_eq!(
+            doc.statements,
+            vec![Stmt::Item {
+                title: "whitepaper/architectural-choices".to_string(),
+                body: Some("Body".to_string()),
+            }]
+        );
+    }
+
+    #[test]
+    fn parse_nested_path_vote() {
+        let input = "~/whitepaper/a 3:1 ~/whitepaper/b { because }";
+        let doc = parse(input).unwrap();
+        assert_eq!(
+            doc.statements,
+            vec![Stmt::Vote {
+                item1: "whitepaper/a".to_string(),
+                item2: "whitepaper/b".to_string(),
+                ratio_left: 3,
                 ratio_right: 1,
                 explanation: "because".to_string()
             }]

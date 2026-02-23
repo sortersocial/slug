@@ -11,8 +11,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
     dsl,
-    events::{canonicalize_actor, canonicalize_aspect, canonicalize_item, canonicalize_tag, Event},
-    ranking::ranked_items,
+    events::{canonicalize_actor, canonicalize_aspect, canonicalize_item, canonicalize_tag, item_thread, Event},
+    ranking::{ranked_items, ranked_items_subset},
     reducer::GroupKey,
     state::AppState,
 };
@@ -27,6 +27,23 @@ fn now_ms() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
     t.as_millis() as i64
+}
+
+fn require_path_item(item: &str) -> Result<(String, String), String> {
+    let canonical = canonicalize_item(item);
+    let Some(tag) = item_thread(&canonical) else {
+        return Err(format!(
+            "item must include thread root path, e.g. `~/thread/name`. got: `{}`",
+            item
+        ));
+    };
+    if canonical == tag {
+        return Err(format!(
+            "item must include at least one segment under thread root, e.g. `~/{}/child`",
+            tag
+        ));
+    }
+    Ok((tag, canonical))
 }
 
 /// Validate actor format: @<uuid>:<rig>:<model>
@@ -291,6 +308,8 @@ pub struct RankQuery {
     pub tag: String,
     pub aspect: String,
     #[serde(default)]
+    pub parent: Option<String>,
+    #[serde(default)]
     pub limit: Option<usize>,
 }
 
@@ -304,17 +323,38 @@ pub struct RankResponse {
 pub async fn get_rank(State(state): State<AppState>, Query(q): Query<RankQuery>) -> impl IntoResponse {
     let tag = canonicalize_tag(&q.tag);
     let aspect = canonicalize_aspect(&q.aspect);
+    let parent = q
+        .parent
+        .as_deref()
+        .map(canonicalize_item)
+        .unwrap_or_else(|| tag.clone());
+    if item_thread(&parent).as_deref() != Some(tag.as_str()) {
+        return api_error(
+            StatusCode::BAD_REQUEST,
+            "parent path must be in requested thread",
+            Some(format!("expected parent under `~/{}`", tag)),
+        );
+    }
     let limit = q.limit.unwrap_or(50).clamp(1, 500);
 
     let ranking = {
-        let mut reduced = state.reduced.write().await;
+        let reduced = state.reduced.read().await;
         let key = GroupKey {
             tag: tag.clone(),
             aspect: aspect.clone(),
         };
-        let group = reduced.groups.get_mut(&key);
+        let group = reduced.groups.get(&key);
         if let Some(g) = group {
-            ranked_items(g, 10000, 1e-8)
+            let children = reduced
+                .item_children
+                .get(&parent)
+                .map(|s| s.iter().cloned().collect::<Vec<_>>())
+                .unwrap_or_default();
+            let idxs: Vec<usize> = children
+                .iter()
+                .filter_map(|it| g.item_to_idx.get(it).copied())
+                .collect();
+            ranked_items_subset(g, &idxs, 10000, 1e-8)
                 .into_iter()
                 .take(limit)
                 .map(|r| RankRow {
@@ -339,6 +379,8 @@ pub async fn get_rank(State(state): State<AppState>, Query(q): Query<RankQuery>)
 pub struct PairQuery {
     pub tag: String,
     pub aspect: String,
+    #[serde(default)]
+    pub parent: Option<String>,
     /// If true, ignore ranking and select a random pair (useful for “skip”).
     #[serde(default)]
     pub random: Option<bool>,
@@ -391,34 +433,35 @@ fn is_pair_voted(group: &crate::reducer::GroupState, a: &str, b: &str) -> bool {
 pub async fn get_pair(State(state): State<AppState>, Query(q): Query<PairQuery>) -> impl IntoResponse {
     let tag = canonicalize_tag(&q.tag);
     let aspect = canonicalize_aspect(&q.aspect);
+    let parent = q
+        .parent
+        .as_deref()
+        .map(canonicalize_item)
+        .unwrap_or_else(|| tag.clone());
+    if item_thread(&parent).as_deref() != Some(tag.as_str()) {
+        return api_error(
+            StatusCode::BAD_REQUEST,
+            "parent path must be in requested thread",
+            Some(format!("expected parent under `~/{}`", tag)),
+        );
+    }
     let force_random = q.random.unwrap_or(false);
 
-    // Pool is “all items under tag”, independent of aspect votes.
-    //
-    // Note: today many tags are “implicit” (created by votes) and won't have a
-    // `TagAdd` event yet, so we fall back to the group's known items.
+    // Pool is direct children under parent scope.
     let pool: Vec<String> = {
         let reduced = state.reduced.read().await;
-        if let Some(s) = reduced.tags.get(&tag) {
+        if let Some(s) = reduced.item_children.get(&parent) {
             s.iter().cloned().collect()
         } else {
-            let key = GroupKey {
-                tag: tag.clone(),
-                aspect: aspect.clone(),
-            };
-            reduced
-                .groups
-                .get(&key)
-                .map(|g| g.idx_to_item.clone())
-                .unwrap_or_default()
+            vec![]
         }
     };
 
     if pool.len() < 2 {
         return api_error(
             StatusCode::BAD_REQUEST,
-            format!("need at least 2 items under tag #{tag}"),
-            Some(format!("add items via ingest:\n#{}\n/item {{ ... }}", tag)),
+            format!("need at least 2 sibling items under parent /{}", parent),
+            Some("add sibling items via ingest using `~/thread/parent/child` paths".to_string()),
         );
     }
 
@@ -427,8 +470,8 @@ pub async fn get_pair(State(state): State<AppState>, Query(q): Query<PairQuery>)
         let Some((left, right)) = pick_random_distinct(&pool) else {
             return api_error(
                 StatusCode::BAD_REQUEST,
-                format!("need at least 2 items under tag #{tag}"),
-                Some(format!("add items via ingest:\n#{}\n/item {{ ... }}", tag)),
+                format!("need at least 2 sibling items under parent /{}", parent),
+                Some("add sibling items via ingest using `~/thread/parent/child` paths".to_string()),
             );
         };
         let (left_body, right_body) = {
@@ -463,8 +506,11 @@ pub async fn get_pair(State(state): State<AppState>, Query(q): Query<PairQuery>)
             Some(group) => {
                 let mut rng = rand::thread_rng();
 
-                // Compute ranked items (sorted high->low). Group contains only items that have appeared in votes.
-                let ranked = ranked_items(group, 10000, 1e-8);
+                let idxs: Vec<usize> = pool
+                    .iter()
+                    .filter_map(|it| group.item_to_idx.get(it).copied())
+                    .collect();
+                let ranked = ranked_items_subset(group, &idxs, 10000, 1e-8);
                 let ranked_set: std::collections::HashSet<String> =
                     ranked.iter().map(|r| r.item.clone()).collect();
 
@@ -781,10 +827,9 @@ pub struct CheckResponse {
 /// Ingest a DSL/prose document, emitting events into the JSONL log.
 ///
 /// Interpretation model:
-/// - `#tag` sets the active tag context
 /// - `:aspect` sets the active aspect context (default: "default")
-/// - `/item {body}` emits `ItemUpsert` (and `TagAdd` if tag context exists)
-/// - `/a 2:1 /b {explanation}` emits `VoteCast` (and `TagAdd` for both items if tag context exists)
+/// - `~/thread/item {body}` declares/updates an item body
+/// - `~/thread/a 2:1 ~/thread/b {explanation}` records a vote
 pub async fn post_ingest(
     State(state): State<AppState>,
     _headers: axum::http::HeaderMap,
@@ -806,7 +851,6 @@ pub async fn post_ingest(
         }
     };
 
-    let mut current_tag: Option<String> = None;
     let mut current_aspect: String = "default".to_string();
     let ts = now_ms();
 
@@ -826,20 +870,28 @@ pub async fn post_ingest(
                 voter_key_id = a;
             }
             dsl::Stmt::Hashtag { name } => {
-                let t = canonicalize_tag(&name);
-                current_tag = Some(t.clone());
-                tags_seen.insert(t);
+                return api_error(
+                    StatusCode::BAD_REQUEST,
+                    "legacy #thread syntax is no longer accepted",
+                    Some(format!(
+                        "replace `#{}` with explicit item paths like `~/{}/...`",
+                        name, name
+                    )),
+                );
             }
             dsl::Stmt::Attribute { name } => {
                 current_aspect = canonicalize_aspect(&name);
             }
             dsl::Stmt::Item { title, body } => {
-                let item = canonicalize_item(&title);
+                let (tag, item) = match require_path_item(&title) {
+                    Ok(v) => v,
+                    Err(msg) => return api_error(StatusCode::BAD_REQUEST, "invalid item path", Some(msg)),
+                };
                 let Some(body_text) = body else {
                     return api_error(
                         StatusCode::BAD_REQUEST,
                         format!("item missing body: /{item}"),
-                        Some("items must be declared with bodies, e.g. `/item { ... }`".to_string()),
+                        Some("items must be declared with bodies, e.g. `~/thread/item { ... }`".to_string()),
                     );
                 };
                 if body_text.trim().is_empty() {
@@ -850,26 +902,50 @@ pub async fn post_ingest(
                     );
                 }
                 defined_in_doc.insert(item.clone());
+                tags_seen.insert(tag);
             }
             dsl::Stmt::Vote {
                 item1,
                 item2,
                 ..
             } => {
-                let Some(ref tag) = current_tag else {
+                let (tag_a, a) = match require_path_item(&item1) {
+                    Ok(v) => v,
+                    Err(msg) => {
+                        return api_error(
+                            StatusCode::BAD_REQUEST,
+                            "invalid vote item path",
+                            Some(msg),
+                        )
+                    }
+                };
+                let (tag_b, b) = match require_path_item(&item2) {
+                    Ok(v) => v,
+                    Err(msg) => {
+                        return api_error(
+                            StatusCode::BAD_REQUEST,
+                            "invalid vote item path",
+                            Some(msg),
+                        )
+                    }
+                };
+                if tag_a != tag_b {
                     return api_error(
                         StatusCode::BAD_REQUEST,
-                        "vote requires an active #tag context",
-                        Some("add a `#tag` line before any votes".to_string()),
+                        "vote items must be in the same thread root",
+                        Some(format!(
+                            "left is in `#{}` and right is in `#{}`",
+                            tag_a, tag_b
+                        )),
                     );
-                };
-                let a = canonicalize_item(&item1);
-                let b = canonicalize_item(&item2);
+                }
+                let tag = tag_a;
+                tags_seen.insert(tag.clone());
 
                 // Validate items exist and have bodies.
                 {
                     let reduced = state.reduced.read().await;
-                    let items_in_tag = reduced.tags.get(tag);
+                    let items_in_tag = reduced.tags.get(&tag);
                     let mut missing: Vec<String> = Vec::new();
                     for it in [&a, &b] {
                         let ok_in_doc = defined_in_doc.contains(it);
@@ -988,7 +1064,6 @@ pub async fn post_check(
     // Open-write semantics: actor comes from `@actor` in the document.
     let mut current_actor: Option<String> = None;
     let mut voter_key_id: String = "anon".to_string();
-    let mut current_tag: Option<String> = None;
     let mut current_aspect: String = "default".to_string();
     let ts = now_ms();
 
@@ -1009,20 +1084,28 @@ pub async fn post_check(
                 voter_key_id = a;
             }
             dsl::Stmt::Hashtag { name } => {
-                let t = canonicalize_tag(&name);
-                current_tag = Some(t.clone());
-                tags_seen.insert(t);
+                return api_error(
+                    StatusCode::BAD_REQUEST,
+                    "legacy #thread syntax is no longer accepted",
+                    Some(format!(
+                        "replace `#{}` with explicit item paths like `~/{}/...`",
+                        name, name
+                    )),
+                );
             }
             dsl::Stmt::Attribute { name } => {
                 current_aspect = canonicalize_aspect(&name);
             }
             dsl::Stmt::Item { title, body } => {
-                let item = canonicalize_item(&title);
+                let (tag, item) = match require_path_item(&title) {
+                    Ok(v) => v,
+                    Err(msg) => return api_error(StatusCode::BAD_REQUEST, "invalid item path", Some(msg)),
+                };
                 let Some(body_text) = body else {
                     return api_error(
                         StatusCode::BAD_REQUEST,
                         format!("item missing body: /{item}"),
-                        Some("items must be declared with bodies, e.g. `/item { ... }`".to_string()),
+                        Some("items must be declared with bodies, e.g. `~/thread/item { ... }`".to_string()),
                     );
                 };
                 if body_text.trim().is_empty() {
@@ -1033,27 +1116,51 @@ pub async fn post_check(
                     );
                 }
                 defined_in_doc.insert(item.clone());
+                tags_seen.insert(tag);
             }
             dsl::Stmt::Vote {
                 item1,
                 item2,
                 ..
             } => {
-                let Some(ref tag) = current_tag else {
-                    return api_error(
-                        StatusCode::BAD_REQUEST,
-                        "vote requires an active #tag context",
-                        Some("add a `#tag` line before any votes".to_string()),
-                    );
+                let (tag_a, a) = match require_path_item(&item1) {
+                    Ok(v) => v,
+                    Err(msg) => {
+                        return api_error(
+                            StatusCode::BAD_REQUEST,
+                            "invalid vote item path",
+                            Some(msg),
+                        )
+                    }
                 };
                 let aspect = current_aspect.clone();
-                let a = canonicalize_item(&item1);
-                let b = canonicalize_item(&item2);
+                let (tag_b, b) = match require_path_item(&item2) {
+                    Ok(v) => v,
+                    Err(msg) => {
+                        return api_error(
+                            StatusCode::BAD_REQUEST,
+                            "invalid vote item path",
+                            Some(msg),
+                        )
+                    }
+                };
+                if tag_a != tag_b {
+                    return api_error(
+                        StatusCode::BAD_REQUEST,
+                        "vote items must be in the same thread root",
+                        Some(format!(
+                            "left is in `#{}` and right is in `#{}`",
+                            tag_a, tag_b
+                        )),
+                    );
+                }
+                let tag = tag_a;
+                tags_seen.insert(tag.clone());
 
                 // Validate items exist and have bodies.
                 {
                     let reduced = state.reduced.read().await;
-                    let items_in_tag = reduced.tags.get(tag);
+                    let items_in_tag = reduced.tags.get(&tag);
                     let mut missing: Vec<String> = Vec::new();
                     for it in [&a, &b] {
                         let ok_in_doc = defined_in_doc.contains(it);
@@ -1092,7 +1199,7 @@ pub async fn post_check(
                     }
                 }
 
-                groups_touched.insert((tag.clone(), aspect));
+                groups_touched.insert((tag, aspect));
             }
             _ => {}
         }
