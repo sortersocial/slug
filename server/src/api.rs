@@ -29,21 +29,32 @@ fn now_ms() -> i64 {
     t.as_millis() as i64
 }
 
-fn require_path_item(item: &str) -> Result<(String, String), String> {
+/// Resolve an item path, optionally using a current tag context for single-segment items.
+/// `#tag` context + `/item` is treated as `~/tag/item`.
+fn require_path_item_ctx(item: &str, current_tag: Option<&str>) -> Result<(String, String), String> {
     let canonical = canonicalize_item(item);
-    let Some(tag) = item_thread(&canonical) else {
-        return Err(format!(
-            "item must include thread root path, e.g. `~/thread/name`. got: `{}`",
-            item
-        ));
-    };
-    if canonical == tag {
-        return Err(format!(
-            "item must include at least one segment under thread root, e.g. `~/{}/child`",
-            tag
-        ));
+    if canonical.is_empty() {
+        return Err(format!("empty item path: `{}`", item));
     }
-    Ok((tag, canonical))
+    if canonical.contains('/') {
+        // Multi-segment: explicit thread root present.
+        let tag = item_thread(&canonical).unwrap();
+        return Ok((tag, canonical));
+    }
+    // Single-segment: needs #tag context.
+    if let Some(tag) = current_tag {
+        let tag = canonicalize_tag(tag);
+        let full = format!("{}/{}", tag, canonical);
+        return Ok((tag, full));
+    }
+    Err(format!(
+        "item `{}` has no thread root. use `~/thread/{}` or set `#thread` context first.",
+        item, canonical
+    ))
+}
+
+fn require_path_item(item: &str) -> Result<(String, String), String> {
+    require_path_item_ctx(item, None)
 }
 
 /// Validate actor format: @<uuid>:<rig>:<model>
@@ -641,6 +652,40 @@ pub async fn get_tags(State(state): State<AppState>) -> impl IntoResponse {
     Json(TagsResponse { tags: out }).into_response()
 }
 
+// ThreadSummary and ThreadsResponse live in slug_types (shared with CLI).
+
+pub async fn get_threads(State(state): State<AppState>) -> impl IntoResponse {
+    let reduced = state.reduced.read().await;
+
+    let mut aspects_by_tag: BTreeMap<String, usize> = BTreeMap::new();
+    for k in reduced.groups.keys() {
+        *aspects_by_tag.entry(k.tag.clone()).or_default() += 1;
+    }
+
+    // Collect all known threads from the ThreadState map.
+    let mut out: Vec<slug_types::ThreadSummary> = reduced
+        .threads
+        .iter()
+        .map(|(tag, thread)| {
+            let items = reduced.tags.get(tag).map(|s| s.len()).unwrap_or(0);
+            let aspects = aspects_by_tag.get(tag).copied().unwrap_or(0);
+            slug_types::ThreadSummary {
+                thread: format!("#{tag}"),
+                last_activity_ts: thread.last_activity_ts,
+                subscriber_count: thread.subscriber_count,
+                items,
+                aspects,
+                web: format!("https://slug.social/~/{}", tag),
+            }
+        })
+        .collect();
+
+    // Bump order: most recently active first.
+    out.sort_by(|a, b| b.last_activity_ts.cmp(&a.last_activity_ts));
+
+    Json(slug_types::ThreadsResponse { threads: out }).into_response()
+}
+
 #[derive(Debug, Deserialize)]
 pub struct TagDetailQuery {
     pub tag: String,
@@ -852,6 +897,7 @@ pub async fn post_ingest(
     };
 
     let mut current_aspect: String = "default".to_string();
+    let mut current_tag: Option<String> = None;
     let ts = now_ms();
 
     let mut tags_seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
@@ -870,20 +916,14 @@ pub async fn post_ingest(
                 voter_key_id = a;
             }
             dsl::Stmt::Hashtag { name } => {
-                return api_error(
-                    StatusCode::BAD_REQUEST,
-                    "legacy #thread syntax is no longer accepted",
-                    Some(format!(
-                        "replace `#{}` with explicit item paths like `~/{}/...`",
-                        name, name
-                    )),
-                );
+                // #thread sets tag context for subsequent items/votes.
+                current_tag = Some(canonicalize_tag(name));
             }
             dsl::Stmt::Attribute { name } => {
                 current_aspect = canonicalize_aspect(&name);
             }
             dsl::Stmt::Item { title, body } => {
-                let (tag, item) = match require_path_item(&title) {
+                let (tag, item) = match require_path_item_ctx(&title, current_tag.as_deref()) {
                     Ok(v) => v,
                     Err(msg) => return api_error(StatusCode::BAD_REQUEST, "invalid item path", Some(msg)),
                 };
@@ -909,7 +949,7 @@ pub async fn post_ingest(
                 item2,
                 ..
             } => {
-                let (tag_a, a) = match require_path_item(&item1) {
+                let (tag_a, a) = match require_path_item_ctx(&item1, current_tag.as_deref()) {
                     Ok(v) => v,
                     Err(msg) => {
                         return api_error(
@@ -919,7 +959,7 @@ pub async fn post_ingest(
                         )
                     }
                 };
-                let (tag_b, b) = match require_path_item(&item2) {
+                let (tag_b, b) = match require_path_item_ctx(&item2, current_tag.as_deref()) {
                     Ok(v) => v,
                     Err(msg) => {
                         return api_error(
@@ -1012,10 +1052,21 @@ pub async fn post_ingest(
     if let Err(err) = state.event_log.append(&event).await {
         return api_error(StatusCode::INTERNAL_SERVER_ERROR, format!("{err}"), None);
     }
+    let actor_for_stream = match &event {
+        Event::Ingest(ing) => ing.actor.clone(),
+    };
     {
         let mut reduced = state.reduced.write().await;
         reduced.apply_event(event);
     }
+
+    // Broadcast to SSE subscribers (best-effort; ignore send errors if no subscribers).
+    let _ = state.stream_tx.send(crate::state::StreamEvent {
+        ts,
+        actor: actor_for_stream,
+        tags: tags_vec.iter().map(|t| format!("#{t}")).collect(),
+        snippet: req.text.chars().take(200).collect(),
+    });
 
     let primary_tag = tags_vec
         .get(0)
@@ -1065,6 +1116,7 @@ pub async fn post_check(
     let mut current_actor: Option<String> = None;
     let mut voter_key_id: String = "anon".to_string();
     let mut current_aspect: String = "default".to_string();
+    let mut current_tag: Option<String> = None;
     let ts = now_ms();
 
     let mut tags_seen: BTreeSet<String> = BTreeSet::new();
@@ -1084,20 +1136,14 @@ pub async fn post_check(
                 voter_key_id = a;
             }
             dsl::Stmt::Hashtag { name } => {
-                return api_error(
-                    StatusCode::BAD_REQUEST,
-                    "legacy #thread syntax is no longer accepted",
-                    Some(format!(
-                        "replace `#{}` with explicit item paths like `~/{}/...`",
-                        name, name
-                    )),
-                );
+                // #thread sets tag context for subsequent items/votes.
+                current_tag = Some(canonicalize_tag(name));
             }
             dsl::Stmt::Attribute { name } => {
                 current_aspect = canonicalize_aspect(&name);
             }
             dsl::Stmt::Item { title, body } => {
-                let (tag, item) = match require_path_item(&title) {
+                let (tag, item) = match require_path_item_ctx(&title, current_tag.as_deref()) {
                     Ok(v) => v,
                     Err(msg) => return api_error(StatusCode::BAD_REQUEST, "invalid item path", Some(msg)),
                 };
@@ -1123,7 +1169,7 @@ pub async fn post_check(
                 item2,
                 ..
             } => {
-                let (tag_a, a) = match require_path_item(&item1) {
+                let (tag_a, a) = match require_path_item_ctx(&item1, current_tag.as_deref()) {
                     Ok(v) => v,
                     Err(msg) => {
                         return api_error(
@@ -1134,7 +1180,7 @@ pub async fn post_check(
                     }
                 };
                 let aspect = current_aspect.clone();
-                let (tag_b, b) = match require_path_item(&item2) {
+                let (tag_b, b) = match require_path_item_ctx(&item2, current_tag.as_deref()) {
                     Ok(v) => v,
                     Err(msg) => {
                         return api_error(
@@ -1318,6 +1364,31 @@ pub async fn get_notifications(
         notifications,
     })
     .into_response()
+}
+
+/// SSE live stream — broadcasts an event for every ingest.
+/// Connect: GET /api/v0/stream
+/// Each event is a JSON-encoded StreamEvent.
+pub async fn get_stream(State(state): State<AppState>) -> impl IntoResponse {
+    use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
+    use tokio_stream::wrappers::BroadcastStream;
+    use tokio_stream::StreamExt as _;
+
+    let rx = state.stream_tx.subscribe();
+    let stream = BroadcastStream::new(rx).filter_map(|msg| {
+        match msg {
+            Ok(ev) => {
+                let data = serde_json::to_string(&ev).unwrap_or_default();
+                Some(Ok::<_, std::convert::Infallible>(
+                    SseEvent::default().event("ingest").data(data),
+                ))
+            }
+            // Lagged — skip the missed events rather than killing the stream.
+            Err(_) => None,
+        }
+    });
+
+    Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
 

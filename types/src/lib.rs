@@ -52,6 +52,21 @@ pub struct TagSummary {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct ThreadsResponse {
+    pub threads: Vec<ThreadSummary>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ThreadSummary {
+    pub thread: String,
+    pub last_activity_ts: i64,
+    pub subscriber_count: usize,
+    pub items: usize,
+    pub aspects: usize,
+    pub web: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct TagDetailResponse {
     pub tag: String,
     pub items: Vec<String>,

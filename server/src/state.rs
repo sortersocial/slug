@@ -1,11 +1,20 @@
 use std::{collections::HashMap, sync::Arc};
 
-use tokio::sync::RwLock;
+use tokio::sync::{broadcast, RwLock};
 
 use crate::{
     event_log::EventLog,
     reducer::{GroupKey, ReducerState},
 };
+
+/// An SSE event broadcast to all live stream subscribers when an ingest occurs.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StreamEvent {
+    pub ts: i64,
+    pub actor: String,
+    pub tags: Vec<String>,
+    pub snippet: String,
+}
 
 #[derive(Debug, Clone)]
 pub struct KeyRecord {
@@ -27,6 +36,8 @@ pub struct AppState {
     pub event_log: Arc<EventLog>,
     pub reduced: Arc<RwLock<ReducerState>>,
     pub rate: Arc<RwLock<HashMap<String, RateWindow>>>,
+    /// Broadcast channel for SSE live-streaming. Capacity = 64 events.
+    pub stream_tx: broadcast::Sender<StreamEvent>,
 }
 
 #[derive(Debug, Clone)]
@@ -38,11 +49,13 @@ pub struct RateWindow {
 impl AppState {
     pub fn new(cfg: AppConfig) -> Self {
         let event_log = EventLog::new(cfg.event_log_path.clone());
+        let (stream_tx, _) = broadcast::channel(64);
         Self {
             cfg: Arc::new(cfg),
             event_log: Arc::new(event_log),
             reduced: Arc::new(RwLock::new(ReducerState::default())),
             rate: Arc::new(RwLock::new(HashMap::new())),
+            stream_tx,
         }
     }
 

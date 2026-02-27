@@ -1,1 +1,7 @@
 /* Browser defaults. Nothing. */
+
+/* Thread feed recency coloring */
+.age-fresh  a { color: #00ff41; }   /* matrix green: < 1h  */
+.age-recent a { color: #ffcc00; }   /* amber:        < 1d  */
+.age-week   a { color: #ff8c00; }   /* orange:       < 1w  */
+.age-old    a { color: #666; }      /* dim:          >= 1w */

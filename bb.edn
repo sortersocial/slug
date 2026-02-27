@@ -3,68 +3,13 @@
              [clojure.string :as str])
 
   release
-  {:doc "Tag and push a new release"
-   :task (fn [args]
-           (let [bump-type-or-version (first args)
-                 explicit-version (when (and bump-type-or-version
-                                             (re-matches #"^\d+\.\d+\.\d+$" bump-type-or-version))
-                                    bump-type-or-version)
-                 bump-type (if explicit-version
-                             "patch"
-                             (or bump-type-or-version "patch"))
-                 
-                 ;; Get latest tag
-                 latest-tag (-> (p/process "git tag --sort=-version:refname | head -1" {:out :string})
-                                deref
-                                :out
-                                str/trim)
-                 latest-version (if (empty? latest-tag)
-                                  "0.0.0"
-                                  (str/replace latest-tag #"^v" ""))
-                 
-                 ;; Bump version
-                 bump-version (fn [version bump-type]
-                                (let [[major minor patch] (map #(Integer/parseInt %)
-                                                               (str/split version #"\."))
-                                      [new-major new-minor new-patch]
-                                      (case bump-type
-                                        "major" [(inc major) 0 0]
-                                        "minor" [major (inc minor) 0]
-                                        "patch" [major minor (inc patch)]
-                                        [major minor (inc patch)])]
-                                  (str new-major "." new-minor "." new-patch)))
-                 
-                 version (if explicit-version
-                           (str/replace explicit-version #"^v" "")
-                           (bump-version latest-version bump-type))
-                 tag (str "v" version)]
-             
-             ;; Check for clean working tree
-             (let [result @(p/process "git diff --quiet && git diff --cached --quiet" {:continue true})]
-               (when (not= 0 (:exit result))
-                 (println "error: working tree has uncommitted changes — commit or stash first")
-                 (System/exit 1)))
-             
-             ;; Show what we're doing
-             (when (not explicit-version)
-               (println (str "Latest version: " latest-version))
-               (println (str "Bumping " bump-type " version to: " version)))
-             
-             ;; Create and push tag
-             (println (str "Tagging " tag " and pushing to origin..."))
-             @(p/process ["git" "tag" "-a" tag "-m" (str "Release " tag)])
-             @(p/process ["git" "push" "origin" tag])
-             
-             (println "")
-             (println (str "Done. Tag " tag " pushed."))
-             (println "Watch the release workflow at:")
-             (println "  https://github.com/sortersocial/slug/actions")
-             (println "")
-             (println "Once complete, users will get the new binary via: npx slugsocial")))}
+  {:doc "Tag and push a new release. Usage: bb release [patch|minor|major|X.Y.Z]"
+   :requires ([scripts.release :as rel])
+   :task (apply rel/release *command-line-args*)}
 
   release-help
   {:doc "Show release task usage"
-   :task (fn [_]
+   :task (do
            (println "Usage:")
            (println "  bb release              # Auto-bump patch version (0.0.15 -> 0.0.16)")
            (println "  bb release patch        # Explicitly bump patch version")
@@ -84,5 +29,4 @@
            (println "  - Publishes @sortersocial/slugsocial-* platform packages to npm")
            (println "  - Publishes the root `slugsocial` package to npm")
            (println "")
-           (println "After ~5 minutes, `npx slugsocial` will pull the new version with the")
-           (println "updated GUIDE.sorter (it is embedded in the binary via include_str!)."))}}}
+           (println "After ~5 minutes, `npx slugsocial` will pull the new version."))}}}

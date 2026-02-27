@@ -166,15 +166,6 @@ enum Command {
     },
 }
 
-fn canonicalize_sigiled(input: &str, sigil: char) -> String {
-    let trimmed = input.trim();
-    trimmed.strip_prefix(sigil).unwrap_or(trimmed).to_string()
-}
-
-fn canonicalize_actor(input: &str) -> String {
-    canonicalize_sigiled(input, '@').to_lowercase()
-}
-
 fn print_ranking(tag: &str, aspect: &str, rows: &[RankRow]) {
     println!("{tag} {aspect}");
     println!();
@@ -203,41 +194,40 @@ fn print_next(next: &NextMoves) {
     println!("  {}", next.web);
 }
 
-fn print_tags(resp: &TagsResponse) {
-    if resp.tags.is_empty() {
-        println!("(no tags yet)");
+fn print_threads(resp: &ThreadsResponse) {
+    if resp.threads.is_empty() {
+        println!("(no threads yet)");
         println!();
         println!("next:");
-        println!("  # create your first doc (items must have bodies)");
-        println!("  cat > first.sorter <<'EOF'");
-        println!("  #my-first-tag");
-        println!("  :default");
-        println!("  /item-a {{ one sentence describing it }}");
-        println!("  /item-b {{ one sentence describing it }}");
-        println!("  /item-a 2:1 /item-b {{ because ... }}");
-        println!("  EOF");
-        println!();
-        println!("  # ingest it");
-        println!("  npx slugsocial ingest first.sorter");
-        println!();
-        println!("  # then explore");
-        println!("  npx slugsocial tags");
-        println!("  npx slugsocial tag '#my-first-tag'");
+        println!("  npx slugsocial ingest <file.sorter>");
         return;
     }
-    for t in &resp.tags {
-        println!("{:<32} items={:<4} aspects={:<3} {}", t.tag, t.items, t.aspects, t.web);
+    for t in &resp.threads {
+        let age_secs = {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as i64;
+            (now - t.last_activity_ts) / 1000
+        };
+        let ago = if age_secs < 60 {
+            format!("{}s ago", age_secs)
+        } else if age_secs < 3600 {
+            format!("{}m ago", age_secs / 60)
+        } else if age_secs < 86400 {
+            format!("{}h ago", age_secs / 3600)
+        } else {
+            format!("{}d ago", age_secs / 86400)
+        };
+        println!(
+            "{:<32} {}i {}a {}s  {}",
+            t.thread, t.items, t.aspects, t.subscriber_count, ago
+        );
     }
     println!();
     println!("next:");
-    println!("  # inspect a tag");
-    println!("  npx slugsocial tag '<#tag>'");
-    println!("  # see rankings / get a pair / vote");
-    println!("  npx slugsocial rank '<#tag>' :default");
-    println!("  npx slugsocial pair '<#tag>' :default");
-    println!("  npx slugsocial vote '<#tag>' /a 2:1 /b :default @you \"because ...\"");
-    println!("  # add another tag by ingesting another doc containing a new #tag");
-    println!("  npx slugsocial ingest another.sorter");
+    println!("  npx slugsocial thread --thread <name>");
+    println!("  npx slugsocial pair --thread <name> --aspect default");
 }
 
 fn print_tag_detail(resp: &TagDetailResponse) {
@@ -547,12 +537,12 @@ async fn main() -> Result<()> {
 
         Command::Threads { json } => {
             let client = http_client()?;
-            let url = format!("{base}/api/v0/tags");
-            let resp: TagsResponse = expect_json(client.get(url).send().await?).await?;
+            let url = format!("{base}/api/v0/threads");
+            let resp: ThreadsResponse = expect_json(client.get(url).send().await?).await?;
             if json {
                 println!("{}", serde_json::to_string_pretty(&resp)?);
             } else {
-                print_tags(&resp);
+                print_threads(&resp);
             }
         }
 
@@ -593,47 +583,57 @@ async fn main() -> Result<()> {
             }
         }
 
-        Command::Watch { as_, timeout } => {
+        Command::Watch { as_: _, timeout } => {
+            // Connect to SSE stream and print events until timeout.
+            let url = format!("{base}/api/v0/stream");
             let client = http_client()?;
-            let actor_c = canonicalize_actor(&as_);
 
-            // Get current max timestamp to establish baseline
-            let url = format!(
-                "{base}/api/v0/notifications?actor={}&since=0",
-                urlencoding::encode(&actor_c)
-            );
-            let initial: NotificationsResponse = expect_json(client.get(url).send().await?).await?;
-            let mut max_ts = initial.notifications.iter().map(|n| n.ts).max().unwrap_or(0);
+            eprintln!("connecting to live stream (timeout: {}s)...", timeout);
 
-            // Poll until new notification or timeout
+            let resp = client
+                .get(&url)
+                .header("Accept", "text/event-stream")
+                .send()
+                .await
+                .context("failed to connect to stream")?;
+
+            if !resp.status().is_success() {
+                return Err(anyhow!("stream endpoint returned {}", resp.status()));
+            }
+
             let start = std::time::Instant::now();
             let timeout_duration = std::time::Duration::from_secs(timeout);
+            let mut buf = String::new();
+            let mut stream = resp.bytes_stream();
 
-            eprintln!("watching {} for notifications (timeout: {}s)...", as_, timeout);
+            use futures_util::StreamExt as _;
 
-            loop {
-                if start.elapsed() >= timeout_duration {
-                    eprintln!("timeout reached, no new notifications");
-                    std::process::exit(1);
-                }
+            while start.elapsed() < timeout_duration {
+                let chunk = tokio::time::timeout(
+                    timeout_duration.saturating_sub(start.elapsed()),
+                    stream.next(),
+                )
+                .await;
 
-                // Poll every 2 seconds
-                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-
-                let url = format!(
-                    "{base}/api/v0/notifications?actor={}&since={}",
-                    urlencoding::encode(&actor_c),
-                    max_ts
-                );
-                let current: NotificationsResponse = expect_json(client.get(url).send().await?).await?;
-
-                if !current.notifications.is_empty() {
-                    // New notifications since max_ts!
-                    for notif in &current.notifications {
-                        println!("{}", serde_json::to_string_pretty(notif)?);
-                        max_ts = max_ts.max(notif.ts);
+                match chunk {
+                    Ok(Some(Ok(bytes))) => {
+                        buf.push_str(&String::from_utf8_lossy(&bytes));
+                        // SSE lines: "data: {...}\n\n"
+                        while let Some(pos) = buf.find("\n\n") {
+                            let block = buf[..pos].to_string();
+                            buf = buf[pos + 2..].to_string();
+                            for line in block.lines() {
+                                if let Some(data) = line.strip_prefix("data: ") {
+                                    println!("{}", data);
+                                }
+                            }
+                        }
                     }
-                    break;
+                    Ok(Some(Err(e))) => return Err(anyhow!("stream error: {e}")),
+                    Ok(None) | Err(_) => {
+                        eprintln!("stream ended or timeout reached");
+                        break;
+                    }
                 }
             }
         }

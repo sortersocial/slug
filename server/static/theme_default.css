@@ -455,3 +455,10 @@ summary {
   cursor: pointer;
   border: none;
 }
+
+/* Thread feed recency coloring */
+.thread-feed li a { transition: color 0.1s; }
+.age-fresh  a { color: oklch(88% 0.18 150); }  /* green: < 1h  */
+.age-recent a { color: oklch(80% 0.14 200); }  /* cyan:  < 1d  */
+.age-week   a { color: var(--link); }           /* purple: < 1w */
+.age-old    a { color: var(--meta); }           /* dim:   >= 1w */

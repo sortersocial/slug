@@ -21,7 +21,7 @@ fn ingest_event(ts: i64, raw: &str) -> Event {
 
 fn vote_doc(tag: &str, aspect: &str, a: &str, b: &str, left: i32, right: i32) -> String {
     format!(
-        "@00000000-0000-0000-0000-000000000000:test:local/test\n#{tag}\n:{aspect}\n/{a} {{body a}}\n/{b} {{body b}}\n/{a} {left}:{right} /{b} {{because test}}\n"
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n:{aspect}\n~/{tag}/{a} {{body a}}\n~/{tag}/{b} {{body b}}\n~/{tag}/{a} {left}:{right} ~/{tag}/{b} {{because test}}\n"
     )
 }
 
@@ -35,9 +35,9 @@ fn reducer_and_ranking_linear_chain() {
     let mut state = ReducerState::default();
 
     // First ingest: define items + vote a > b.
-    state.apply_event(ingest_event(1, "@00000000-0000-0000-0000-000000000000:test:local/test\n#t\n:x\n/a {a}\n/b {b}\n/a 3:1 /b {because}\n"));
+    state.apply_event(ingest_event(1, "@00000000-0000-0000-0000-000000000000:test:local/test\n:x\n~/t/a {a}\n~/t/b {b}\n~/t/a 3:1 ~/t/b {because}\n"));
     // Second ingest: define c + vote b > c.
-    state.apply_event(ingest_event(2, "@00000000-0000-0000-0000-000000000000:test:local/test\n#t\n:x\n/c {c}\n/b 3:1 /c {because}\n"));
+    state.apply_event(ingest_event(2, "@00000000-0000-0000-0000-000000000000:test:local/test\n:x\n~/t/c {c}\n~/t/b 3:1 ~/t/c {because}\n"));
 
     let key = GroupKey {
         tag: "t".to_string(),
@@ -47,9 +47,9 @@ fn reducer_and_ranking_linear_chain() {
 
     let ranked = ranked_items(&mut group, 20000, 1e-9);
     assert_eq!(ranked.len(), 3);
-    assert_eq!(ranked[0].item, "a");
-    assert_eq!(ranked[1].item, "b");
-    assert_eq!(ranked[2].item, "c");
+    assert_eq!(ranked[0].item, "t/a");
+    assert_eq!(ranked[1].item, "t/b");
+    assert_eq!(ranked[2].item, "t/c");
 }
 
 #[test]
@@ -59,15 +59,15 @@ fn reducer_canonicalizes_identifiers() {
     // Mix of formats across ingests (case + sigils).
     state.apply_event(ingest_event(
         1,
-        "@00000000-0000-0000-0000-000000000000:test:local/test\n#Tag\n:Aspect\n/Item-A {x}\n/Item-B {y}\n/Item-A 2:1 /Item-B {because}\n",
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n:Aspect\n~/Tag/Item-A {x}\n~/Tag/Item-B {y}\n~/Tag/Item-A 2:1 ~/Tag/Item-B {because}\n",
     ));
     state.apply_event(ingest_event(
         2,
-        "@00000000-0000-0000-0000-000000000000:test:local/test\nTAG\nASPECT\nITEM-A 2:1 ITEM-B {because}\n",
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n:ASPECT\n~/TAG/ITEM-A 2:1 ~/TAG/ITEM-B {because}\n",
     ));
     state.apply_event(ingest_event(
         3,
-        "@00000000-0000-0000-0000-000000000000:test:local/test\n#tag\n:aspect\n/item-a 2:1 /item-b {because}\n",
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n:aspect\n~/tag/item-a 2:1 ~/tag/item-b {because}\n",
     ));
 
     let key = GroupKey {
@@ -84,15 +84,15 @@ fn reducer_handles_item_and_body_from_ingest() {
     let mut state = ReducerState::default();
     state.apply_event(ingest_event(
         1,
-        "@00000000-0000-0000-0000-000000000000:test:local/test\n#t\n/test-item {Description here}\n",
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n~/t/test-item {Description here}\n",
     ));
 
-    assert!(state.items.contains("test-item"));
+    assert!(state.items.contains("t/test-item"));
     assert_eq!(
-        state.item_bodies.get("test-item"),
+        state.item_bodies.get("t/test-item"),
         Some(&"Description here".to_string())
     );
-    assert!(state.tags.get("t").unwrap().contains("test-item"));
+    assert!(state.tags.get("t").unwrap().contains("t/test-item"));
 }
 
 #[test]
@@ -109,8 +109,8 @@ fn reducer_aggregates_multiple_votes() {
         aspect: "x".to_string(),
     };
     let group = &state.groups[&key];
-    let a_idx = group.item_to_idx["a"];
-    let b_idx = group.item_to_idx["b"];
+    let a_idx = group.item_to_idx["t/a"];
+    let b_idx = group.item_to_idx["t/b"];
 
     // Should have accumulated edge weights in both directions.
     assert!(group.edges.contains_key(&(a_idx, b_idx)));
@@ -122,11 +122,11 @@ fn reducer_clamps_score_bounds() {
     let mut state = ReducerState::default();
     state.apply_event(ingest_event(
         1,
-        "@00000000-0000-0000-0000-000000000000:test:local/test\n#t\n:x\n/a {a}\n/b {b}\n/a 1000:1 /b {huge}\n",
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n:x\n~/t/a {a}\n~/t/b {b}\n~/t/a 1000:1 ~/t/b {huge}\n",
     ));
     state.apply_event(ingest_event(
         2,
-        "@00000000-0000-0000-0000-000000000000:test:local/test\n#t\n:x\n/a 1:1000 /b {huge}\n",
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n:x\n~/t/a 1:1000 ~/t/b {huge}\n",
     ));
 
     let key = GroupKey {
@@ -148,15 +148,15 @@ fn ranking_cycle_is_nearly_equal() {
     let mut state = ReducerState::default();
     state.apply_event(ingest_event(
         1,
-        "@00000000-0000-0000-0000-000000000000:test:local/test\n#rps\n:x\n/rock {r}\n/scissors {s}\n/rock 3:1 /scissors {because}\n",
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n:x\n~/rps/rock {r}\n~/rps/scissors {s}\n~/rps/rock 3:1 ~/rps/scissors {because}\n",
     ));
     state.apply_event(ingest_event(
         2,
-        "@00000000-0000-0000-0000-000000000000:test:local/test\n#rps\n:x\n/scissors 3:1 /paper {because}\n",
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n:x\n~/rps/paper {p}\n~/rps/scissors 3:1 ~/rps/paper {because}\n",
     ));
     state.apply_event(ingest_event(
         3,
-        "@00000000-0000-0000-0000-000000000000:test:local/test\n#rps\n:x\n/paper 3:1 /rock {because}\n",
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n:x\n~/rps/paper 3:1 ~/rps/rock {because}\n",
     ));
 
     let key = GroupKey {
@@ -191,7 +191,7 @@ fn ranking_dominant_item_wins() {
     let mut state = ReducerState::default();
     state.apply_event(ingest_event(
         1,
-        "@00000000-0000-0000-0000-000000000000:test:local/test\n#t\n:x\n/champion {c}\n/b {b}\n/c {c}\n/d {d}\n/champion 10:1 /b {because}\n/champion 10:1 /c {because}\n/champion 10:1 /d {because}\n/b 2:1 /c {because}\n/c 2:1 /d {because}\n",
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n:x\n~/t/champion {c}\n~/t/b {b}\n~/t/c {c}\n~/t/d {d}\n~/t/champion 10:1 ~/t/b {because}\n~/t/champion 10:1 ~/t/c {because}\n~/t/champion 10:1 ~/t/d {because}\n~/t/b 2:1 ~/t/c {because}\n~/t/c 2:1 ~/t/d {because}\n",
     ));
 
     let key = GroupKey {
@@ -201,7 +201,7 @@ fn ranking_dominant_item_wins() {
     let mut group = state.groups.remove(&key).expect("group exists");
     let ranked = ranked_items(&mut group, 20000, 1e-9);
 
-    assert_eq!(ranked[0].item, "champion");
+    assert_eq!(ranked[0].item, "t/champion");
     assert!(ranked[0].score > ranked[1].score);
 }
 
@@ -210,7 +210,7 @@ fn ranking_neutral_votes_produce_equal_scores() {
     let mut state = ReducerState::default();
     state.apply_event(ingest_event(
         1,
-        "@00000000-0000-0000-0000-000000000000:test:local/test\n#t\n:x\n/a {a}\n/b {b}\n/c {c}\n/a 1:1 /b {neutral}\n/b 1:1 /c {neutral}\n/c 1:1 /a {neutral}\n",
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n:x\n~/t/a {a}\n~/t/b {b}\n~/t/c {c}\n~/t/a 1:1 ~/t/b {neutral}\n~/t/b 1:1 ~/t/c {neutral}\n~/t/c 1:1 ~/t/a {neutral}\n",
     ));
 
     let key = GroupKey {
@@ -349,7 +349,7 @@ async fn full_workflow_reducer_and_ranking() {
 
     state.apply_event(ingest_event(
         1,
-        "@00000000-0000-0000-0000-000000000000:test:local/test\n#langs\n:speed\n/rust {Systems language}\n/go {Simple concurrency}\n/rust 3:1 /go {because}\n",
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n:speed\n~/langs/rust {Systems language}\n~/langs/go {Simple concurrency}\n~/langs/rust 3:1 ~/langs/go {because}\n",
     ));
 
     let key = GroupKey {
@@ -360,7 +360,7 @@ async fn full_workflow_reducer_and_ranking() {
     let ranked = ranked_items(&mut group, 20000, 1e-9);
 
     assert_eq!(ranked.len(), 2);
-    assert_eq!(ranked[0].item, "rust"); // Should win
+    assert_eq!(ranked[0].item, "langs/rust"); // Should win
     assert!(ranked[0].score > ranked[1].score);
 }
 

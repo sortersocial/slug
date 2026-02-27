@@ -135,7 +135,7 @@ async fn test_rank_endpoint() {
     assert!(body["ranking"].is_array());
     let ranking = body["ranking"].as_array().unwrap();
     assert_eq!(ranking.len(), 2);
-    assert_eq!(ranking[0]["item"], "/rust");
+    assert_eq!(ranking[0]["item"], "/langs/rust");
 }
 
 #[tokio::test]

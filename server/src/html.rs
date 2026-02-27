@@ -171,68 +171,59 @@ fn item_href_for_tag(tag: &str, item: &str) -> String {
     format!("/~/{}/{}", tag, item_suffix_for_tag(tag, item))
 }
 
+/// Age bucket for recency coloring of thread entries.
+fn recency_class(now_ms: i64, ts_ms: i64) -> &'static str {
+    let age_ms = now_ms.saturating_sub(ts_ms);
+    let age_secs = age_ms / 1000;
+    if age_secs < 3600 {
+        "age-fresh"       // < 1 hour
+    } else if age_secs < 86400 {
+        "age-recent"      // < 1 day
+    } else if age_secs < 86400 * 7 {
+        "age-week"        // < 1 week
+    } else {
+        "age-old"         // >= 1 week
+    }
+}
+
 pub async fn index(State(state): State<AppState>) -> impl IntoResponse {
     #[derive(Clone)]
-    struct TagRow {
+    struct ThreadRow {
         tag: String,
         last_ts: i64,
         items: usize,
         aspects: usize,
-        recent_votes: usize,
+        subscriber_count: usize,
     }
 
     let now = now_ms();
-    let rows: Vec<TagRow> = {
+    let mut rows: Vec<ThreadRow> = {
         let reduced = state.reduced.read().await;
 
-        // Union of all "existing" tags we know about.
-        let mut all_tags: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-        all_tags.extend(reduced.ingests_by_tag.keys().cloned());
-        all_tags.extend(reduced.tags.keys().cloned());
-        all_tags.extend(reduced.groups.keys().map(|k| k.tag.clone()));
-
-        let mut out = Vec::new();
-        for tag in all_tags.into_iter() {
-            // Recency: prefer newest ingest timestamp; fallback to newest vote timestamp if present.
-            let last_ingest_ts = reduced
-                .ingests_by_tag
-                .get(&tag)
-                .and_then(|q| q.front())
-                .and_then(|ing_id| reduced.ingests_by_id.get(ing_id).map(|ing| ing.ts))
-                .unwrap_or(0);
-
-            let mut aspects = 0usize;
-            let mut recent_votes = 0usize;
-            let mut last_vote_ts = 0i64;
-            for (k, g) in reduced.groups.iter() {
-                if k.tag != tag {
-                    continue;
-                }
-                aspects += 1;
-                recent_votes += g.recent_votes.len();
-                if let Some(v) = g.recent_votes.front() {
-                    if v.ts > last_vote_ts {
-                        last_vote_ts = v.ts;
-                    }
-                }
-            }
-
-            let last_ts = last_ingest_ts.max(last_vote_ts);
-            let items = reduced.tags.get(&tag).map(|s| s.len()).unwrap_or(0);
-            out.push(TagRow {
-                tag,
-                last_ts,
-                items,
-                aspects,
-                recent_votes,
-            });
+        let mut aspects_by_tag: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        for k in reduced.groups.keys() {
+            *aspects_by_tag.entry(k.tag.clone()).or_default() += 1;
         }
 
-        out
+        reduced
+            .threads
+            .iter()
+            .map(|(tag, thread)| {
+                let items = reduced.tags.get(tag).map(|s| s.len()).unwrap_or(0);
+                let aspects = aspects_by_tag.get(tag).copied().unwrap_or(0);
+                ThreadRow {
+                    tag: tag.clone(),
+                    last_ts: thread.last_activity_ts,
+                    items,
+                    aspects,
+                    subscriber_count: thread.subscriber_count,
+                }
+            })
+            .collect()
     };
 
-    let mut rows = rows;
-    rows.sort_by_key(|r| std::cmp::Reverse(r.last_ts));
+    // Bump order: most recently active first.
+    rows.sort_by(|a, b| b.last_ts.cmp(&a.last_ts));
 
     let page = layout(
         "slug.social",
@@ -244,18 +235,19 @@ pub async fn index(State(state): State<AppState>) -> impl IntoResponse {
             @if rows.is_empty() {
                 p class="muted" { "no threads yet" }
             } @else {
-                ul {
+                ul class="thread-feed" {
                     @for r in rows {
                         @let href = format!("/~/{}", r.tag);
                         @let hover = timeago::rfc3339_utc(r.last_ts);
                         @let ago = timeago::timeago(now, r.last_ts);
-                        li {
+                        @let age_cls = recency_class(now, r.last_ts);
+                        li class=(age_cls) {
                             a href=(href) { "#" (r.tag) }
                             " "
                             span class="muted" title=(hover) {
                                 (ago)
                                 " · "
-                                (format!("items={} aspects={} recent_votes={}", r.items, r.aspects, r.recent_votes))
+                                (format!("{}i {}a {}s", r.items, r.aspects, r.subscriber_count))
                             }
                         }
                     }

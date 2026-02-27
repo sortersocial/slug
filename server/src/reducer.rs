@@ -157,6 +157,17 @@ pub struct Notification {
     pub notification_type: NotificationType,
 }
 
+/// First-class thread state. Tracks bump order and subscriber count.
+/// Threads are the forum layer — topic-based sessions, bump-ordered.
+/// Items (`~/path/item`) are the ontology layer — persistent, accumulated.
+#[derive(Debug, Clone, Default)]
+pub struct ThreadState {
+    /// Unix timestamp (ms) of the most recent ingest touching this thread.
+    pub last_activity_ts: i64,
+    /// Number of distinct actors who have participated.
+    pub subscriber_count: usize,
+}
+
 #[derive(Debug, Default, Clone)]
 pub struct ReducerState {
     pub groups: HashMap<GroupKey, GroupState>,
@@ -176,6 +187,9 @@ pub struct ReducerState {
     /// Per-(tag,item) ingest references (most recent first).
     /// This is *unbounded* by design; memory usage is dominated by `ingests_by_id`.
     pub item_snippets: HashMap<ItemKey, VecDeque<String>>,
+
+    /// First-class thread state: bump time, subscriber count.
+    pub threads: HashMap<String, ThreadState>,
 
     /// Track thread subscriptions: thread -> set(actor)
     /// Actors are subscribed when they vote or ingest in a thread.
@@ -199,8 +213,14 @@ impl ReducerState {
         if c.is_empty() {
             return None;
         }
-        if let Some(tag) = item_thread(&c) {
-            return Some((tag, c));
+        // Only treat the first segment as the tag if the path has >= 2 segments.
+        // A single-segment path like "a" (from `/a`) must use the #tag context —
+        // otherwise item_thread("a") would return Some("a") and create a spurious tag.
+        let has_explicit_thread = c.contains('/');
+        if has_explicit_thread {
+            if let Some(tag) = item_thread(&c) {
+                return Some((tag, c));
+            }
         }
         current_tag
             .as_ref()
@@ -331,13 +351,54 @@ impl ReducerState {
                             group.apply_vote(vote.clone());
 
                             // Index vote by (tag,item) for both items.
+                            // Also notify actors who have previously voted on the same items.
                             for it in [&vote.a, &vote.b] {
                                 let ik = ItemKey {
                                     tag: tag.clone(),
                                     item: it.clone(),
                                 };
+                                // Collect prior voters before mutating the queue.
+                                let prior_voters: Vec<String> = self
+                                    .item_votes
+                                    .get(&ik)
+                                    .map(|q| {
+                                        q.iter()
+                                            .map(|v| v.actor.clone())
+                                            .filter(|a| a != &vote.actor)
+                                            .collect::<std::collections::HashSet<_>>()
+                                            .into_iter()
+                                            .collect()
+                                    })
+                                    .unwrap_or_default();
+
                                 let q = self.item_votes.entry(ik).or_default();
                                 q.push_front(vote.clone());
+
+                                // Notify prior voters about new activity on this item.
+                                let detail = format!(
+                                    "{} {} {}:{} {} {}",
+                                    vote.actor, it,
+                                    vote.ratio_left, vote.ratio_right,
+                                    vote.a, vote.b
+                                );
+                                for prior_actor in prior_voters {
+                                    let notification = Notification {
+                                        ts: ing.ts,
+                                        ingest_id: ing.id.clone(),
+                                        actor: vote.actor.clone(),
+                                        notification_type: NotificationType::ThreadActivity {
+                                            thread: format!("#{}", tag),
+                                            activity: "vote".to_string(),
+                                            actor: vote.actor.clone(),
+                                            details: detail.clone(),
+                                        },
+                                    };
+                                    let queue = self.notifications.entry(prior_actor).or_default();
+                                    queue.push_front(notification);
+                                    while queue.len() > 100 {
+                                        queue.pop_back();
+                                    }
+                                }
                             }
                         }
                         crate::dsl::Stmt::Prose { .. } => {
@@ -356,6 +417,14 @@ impl ReducerState {
                         };
                         let q = self.item_snippets.entry(ik).or_default();
                         q.push_front(ing.id.clone());
+                    }
+                }
+
+                // Bump thread state for each extracted tag.
+                for tag in &extracted_tags {
+                    let thread = self.threads.entry(tag.clone()).or_default();
+                    if ing.ts > thread.last_activity_ts {
+                        thread.last_activity_ts = ing.ts;
                     }
                 }
 
@@ -393,10 +462,14 @@ impl ReducerState {
                     }
 
                     // Subscribe this actor to the thread.
-                    self.thread_subscriptions
+                    let subs = self.thread_subscriptions
                         .entry(tag.clone())
-                        .or_default()
-                        .insert(ing.actor.clone());
+                        .or_default();
+                    subs.insert(ing.actor.clone());
+                    // Keep subscriber_count in sync.
+                    if let Some(thread) = self.threads.get_mut(tag) {
+                        thread.subscriber_count = subs.len();
+                    }
                 }
 
                 // Index ingest by extracted tags.
