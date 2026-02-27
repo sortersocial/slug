@@ -1452,6 +1452,7 @@ name = "slugsocial-server"
 version = "0.0.1"
 dependencies = [
  "axum",
+ "futures-util",
  "http",
  "maud",
  "rand 0.8.5",

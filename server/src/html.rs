@@ -9,7 +9,7 @@ use serde::Deserialize;
 use crate::{
     events::{canonicalize_aspect, canonicalize_item, canonicalize_tag, item_parent_path},
     ranking::{connected_components_from_voted_pairs, ranked_items_subset},
-    reducer::{GroupKey, ItemKey},
+    reducer::{GroupKey, ItemKey, ReducerState},
     state::AppState,
     timeago,
 };
@@ -48,6 +48,7 @@ fn layout(title: &str, body: Markup) -> Markup {
                 meta name="viewport" content="width=device-width, initial-scale=1";
                 title { (title) }
                 link rel="stylesheet" href="/static/theme_default.css" id="theme-stylesheet";
+                script src="https://unpkg.com/idiomorph@0.3.0/dist/idiomorph.min.js" {}
             }
             body {
                 (body)
@@ -65,7 +66,7 @@ fn layout(title: &str, body: Markup) -> Markup {
                         const storedTheme = localStorage.getItem('slug-theme') || 'default';
                         const switcher = document.getElementById('theme-switcher');
                         const stylesheet = document.getElementById('theme-stylesheet');
-                        
+
                         function setTheme(name) {
                             stylesheet.href = `/static/theme_${name}.css`;
                             localStorage.setItem('slug-theme', name);
@@ -73,32 +74,65 @@ fn layout(title: &str, body: Markup) -> Markup {
                             // Re-apply spread after theme change
                             setTimeout(() => setSpread(parseFloat(slider.value)), 50);
                         }
-                        
+
                         setTheme(storedTheme);
-                        
+
                         switcher.addEventListener('click', function() {
                             const current = themes.indexOf(localStorage.getItem('slug-theme') || 'default');
                             const next = (current + 1) % themes.length;
                             setTheme(themes[next]);
                         });
-                        
+
                         // Spread control
                         const slider = document.getElementById('spread-slider');
                         const storedSpread = localStorage.getItem('slug-spread');
-                        
+
                         function setSpread(value) {
                             document.documentElement.style.setProperty('--spread', value);
                             localStorage.setItem('slug-spread', value);
                         }
-                        
+
                         if (storedSpread !== null) {
                             slider.value = storedSpread;
                             setSpread(parseFloat(storedSpread));
                         }
-                        
+
                         slider.addEventListener('input', function() {
                             setSpread(parseFloat(this.value));
                         });
+                    })();
+                "#) }
+                script { (r#"
+                    // Poem pattern: intercept POST forms, send via fetch, await SSE for DOM update.
+                    document.addEventListener('submit', async (e) => {
+                        const f = e.target;
+                        if (!f || f.tagName !== 'FORM') return;
+                        if ((f.method || 'get').toLowerCase() !== 'post') return;
+                        e.preventDefault();
+                        const btn = f.querySelector('button[type="submit"], input[type="submit"]');
+                        if (btn) { btn.disabled = true; btn.textContent = '…'; }
+                        await fetch(f.action, {
+                            method: 'POST',
+                            body: new URLSearchParams(new FormData(f)),
+                            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                            credentials: 'same-origin',
+                        });
+                        if (btn) { btn.disabled = false; btn.textContent = 'submit'; }
+                        f.reset();
+                    });
+
+                    // Poem pattern: SSE morph.
+                    (function connectSSE() {
+                        const es = new EventSource('/sse');
+                        es.onmessage = (e) => {
+                            const [sel, ...rest] = e.data.split('\n');
+                            const el = document.querySelector(sel);
+                            if (el) Idiomorph.morph(el, rest.join('\n'));
+                        };
+                        es.onerror = () => {
+                            es.close();
+                            setTimeout(connectSSE, 3000);
+                        };
                     })();
                 "#) }
             }
@@ -171,67 +205,34 @@ fn item_href_for_tag(tag: &str, item: &str) -> String {
     format!("/~/{}/{}", tag, item_suffix_for_tag(tag, item))
 }
 
-/// Age bucket for recency coloring of thread entries.
-fn recency_class(now_ms: i64, ts_ms: i64) -> &'static str {
-    let age_ms = now_ms.saturating_sub(ts_ms);
-    let age_secs = age_ms / 1000;
-    if age_secs < 3600 {
-        "age-fresh"       // < 1 hour
-    } else if age_secs < 86400 {
-        "age-recent"      // < 1 day
-    } else if age_secs < 86400 * 7 {
-        "age-week"        // < 1 week
-    } else {
-        "age-old"         // >= 1 week
+/// Collect thread rows from reducer state (unsorted).
+fn collect_thread_rows(reduced: &ReducerState, now: i64) -> Vec<ThreadRow> {
+    let _ = now; // used by callers for sorting/display
+    let mut aspects_by_tag: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for k in reduced.groups.keys() {
+        *aspects_by_tag.entry(k.tag.clone()).or_default() += 1;
     }
+    reduced
+        .threads
+        .iter()
+        .map(|(tag, thread)| {
+            let items = reduced.tags.get(tag).map(|s| s.len()).unwrap_or(0);
+            let aspects = aspects_by_tag.get(tag).copied().unwrap_or(0);
+            ThreadRow {
+                tag: tag.clone(),
+                last_ts: thread.last_activity_ts,
+                items,
+                aspects,
+                subscriber_count: thread.subscriber_count,
+            }
+        })
+        .collect()
 }
 
-pub async fn index(State(state): State<AppState>) -> impl IntoResponse {
-    #[derive(Clone)]
-    struct ThreadRow {
-        tag: String,
-        last_ts: i64,
-        items: usize,
-        aspects: usize,
-        subscriber_count: usize,
-    }
-
-    let now = now_ms();
-    let mut rows: Vec<ThreadRow> = {
-        let reduced = state.reduced.read().await;
-
-        let mut aspects_by_tag: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-        for k in reduced.groups.keys() {
-            *aspects_by_tag.entry(k.tag.clone()).or_default() += 1;
-        }
-
-        reduced
-            .threads
-            .iter()
-            .map(|(tag, thread)| {
-                let items = reduced.tags.get(tag).map(|s| s.len()).unwrap_or(0);
-                let aspects = aspects_by_tag.get(tag).copied().unwrap_or(0);
-                ThreadRow {
-                    tag: tag.clone(),
-                    last_ts: thread.last_activity_ts,
-                    items,
-                    aspects,
-                    subscriber_count: thread.subscriber_count,
-                }
-            })
-            .collect()
-    };
-
-    // Bump order: most recently active first.
-    rows.sort_by(|a, b| b.last_ts.cmp(&a.last_ts));
-
-    let page = layout(
-        "slug.social",
-        html! {
-            nav class="breadcrumb" {
-                (bc_segment("slug.social", "/", true))
-            }
-            h2 { "threads" }
+/// Render the thread feed div (id="thread-feed"). Used by both index() and SSE broadcast.
+fn render_thread_feed(rows: &[ThreadRow], now: i64) -> Markup {
+    html! {
+        div id="thread-feed" {
             @if rows.is_empty() {
                 p class="muted" { "no threads yet" }
             } @else {
@@ -253,6 +254,86 @@ pub async fn index(State(state): State<AppState>) -> impl IntoResponse {
                     }
                 }
             }
+        }
+    }
+}
+
+/// Render the web ingest form.
+fn render_ingest_form() -> Markup {
+    html! {
+        details class="ingest-form-wrap" {
+            summary { "post" }
+            form method="post" action="/web/ingest" class="ingest-form" {
+                textarea
+                    name="text"
+                    rows="8"
+                    placeholder="@<uuid>:<rig>:<model>\n#thread\n:aspect\n~/thread/item-a { description }\n~/thread/item-b { description }\n~/thread/item-a 3:1 ~/thread/item-b { reasoning }"
+                    autocomplete="off"
+                    spellcheck="false"
+                    {}
+                div class="ingest-form-actions" {
+                    button type="submit" { "submit" }
+                    span class="muted" { " · text is public" }
+                }
+            }
+        }
+    }
+}
+
+/// Returns the current thread feed HTML fragment for SSE broadcast.
+/// selector: `#thread-feed`
+pub async fn thread_feed_html(state: &AppState) -> String {
+    let now = now_ms();
+    let mut rows = {
+        let reduced = state.reduced.read().await;
+        collect_thread_rows(&reduced, now)
+    };
+    rows.sort_by(|a, b| b.last_ts.cmp(&a.last_ts));
+    render_thread_feed(&rows, now).into_string()
+}
+
+/// Age bucket for recency coloring of thread entries.
+fn recency_class(now_ms: i64, ts_ms: i64) -> &'static str {
+    let age_ms = now_ms.saturating_sub(ts_ms);
+    let age_secs = age_ms / 1000;
+    if age_secs < 3600 {
+        "age-fresh"       // < 1 hour
+    } else if age_secs < 86400 {
+        "age-recent"      // < 1 day
+    } else if age_secs < 86400 * 7 {
+        "age-week"        // < 1 week
+    } else {
+        "age-old"         // >= 1 week
+    }
+}
+
+#[derive(Clone)]
+struct ThreadRow {
+    tag: String,
+    last_ts: i64,
+    items: usize,
+    aspects: usize,
+    subscriber_count: usize,
+}
+
+pub async fn index(State(state): State<AppState>) -> impl IntoResponse {
+    let now = now_ms();
+    let mut rows: Vec<ThreadRow> = {
+        let reduced = state.reduced.read().await;
+        collect_thread_rows(&reduced, now)
+    };
+    // Bump order: most recently active first.
+    rows.sort_by(|a, b| b.last_ts.cmp(&a.last_ts));
+
+    let page = layout(
+        "slug.social",
+        html! {
+            nav class="breadcrumb" {
+                (bc_segment("slug.social", "/", true))
+            }
+            h2 { "threads" }
+            (render_thread_feed(&rows, now))
+            (render_ingest_form())
         },
     );
     Html(page.into_string())

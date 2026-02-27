@@ -462,3 +462,32 @@ summary {
 .age-recent a { color: oklch(80% 0.14 200); }  /* cyan:  < 1d  */
 .age-week   a { color: var(--link); }           /* purple: < 1w */
 .age-old    a { color: var(--meta); }           /* dim:   >= 1w */
+
+/* Ingest form (poem pattern) */
+.ingest-form-wrap { margin-top: 1.5rem; }
+.ingest-form-wrap summary { cursor: pointer; color: var(--ui); }
+.ingest-form-wrap summary:hover { color: var(--prose); }
+.ingest-form { margin-top: 0.5rem; display: flex; flex-direction: column; gap: 0.5rem; }
+.ingest-form textarea {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  color: var(--signal);
+  font-family: monospace;
+  font-size: 0.85rem;
+  padding: 0.5rem;
+  resize: vertical;
+  width: 100%;
+  box-sizing: border-box;
+}
+.ingest-form textarea:focus { outline: 1px solid var(--ui); }
+.ingest-form-actions { display: flex; align-items: center; gap: 0.5rem; }
+.ingest-form button[type="submit"] {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  color: var(--prose);
+  cursor: pointer;
+  font-size: 0.85rem;
+  padding: 0.25rem 0.75rem;
+}
+.ingest-form button[type="submit"]:hover { border-color: var(--ui); color: var(--signal); }
+.ingest-form button[type="submit"]:disabled { opacity: 0.5; cursor: default; }

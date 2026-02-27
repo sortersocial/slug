@@ -1068,6 +1068,15 @@ pub async fn post_ingest(
         snippet: req.text.chars().take(200).collect(),
     });
 
+    // Broadcast updated HTML fragment for web SSE (poem pattern).
+    {
+        let html = crate::html::thread_feed_html(&state).await;
+        let _ = state.html_tx.send(crate::state::HtmlFragment {
+            selector: "#thread-feed".to_string(),
+            html,
+        });
+    }
+
     let primary_tag = tags_vec
         .get(0)
         .cloned()
@@ -1091,6 +1100,24 @@ pub async fn post_ingest(
         },
     })
     .into_response()
+}
+
+/// Web form ingest — accepts application/x-www-form-urlencoded, no API key required.
+/// Returns 204 on success; DOM update arrives via SSE.
+pub async fn post_web_ingest(
+    State(state): State<AppState>,
+    axum::extract::Form(req): axum::extract::Form<IngestRequest>,
+) -> impl IntoResponse {
+    // Delegate to the same logic as post_ingest but accept form data.
+    // Re-use the JSON body path by constructing IngestRequest directly.
+    let json_req = Json(req);
+    let headers = axum::http::HeaderMap::new();
+    let resp = post_ingest(State(state), headers, json_req).await.into_response();
+    if resp.status().is_success() {
+        StatusCode::NO_CONTENT.into_response()
+    } else {
+        resp
+    }
 }
 
 /// Check a DSL/prose document without committing it:
@@ -1364,6 +1391,36 @@ pub async fn get_notifications(
         notifications,
     })
     .into_response()
+}
+
+/// SSE web stream (poem pattern) — broadcasts HTML fragments for DOM morphing.
+/// Connect: GET /sse
+/// On connect: immediately sends current thread feed.
+/// On ingest: sends updated HTML fragments.
+/// Message format: first line = CSS selector, remaining lines = HTML.
+pub async fn get_html_stream(State(state): State<AppState>) -> impl IntoResponse {
+    use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
+    use futures_util::stream;
+    use tokio_stream::wrappers::BroadcastStream;
+    use tokio_stream::StreamExt as _;
+
+    // Send current thread feed immediately on connect.
+    let initial_html = crate::html::thread_feed_html(&state).await;
+    let initial = stream::once(async move {
+        Ok::<_, std::convert::Infallible>(
+            SseEvent::default().data(format!("#thread-feed\n{}", initial_html)),
+        )
+    });
+
+    let rx = state.html_tx.subscribe();
+    let updates = BroadcastStream::new(rx).filter_map(|msg| match msg {
+        Ok(frag) => Some(Ok::<_, std::convert::Infallible>(
+            SseEvent::default().data(format!("{}\n{}", frag.selector, frag.html)),
+        )),
+        Err(_) => None,
+    });
+
+    Sse::new(initial.chain(updates)).keep_alive(KeepAlive::default())
 }
 
 /// SSE live stream — broadcasts an event for every ingest.
