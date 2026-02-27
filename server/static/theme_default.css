@@ -491,3 +491,20 @@ summary {
 }
 .ingest-form button[type="submit"]:hover { border-color: var(--ui); color: var(--signal); }
 .ingest-form button[type="submit"]:disabled { opacity: 0.5; cursor: default; }
+
+/* Ontology view: light mode */
+body.view-ontology {
+  --bg:     oklch(99%  0    0);
+  --panel:  oklch(95%  0    0);
+  --border: oklch(88%  0    0);
+  --signal: oklch(8%   0    0);
+  --prose:  oklch(22%  0    0);
+  --ui:     oklch(52%  0    0);
+  --meta:   oklch(68%  0    0);
+  --link:   oklch(38%  0.14 280);
+  color-scheme: light;
+}
+body.view-ontology .age-fresh  a { color: oklch(42% 0.18 150); }
+body.view-ontology .age-recent a { color: oklch(38% 0.14 200); }
+body.view-ontology .age-week   a { color: var(--link); }
+body.view-ontology .age-old    a { color: var(--meta); }

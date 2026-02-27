@@ -39,7 +39,7 @@ pub async fn serve_theme_css(Path(filename): Path<String>) -> impl IntoResponse 
         .into_response()
 }
 
-fn layout(title: &str, body: Markup) -> Markup {
+fn layout(title: &str, view: &str, body: Markup) -> Markup {
     html! {
         (DOCTYPE)
         html {
@@ -50,7 +50,7 @@ fn layout(title: &str, body: Markup) -> Markup {
                 link rel="stylesheet" href="/static/theme_default.css" id="theme-stylesheet";
                 script src="https://unpkg.com/idiomorph@0.3.0/dist/idiomorph.min.js" {}
             }
-            body {
+            body class=(view) {
                 (body)
                 div id="controls" {
                     div id="spread-control" {
@@ -233,18 +233,21 @@ fn render_thread_feed(rows: &[ThreadRow], now: i64) -> Markup {
             } @else {
                 ul class="thread-feed" {
                     @for r in rows {
-                        @let href = format!("/~/{}", r.tag);
+                        @let thread_href = format!("/t/{}", r.tag);
+                        @let garden_href = format!("/~/{}", r.tag);
                         @let hover = timeago::rfc3339_utc(r.last_ts);
                         @let ago = timeago::timeago(now, r.last_ts);
                         @let age_cls = recency_class(now, r.last_ts);
                         li class=(age_cls) {
-                            a href=(href) { "#" (r.tag) }
+                            a href=(thread_href) { "#" (r.tag) }
                             " "
                             span class="muted" title=(hover) {
                                 (ago)
                                 " · "
                                 (format!("{}i {}a {}s", r.items, r.aspects, r.subscriber_count))
                             }
+                            " "
+                            a href=(garden_href) class="muted" { "~" }
                         }
                     }
                 }
@@ -322,13 +325,73 @@ pub async fn index(State(state): State<AppState>) -> impl IntoResponse {
 
     let page = layout(
         "slug.social",
+        "view-thread",
         html! {
             nav class="breadcrumb" {
                 (bc_segment("slug.social", "/", true))
+                " · "
+                a href="/~" { "~/garden" }
             }
             h2 { "threads" }
             (render_thread_feed(&rows, now))
             (render_ingest_form())
+        },
+    );
+    Html(page.into_string())
+}
+
+/// Ontology index — all namespaces with item counts, light view.
+pub async fn garden_index(State(state): State<AppState>) -> impl IntoResponse {
+    #[derive(Clone)]
+    struct NsRow {
+        tag: String,
+        items: usize,
+        aspects: usize,
+    }
+
+    let mut rows: Vec<NsRow> = {
+        let reduced = state.reduced.read().await;
+        let mut aspects_by_tag: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        for k in reduced.groups.keys() {
+            *aspects_by_tag.entry(k.tag.clone()).or_default() += 1;
+        }
+        let mut tags: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for t in reduced.tags.keys() { tags.insert(t.clone()); }
+        for t in reduced.threads.keys() { tags.insert(t.clone()); }
+        tags.into_iter().map(|tag| {
+            let items = reduced.tags.get(&tag).map(|s| s.len()).unwrap_or(0);
+            let aspects = aspects_by_tag.get(&tag).copied().unwrap_or(0);
+            NsRow { tag, items, aspects }
+        }).collect()
+    };
+    rows.sort_by(|a, b| a.tag.cmp(&b.tag));
+
+    let page = layout(
+        "~/garden",
+        "view-ontology",
+        html! {
+            nav class="breadcrumb" {
+                a href="/" { "slug.social" }
+                " · "
+                (bc_segment("~/garden", "/~", true))
+            }
+            h2 { "namespaces" }
+            @if rows.is_empty() {
+                p class="muted" { "no items yet" }
+            } @else {
+                ul {
+                    @for r in &rows {
+                        @let href = format!("/~/{}", r.tag);
+                        li {
+                            a href=(href) { "~/" (r.tag) }
+                            " "
+                            span class="muted" {
+                                (format!("{}i {}a", r.items, r.aspects))
+                            }
+                        }
+                    }
+                }
+            }
         },
     );
     Html(page.into_string())
@@ -340,39 +403,17 @@ pub struct ThreadQuery {
     parent: Option<String>,
 }
 
-pub async fn thread_page(
+/// Thread view — `/t/:tag` — dark, recent ingests only.
+pub async fn thread_view(
     State(state): State<AppState>,
     Path(tag): Path<String>,
-    Query(query): Query<ThreadQuery>,
 ) -> impl IntoResponse {
-    let tag = tag.trim_start_matches('#').to_string();
+    let tag = canonicalize_tag(&tag);
 
-    // If aspect is specified, render the aspect ranking view
-    if let Some(aspect) = query.aspect {
-        let aspect = aspect.trim_start_matches(':').to_string();
-        let parent = query.parent.as_deref().map(|p| qualify_item_for_tag(&tag, p));
-        return render_aspect_view(state, tag, aspect, None, parent).await;
-    }
-
-    // Otherwise render the thread overview
-    let (mut aspects, ingest_ids) = {
+    let ingest_ids = {
         let reduced = state.reduced.read().await;
-        let aspects: Vec<String> = reduced
-            .groups
-            .keys()
-            .filter(|k| k.tag == tag)
-            .map(|k| k.aspect.clone())
-            .collect();
-        let ingest_ids = reduced
-            .ingests_by_tag
-            .get(&tag)
-            .cloned()
-            .unwrap_or_default();
-        (aspects, ingest_ids)
+        reduced.ingests_by_tag.get(&tag).cloned().unwrap_or_default()
     };
-    aspects.sort();
-    aspects.dedup();
-
     let ingests = {
         let reduced = state.reduced.read().await;
         ingest_ids
@@ -381,39 +422,122 @@ pub async fn thread_page(
             .collect::<Vec<_>>()
     };
 
+    let now = now_ms();
+    let tag_label = format!("#{tag}");
+    let ontology_href = format!("/~/{tag}");
+
     let page = layout(
-        &format!("#{tag}"),
+        &tag_label,
+        "view-thread",
         html! {
             nav class="breadcrumb" {
-                (bc_segment("slug.social", "/", false))
-                @let tag_label = format!("#{tag}");
-                @let tag_href = format!("/~/{tag}");
-                (bc_segment(&tag_label, &tag_href, true))
+                a href="/" { "slug.social" }
+                " · "
+                (bc_segment(&tag_label, &format!("/t/{tag}"), true))
+                " · "
+                a href=(ontology_href) class="muted" { "~/garden" }
             }
-            h2 { "aspects" }
-            @if aspects.is_empty() {
-                p class="muted" { "no aspects yet" }
+            h2 { "#" (tag) }
+            @if ingests.is_empty() {
+                p class="muted" { "no activity yet" }
             } @else {
+                @for ing in ingests.iter().rev().take(50) {
+                    @let hover = timeago::rfc3339_utc(ing.ts);
+                    @let ago = timeago::timeago(now, ing.ts);
+                    div class="ingest-entry" {
+                        div class="ingest-meta muted" title=(hover) {
+                            span class="address" { "@" (actor_label(&ing.actor)) }
+                            " · "
+                            (ago)
+                        }
+                        pre { (ing.raw) }
+                    }
+                }
+            }
+            (render_ingest_form())
+        },
+    );
+    Html(page.into_string()).into_response()
+}
+
+/// Ontology namespace — `/~/tag` — light, aspects + items.
+/// With ?aspect=x renders the aspect ranking view.
+pub async fn ontology_ns(
+    State(state): State<AppState>,
+    Path(tag): Path<String>,
+    Query(query): Query<ThreadQuery>,
+) -> impl IntoResponse {
+    let tag = canonicalize_tag(&tag);
+
+    // Aspect view
+    if let Some(aspect) = query.aspect {
+        let aspect = aspect.trim_start_matches(':').to_string();
+        let parent = query.parent.as_deref().map(|p| qualify_item_for_tag(&tag, p));
+        return render_aspect_view(state, tag, aspect, None, parent).await;
+    }
+
+    // Namespace overview: aspects + items
+    let mut aspects = {
+        let reduced = state.reduced.read().await;
+        let mut a: Vec<String> = reduced
+            .groups
+            .keys()
+            .filter(|k| k.tag == tag)
+            .map(|k| k.aspect.clone())
+            .collect();
+        a.sort();
+        a.dedup();
+        a
+    };
+
+    let items = {
+        let reduced = state.reduced.read().await;
+        let mut v: Vec<String> = reduced
+            .tags
+            .get(&tag)
+            .map(|s| s.iter().cloned().collect())
+            .unwrap_or_default();
+        v.sort();
+        v
+    };
+
+    let tag_label = format!("~/{tag}");
+    let tag_href = format!("/~/{tag}");
+    let thread_href = format!("/t/{tag}");
+
+    let page = layout(
+        &tag_label,
+        "view-ontology",
+        html! {
+            nav class="breadcrumb" {
+                a href="/" { "slug.social" }
+                " · "
+                a href="/~" { "~/garden" }
+                " · "
+                (bc_segment(&tag_label, &tag_href, true))
+                " · "
+                a href=(thread_href) class="muted" { "#thread" }
+            }
+            @if !aspects.is_empty() {
+                h2 { "aspects" }
                 ul {
-                    @for a in aspects {
+                    @for a in aspects.drain(..) {
                         li { a href={(format!("/~/{tag}?aspect={a}"))} { ":" (a) } }
                     }
                 }
             }
-
-            h2 { "recent ingests" }
-            @if ingests.is_empty() {
-                p class="muted" { "none yet" }
-            } @else {
-                @let now = now_ms();
-                @for ing in ingests.iter().take(5) {
-                    @let hover = timeago::rfc3339_utc(ing.ts);
-                    @let ago = timeago::timeago(now, ing.ts);
-                    p class="muted" title=(hover) {
-                        (ago)
+            @if !items.is_empty() {
+                h2 { "items" }
+                ul {
+                    @for it in &items {
+                        @let suffix = item_suffix_for_tag(&tag, it);
+                        @let href = item_href_for_tag(&tag, it);
+                        li { a href=(href) { code { "/" (suffix) } } }
                     }
-                    pre { (ing.raw) }
                 }
+            }
+            @if aspects.is_empty() && items.is_empty() {
+                p class="muted" { "nothing here yet" }
             }
         },
     );
@@ -516,7 +640,7 @@ pub async fn item_page(
     let now = now_ms();
 
     let parent_scope = item_parent_path(&item).unwrap_or_else(|| tag.clone());
-    let tag_label = format!("#{tag}");
+    let tag_label = format!("~/{tag}");
     let tag_href = format!("/~/{tag}");
     let item_suffix = item_suffix_for_tag(&tag, &item);
     let item_label = format!("/{item_suffix}");
@@ -524,9 +648,13 @@ pub async fn item_page(
 
     let page = layout(
         &format!("/{item}"),
+        "view-ontology",
         html! {
             nav class="breadcrumb" {
-                (bc_segment("slug.social", "/", false))
+                a href="/" { "slug.social" }
+                " · "
+                a href="/~" { "~/garden" }
+                " · "
                 (bc_segment(&tag_label, &tag_href, false))
                 (bc_segment(&item_label, &item_href, true))
             }
@@ -649,9 +777,12 @@ async fn render_aspect_view(
         let Some(group) = reduced.groups.get(&key) else {
             let page = layout(
                 "not found",
+                "view-ontology",
                 html! {
                     nav class="breadcrumb" {
-                        (bc_segment("slug.social", "/", false))
+                        a href="/" { "slug.social" }
+                        " · "
+                        a href="/~" { "~/garden" }
                     }
                     h1 { "not found" }
                 },
@@ -739,7 +870,7 @@ async fn render_aspect_view(
         out
     };
 
-    let tag_label = format!("#{tag}");
+    let tag_label = format!("~/{tag}");
     let tag_href = format!("/~/{tag}");
     let aspect_label = format!(":{aspect}");
     let aspect_href = format!("/~/{tag}?aspect={aspect}&parent={}", parent_scope);
@@ -750,19 +881,21 @@ async fn render_aspect_view(
         .as_ref()
         .map(|it| format!("{}?aspect={aspect}", item_href_for_tag(&tag, it)));
 
-    // Always show aspect selector, even when a specific aspect is selected.
-    // Keep item context (path) if we're in item-focused mode.
     let aspect_base = if let Some(ref it) = selected_item {
         item_href_for_tag(&tag, it)
     } else {
         format!("/~/{tag}")
     };
-    
+
     let page = layout(
-        &format!("#{tag} :{aspect}"),
+        &format!("~/{tag} :{aspect}"),
+        "view-ontology",
         html! {
             nav class="breadcrumb" {
-                (bc_segment("slug.social", "/", false))
+                a href="/" { "slug.social" }
+                " · "
+                a href="/~" { "~/garden" }
+                " · "
                 (bc_segment(&tag_label, &tag_href, false))
                 @if let Some(ref it_label) = item_label {
                     (bc_segment(&aspect_label, &aspect_href, false))

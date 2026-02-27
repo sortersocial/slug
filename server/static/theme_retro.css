@@ -35,3 +35,15 @@
 }
 .ingest-form button[type="submit"]:hover { border-color: #00ff41; }
 .ingest-form button[type="submit"]:disabled { opacity: 0.5; cursor: default; }
+
+/* Ontology view: paper mode */
+body.view-ontology {
+  background: #f5f0e8;
+  color: #1a1a1a;
+  color-scheme: light;
+}
+body.view-ontology a { color: #3a3a8c; }
+body.view-ontology a:visited { color: #6a3a8c; }
+body.view-ontology pre, body.view-ontology code { background: #ede8df; color: #1a1a1a; }
+body.view-ontology .muted { color: #888; }
+body.view-ontology #controls { background: #ede8df; border-top: 1px solid #ccc; }
