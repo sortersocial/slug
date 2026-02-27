@@ -1,510 +1,468 @@
+/* ================================================================
+   ZIGGURAT — bevel-first dark theme
+   --spread (0→1) controls bevel depth. 0 = flat. 1 = full relief.
+   Light source: top-left. Shadow: bottom-right.
+   Platforms nest. Each level is raised. Nothing is rounded.
+   ================================================================ */
+
 :root {
   color-scheme: dark;
-  
-  /* 
-     OKLCH COLOR CALCULATIONS
-     L = Lightness (0-100%)
-     C = Chroma (0-0.37, 0 = gray)
-     H = Hue (0-360)
-     
-     The Luminance Hierarchy:
-     - Graph nodes are WHITE. They are the signal.
-     - Prose is light gray. It is human context.
-     - UI is mid gray. It should be invisible.
-     - Meta is dark gray. Barely there.
-     
-     --spread controls the range (0 = flat gray, 1 = full contrast)
-  */
+  --spread: 1;
 
-  /* === CONTROL === */
-  --spread: 1;  /* 0 to 1: controls luminance range */
-  --base: 50%;  /* Center point when spread=0 */
+  /* Ground to summit */
+  --g0: #080808;   /* void / ground */
+  --g1: #131313;   /* floor */
+  --g2: #1c1c1c;   /* platform */
+  --g3: #252525;   /* raised surface */
+  --g4: #2e2e2e;   /* element */
+  --g5: #383838;   /* button */
 
-  /* === THE VOID === */
-  --bg: oklch(0% 0 0);
-  --panel: oklch(6% 0 0);
-  --border: oklch(18% 0 0);
+  /* Bevel edges */
+  --hi: #5e5e5e;   /* highlight: top + left */
+  --lo: #050505;   /* shadow:    bottom + right */
 
-  /* === THE LUMINANCE STACK === */
-  /* Target values at full spread */
-  --L-signal-target: 100;  /* Pure white: scores, the output */
-  --L-graph-target: 88;    /* Off-white: slugs, addresses */
-  --L-prose-target: 68;    /* Light: human reasoning */
-  --L-ui-target: 42;       /* Mid: headers, navigation */
-  --L-meta-target: 26;     /* Dark: timestamps, counts */
-  --L-base: 50;
-  
-  /* Computed: base + (target - base) * spread */
-  --signal: oklch(calc(var(--L-base) * 1% + (var(--L-signal-target) - var(--L-base)) * var(--spread) * 1%) 0 0);
-  --graph: oklch(calc(var(--L-base) * 1% + (var(--L-graph-target) - var(--L-base)) * var(--spread) * 1%) 0 0);
-  --prose: oklch(calc(var(--L-base) * 1% + (var(--L-prose-target) - var(--L-base)) * var(--spread) * 1%) 0 0);
-  --ui: oklch(calc(var(--L-base) * 1% + (var(--L-ui-target) - var(--L-base)) * var(--spread) * 1%) 0 0);
-  --meta: oklch(calc(var(--L-base) * 1% + (var(--L-meta-target) - var(--L-base)) * var(--spread) * 1%) 0 0);
-  
-  /* Links: Purple (the only chroma in the system) */
-  --link: oklch(58% 0.18 280);
-  --link-visited: oklch(42% 0.14 270);
-  --link-hover: oklch(72% 0.22 285);
-  
-  /* Default text inherits prose level */
-  --fg: var(--prose);
-  
-  /* Typography */
-  --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
-  --serif: ui-serif, Iowan Old Style, Palatino, Georgia, serif;
-  
-  /* Font Sizes */
-  --text-xs: 0.75rem;
-  --text-sm: 0.85rem;
-  --text-base: 1rem;
-  --text-lg: 1.1rem;
+  /* Bevel depth: spread drives thickness */
+  --bv: calc(var(--spread) * 4px + 1px);
+  --bv-lg: calc(var(--spread) * 6px + 2px);
+
+  /* Text */
+  --signal: #f0f0f0;
+  --prose:  #c2c2c2;
+  --ui:     #888;
+  --meta:   #4a4a4a;
+  --link:   #8899ee;
+
+  /* Code tint */
+  --code-fg: #c8dda0;
 }
+
+/* ----------------------------------------------------------------
+   RESET
+   ---------------------------------------------------------------- */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
 
 body {
-  font-family: var(--sans);
-  font-size: var(--text-base);
-  max-width: 880px;
-  margin: 24px auto;
-  padding: 0 16px;
-  line-height: 1.45;
-  color: var(--fg);
-  background: var(--bg);
-  padding-bottom: 100px;
-}
-
-/* ============================================
-   LAYER 1: THE GRAPH (White)
-   These are the NODES. The things that exist.
-   #tags, :aspects, /items, @actors
-   ============================================ */
-code, .slug, .address {
-  font-family: var(--mono);
-  color: var(--graph);
-}
-
-.vote-items {
-  font-family: var(--mono);
-  color: var(--graph);
-}
-
-/* ============================================
-   LAYER 2: PROSE (Light Gray)
-   Human reasoning, vote bodies, explanations.
-   ============================================ */
-.prose, .vote-body {
-  font-family: var(--serif);
+  background: var(--g0);
   color: var(--prose);
+  font-family: system-ui, -apple-system, sans-serif;
+  font-size: 14px;
   line-height: 1.6;
-  font-size: var(--text-base);
-  max-width: 65ch;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+  min-height: 100vh;
+  padding: 0 0 48px;
 }
 
-/* ============================================
-   LAYER 3: UI / SCAFFOLDING (Mid Gray)
-   Headers, navigation labels. Structural.
-   ============================================ */
-
-/* Breadcrumb navigation */
-.breadcrumb {
-  font-family: var(--mono);
-  font-size: var(--text-sm);
-  color: var(--meta);
-  margin-bottom: 16px;
-}
-.breadcrumb a {
-  color: var(--graph);
-  text-decoration: none;
-  cursor: pointer;
-}
-.breadcrumb a:hover {
-  color: var(--link-hover);
-}
-.breadcrumb a.bc-current {
-  text-decoration: underline;
-  text-underline-offset: 0.18em;
-}
-
-h1 {
+/* ----------------------------------------------------------------
+   BREADCRUMB NAV — first raised platform
+   ---------------------------------------------------------------- */
+nav.breadcrumb {
+  background: var(--g2);
+  border: var(--bv) solid;
+  border-color: var(--hi) var(--lo) var(--lo) var(--hi);
   color: var(--ui);
-  font-weight: 400;
-  font-size: var(--text-lg);
-  margin: 0 0 12px 0;
+  font-size: 13px;
+  margin: 8px 8px 0;
+  padding: 6px 10px;
+}
+nav.breadcrumb a       { color: var(--ui); text-decoration: none; }
+nav.breadcrumb a:hover { color: var(--signal); }
+nav.breadcrumb a.bc-current { color: var(--signal); }
+nav.breadcrumb .bc-sep { color: var(--meta); padding: 0 2px; }
+nav.breadcrumb .bc-side { margin-left: 8px; font-size: 12px; color: var(--meta); }
+nav.breadcrumb .bc-side a { color: var(--meta); }
+nav.breadcrumb .bc-side a:hover { color: var(--ui); }
+
+/* ----------------------------------------------------------------
+   HEADINGS
+   ---------------------------------------------------------------- */
+h1, h2, h3 {
+  color: var(--signal);
+  font-size: 11px;
+  font-weight: bold;
+  letter-spacing: 0.12em;
+  margin: 14px 12px 6px;
+  text-transform: uppercase;
 }
 
-h2 {
-  color: var(--ui);
-  font-weight: 400;
-  font-size: var(--text-sm);
-  margin: 16px 0 8px 0;
-  text-transform: lowercase;
-}
+/* ----------------------------------------------------------------
+   LINKS (default)
+   ---------------------------------------------------------------- */
+a { color: var(--link); text-decoration: none; }
+a:hover { color: var(--signal); }
 
-h3 {
+/* ----------------------------------------------------------------
+   THREAD FEED — raised tray holding the tablets
+   ---------------------------------------------------------------- */
+div#thread-feed {
+  background: var(--g1);
+  border: var(--bv-lg) solid;
+  border-color: var(--hi) var(--lo) var(--lo) var(--hi);
+  margin: 6px 8px;
+  padding: 6px;
+}
+div#thread-feed p.muted {
   color: var(--meta);
-  font-weight: 400;
-  font-size: var(--text-xs);
-  margin: 12px 0 4px 0;
-  text-transform: lowercase;
+  margin: 4px 2px;
 }
-
-h1 .slug, h2 .slug {
-  color: var(--graph);
-}
-
-/* ============================================
-   LAYER 4: META (Dark Gray)
-   Timestamps, counts, secondary info.
-   ============================================ */
-.muted { color: var(--ui); }
-.faint { color: var(--meta); }
-.vote-meta { color: var(--meta); font-size: var(--text-xs); }
-.ratio-label { color: var(--meta); font-size: var(--text-xs); font-family: var(--mono); margin-bottom: 4px; }
-
-/* ============================================
-   LINKS: The only color in the system
-   ============================================ */
-a {
-  text-decoration: none;
-  color: var(--link);
-  transition: color 0.1s;
-}
-a:visited { color: var(--link-visited); }
-a:hover { 
-  text-decoration: underline; 
-  color: var(--link-hover);
-}
-
-/* ============================================
-   COMPONENTS
-   ============================================ */
-.row { display: flex; justify-content: space-between; gap: 16px; }
-
-pre {
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  overflow-x: auto;
-  background: var(--panel);
-  font-family: var(--mono);
-  font-size: var(--text-sm);
-  color: var(--graph);
-}
-
-table { width: 100%; border-collapse: collapse; }
-td, th { padding: 4px 0; border-bottom: 1px solid var(--border); }
-th { text-align: left; color: var(--meta); font-weight: normal; font-size: var(--text-xs); }
-
-ul { 
-  padding-left: 1.2em; 
-  border-left: 1px solid var(--border);
-  margin: 8px 0;
-}
-li { margin: 4px 0; }
-
-/* Ranking list */
-ol.ranking {
-  padding-left: 0;
-  margin: 0;
+ul.thread-feed {
   list-style: none;
-  counter-reset: rank;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
 }
-ol.ranking li {
-  margin: 2px 0;
+ul.thread-feed li {
+  background: var(--g3);
+  border: var(--bv) solid;
+  border-color: var(--hi) var(--lo) var(--lo) var(--hi);
   display: flex;
   align-items: baseline;
   gap: 6px;
-  counter-increment: rank;
+  padding: 5px 10px;
 }
-ol.ranking li::before {
-  content: counter(rank) ".";
-  color: var(--meta);
-  font-family: var(--mono);
-  font-size: var(--text-lg);
-  min-width: 2em;
-}
-
-/* Ranking list variant for "meat" (block cards, still numbered) */
-ol.ranking.meat li {
-  display: block;
-  position: relative;
-  padding-left: 2.4em; /* room for marker */
-}
-ol.ranking.meat li::before {
-  position: absolute;
-  left: 0;
-  top: 0;
-  min-width: auto;
-}
-.score {
+ul.thread-feed li:hover { background: var(--g4); }
+ul.thread-feed li > a:first-child {
   color: var(--signal);
-  font-family: var(--mono);
-  font-size: var(--text-lg);
-  font-weight: 500;
-  margin-left: auto;
+  font-weight: bold;
 }
 
-/* Item links in rankings */
-.item-link {
-  color: var(--graph);
-  cursor: pointer;
-}
-.item-link code {
-  /* `code` has its own color, so force it to follow the link state */
-  color: inherit;
-}
-.item-link:visited {
-  color: var(--graph);
-}
-.item-link:hover {
-  /* Subtle darkening (less bright) to indicate hover without screaming */
-  color: var(--ui);
-  text-decoration: none;
-}
-
-summary {
-  cursor: pointer;
-}
-
-/* Item card (expanded view) */
-.item-card {
-  width: 100%;
-  box-sizing: border-box;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  padding: 10px;
-  margin: 8px 0;
-}
-
-.item-card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 12px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--border);
-  width: 100%;
-  box-sizing: border-box;
-}
-
-.item-card-header code {
-  color: var(--signal);
-  font-size: var(--text-lg);
-}
-
-.item-card-body {
-  font-family: var(--serif);
-  color: var(--prose);
-  font-size: var(--text-base);
-  line-height: 1.6;
-  margin-top: 8px;
-  white-space: pre-wrap;
-  width: 100%;
-  box-sizing: border-box;
-}
-
-.vote {
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  padding: 10px;
-  margin: 8px 0;
-  background: var(--panel);
-}
-
-.vote-header {
-  display: flex;
-  justify-content: center;
-  align-items: baseline;
-  gap: 12px;
-  margin-bottom: 6px;
-}
-
-.vote-left, .vote-right {
-  font-family: var(--mono);
-  color: var(--graph);
-  font-size: var(--text-sm);
-}
-
-.vote-ratio {
-  font-family: var(--mono);
-  color: var(--signal);
-  font-size: var(--text-lg);
-  font-weight: 500;
-}
-
-.vote-body { margin-top: 8px; }
-
-.vote-meta {
-  margin-top: 8px;
-  padding-top: 6px;
-  border-top: 1px solid var(--border);
-  font-size: var(--text-xs);
-  color: var(--meta);
-}
-
-.ratio-bar {
-  display: flex;
-  height: 3px;
-  border-radius: 1px;
-  overflow: hidden;
-  background: var(--border);
-}
-.ratio-left { background: oklch(50% 0 0); }
-.ratio-right { background: oklch(22% 0 0); }
-
-.component {
-  border: 1px solid var(--border);
-  border-radius: 2px;
-  padding: 6px 8px;
-  margin: 4px 0;
-  background: var(--panel);
-}
-
-.component-header {
-  color: var(--meta);
-  font-family: var(--mono);
-  font-size: var(--text-xs);
-  margin-bottom: 4px;
-}
-
-.component.unsorted {
-  border-style: dotted;
-  background: transparent;
-}
-
-.component ul {
-  margin: 0;
-  padding-left: 1em;
-  border-left: none;
-}
-
-
-/* ============================================
-   CONTROLS
-   ============================================ */
-#controls {
-  position: fixed;
-  bottom: 20px;
-  right: 20px;
+/* ----------------------------------------------------------------
+   GENERIC LISTS — aspects, items, namespace entries
+   ---------------------------------------------------------------- */
+ul:not(.thread-feed):not(.ranking) {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  align-items: flex-end;
-  font-family: var(--mono);
-  font-size: var(--text-xs);
-  z-index: 9999;
+  gap: 4px;
+  list-style: none;
+  margin: 0 8px 8px;
 }
+ul:not(.thread-feed):not(.ranking) li {
+  background: var(--g3);
+  border: var(--bv) solid;
+  border-color: var(--hi) var(--lo) var(--lo) var(--hi);
+  padding: 4px 10px;
+}
+ul:not(.thread-feed):not(.ranking) li a { color: var(--link); }
+ul:not(.thread-feed):not(.ranking) li a:hover { color: var(--signal); }
 
-#theme-switcher {
-  color: var(--meta);
-  border: 1px solid var(--border);
-  padding: 6px 8px;
-  border-radius: 2px;
-  background: var(--panel);
-  opacity: 0.4;
-  transition: opacity 0.15s, color 0.15s;
+/* ----------------------------------------------------------------
+   INGEST FORM — raised panel, inset textarea
+   ---------------------------------------------------------------- */
+details.ingest-form-wrap {
+  background: var(--g2);
+  border: var(--bv-lg) solid;
+  border-color: var(--hi) var(--lo) var(--lo) var(--hi);
+  margin: 6px 8px;
+}
+details.ingest-form-wrap summary {
+  background: var(--g3);
+  border-bottom: calc(var(--bv) / 2 + 1px) solid var(--lo);
+  color: var(--ui);
+  cursor: pointer;
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  list-style: none;
+  padding: 5px 10px;
+  text-transform: uppercase;
   user-select: none;
-  cursor: pointer;
 }
-#theme-switcher:hover {
-  opacity: 1.0;
-  color: var(--graph);
-}
+details.ingest-form-wrap summary:hover { color: var(--signal); }
+details.ingest-form-wrap summary::marker,
+details.ingest-form-wrap summary::-webkit-details-marker { display: none; }
 
-#spread-control {
+form.ingest-form {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--meta);
-  border: 1px solid var(--border);
-  padding: 6px 8px;
-  border-radius: 2px;
-  background: var(--panel);
-  opacity: 0.4;
-  transition: opacity 0.15s;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
 }
-#spread-control:hover {
-  opacity: 1.0;
-}
-
-#spread-slider {
-  width: 80px;
-  height: 4px;
-  -webkit-appearance: none;
-  appearance: none;
-  background: var(--border);
-  border-radius: 2px;
-  cursor: pointer;
-}
-#spread-slider::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  width: 12px;
-  height: 12px;
-  background: var(--ui);
-  border-radius: 50%;
-  cursor: pointer;
-}
-#spread-slider::-moz-range-thumb {
-  width: 12px;
-  height: 12px;
-  background: var(--ui);
-  border-radius: 50%;
-  cursor: pointer;
-  border: none;
-}
-
-/* Thread feed recency coloring */
-.thread-feed li a { transition: color 0.1s; }
-.age-fresh  a { color: oklch(88% 0.18 150); }  /* green: < 1h  */
-.age-recent a { color: oklch(80% 0.14 200); }  /* cyan:  < 1d  */
-.age-week   a { color: var(--link); }           /* purple: < 1w */
-.age-old    a { color: var(--meta); }           /* dim:   >= 1w */
-
-/* Ingest form (poem pattern) */
-.ingest-form-wrap { margin-top: 1.5rem; }
-.ingest-form-wrap summary { cursor: pointer; color: var(--ui); }
-.ingest-form-wrap summary:hover { color: var(--prose); }
-.ingest-form { margin-top: 0.5rem; display: flex; flex-direction: column; gap: 0.5rem; }
-.ingest-form textarea {
-  background: var(--panel);
-  border: 1px solid var(--border);
+form.ingest-form textarea {
+  background: var(--g1);
+  border: var(--bv) solid;
+  border-color: var(--lo) var(--hi) var(--hi) var(--lo); /* INSET */
   color: var(--signal);
   font-family: monospace;
-  font-size: 0.85rem;
-  padding: 0.5rem;
+  font-size: 12px;
+  outline: none;
+  padding: 6px 8px;
   resize: vertical;
   width: 100%;
-  box-sizing: border-box;
 }
-.ingest-form textarea:focus { outline: 1px solid var(--ui); }
-.ingest-form-actions { display: flex; align-items: center; gap: 0.5rem; }
-.ingest-form button[type="submit"] {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  color: var(--prose);
-  cursor: pointer;
-  font-size: 0.85rem;
-  padding: 0.25rem 0.75rem;
+form.ingest-form textarea:focus {
+  border-color: var(--lo) #666 #666 var(--lo);
 }
-.ingest-form button[type="submit"]:hover { border-color: var(--ui); color: var(--signal); }
-.ingest-form button[type="submit"]:disabled { opacity: 0.5; cursor: default; }
+.ingest-form-actions {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
 
-/* Ontology view: light mode */
-body.view-ontology {
-  --bg:     oklch(99%  0    0);
-  --panel:  oklch(95%  0    0);
-  --border: oklch(88%  0    0);
-  --signal: oklch(8%   0    0);
-  --prose:  oklch(22%  0    0);
-  --ui:     oklch(52%  0    0);
-  --meta:   oklch(68%  0    0);
-  --link:   oklch(38%  0.14 280);
-  color-scheme: light;
+/* ----------------------------------------------------------------
+   BUTTONS — raised, press on :active
+   ---------------------------------------------------------------- */
+button[type="submit"] {
+  background: var(--g5);
+  border: var(--bv) solid;
+  border-color: var(--hi) var(--lo) var(--lo) var(--hi);
+  color: var(--signal);
+  cursor: pointer;
+  font-size: 13px;
+  min-width: 60px;
+  padding: 3px 12px;
 }
-body.view-ontology .age-fresh  a { color: oklch(42% 0.18 150); }
-body.view-ontology .age-recent a { color: oklch(38% 0.14 200); }
+button[type="submit"]:hover  { background: #404040; }
+button[type="submit"]:active {
+  border-color: var(--lo) var(--hi) var(--hi) var(--lo);
+  background: var(--g4);
+  transform: translate(1px, 1px);
+}
+button[type="submit"]:disabled { opacity: 0.4; cursor: default; }
+
+/* ----------------------------------------------------------------
+   ITEM CARDS
+   ---------------------------------------------------------------- */
+div.item-card {
+  background: var(--g2);
+  border: var(--bv) solid;
+  border-color: var(--hi) var(--lo) var(--lo) var(--hi);
+  margin: 0 8px 6px;
+}
+div.item-card-header {
+  align-items: baseline;
+  background: var(--g3);
+  border-bottom: 2px solid var(--lo);
+  display: flex;
+  gap: 10px;
+  padding: 5px 10px;
+}
+div.item-card-body       { color: var(--prose); padding: 7px 10px; }
+div.item-card-body.muted { color: var(--meta); }
+
+/* ----------------------------------------------------------------
+   VOTE ENTRIES
+   ---------------------------------------------------------------- */
+div.vote {
+  background: var(--g2);
+  border: var(--bv) solid;
+  border-color: var(--hi) var(--lo) var(--lo) var(--hi);
+  margin: 0 8px 5px;
+}
+div.vote-header {
+  align-items: center;
+  background: var(--g3);
+  border-bottom: 2px solid var(--lo);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 4px 10px;
+}
+div.vote-body { color: var(--prose); padding: 6px 10px; }
+div.vote-meta {
+  border-top: 1px solid var(--g1);
+  color: var(--meta);
+  font-size: 12px;
+  padding: 3px 10px;
+}
+code.vote-left, code.vote-right { color: var(--signal); }
+span.vote-ratio { color: var(--meta); font-size: 12px; }
+
+div.ratio-bar {
+  border: var(--bv) solid;
+  border-color: var(--lo) var(--hi) var(--hi) var(--lo); /* INSET */
+  display: flex;
+  height: 8px;
+  margin: 0 8px 4px;
+}
+div.ratio-left  { background: #4a7a4a; }
+div.ratio-right { background: #6a3a3a; }
+
+/* ----------------------------------------------------------------
+   COMPONENT / RANKING BLOCKS
+   ---------------------------------------------------------------- */
+div.component {
+  background: var(--g2);
+  border: var(--bv-lg) solid;
+  border-color: var(--hi) var(--lo) var(--lo) var(--hi);
+  margin: 6px 8px;
+}
+div.component-header {
+  background: var(--g3);
+  border-bottom: 2px solid var(--lo);
+  color: var(--ui);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  padding: 4px 10px;
+  text-transform: uppercase;
+}
+ol.ranking {
+  counter-reset: rank;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  list-style: none;
+  padding: 6px;
+}
+ol.ranking li {
+  align-items: center;
+  background: var(--g3);
+  border: var(--bv) solid;
+  border-color: var(--hi) var(--lo) var(--lo) var(--hi);
+  counter-increment: rank;
+  display: flex;
+  gap: 8px;
+  padding: 4px 10px;
+}
+ol.ranking li::before {
+  color: var(--meta);
+  content: counter(rank) ".";
+  font-size: 11px;
+  min-width: 18px;
+  text-align: right;
+}
+ol.ranking.meat li { flex-direction: column; align-items: stretch; padding: 0; }
+ol.ranking.meat li::before { display: none; }
+ol.ranking.meat li div.item-card { margin: 0; border: none; }
+
+div.component.unsorted { border-color: var(--meta) var(--lo) var(--lo) var(--meta); }
+
+/* ----------------------------------------------------------------
+   INGEST ENTRIES (thread view)
+   ---------------------------------------------------------------- */
+div.ingest-entry {
+  background: var(--g2);
+  border: var(--bv) solid;
+  border-color: var(--hi) var(--lo) var(--lo) var(--hi);
+  margin: 0 8px 5px;
+}
+div.ingest-meta {
+  background: var(--g3);
+  border-bottom: 2px solid var(--lo);
+  color: var(--meta);
+  font-size: 12px;
+  padding: 3px 10px;
+}
+
+/* ----------------------------------------------------------------
+   PRE / CODE — INSET (recessed into surface)
+   ---------------------------------------------------------------- */
+pre {
+  background: var(--g1);
+  border: var(--bv) solid;
+  border-color: var(--lo) var(--hi) var(--hi) var(--lo); /* INSET */
+  color: var(--code-fg);
+  font-family: monospace;
+  font-size: 12px;
+  margin: 0 8px 6px;
+  overflow-x: auto;
+  padding: 8px 10px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+code {
+  background: var(--g1);
+  border: 2px solid;
+  border-color: var(--lo) var(--hi) var(--hi) var(--lo); /* INSET */
+  color: var(--code-fg);
+  font-family: monospace;
+  font-size: 12px;
+  padding: 1px 4px;
+}
+
+/* ----------------------------------------------------------------
+   SCORE / ADDRESS / UTILITY
+   ---------------------------------------------------------------- */
+.muted   { color: var(--meta); }
+.address { color: var(--ui); font-family: monospace; font-size: 12px; }
+.score   { color: var(--meta); font-size: 12px; margin-left: auto; }
+span.address { font-family: monospace; }
+p.muted  { color: var(--meta); margin: 4px 12px 8px; }
+a.item-link code { border: none; background: none; padding: 0; }
+
+/* ----------------------------------------------------------------
+   DETAILS / SUMMARY (generic)
+   ---------------------------------------------------------------- */
+details > summary {
+  color: var(--ui);
+  cursor: pointer;
+  list-style: none;
+  padding: 4px 12px;
+}
+details > summary:hover { color: var(--signal); }
+details > summary::marker,
+details > summary::-webkit-details-marker { display: none; }
+
+/* ----------------------------------------------------------------
+   CONTROLS — raised bar pinned to bottom
+   ---------------------------------------------------------------- */
+#controls {
+  align-items: center;
+  background: var(--g2);
+  border-top: var(--bv) solid var(--hi);
+  bottom: 0;
+  display: flex;
+  gap: 14px;
+  left: 0;
+  padding: 4px 12px;
+  position: fixed;
+  right: 0;
+  z-index: 100;
+}
+#spread-control {
+  align-items: center;
+  color: var(--meta);
+  display: flex;
+  font-size: 12px;
+  gap: 6px;
+}
+#spread-slider { accent-color: var(--ui); width: 80px; }
+#theme-switcher {
+  background: var(--g4);
+  border: var(--bv) solid;
+  border-color: var(--hi) var(--lo) var(--lo) var(--hi);
+  color: var(--ui);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px 10px;
+  user-select: none;
+}
+#theme-switcher:hover  { color: var(--signal); }
+#theme-switcher:active {
+  border-color: var(--lo) var(--hi) var(--hi) var(--lo);
+  transform: translate(1px, 1px);
+}
+
+/* ----------------------------------------------------------------
+   RECENCY
+   ---------------------------------------------------------------- */
+.age-fresh  a { color: #7acc7a; }
+.age-recent a { color: #7ab0cc; }
+.age-week   a { color: var(--link); }
+.age-old    a { color: var(--meta); }
+
+/* ================================================================
+   ONTOLOGY VIEW — light mode (Win95 gray)
+   All surface vars overridden; bevel flips to white/gray.
+   ================================================================ */
+body.view-ontology {
+  color-scheme: light;
+
+  --g0: #7a7a7a;
+  --g1: #909090;
+  --g2: #a8a8a8;
+  --g3: #b8b8b8;  /* classic Win95 gray */
+  --g4: #c4c4c4;
+  --g5: #d0d0d0;
+
+  --hi: #e8e8e8;  /* white highlight */
+  --lo: #5a5a5a;  /* mid-dark shadow */
+
+  --signal:   #000000;
+  --prose:    #111111;
+  --ui:       #444444;
+  --meta:     #888888;
+  --link:     #0000aa;
+  --code-fg:  #1a1a1a;
+}
+body.view-ontology .age-fresh  a { color: #005500; }
+body.view-ontology .age-recent a { color: #003080; }
 body.view-ontology .age-week   a { color: var(--link); }
 body.view-ontology .age-old    a { color: var(--meta); }

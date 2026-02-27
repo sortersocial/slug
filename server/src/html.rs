@@ -152,15 +152,49 @@ fn ratio_pct(left: i32, right: i32) -> f64 {
     (l / denom) * 100.0
 }
 
-/// Render a single breadcrumb segment
+/// Render a single breadcrumb segment with `/` separator.
 fn bc_segment(label: &str, href: &str, is_current: bool) -> Markup {
     html! {
+        span class="bc-sep" { " / " }
         @if is_current {
             a href=(href) class="bc-current" { (label) }
         } @else {
             a href=(href) { (label) }
         }
-        " "
+    }
+}
+
+/// Render the ontology path breadcrumb: `slug.social / ~ / tag`
+/// with an optional side-link to the thread view and optional extra segments.
+fn bc_ontology(tag: &str, side_thread: bool, extra: Option<Markup>) -> Markup {
+    let tag_href = format!("/~/{tag}");
+    let thread_href = format!("/t/{tag}");
+    html! {
+        a href="/" { "slug.social" }
+        (bc_segment("~", "/~", false))
+        (bc_segment(tag, &tag_href, extra.is_none()))
+        @if let Some(e) = extra { (e) }
+        @if side_thread {
+            span class="bc-side" {
+                a href=(thread_href) { "#" (tag) }
+            }
+        }
+    }
+}
+
+/// Render the thread path breadcrumb: `slug.social / #tag`
+/// with an optional side-link to the ontology.
+fn bc_thread(tag: &str, side_ontology: bool) -> Markup {
+    let thread_href = format!("/t/{tag}");
+    let garden_href = format!("/~/{tag}");
+    html! {
+        a href="/" { "slug.social" }
+        (bc_segment(&format!("#{tag}"), &thread_href, true))
+        @if side_ontology {
+            span class="bc-side" {
+                a href=(garden_href) { "~" }
+            }
+        }
     }
 }
 
@@ -328,9 +362,8 @@ pub async fn index(State(state): State<AppState>) -> impl IntoResponse {
         "view-thread",
         html! {
             nav class="breadcrumb" {
-                (bc_segment("slug.social", "/", true))
-                " · "
-                a href="/~" { "~/garden" }
+                a href="/" class="bc-current" { "slug.social" }
+                span class="bc-side" { a href="/~" { "~" } }
             }
             h2 { "threads" }
             (render_thread_feed(&rows, now))
@@ -372,8 +405,7 @@ pub async fn garden_index(State(state): State<AppState>) -> impl IntoResponse {
         html! {
             nav class="breadcrumb" {
                 a href="/" { "slug.social" }
-                " · "
-                (bc_segment("~/garden", "/~", true))
+                (bc_segment("~", "/~", true))
             }
             h2 { "namespaces" }
             @if rows.is_empty() {
@@ -430,13 +462,7 @@ pub async fn thread_view(
         &tag_label,
         "view-thread",
         html! {
-            nav class="breadcrumb" {
-                a href="/" { "slug.social" }
-                " · "
-                (bc_segment(&tag_label, &format!("/t/{tag}"), true))
-                " · "
-                a href=(ontology_href) class="muted" { "~/garden" }
-            }
+            nav class="breadcrumb" { (bc_thread(&tag, true)) }
             h2 { "#" (tag) }
             @if ingests.is_empty() {
                 p class="muted" { "no activity yet" }
@@ -509,15 +535,7 @@ pub async fn ontology_ns(
         &tag_label,
         "view-ontology",
         html! {
-            nav class="breadcrumb" {
-                a href="/" { "slug.social" }
-                " · "
-                a href="/~" { "~/garden" }
-                " · "
-                (bc_segment(&tag_label, &tag_href, true))
-                " · "
-                a href=(thread_href) class="muted" { "#thread" }
-            }
+            nav class="breadcrumb" { (bc_ontology(&tag, true, None)) }
             @if !aspects.is_empty() {
                 h2 { "aspects" }
                 ul {
@@ -651,12 +669,9 @@ pub async fn item_page(
         "view-ontology",
         html! {
             nav class="breadcrumb" {
-                a href="/" { "slug.social" }
-                " · "
-                a href="/~" { "~/garden" }
-                " · "
-                (bc_segment(&tag_label, &tag_href, false))
-                (bc_segment(&item_label, &item_href, true))
+                (bc_ontology(&tag, false, Some(html! {
+                    (bc_segment(&item_label, &item_href, true))
+                })))
             }
 
             @if aspects.is_empty() {
@@ -781,8 +796,7 @@ async fn render_aspect_view(
                 html! {
                     nav class="breadcrumb" {
                         a href="/" { "slug.social" }
-                        " · "
-                        a href="/~" { "~/garden" }
+                        (bc_segment("~", "/~", false))
                     }
                     h1 { "not found" }
                 },
@@ -892,16 +906,15 @@ async fn render_aspect_view(
         "view-ontology",
         html! {
             nav class="breadcrumb" {
-                a href="/" { "slug.social" }
-                " · "
-                a href="/~" { "~/garden" }
-                " · "
-                (bc_segment(&tag_label, &tag_href, false))
                 @if let Some(ref it_label) = item_label {
-                    (bc_segment(&aspect_label, &aspect_href, false))
-                    (bc_segment(it_label, item_href.as_ref().unwrap(), true))
+                    (bc_ontology(&tag, false, Some(html! {
+                        (bc_segment(&aspect_label, &aspect_href, false))
+                        (bc_segment(it_label, item_href.as_ref().unwrap(), true))
+                    })))
                 } @else {
-                    (bc_segment(&aspect_label, &aspect_href, true))
+                    (bc_ontology(&tag, true, Some(html! {
+                        (bc_segment(&aspect_label, &aspect_href, true))
+                    })))
                 }
             }
 
