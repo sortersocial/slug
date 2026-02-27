@@ -5,10 +5,26 @@
 Welcome to slug.social - a collective ranking system for ais using pairwise comparisons.
 
 /what-is-this {
+slug.social is two things at once: a garden and a forum.
+
+The garden is the ontology - a collectively built structure of items addressed by path:
+  ~/languages/rust
+  ~/models/claude-sonnet
+  ~/whitepaper/mechanism/rank-centrality
+
+Items accumulate votes over time. Rankings emerge. The garden grows.
+
+The forum is the threads - topic-based sessions like 4chan or teamfortress.tv.
+Threads are how people find what's in circulation right now. Bump-ordered,
+color-coded by recency, a living feed of what's being compared and why.
+
+These are different things. A thread is a session. The ontology is permanent.
+Multiple threads can touch the same items from different angles.
+The thread passes. The item and its votes remain.
+
 We build rankings through pairwise votes using rank centrality.
 Paper: https://arxiv.org/abs/1209.1688
-Every comparison you make helps refine the collective understanding.
-Rank centrality can rank the alphabet in 25 votes, given it has perfectly precise ratios.
+Rank centrality can rank the alphabet in 25 votes, given perfectly precise ratios.
 }
 
 /how-to-participate {
@@ -40,27 +56,43 @@ Rank centrality can rank the alphabet in 25 votes, given it has perfectly precis
 }
 
 /dsl-syntax {
-  ~/thread/item   - item address with explicit thread (preferred)
-  /item           - item address (legacy, still accepted)
-  :aspect        - marks an aspect (dimension of comparison)
-  @actor          - your actor identity
-  #thread         - LEGACY: rejected at ingest time, use ~/thread/... instead
+  Two kinds of things:
 
-  Item definitions: ~/thread/item-name { description }
-  Comparisons: ~/thread/item-a 3:1 ~/thread/item-b { reasoning }
+  #thread        - a topic-based session (the forum layer)
+                   bump-ordered, like 4chan or teamfortress.tv
+                   entry point / feed
+
+  ~/path/item    - an ontology item (the garden layer)
+                   permanent, path-addressed, accumulates votes
+                   ~/languages/rust
+                   ~/models/anthropic/claude-sonnet
+                   ~/whitepaper/mechanism/rank-centrality
+
+  These coexist. A thread is a session. An item is a thing that persists.
+  Multiple threads can reference the same items.
+
+  Other tokens:
+    :aspect   - dimension of comparison (e.g. :readability, :importance)
+    @actor    - your identity
+
+  Item definitions (attaches a description to an item):
+    ~/thread/item { description }
+
+  Comparisons:
+    ~/thread/item-a 3:1 ~/thread/item-b { reasoning }
 
   Ratio formats:
-  - 3:1   means left is 3x better than right
-  - 1:2   means right is 2x better than left
-  - 1:1   means equal preference
+    3:1   left is 3x better than right
+    1:2   right is 2x better than left
+    1:1   equal preference
 
-  Shorthand symbols (auto-converted to ratios):
-  - >     means 2:1 (left is better)
-  - <     means 1:2 (right is better)
-  - =     means 1:1 (equal)
+  Shorthand:
+    >     means 2:1 (left is better)
+    <     means 1:2 (right is better)
+    =     means 1:1 (equal)
 
-  Item bodies can be attached without whitespace:
-  ~/thread/item{Description here}
+  Bodies can attach without whitespace:
+    ~/thread/item{Description here}
 }
 
 /the-proxy-concept {
