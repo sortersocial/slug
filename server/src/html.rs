@@ -59,7 +59,7 @@ fn layout(title: &str, body: Markup) -> Markup {
                     }
                     div id="theme-switcher" { "theme" }
                 }
-                script { (r#"
+                script { (maud::PreEscaped(r#"
                     (function() {
                         // Theme switching
                         const themes = ['default', 'retro'];
@@ -71,7 +71,6 @@ fn layout(title: &str, body: Markup) -> Markup {
                             stylesheet.href = `/static/theme_${name}.css`;
                             localStorage.setItem('slug-theme', name);
                             switcher.textContent = name;
-                            // Re-apply spread after theme change
                             setTimeout(() => setSpread(parseFloat(slider.value)), 50);
                         }
 
@@ -100,41 +99,37 @@ fn layout(title: &str, body: Markup) -> Markup {
                         slider.addEventListener('input', function() {
                             setSpread(parseFloat(this.value));
                         });
-                    })();
-                "#) }
-                script { (r#"
-                    // Poem pattern: intercept POST forms, send via fetch, await SSE for DOM update.
-                    document.addEventListener('submit', async (e) => {
-                        const f = e.target;
-                        if (!f || f.tagName !== 'FORM') return;
-                        if ((f.method || 'get').toLowerCase() !== 'post') return;
-                        e.preventDefault();
-                        const btn = f.querySelector('button[type="submit"], input[type="submit"]');
-                        if (btn) { btn.disabled = true; btn.textContent = '…'; }
-                        await fetch(f.action, {
-                            method: 'POST',
-                            body: new URLSearchParams(new FormData(f)),
-                            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                            credentials: 'same-origin',
-                        });
-                        if (btn) { btn.disabled = false; btn.textContent = 'submit'; }
-                        f.reset();
-                    });
 
-                    // Poem pattern: SSE morph.
-                    (function connectSSE() {
-                        const es = new EventSource('/sse');
-                        es.onmessage = (e) => {
-                            const [sel, ...rest] = e.data.split('\n');
-                            const el = document.querySelector(sel);
-                            if (el) Idiomorph.morph(el, rest.join('\n'));
-                        };
-                        es.onerror = () => {
-                            es.close();
-                            setTimeout(connectSSE, 3000);
-                        };
+                        // Poem: intercept POST forms, send via fetch, await SSE for DOM update.
+                        document.addEventListener('submit', async (e) => {
+                            const f = e.target;
+                            if (!f || f.tagName !== 'FORM') return;
+                            if ((f.method || 'get').toLowerCase() !== 'post') return;
+                            e.preventDefault();
+                            const btn = f.querySelector('button[type="submit"], input[type="submit"]');
+                            if (btn) { btn.disabled = true; btn.textContent = '…'; }
+                            await fetch(f.action, {
+                                method: 'POST',
+                                body: new URLSearchParams(new FormData(f)),
+                                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                                credentials: 'same-origin',
+                            });
+                            if (btn) { btn.disabled = false; btn.textContent = 'submit'; }
+                            f.reset();
+                        });
+
+                        // Poem: SSE morph.
+                        (function connectSSE() {
+                            const es = new EventSource('/sse');
+                            es.onmessage = (e) => {
+                                const [sel, ...rest] = e.data.split('\n');
+                                const el = document.querySelector(sel);
+                                if (el) Idiomorph.morph(el, rest.join('\n'));
+                            };
+                            es.onerror = () => { es.close(); setTimeout(connectSSE, 3000); };
+                        })();
                     })();
-                "#) }
+                "#)) }
             }
         }
     }
