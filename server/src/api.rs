@@ -12,7 +12,7 @@ use std::collections::BTreeSet;
 use crate::{
     dsl,
     events::{canonicalize_actor, canonicalize_aspect, canonicalize_item, canonicalize_tag, Event},
-    ranking::{ranked_items, ranked_items_subset},
+    ranking::{connected_components_from_voted_pairs, ranked_items, ranked_items_subset},
     reducer::GroupKey,
     state::AppState,
 };
@@ -167,6 +167,8 @@ pub struct PairResponseLocal {
     pub left_body: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub right_body: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub graph_stats: Option<slug_types::GraphStats>,
 }
 
 fn pick_random_distinct(items: &[String]) -> Option<(String, String)> {
@@ -193,6 +195,65 @@ fn is_pair_voted(group: &crate::reducer::GroupState, a: &str, b: &str) -> bool {
     let Some(&b_idx) = group.item_to_idx.get(b) else { return false; };
     let (i, j) = if a_idx < b_idx { (a_idx, b_idx) } else { (b_idx, a_idx) };
     group.voted_pairs.contains(&(i, j))
+}
+
+/// Compute graph connectivity stats for a pool of items within a group.
+///
+/// Returns `None` if the group has no votes yet (pool is unconnected by definition
+/// but there is no group state to query).
+fn compute_graph_stats(
+    pool: &[String],
+    group: Option<&crate::reducer::GroupState>,
+) -> Option<slug_types::GraphStats> {
+    let n = pool.len();
+    if n < 2 {
+        return None;
+    }
+    let total_pairs = n * (n - 1) / 2;
+
+    let Some(group) = group else {
+        // No votes at all: every item is an isolate, need n-1 comparisons.
+        return Some(slug_types::GraphStats {
+            comparisons_until_connected: n - 1,
+            pairs_compared: 0,
+            total_pairs,
+        });
+    };
+
+    // Build a compact index for the pool items.
+    let pool_idx: std::collections::HashMap<usize, usize> = pool
+        .iter()
+        .enumerate()
+        .filter_map(|(compact, item)| group.item_to_idx.get(item).map(|&orig| (orig, compact)))
+        .collect();
+
+    // Count pairs compared within the pool and build voted-pairs iterator.
+    let mut pairs_compared = 0usize;
+    let voted_within_pool: Vec<(usize, usize)> = group
+        .voted_pairs
+        .iter()
+        .filter_map(|&(a, b)| {
+            let ca = pool_idx.get(&a)?;
+            let cb = pool_idx.get(&b)?;
+            Some((*ca, *cb))
+        })
+        .inspect(|_| pairs_compared += 1)
+        .collect();
+
+    let (comps, isolates) =
+        connected_components_from_voted_pairs(n, voted_within_pool.into_iter());
+    let total_components = comps.len() + isolates.len();
+    let comparisons_until_connected = if total_components > 1 {
+        total_components - 1
+    } else {
+        0
+    };
+
+    Some(slug_types::GraphStats {
+        comparisons_until_connected,
+        pairs_compared,
+        total_pairs,
+    })
 }
 
 pub async fn get_pair(State(state): State<AppState>, Query(q): Query<PairQuery>) -> impl IntoResponse {
@@ -231,9 +292,12 @@ pub async fn get_pair(State(state): State<AppState>, Query(q): Query<PairQuery>)
         let Some((left, right)) = pick_random_distinct(&pool) else {
             return api_error(StatusCode::BAD_REQUEST, "need at least 2 items", None);
         };
-        let (left_body, right_body) = {
+        let (left_body, right_body, graph_stats) = {
             let reduced = state.reduced.read().await;
-            (reduced.item_bodies.get(&left).cloned(), reduced.item_bodies.get(&right).cloned())
+            let key = GroupKey { aspect: aspect.clone() };
+            let group = reduced.groups.get(&key);
+            let stats = compute_graph_stats(&pool, group);
+            (reduced.item_bodies.get(&left).cloned(), reduced.item_bodies.get(&right).cloned(), stats)
         };
         return Json(PairResponseLocal {
             aspect: format!(":{aspect}"),
@@ -241,6 +305,7 @@ pub async fn get_pair(State(state): State<AppState>, Query(q): Query<PairQuery>)
             right: format!("/{}", right),
             left_body,
             right_body,
+            graph_stats,
         }).into_response();
     }
 
@@ -303,9 +368,12 @@ pub async fn get_pair(State(state): State<AppState>, Query(q): Query<PairQuery>)
         return api_error(StatusCode::BAD_REQUEST, "need at least 2 items", None);
     };
 
-    let (left_body, right_body) = {
+    let (left_body, right_body, graph_stats) = {
         let reduced = state.reduced.read().await;
-        (reduced.item_bodies.get(&left).cloned(), reduced.item_bodies.get(&right).cloned())
+        let key = GroupKey { aspect: aspect.clone() };
+        let group = reduced.groups.get(&key);
+        let stats = compute_graph_stats(&pool, group);
+        (reduced.item_bodies.get(&left).cloned(), reduced.item_bodies.get(&right).cloned(), stats)
     };
     Json(PairResponseLocal {
         aspect: format!(":{aspect}"),
@@ -313,6 +381,7 @@ pub async fn get_pair(State(state): State<AppState>, Query(q): Query<PairQuery>)
         right: format!("/{}", right),
         left_body,
         right_body,
+        graph_stats,
     }).into_response()
 }
 

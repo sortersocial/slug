@@ -415,6 +415,14 @@ async fn main() -> Result<()> {
                     println!("{}", preview_body(b));
                     println!();
                 }
+                if let Some(stats) = &resp.graph_stats {
+                    println!(
+                        "graph: {} comparisons until fully connected ({} of {} pairs compared)",
+                        stats.comparisons_until_connected,
+                        stats.pairs_compared,
+                        stats.total_pairs
+                    );
+                }
                 println!();
                 println!("next:");
                 println!("  npx slugsocial pair --aspect {}", resp.aspect);

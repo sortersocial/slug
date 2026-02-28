@@ -313,6 +313,47 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn graph_stats_fully_connected_returns_zero() {
+        // 3-node complete graph: a-b, b-c, a-c => connected, 0 more needed.
+        let mut g = mk_group();
+        g.apply_vote(vote(1, "a", "b", 1, 1));
+        g.apply_vote(vote(2, "b", "c", 1, 1));
+        g.apply_vote(vote(3, "a", "c", 1, 1));
+
+        let n = g.idx_to_item.len();
+        let (comps, isolates) =
+            connected_components_from_voted_pairs(n, g.voted_pairs.iter().copied());
+        let k = comps.len() + isolates.len();
+        assert_eq!(k, 1, "should be 1 connected component");
+        assert_eq!(if k > 1 { k - 1 } else { 0 }, 0);
+    }
+
+    #[test]
+    fn graph_stats_four_isolates_need_three_comparisons() {
+        // 4 items, no votes => 4 components, need 3 comparisons.
+        let n = 4;
+        // Pass empty iterator (no voted pairs).
+        let (comps, isolates) =
+            connected_components_from_voted_pairs(n, std::iter::empty());
+        let k = comps.len() + isolates.len();
+        assert_eq!(k, 4);
+        assert_eq!(k - 1, 3);
+    }
+
+    #[test]
+    fn graph_stats_two_components_need_one_comparison() {
+        // {a,b} and {c,d} are two components => need 1 more comparison.
+        let mut g = mk_group();
+        g.apply_vote(vote(1, "a", "b", 1, 1));
+        g.apply_vote(vote(2, "c", "d", 1, 1));
+
+        let n = g.idx_to_item.len();
+        let (comps, isolates) =
+            connected_components_from_voted_pairs(n, g.voted_pairs.iter().copied());
+        let k = comps.len() + isolates.len();
+        assert_eq!(k, 2);
+        assert_eq!(k - 1, 1);
+    }
 }
-
-

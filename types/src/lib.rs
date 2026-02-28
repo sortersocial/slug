@@ -21,12 +21,25 @@ pub struct RankResponse {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct GraphStats {
+    /// Minimum number of additional pairwise comparisons needed to make the
+    /// comparison graph fully connected (every item reachable from every other).
+    pub comparisons_until_connected: usize,
+    /// Number of distinct pairs that have been compared so far.
+    pub pairs_compared: usize,
+    /// Total possible pairs: n*(n-1)/2.
+    pub total_pairs: usize,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct PairResponse {
     pub aspect: String,
     pub left: String,
     pub right: String,
     pub left_body: Option<String>,
     pub right_body: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub graph_stats: Option<GraphStats>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
