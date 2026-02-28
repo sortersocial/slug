@@ -199,10 +199,8 @@ async fn render_scope_view(state: AppState, path: OntologyPath) -> axum::respons
         "view-ontology",
         html! {
             nav class="breadcrumb" { (bc_path(&path)) }
-            h2 { "~/" (model.parent_scope) }
             @if let Some(body) = &model.parent_body {
                 div class="item-card" {
-                    div class="item-card-header" { "body" }
                     div class="item-card-body" { (body) }
                 }
             }
