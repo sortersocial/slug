@@ -227,22 +227,14 @@ fn bc_segment(label: &str, href: &str, is_current: bool) -> Markup {
     }
 }
 
-/// Render the ontology path breadcrumb: `slug.social / ~ / ns`
-/// with an optional side-link to the thread view and optional extra segments.
-fn bc_ontology(ns: &str, side_thread: bool, extra: Option<Markup>, aspect: Option<&str>) -> Markup {
+/// Render the ontology path breadcrumb: `slug.social / ~ / ns`.
+fn bc_ontology(ns: &str, aspect: Option<&str>) -> Markup {
     let root_href = with_aspect("/~", aspect);
     let ns_href = with_aspect(&format!("/~/{ns}"), aspect);
-    let thread_href = format!("/t/{ns}");
     html! {
         a href="/" { "slug.social" }
         (bc_segment("~", &root_href, false))
-        (bc_segment(ns, &ns_href, extra.is_none()))
-        @if let Some(e) = extra { (e) }
-        @if side_thread {
-            span class="bc-side" {
-                a href=(thread_href) { "#" (ns) }
-            }
-        }
+        (bc_segment(ns, &ns_href, true))
     }
 }
 
@@ -735,19 +727,6 @@ async fn render_aspect_view(
         out
     };
 
-    let aspect_label = format!(":{aspect}");
-    let aspect_href = with_query_param(
-        &with_aspect(&format!("/~/{tag}"), Some(&aspect)),
-        "parent",
-        &parent_scope,
-    );
-    let selected_item_label = selected_item
-        .as_ref()
-        .map(|it| format!("/{}", item_display_path(&tag, it)));
-    let selected_item_href = selected_item
-        .as_ref()
-        .map(|it| item_href(&tag, it, Some(&aspect)));
-
     let aspect_base = if let Some(ref it) = selected_item {
         item_href(&tag, it, None)
     } else {
@@ -762,16 +741,7 @@ async fn render_aspect_view(
         html! {
             (render_ontology_header(&all_aspects, &aspect_base, Some(&aspect)))
             nav class="breadcrumb" {
-                @if let Some(ref it_label) = selected_item_label {
-                    (bc_ontology(&tag, false, Some(html! {
-                        (bc_segment(&aspect_label, &aspect_href, false))
-                        (bc_segment(it_label, selected_item_href.as_ref().unwrap(), true))
-                    }), Some(&aspect)))
-                } @else {
-                    (bc_ontology(&tag, true, Some(html! {
-                        (bc_segment(&aspect_label, &aspect_href, true))
-                    }), Some(&aspect)))
-                }
+                (bc_ontology(&tag, Some(&aspect)))
             }
 
             @if !aspects_for_tag.is_empty() {
