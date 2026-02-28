@@ -226,13 +226,12 @@ mod tests {
     use crate::reducer::VoteData;
 
     fn mk_group() -> GroupState {
-        GroupState::new("t".to_string(), "x".to_string())
+        GroupState::new("x".to_string())
     }
 
     fn vote(ts: i64, a: &str, b: &str, l: i32, r: i32) -> VoteData {
         VoteData {
             ts,
-            tag: "t".to_string(),
             aspect: "x".to_string(),
             a: a.to_string(),
             b: b.to_string(),

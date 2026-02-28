@@ -447,24 +447,9 @@ fn parse_line(masked_line: &str, masker: &BlockMasker) -> Result<Vec<Stmt>, DslE
             }])
         }
         ':' => {
-            // One or more attributes: ":a :b"
-            let mut out = Vec::new();
-            for tok in stripped.split_whitespace() {
-                let t = tok.trim();
-                let Some(name) = t.strip_prefix(':') else {
-                    return Err(DslError::Parse(format!("invalid attribute: {t}")));
-                };
-                if !is_word(name) {
-                    return Err(DslError::Parse(format!("invalid attribute: {t}")));
-                }
-                out.push(Stmt::Attribute {
-                    name: name.to_string(),
-                });
-            }
-            if out.is_empty() {
-                return Err(DslError::Parse("empty attribute decl".to_string()));
-            }
-            Ok(out)
+            Err(DslError::Parse(
+                "aspect declarations are not supported: sorter uses one ranking".to_string(),
+            ))
         }
         '@' => {
             // Actor signature (`@name`). Email addresses are not part of the DSL.
@@ -736,6 +721,19 @@ signature: thanks
             s,
             Stmt::Actor { name } if name == "00000000-0000-0000-0000-000000000000:test:local/test"
         )));
+    }
+
+    #[test]
+    fn parse_rejects_aspect_declarations() {
+        let inputs = [":beauty", ":depth :comfort", ":x"];
+        for input in &inputs {
+            let result = parse(input);
+            assert!(result.is_err(), "expected error for {input}");
+            assert!(
+                result.unwrap_err().to_string().contains("aspect declarations are not supported"),
+                "wrong error for {input}"
+            );
+        }
     }
 
     #[test]
