@@ -228,7 +228,38 @@ button[type="submit"]:active {
 button[type="submit"]:disabled { opacity: 0.4; cursor: default; }
 
 /* ----------------------------------------------------------------
-   ASPECT SELECTOR (item page)
+   ONTOLOGY HEADER — aspect selector (always first, global)
+   ---------------------------------------------------------------- */
+div.ontology-header {
+  align-items: center;
+  background: var(--g2);
+  border: var(--bv) solid;
+  border-color: var(--hi) var(--lo) var(--lo) var(--hi);
+  display: flex;
+  gap: 8px;
+  margin: 8px 0 0;
+  padding: 6px 10px;
+  width: fit-content;
+}
+div.ontology-header label {
+  color: var(--ui);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+div.ontology-header select {
+  background: var(--g3);
+  border: var(--bv) solid;
+  border-color: var(--hi) var(--lo) var(--lo) var(--hi);
+  color: var(--signal);
+  font-size: 13px;
+  padding: 4px 8px;
+}
+div.ontology-header select:hover { background: var(--g4); }
+div.ontology-header select:focus { outline: none; border-color: var(--link); }
+
+/* ----------------------------------------------------------------
+   ASPECT SELECTOR (item page — legacy, kept for compatibility)
    ---------------------------------------------------------------- */
 div.aspect-selector {
   align-items: center;

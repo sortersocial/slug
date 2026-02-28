@@ -7,7 +7,7 @@ use maud::{html, Markup, DOCTYPE};
 use serde::Deserialize;
 
 use crate::{
-    events::{canonicalize_aspect, canonicalize_item, canonicalize_tag, item_parent_path},
+    events::{canonicalize_aspect, canonicalize_item, canonicalize_tag},
     ranking::{connected_components_from_voted_pairs, ranked_items_subset},
     reducer::{GroupKey, ReducerState},
     state::AppState,
@@ -431,8 +431,15 @@ pub async fn index(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 /// Ontology index — root-level items (children of ""), light view.
-pub async fn garden_index(State(state): State<AppState>) -> impl IntoResponse {
-    let mut roots: Vec<(String, usize)> = {
+/// Requires ?aspect= to show content; without it, only the aspect selector menu is shown.
+pub async fn garden_index(
+    State(state): State<AppState>,
+    Query(query): Query<ThreadQuery>,
+) -> impl IntoResponse {
+    let aspects = all_aspects(&state).await;
+    let selected_aspect = query.aspect.map(|a| canonicalize_aspect(&a));
+
+    let roots: Vec<(String, usize)> = if selected_aspect.is_some() {
         let reduced = state.reduced.read().await;
         let mut v: Vec<(String, usize)> = reduced
             .item_children
@@ -446,30 +453,37 @@ pub async fn garden_index(State(state): State<AppState>) -> impl IntoResponse {
             .unwrap_or_default();
         v.sort_by(|a, b| a.0.cmp(&b.0));
         v
+    } else {
+        vec![]
     };
 
     let page = layout(
         "~/",
         "view-ontology",
         html! {
-            nav class="breadcrumb" {
-                a href="/" { "slug.social" }
-                (bc_segment("~", "/~", true))
-            }
-            h2 { "paths" }
-            @if roots.is_empty() {
-                p class="muted" { "no items yet" }
-            } @else {
-                ul {
-                    @for (path, children) in &roots {
-                        @let href = format!("/~/{}", path);
-                        li {
-                            a href=(href) { "~/" (path) }
-                            " "
-                            span class="muted" { (format!("{}c", children)) }
+            (render_ontology_header(&aspects, "/~", selected_aspect.as_deref()))
+            @if selected_aspect.is_some() {
+                nav class="breadcrumb" {
+                    a href="/" { "slug.social" }
+                    (bc_segment("~", "/~", true))
+                }
+                h2 { "paths" }
+                @if roots.is_empty() {
+                    p class="muted" { "no items yet" }
+                } @else {
+                    ul {
+                        @for (path, children) in &roots {
+                            @let href = format!("/~/{}", path);
+                            li {
+                                a href=(href) { "~/" (path) }
+                                " "
+                                span class="muted" { (format!("{}c", children)) }
+                            }
                         }
                     }
                 }
+            } @else if aspects.is_empty() {
+                p class="muted" { "no aspects yet — add votes to create aspects" }
             }
         },
     );
@@ -480,6 +494,33 @@ pub async fn garden_index(State(state): State<AppState>) -> impl IntoResponse {
 pub struct ThreadQuery {
     aspect: Option<String>,
     parent: Option<String>,
+}
+
+/// All aspects in the system (from ranking groups).
+async fn all_aspects(state: &AppState) -> Vec<String> {
+    let reduced = state.reduced.read().await;
+    let mut a: Vec<String> = reduced.groups.keys().map(|k| k.aspect.clone()).collect();
+    a.sort();
+    a
+}
+
+/// Ontology header: aspect selector (always first, global). Renders a select that navigates on change.
+fn render_ontology_header(aspects: &[String], base_url: &str, current: Option<&str>) -> Markup {
+    html! {
+        div class="ontology-header" {
+            label for="ontology-aspect-select" { "aspect" }
+            select id="ontology-aspect-select" onchange="if(this.value){window.location.href=this.value}" {
+                @if aspects.is_empty() {
+                    option value="" disabled selected { "no aspects yet" }
+                } @else {
+                    @for a in aspects {
+                        @let href = format!("{}?aspect={}", base_url, a);
+                        option value=(href) selected[current == Some(a.as_str())] { ":" (a) }
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Thread view — `/t/:tag` — dark, recent ingests only.
@@ -543,7 +584,7 @@ pub async fn ontology_path(
 }
 
 /// Generic tree view for any path under /~. Works identically at every depth.
-/// Shows: body, children, aspects (from direct votes + children's votes), vote history, snippets.
+/// Requires ?aspect= to show content; without it, only the aspect selector menu is shown.
 /// With ?aspect=X delegates to the ranking view scoped to this subtree.
 async fn render_path_view(
     state: AppState,
@@ -553,229 +594,25 @@ async fn render_path_view(
     let ns = path.split('/').next().unwrap_or(&path).to_string();
 
     // ?aspect=X: ranking view scoped to this path's subtree.
-    if let Some(aspect) = selected_aspect {
+    if let Some(aspect) = selected_aspect.clone() {
         let parent_scope = Some(path.clone());
         return render_aspect_view(state, ns, aspect, None, parent_scope).await;
     }
 
-    let (children, votes, body, snippet_refs, child_aspects) = {
-        let reduced = state.reduced.read().await;
-
-        let mut children: Vec<String> = reduced
-            .item_children
-            .get(&path)
-            .map(|s| s.iter().cloned().collect())
-            .unwrap_or_default();
-        children.sort();
-
-        let votes: Vec<_> = reduced
-            .item_votes
-            .get(&path)
-            .cloned()
-            .unwrap_or_default()
-            .into_iter()
-            .collect();
-
-        let body = reduced.item_bodies.get(&path).cloned();
-
-        let snippet_refs: Vec<_> = reduced
-            .item_snippets
-            .get(&path)
-            .cloned()
-            .unwrap_or_default()
-            .into_iter()
-            .collect();
-
-        // Aspects active in direct children (for path-level overview).
-        let mut child_aspects: std::collections::BTreeSet<String> =
-            std::collections::BTreeSet::new();
-        for child in &children {
-            if let Some(child_votes) = reduced.item_votes.get(child) {
-                for v in child_votes {
-                    child_aspects.insert(v.aspect.clone());
-                }
-            }
-        }
-
-        (children, votes, body, snippet_refs, child_aspects)
-    };
-
-    // Aspects from direct votes on this path (with vote count + last-ts).
-    let mut aspects: std::collections::BTreeMap<String, (usize, i64)> =
-        std::collections::BTreeMap::new();
-    for v in votes.iter() {
-        let e = aspects.entry(v.aspect.clone()).or_insert((0, 0));
-        e.0 += 1;
-        if v.ts > e.1 {
-            e.1 = v.ts;
-        }
-    }
-    // Merge in aspects from children (count 0 if not already present).
-    for a in &child_aspects {
-        aspects.entry(a.clone()).or_insert((0, 0));
-    }
-
-    // Rank position of this path within each aspect's largest component.
-    let aspect_ranks: std::collections::HashMap<String, Option<(usize, usize, f64)>> = {
-        let reduced = state.reduced.read().await;
-        let mut out = std::collections::HashMap::new();
-        for aspect in aspects.keys() {
-            let key = GroupKey { aspect: aspect.clone() };
-            let Some(group) = reduced.groups.get(&key) else {
-                out.insert(aspect.clone(), None);
-                continue;
-            };
-            let n = group.idx_to_item.len();
-            let (mut comps, _) =
-                connected_components_from_voted_pairs(n, group.voted_pairs.iter().copied());
-            if comps.is_empty() {
-                out.insert(aspect.clone(), None);
-                continue;
-            }
-            comps.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
-            let largest = &comps[0];
-            let ranked = ranked_items_subset(group, largest, 10_000, 1e-8);
-            let found = ranked.iter().enumerate().find_map(|(i, r)| {
-                if r.item == path {
-                    Some((i + 1, ranked.len(), r.score))
-                } else {
-                    None
-                }
-            });
-            out.insert(aspect.clone(), found);
-        }
-        out
-    };
-
-    let snippet_total = snippet_refs.len();
-    let snippets = {
-        let reduced = state.reduced.read().await;
-        snippet_refs
-            .iter()
-            .filter_map(|id| reduced.ingests_by_id.get(id).cloned())
-            .collect::<Vec<_>>()
-    };
-
-    let now = now_ms();
-    let this_href = format!("/~/{path}");
-    // For the "→ ranking" link: scope to parent if we're a leaf, self if we're a directory.
-    let ranking_scope = if children.is_empty() {
-        item_parent_path(&path).unwrap_or_else(|| ns.clone())
-    } else {
-        path.clone()
-    };
-
+    // No aspect: show only aspect selector (menu).
+    let aspects = all_aspects(&state).await;
+    let base_url = format!("/~/{path}");
     let page = layout(
         &format!("~/{path}"),
         "view-ontology",
         html! {
-            nav class="breadcrumb" { (bc_path(&path)) }
-
-            @if body.is_some() || !votes.is_empty() {
-                div class="item-card" {
-                    div class="item-card-header" {
-                        code { "~/" (path) }
-                        span class="muted" {
-                            (format!("votes={} · children={} · snippets={}",
-                                votes.len(), children.len(), snippet_total))
-                        }
-                    }
-                    @if let Some(ref b) = body {
-                        div class="item-card-body" { (b) }
-                    }
-                }
-            }
-
-            @if !children.is_empty() {
-                h2 { "children" }
-                ul {
-                    @for child in &children {
-                        @let child_href = format!("/~/{}", child);
-                        @let label = child.strip_prefix(&format!("{path}/")).unwrap_or(child);
-                        li { a href=(child_href) { code { "/" (label) } } }
-                    }
-                }
-            }
-
-            @if !aspects.is_empty() {
-                div class="aspect-selector" {
-                    label for="aspect-select" { "aspect" }
-                    select id="aspect-select" onchange="window.location.href=this.value" {
-                        option value=(this_href) { "all" }
-                        @for (aspect, (count, _)) in aspects.iter() {
-                            @let href = format!("{}?aspect={}", this_href, aspect);
-                            @let rank_str = aspect_ranks.get(aspect).cloned().flatten()
-                                .map(|(pos, n, _)| format!(" · rank {pos}/{n}"))
-                                .unwrap_or_default();
-                            option value=(href) {
-                                ":" (aspect)
-                                @if *count > 0 { " (" (count) ")" }
-                                (rank_str)
-                            }
-                        }
-                    }
-                    a class="aspect-ranking-link" href={(format!("/~/{}?aspect=", ranking_scope))} { "→ ranking" }
-                }
-            }
-
-            @if !votes.is_empty() {
-                h2 { "votes" }
-                @for v in votes.iter().take(200) {
-                    @let pct = ratio_pct(v.ratio_left, v.ratio_right);
-                    @let hover = timeago::rfc3339_utc(v.ts);
-                    @let ago = timeago::timeago(now, v.ts);
-                    div class="vote" {
-                        div class="vote-header" {
-                            @let aspect_href = format!("/~/{}?aspect={}", v.a.split('/').next().unwrap_or(&ns), v.aspect);
-                            a href=(aspect_href) class="muted" { ":" (v.aspect) }
-                            " "
-                            a class="item-link" href=(format!("/~/{}", v.a)) { code class="vote-left" { "/" (v.a) } }
-                            span class="vote-ratio" { (format!("{}:{}", v.ratio_left, v.ratio_right)) }
-                            a class="item-link" href=(format!("/~/{}", v.b)) { code class="vote-right" { "/" (v.b) } }
-                        }
-                        div class="ratio-bar" aria-label={(format!("ratio {}:{}", v.ratio_left, v.ratio_right))} {
-                            @let left_class = format!("ratio-left{}", if v.a == path { " current" } else { "" });
-                            @let right_class = format!("ratio-right{}", if v.b == path { " current" } else { "" });
-                            div class=(left_class) style={(format!("width: {:.3}%;", pct))} {}
-                            div class=(right_class) style={(format!("width: {:.3}%;", 100.0 - pct))} {}
-                        }
-                        div class="vote-body" { (v.body) }
-                        div class="vote-meta" title=(hover) {
-                            span class="address" { "@" (actor_label(&v.actor)) }
-                            " · "
-                            (ago)
-                        }
-                    }
-                }
-            }
-
-            @if children.is_empty() && votes.is_empty() && body.is_none() {
-                p class="muted" { "nothing here yet" }
-            }
-
-            @if snippet_total > 0 {
-                details {
-                    summary { "snippets " span class="muted" { (format!("({})", snippet_total)) } }
-                    @for ing in snippets.iter().take(10) {
-                        @let hover = timeago::rfc3339_utc(ing.ts);
-                        @let ago = timeago::timeago(now, ing.ts);
-                        details {
-                            summary class="muted" title=(hover) {
-                                (ago)
-                                " · "
-                                span class="address" { "@" (actor_label(&ing.actor)) }
-                            }
-                            pre { (maud::PreEscaped(linkify_slugs(&ing.raw))) }
-                        }
-                    }
-                    @if snippet_total > 10 {
-                        p class="muted" { "…" }
-                    }
-                }
+            (render_ontology_header(&aspects, &base_url, None))
+            @if aspects.is_empty() {
+                p class="muted" { "no aspects yet — add votes to create aspects" }
             }
         },
     );
-    Html(page.into_string()).into_response()
+    return Html(page.into_string()).into_response();
 }
 
 async fn render_aspect_view(
@@ -900,10 +737,13 @@ async fn render_aspect_view(
         format!("/~/{tag}")
     };
 
+    let all_aspects = all_aspects(&state).await;
+
     let page = layout(
         &format!("~/{tag} :{aspect}"),
         "view-ontology",
         html! {
+            (render_ontology_header(&all_aspects, &aspect_base, Some(&aspect)))
             nav class="breadcrumb" {
                 @if let Some(ref it_label) = selected_item_label {
                     (bc_ontology(&tag, false, Some(html! {
