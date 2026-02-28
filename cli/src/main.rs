@@ -40,9 +40,6 @@ enum Command {
 
     /// Get a suggested pair of items to compare next
     Pair {
-        /// Thread name (unused, kept for compatibility)
-        #[arg(long)]
-        thread: Option<String>,
         /// Aspect name (without : prefix, defaults to "default")
         #[arg(long, default_value = "default")]
         aspect: String,
@@ -226,7 +223,7 @@ fn print_threads(resp: &ThreadsResponse) {
     println!();
     println!("next:");
     println!("  npx slugsocial thread --thread <name>");
-    println!("  npx slugsocial pair --thread <name> --aspect default");
+    println!("  npx slugsocial pair --aspect default");
 }
 
 fn print_path_detail(resp: &PathDetailResponse) {
@@ -286,8 +283,8 @@ fn print_recent_votes(resp: &RecentVotesResponse) {
     // HATEOAS followups are context dependent; users can copy from any printed line above.
     println!();
     println!("next:");
-    println!("  npx slugsocial pair '<#tag>' :default");
-    println!("  npx slugsocial rank '<#tag>' :default");
+    println!("  npx slugsocial pair --aspect default");
+    println!("  npx slugsocial rank --aspect default");
 }
 
 fn preview_body(body: &str) -> String {
@@ -381,7 +378,6 @@ async fn main() -> Result<()> {
         }
 
         Command::Pair {
-            thread: _,
             aspect,
             parent,
             random,
