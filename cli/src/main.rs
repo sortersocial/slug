@@ -123,9 +123,9 @@ enum Command {
         json: bool,
     },
 
-    /// Show recent votes for an aspect
+    /// Show recent votes for an aspect, or full post bodies for a thread
     Recent {
-        /// Thread name (unused, kept for compatibility)
+        /// Thread name (when provided, prints thread post bodies instead of votes)
         #[arg(long)]
         thread: Option<String>,
         /// Aspect name (without : prefix, defaults to "default")
@@ -288,6 +288,66 @@ fn print_recent_votes(resp: &RecentVotesResponse) {
     println!("next:");
     println!("  npx slugsocial pair '<#tag>' :default");
     println!("  npx slugsocial rank '<#tag>' :default");
+}
+
+fn normalize_thread_path(thread: &str) -> String {
+    let mut s = thread.trim();
+    if let Some(rest) = s.strip_prefix('#') {
+        s = rest;
+    }
+    if let Some(rest) = s.strip_prefix("~/") {
+        s = rest;
+    }
+    if let Some(rest) = s.strip_prefix('/') {
+        s = rest;
+    }
+    s.to_string()
+}
+
+fn xml_escape_attr(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
+}
+
+fn xml_cdata(s: &str) -> String {
+    format!("<![CDATA[{}]]>", s.replace("]]>", "]]]]><![CDATA[>"))
+}
+
+async fn fetch_thread_posts(
+    client: &reqwest::Client,
+    base: &str,
+    thread: &str,
+) -> Result<Vec<(String, String)>> {
+    let thread_path = normalize_thread_path(thread);
+    let path_url = format!(
+        "{base}/api/v0/path?path={}",
+        urlencoding::encode(&thread_path)
+    );
+    let path_resp: PathDetailResponse = expect_json(client.get(path_url).send().await?).await?;
+
+    let mut posts = Vec::new();
+    for child in path_resp.children {
+        let item_url = format!("{base}/api/v0/item?item={}", urlencoding::encode(&child));
+        let item_resp: ItemResponse = expect_json(client.get(item_url).send().await?).await?;
+        if let Some(body) = item_resp.body {
+            posts.push((item_resp.item, body));
+        }
+    }
+
+    Ok(posts)
+}
+
+fn print_thread_posts_xml(thread: &str, posts: &[(String, String)]) {
+    println!("<posts thread=\"{}\">", xml_escape_attr(thread));
+    for (item, body) in posts {
+        println!("  <post item=\"{}\">", xml_escape_attr(item));
+        println!("{}", xml_cdata(body));
+        println!("  </post>");
+    }
+    println!("</posts>");
 }
 
 fn preview_body(body: &str) -> String {
@@ -558,17 +618,36 @@ async fn main() -> Result<()> {
             }
         }
 
-        Command::Recent { thread: _, aspect, json } => {
+        Command::Recent { thread, aspect, json } => {
             let client = http_client()?;
-            let url = format!(
-                "{base}/api/v0/recent_votes?aspect={}",
-                urlencoding::encode(&aspect),
-            );
-            let resp: RecentVotesResponse = expect_json(client.get(url).send().await?).await?;
-            if json {
-                println!("{}", serde_json::to_string_pretty(&resp)?);
+
+            if let Some(thread) = thread {
+                let posts = fetch_thread_posts(&client, base, &thread).await?;
+                if json {
+                    let payload = serde_json::json!({
+                        "thread": format!("#{}", normalize_thread_path(&thread)),
+                        "posts": posts.iter().map(|(item, body)| {
+                            serde_json::json!({
+                                "item": item,
+                                "body": body
+                            })
+                        }).collect::<Vec<_>>()
+                    });
+                    println!("{}", serde_json::to_string_pretty(&payload)?);
+                } else {
+                    print_thread_posts_xml(&format!("#{}", normalize_thread_path(&thread)), &posts);
+                }
             } else {
-                print_recent_votes(&resp);
+                let url = format!(
+                    "{base}/api/v0/recent_votes?aspect={}",
+                    urlencoding::encode(&aspect),
+                );
+                let resp: RecentVotesResponse = expect_json(client.get(url).send().await?).await?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&resp)?);
+                } else {
+                    print_recent_votes(&resp);
+                }
             }
         }
 
