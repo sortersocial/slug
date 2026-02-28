@@ -386,6 +386,14 @@ div.ingest-entry {
   width: fit-content;
   max-width: 100%;
 }
+/* Slug links in pre: visually identical to text, clickable */
+pre a.pre-link {
+  color: inherit;
+  cursor: pointer;
+  text-decoration: none;
+}
+pre a.pre-link:hover { color: var(--link); }
+
 div.ingest-meta {
   background: var(--g3);
   border-bottom: 2px solid var(--lo);
