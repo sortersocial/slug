@@ -322,13 +322,15 @@ div.ratio-bar {
   border: var(--bv) solid;
   border-color: var(--lo) var(--hi) var(--hi) var(--lo); /* INSET */
   display: flex;
-  height: 8px;
+  height: 12px;
   margin: 0 0 4px;
-  width: fit-content;
-  min-width: 120px;
+  width: 100%;
 }
-div.ratio-left  { background: #4a7a4a; }
-div.ratio-right { background: #6a3a3a; }
+/* Default: muted gray. Current item's side gets link purple. */
+div.ratio-left  { background: var(--g4); }
+div.ratio-right { background: var(--g4); }
+div.ratio-left.current  { background: var(--link); }
+div.ratio-right.current { background: var(--link); }
 
 /* ----------------------------------------------------------------
    COMPONENT / RANKING BLOCKS

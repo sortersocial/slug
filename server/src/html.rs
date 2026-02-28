@@ -734,8 +734,10 @@ async fn render_path_view(
                             a class="item-link" href=(format!("/~/{}", v.b)) { code class="vote-right" { "/" (v.b) } }
                         }
                         div class="ratio-bar" aria-label={(format!("ratio {}:{}", v.ratio_left, v.ratio_right))} {
-                            div class="ratio-left" style={(format!("width: {:.3}%;", pct))} {}
-                            div class="ratio-right" style={(format!("width: {:.3}%;", 100.0 - pct))} {}
+                            @let left_class = format!("ratio-left{}", if v.a == path { " current" } else { "" });
+                            @let right_class = format!("ratio-right{}", if v.b == path { " current" } else { "" });
+                            div class=(left_class) style={(format!("width: {:.3}%;", pct))} {}
+                            div class=(right_class) style={(format!("width: {:.3}%;", 100.0 - pct))} {}
                         }
                         div class="vote-body" { (v.body) }
                         div class="vote-meta" title=(hover) {
@@ -1040,6 +1042,7 @@ async fn render_aspect_view(
                         @let pct = ratio_pct(v.ratio_left, v.ratio_right);
                         @let hover = timeago::rfc3339_utc(v.ts);
                         @let ago = timeago::timeago(now, v.ts);
+                        @let current = selected_item.as_ref();
                         div class="vote" {
                             div class="vote-header" {
                                 a class="item-link" href=(format!("/~/{}", v.a)) { code class="vote-left" { "/" (v.a) } }
@@ -1047,8 +1050,10 @@ async fn render_aspect_view(
                                 a class="item-link" href=(format!("/~/{}", v.b)) { code class="vote-right" { "/" (v.b) } }
                             }
                             div class="ratio-bar" aria-label={(format!("ratio {}:{}", v.ratio_left, v.ratio_right))} {
-                                div class="ratio-left" style={(format!("width: {:.3}%;", pct))} {}
-                                div class="ratio-right" style={(format!("width: {:.3}%;", 100.0 - pct))} {}
+                                @let left_class = format!("ratio-left{}", if current == Some(&v.a) { " current" } else { "" });
+                                @let right_class = format!("ratio-right{}", if current == Some(&v.b) { " current" } else { "" });
+                                div class=(left_class) style={(format!("width: {:.3}%;", pct))} {}
+                                div class=(right_class) style={(format!("width: {:.3}%;", 100.0 - pct))} {}
                             }
                             div class="vote-body" { (v.body) }
                             div class="vote-meta" title=(hover) {
