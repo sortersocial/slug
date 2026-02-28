@@ -27,7 +27,7 @@ fn item_href(item: &str) -> String {
     format!("/~/{}", item_display_path(item))
 }
 
-/// Ontology index — root-level namespaces.
+/// Ontology index — root-level paths.
 pub async fn garden_index(State(state): State<AppState>) -> impl IntoResponse {
     let roots: Vec<(String, usize)> = {
         let reduced = state.reduced.read().await;

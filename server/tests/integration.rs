@@ -63,7 +63,7 @@ async fn test_ingest_actor_with_colons_is_detected_and_validated() {
     // Old archive style: actor includes colons but UUID is only a prefix (invalid).
     // We should detect the actor line, then fail with "invalid actor format" (not "missing actor").
     let ingest_payload = serde_json::json!({
-        "text": "@aec1e31c:claudecode:anthropic/claude-sonnet-4.5\n#t\n/a {x}\n",
+        "text": "@aec1e31c:claudecode:anthropic/claude-sonnet-4.5\n/a {x}\n",
     });
 
     let response = client
@@ -91,7 +91,7 @@ async fn test_vote_endpoint() {
 
     // /api/v0/vote was removed; all votes are submitted via ingest.
     let ingest_payload = serde_json::json!({
-        "text": "@00000000-0000-0000-0000-000000000000:test:local/test\n#rust\n:speed\n/clap {cli parser}\n/argh {cli parser}\n/clap 3:1 /argh {because clap is more full-featured}\n",
+        "text": "@00000000-0000-0000-0000-000000000000:test:local/test\n/clap {cli parser}\n/argh {cli parser}\n/clap 3:1 /argh {because clap is more full-featured}\n",
     });
 
     let response = client
@@ -114,7 +114,7 @@ async fn test_rank_endpoint() {
 
     // Ingest items + vote (vote endpoint removed).
     let ingest_payload = serde_json::json!({
-        "text": "@00000000-0000-0000-0000-000000000000:test:local/test\n#langs\n:speed\n/rust {systems}\n/go {concurrency}\n/rust 3:1 /go {because i prefer rust for systems work}\n",
+        "text": "@00000000-0000-0000-0000-000000000000:test:local/test\n/rust {systems}\n/go {concurrency}\n/rust 3:1 /go {because i prefer rust for systems work}\n",
     });
     client
         .post(&format!("http://{}/api/v0/ingest", addr))
@@ -125,7 +125,7 @@ async fn test_rank_endpoint() {
 
     // Then query ranking
     let response = client
-        .get(&format!("http://{}/api/v0/rank?tag=%23langs&aspect=%3Aspeed", addr))
+        .get(&format!("http://{}/api/v0/rank?aspect=default", addr))
         .send()
         .await
         .unwrap();
@@ -135,7 +135,7 @@ async fn test_rank_endpoint() {
     assert!(body["ranking"].is_array());
     let ranking = body["ranking"].as_array().unwrap();
     assert_eq!(ranking.len(), 2);
-    assert_eq!(ranking[0]["item"], "/langs/rust");
+    assert_eq!(ranking[0]["item"], "/rust");
 }
 
 #[tokio::test]
@@ -144,7 +144,7 @@ async fn test_check_endpoint_does_not_commit() {
     let client = reqwest::Client::new();
 
     let check_payload = serde_json::json!({
-        "text": "@00000000-0000-0000-0000-000000000000:test:local/test\n#t\n:default\n/a {x}\n/b {y}\n/a 2:1 /b {because}\n",
+        "text": "@00000000-0000-0000-0000-000000000000:test:local/test\n/a {x}\n/b {y}\n/a 2:1 /b {because}\n",
     });
     let resp = client
         .post(&format!("http://{}/api/v0/check", addr))
@@ -159,13 +159,13 @@ async fn test_check_endpoint_does_not_commit() {
     let content = std::fs::read_to_string(&log_path).unwrap_or_default();
     assert!(content.trim().is_empty(), "check must not append events");
 
-    // And the live state should still have no tags.
-    let tags_resp = client
-        .get(&format!("http://{}/api/v0/tags", addr))
+    // And the live state should still have no threads (check is dry-run).
+    let threads_resp = client
+        .get(&format!("http://{}/api/v0/threads", addr))
         .send()
         .await
         .unwrap();
-    let body: serde_json::Value = tags_resp.json().await.unwrap();
-    assert!(body["tags"].as_array().unwrap().is_empty());
+    let body: serde_json::Value = threads_resp.json().await.unwrap();
+    assert!(body["threads"].as_array().unwrap().is_empty());
 }
 

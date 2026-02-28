@@ -41,10 +41,6 @@ pub fn item_path_segments(input: &str) -> Vec<String> {
         .collect()
 }
 
-pub fn item_thread(input: &str) -> Option<String> {
-    item_path_segments(input).into_iter().next()
-}
-
 pub fn item_parent_path(input: &str) -> Option<String> {
     let segs = item_path_segments(input);
     if segs.len() <= 1 {
