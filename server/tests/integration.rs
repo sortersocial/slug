@@ -169,3 +169,64 @@ async fn test_check_endpoint_does_not_commit() {
     assert!(body["threads"].as_array().unwrap().is_empty());
 }
 
+#[tokio::test]
+async fn test_ontology_item_tabs_rank_and_vote_filtering() {
+    let (addr, _tmp, _log, _handle) = create_test_server().await;
+    let client = reqwest::Client::new();
+
+    let ingest_payload = serde_json::json!({
+        "text": "@00000000-0000-0000-0000-000000000000:test:local/test\n\
+/topic {topic body}\n\
+/topic/a {alpha body}\n\
+/topic/b {beta body}\n\
+/topic/c {gamma body}\n\
+/other/x {x body}\n\
+/other/y {y body}\n\
+/topic/a 4:1 /topic/b {a over b}\n\
+/other/x 2:1 /other/y {other pair}\n",
+    });
+
+    let ingest_response = client
+        .post(&format!("http://{}/api/v0/ingest", addr))
+        .json(&ingest_payload)
+        .send()
+        .await
+        .unwrap();
+    assert!(ingest_response.status().is_success());
+
+    let body_tab_html = client
+        .get(&format!("http://{}/~/topic/a?tab=body", addr))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(body_tab_html.contains("ont-tab-panel-body"));
+    assert!(body_tab_html.contains("#1 of 2"));
+    assert!(body_tab_html.contains("alpha body"));
+
+    let children_tab_html = client
+        .get(&format!("http://{}/~/topic?tab=children", addr))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(children_tab_html.contains("ont-tab-panel-children"));
+    assert!(children_tab_html.contains("ranked child groups"));
+
+    let votes_tab_html = client
+        .get(&format!("http://{}/~/topic/a?tab=votes", addr))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(votes_tab_html.contains("ont-tab-panel-votes"));
+    assert!(votes_tab_html.contains("a over b"));
+    assert!(!votes_tab_html.contains("other pair"));
+}
+

@@ -1,18 +1,19 @@
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     response::{Html, IntoResponse},
 };
 use maud::html;
+use serde::Deserialize;
 
 use crate::{
-    events::canonicalize_item,
+    events::{canonicalize_item, item_parent_path},
     ranking::{connected_components_from_voted_pairs, ranked_items_subset},
     state::AppState,
     timeago,
 };
 
 use super::{
-    actor_label, bc_path, layout, now_ms, ratio_pct,
+    actor_label, bc_path, layout, linkify_slugs, now_ms, ratio_pct,
     breadcrumb_path::OntologyPath,
 };
 
@@ -48,7 +49,7 @@ pub async fn garden_index(State(state): State<AppState>) -> impl IntoResponse {
 
     let page = layout(
         "~/",
-        "view-ontology",
+        "view-ontology view-ontology-light",
         html! {
             @let root_path = OntologyPath::root();
             nav class="breadcrumb" { (bc_path(&root_path)) }
@@ -75,9 +76,10 @@ pub async fn garden_index(State(state): State<AppState>) -> impl IntoResponse {
 pub async fn ontology_path(
     State(state): State<AppState>,
     Path(path): Path<String>,
+    Query(q): Query<OntologyPathQuery>,
 ) -> impl IntoResponse {
     let path = OntologyPath::from_input(&path);
-    render_scope_view(state, path).await
+    render_scope_view(state, path, ItemTab::from_query(q.tab.as_deref())).await
 }
 
 #[derive(Debug, Clone)]
@@ -87,20 +89,64 @@ struct ScopedComponent {
 }
 
 #[derive(Debug, Clone)]
-struct ScopeViewModel {
-    parent_scope: String,
-    parent_body: Option<String>,
+struct ChildrenRankings {
     component_rankings: Vec<ScopedComponent>,
     isolate_items: Vec<String>,
     no_vote_items: Vec<String>,
-    recent_votes: Vec<crate::reducer::VoteData>,
 }
 
-fn build_scope_view_model(
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ItemTab {
+    Body,
+    Children,
+    Votes,
+}
+
+impl ItemTab {
+    fn from_query(v: Option<&str>) -> Self {
+        match v.unwrap_or("body") {
+            "children" => Self::Children,
+            "votes" => Self::Votes,
+            _ => Self::Body,
+        }
+    }
+
+    fn as_query_value(self) -> &'static str {
+        match self {
+            Self::Body => "body",
+            Self::Children => "children",
+            Self::Votes => "votes",
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct OntologyPathQuery {
+    #[serde(default)]
+    tab: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct SiblingRank {
+    position: usize,
+    component_size: usize,
+    sibling_total: usize,
+}
+
+#[derive(Debug, Clone)]
+struct ItemPageViewModel {
+    item: String,
+    body: Option<String>,
+    selected_tab: ItemTab,
+    sibling_rank: Option<SiblingRank>,
+    child_rankings: ChildrenRankings,
+    touching_votes: Vec<crate::reducer::VoteData>,
+}
+
+fn build_children_rankings(
     reduced: &crate::reducer::ReducerState,
     parent_scope: &str,
-    recent_vote_limit: usize,
-) -> ScopeViewModel {
+) -> ChildrenRankings {
     let group = &reduced.ranking_group;
     let mut items_in_scope: Vec<String> = reduced
         .item_children
@@ -165,59 +211,196 @@ fn build_scope_view_model(
         .collect();
     isolate_items.sort();
 
-    let scope_children: std::collections::HashSet<String> = items_in_scope.iter().cloned().collect();
-    let recent_votes: Vec<crate::reducer::VoteData> = group
-        .recent_votes
-        .iter()
-        .filter(|v| scope_children.contains(&v.a) && scope_children.contains(&v.b))
-        .take(recent_vote_limit)
-        .cloned()
-        .collect();
-
-    ScopeViewModel {
-        parent_scope: parent_scope.to_string(),
-        parent_body: if parent_scope.is_empty() {
-            None
-        } else {
-            reduced.item_bodies.get(parent_scope).cloned()
-        },
+    ChildrenRankings {
         component_rankings,
         isolate_items,
         no_vote_items,
-        recent_votes,
     }
 }
 
-async fn render_scope_view(state: AppState, path: OntologyPath) -> axum::response::Response {
+fn build_sibling_rank(
+    reduced: &crate::reducer::ReducerState,
+    item: &str,
+) -> Option<SiblingRank> {
+    let group = &reduced.ranking_group;
+    let parent = item_parent_path(item).unwrap_or_default();
+    let siblings: Vec<String> = reduced
+        .item_children
+        .get(&parent)
+        .map(|s| s.iter().cloned().collect())
+        .unwrap_or_default();
+    if siblings.is_empty() {
+        return None;
+    }
+
+    let sibling_total = siblings.len();
+    let scoped_idxs: Vec<usize> = siblings
+        .iter()
+        .filter_map(|it| group.item_to_idx.get(it).copied())
+        .collect();
+    if scoped_idxs.is_empty() {
+        return None;
+    }
+    let current_idx = *group.item_to_idx.get(item)?;
+    if !scoped_idxs.contains(&current_idx) {
+        return None;
+    }
+
+    let local_to_global: Vec<usize> = scoped_idxs.clone();
+    let global_to_local: std::collections::HashMap<usize, usize> = scoped_idxs
+        .iter()
+        .enumerate()
+        .map(|(local, global)| (*global, local))
+        .collect();
+    let current_local = *global_to_local.get(&current_idx)?;
+    let (comps_local, _) = connected_components_from_voted_pairs(
+        scoped_idxs.len(),
+        group.voted_pairs.iter().filter_map(|(i, j)| {
+            let li = global_to_local.get(i).copied()?;
+            let lj = global_to_local.get(j).copied()?;
+            Some((li, lj))
+        }),
+    );
+    let containing_comp = comps_local
+        .iter()
+        .find(|comp| comp.contains(&current_local))?;
+    let comp_global: Vec<usize> = containing_comp
+        .iter()
+        .filter_map(|li| local_to_global.get(*li).copied())
+        .collect();
+    let ranked = ranked_items_subset(group, &comp_global, 10000, 1e-8);
+    let position = ranked.iter().position(|r| r.item == item)? + 1;
+    Some(SiblingRank {
+        position,
+        component_size: ranked.len(),
+        sibling_total,
+    })
+}
+
+fn build_item_page_view_model(
+    reduced: &crate::reducer::ReducerState,
+    item: &str,
+    selected_tab: ItemTab,
+    vote_limit: usize,
+) -> ItemPageViewModel {
+    let item = canonicalize_item(item);
+    let child_rankings = build_children_rankings(reduced, &item);
+    let touching_votes: Vec<crate::reducer::VoteData> = reduced
+        .item_votes
+        .get(&item)
+        .map(|q| q.iter().take(vote_limit).cloned().collect())
+        .unwrap_or_default();
+
+    ItemPageViewModel {
+        item: item.clone(),
+        body: reduced.item_bodies.get(&item).cloned(),
+        selected_tab,
+        sibling_rank: build_sibling_rank(reduced, &item),
+        child_rankings,
+        touching_votes,
+    }
+}
+
+async fn render_scope_view(state: AppState, path: OntologyPath, selected_tab: ItemTab) -> axum::response::Response {
     let model = {
         let reduced = state.reduced.read().await;
-        build_scope_view_model(&reduced, path.as_str(), 50)
+        build_item_page_view_model(&reduced, path.as_str(), selected_tab, 50)
     };
+    let base_href = item_href(&model.item);
 
     let page = layout(
         &format!("~/{}", path.as_str()),
-        "view-ontology",
+        "view-ontology view-ontology-light",
         html! {
             nav class="breadcrumb" { (bc_path(&path)) }
-            @if let Some(body) = &model.parent_body {
-                div class="item-card" {
-                    div class="item-card-body" { (body) }
+            section class="ont-item-shell" {
+                header class="ont-item-meta" {
+                    code { "/" (item_display_path(&model.item)) }
+                    @if let Some(rank) = &model.sibling_rank {
+                        span class="ont-rank-badge" {
+                            (format!("#{} of {}", rank.position, rank.component_size))
+                        }
+                        span class="muted" { (format!("({} siblings)", rank.sibling_total)) }
+                    } @else {
+                        span class="muted" { "unranked among siblings" }
+                    }
                 }
             }
-            h3 { "ranked child groups" }
-            @if model.component_rankings.is_empty() {
-                p class="muted" { "no voted pairs yet in this scope" }
-            } @else {
-                @for (ci, comp) in model.component_rankings.iter().enumerate() {
-                    div class="component" {
-                        div class="component-header" {
-                            (format!("ordering {} items={} pairs={}", ci + 1, comp.ranked.len(), comp.pairs))
+
+            nav class="ont-tabs" {
+                @for tab in [ItemTab::Body, ItemTab::Children, ItemTab::Votes] {
+                    @let label = match tab {
+                        ItemTab::Body => "body",
+                        ItemTab::Children => "children",
+                        ItemTab::Votes => "votes",
+                    };
+                    @let class_name = if tab == model.selected_tab { "ont-tab is-active" } else { "ont-tab" };
+                    a class=(class_name)
+                      data-tab=(tab.as_query_value())
+                      href=(format!("{}?tab={}", base_href, tab.as_query_value())) {
+                        (label)
+                    }
+                }
+            }
+
+            @if model.selected_tab == ItemTab::Body {
+                section class="ont-tab-panel ont-tab-panel-body" {
+                    @if let Some(body) = &model.body {
+                        div class="ont-item-content" {
+                            pre { (maud::PreEscaped(linkify_slugs(body))) }
                         }
-                        ol class="ranking" {
-                            @for r in comp.ranked.iter() {
-                                @let item_url = item_href(&r.item);
-                                li {
-                                    a class="item-link" href=(item_url) { code { "/" (item_display_path(&r.item)) } }
+                    } @else {
+                        p class="muted" { "no body yet" }
+                    }
+                }
+            }
+
+            @if model.selected_tab == ItemTab::Children {
+                section class="ont-tab-panel ont-tab-panel-children" {
+                    h3 { "ranked child groups" }
+                    @if model.child_rankings.component_rankings.is_empty() {
+                        p class="muted" { "no voted pairs yet in this scope" }
+                    } @else {
+                        @for (ci, comp) in model.child_rankings.component_rankings.iter().enumerate() {
+                            div class="ont-group-shell" {
+                                div class="ont-group-meta" {
+                                    (format!("ordering {} items={} pairs={}", ci + 1, comp.ranked.len(), comp.pairs))
+                                }
+                                ol class="ont-ranking-list" {
+                                    @for r in comp.ranked.iter() {
+                                        @let item_url = item_href(&r.item);
+                                        li {
+                                            a class="item-link" href=(item_url) { code { "/" (item_display_path(&r.item)) } }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    @if !model.child_rankings.isolate_items.is_empty() {
+                        div class="ont-group-shell ont-group-unsorted" {
+                            div class="ont-group-meta" { "isolates" }
+                            ul class="ont-group-list" {
+                                @for name in &model.child_rankings.isolate_items {
+                                    li {
+                                        @let href = item_href(&name);
+                                        a class="item-link" href=(href) { code { "/" (item_display_path(&name)) } }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    @if !model.child_rankings.no_vote_items.is_empty() {
+                        div class="ont-group-shell ont-group-unsorted" {
+                            div class="ont-group-meta" { "not yet compared" }
+                            ul class="ont-group-list" {
+                                @for it in &model.child_rankings.no_vote_items {
+                                    li {
+                                        @let href = item_href(it);
+                                        a class="item-link" href=(href) { code { "/" (item_display_path(it)) } }
+                                    }
                                 }
                             }
                         }
@@ -225,57 +408,34 @@ async fn render_scope_view(state: AppState, path: OntologyPath) -> axum::respons
                 }
             }
 
-            @if !model.isolate_items.is_empty() {
-                div class="component unsorted" {
-                    div class="component-header" { "isolates" }
-                    ul {
-                        @for name in &model.isolate_items {
-                            li {
-                                @let href = item_href(&name);
-                                a class="item-link" href=(href) { code { "/" (item_display_path(&name)) } }
-                            }
-                        }
-                    }
-                }
-            }
-
-            @if !model.no_vote_items.is_empty() {
-                div class="component unsorted" {
-                    div class="component-header" { "not yet compared" }
-                    ul {
-                        @for it in &model.no_vote_items {
-                            li {
-                                @let href = item_href(it);
-                                a class="item-link" href=(href) { code { "/" (item_display_path(it)) } }
-                            }
-                        }
-                    }
-                }
-            }
-
-            @if !model.recent_votes.is_empty() {
-                details {
-                    summary { "recent votes in this scope " span class="muted" { (format!("({})", model.recent_votes.len())) } }
-                    @let now = now_ms();
-                    @for v in model.recent_votes.iter() {
-                        @let pct = ratio_pct(v.ratio_left, v.ratio_right);
-                        @let hover = timeago::rfc3339_utc(v.ts);
-                        @let ago = timeago::timeago(now, v.ts);
-                        div class="vote" {
-                            div class="vote-header" {
-                                a class="item-link" href=(format!("/~/{}", v.a)) { code class="vote-left" { "/" (v.a) } }
-                                span class="vote-ratio" { (format!("{}:{}", v.ratio_left, v.ratio_right)) }
-                                a class="item-link" href=(format!("/~/{}", v.b)) { code class="vote-right" { "/" (v.b) } }
-                            }
-                            div class="ratio-bar" aria-label={(format!("ratio {}:{}", v.ratio_left, v.ratio_right))} {
-                                div class="ratio-left" style={(format!("width: {:.3}%;", pct))} {}
-                                div class="ratio-right" style={(format!("width: {:.3}%;", 100.0 - pct))} {}
-                            }
-                            div class="vote-body" { (v.body) }
-                            div class="vote-meta" title=(hover) {
-                                span class="address" { "@" (actor_label(&v.actor)) }
-                                " · "
-                                (ago)
+            @if model.selected_tab == ItemTab::Votes {
+                section class="ont-tab-panel ont-tab-panel-votes" {
+                    @if model.touching_votes.is_empty() {
+                        p class="muted" { "no votes touch this item yet" }
+                    } @else {
+                        @let now = now_ms();
+                        @for v in model.touching_votes.iter() {
+                            @let pct = ratio_pct(v.ratio_left, v.ratio_right);
+                            @let hover = timeago::rfc3339_utc(v.ts);
+                            @let ago = timeago::timeago(now, v.ts);
+                            @let left_class = if v.a == model.item { "ratio-left current" } else { "ratio-left" };
+                            @let right_class = if v.b == model.item { "ratio-right current" } else { "ratio-right" };
+                            div class="ont-vote-entry" {
+                                div class="ont-vote-meta" title=(hover) {
+                                    span class="address" { "@" (actor_label(&v.actor)) }
+                                    " · "
+                                    (ago)
+                                }
+                                div class="ont-vote-header" {
+                                    a class="item-link" href=(format!("/~/{}", v.a)) { code class="vote-left" { "/" (v.a) } }
+                                    span class="vote-ratio" { (format!("{}:{}", v.ratio_left, v.ratio_right)) }
+                                    a class="item-link" href=(format!("/~/{}", v.b)) { code class="vote-right" { "/" (v.b) } }
+                                }
+                                div class="ratio-bar" aria-label={(format!("ratio {}:{}", v.ratio_left, v.ratio_right))} {
+                                    div class=(left_class) style={(format!("width: {:.3}%;", pct))} {}
+                                    div class=(right_class) style={(format!("width: {:.3}%;", 100.0 - pct))} {}
+                                }
+                                div class="ont-vote-body" { (v.body) }
                             }
                         }
                     }
@@ -289,7 +449,7 @@ async fn render_scope_view(state: AppState, path: OntologyPath) -> axum::respons
 
 #[cfg(test)]
 mod tests {
-    use super::build_scope_view_model;
+    use super::{build_item_page_view_model, ItemTab};
     use crate::{
         events::{Event, Ingest},
         reducer::ReducerState,
@@ -306,7 +466,15 @@ mod tests {
     }
 
     #[test]
-    fn scope_model_includes_parent_body_without_votes() {
+    fn item_tab_parsing_defaults_to_body() {
+        assert_eq!(ItemTab::from_query(None), ItemTab::Body);
+        assert_eq!(ItemTab::from_query(Some("invalid")), ItemTab::Body);
+        assert_eq!(ItemTab::from_query(Some("children")), ItemTab::Children);
+        assert_eq!(ItemTab::from_query(Some("votes")), ItemTab::Votes);
+    }
+
+    #[test]
+    fn item_page_model_includes_body_and_unranked_without_votes() {
         let mut reduced = ReducerState::default();
         apply_ingest(
             &mut reduced,
@@ -317,15 +485,14 @@ mod tests {
              /topic/b {beta}\n",
         );
 
-        let model = build_scope_view_model(&reduced, "topic", 50);
-        assert_eq!(model.parent_body.as_deref(), Some("topic body"));
-        assert!(model.component_rankings.is_empty());
-        assert!(model.isolate_items.is_empty());
-        assert_eq!(model.no_vote_items, vec!["topic/a".to_string(), "topic/b".to_string()]);
+        let model = build_item_page_view_model(&reduced, "topic/a", ItemTab::Body, 50);
+        assert_eq!(model.body.as_deref(), Some("alpha"));
+        assert!(model.sibling_rank.is_none());
+        assert!(model.child_rankings.component_rankings.is_empty());
     }
 
     #[test]
-    fn scope_model_filters_recent_votes_to_direct_scope_children() {
+    fn item_page_model_filters_votes_touching_item() {
         let mut reduced = ReducerState::default();
         apply_ingest(
             &mut reduced,
@@ -339,14 +506,14 @@ mod tests {
              /other/x 4:1 /other/y {other vote}\n",
         );
 
-        let model = build_scope_view_model(&reduced, "topic", 50);
-        assert_eq!(model.recent_votes.len(), 1);
-        assert_eq!(model.recent_votes[0].a, "topic/a");
-        assert_eq!(model.recent_votes[0].b, "topic/b");
+        let model = build_item_page_view_model(&reduced, "topic/a", ItemTab::Votes, 50);
+        assert_eq!(model.touching_votes.len(), 1);
+        assert_eq!(model.touching_votes[0].a, "topic/a");
+        assert_eq!(model.touching_votes[0].b, "topic/b");
     }
 
     #[test]
-    fn scope_model_retains_isolates_when_child_only_votes_outside_scope() {
+    fn item_page_model_computes_sibling_rank_in_component() {
         let mut reduced = ReducerState::default();
         apply_ingest(
             &mut reduced,
@@ -355,36 +522,45 @@ mod tests {
              /topic {topic body}\n\
              /topic/a {alpha}\n\
              /topic/b {beta}\n\
-             /other/x {x}\n\
-             /topic/a 2:1 /other/x {cross-scope vote}\n",
+             /topic/c {gamma}\n\
+             /topic/a 2:1 /topic/b {a beats b}\n",
         );
 
-        let model = build_scope_view_model(&reduced, "topic", 50);
-        assert!(model.component_rankings.is_empty());
-        assert_eq!(model.isolate_items, vec!["topic/a".to_string()]);
-        assert_eq!(model.no_vote_items, vec!["topic/b".to_string()]);
+        let model = build_item_page_view_model(&reduced, "topic/a", ItemTab::Body, 50);
+        let rank = model.sibling_rank.expect("expected sibling rank");
+        assert_eq!(rank.position, 1);
+        assert_eq!(rank.component_size, 2);
+        assert_eq!(rank.sibling_total, 3);
     }
 
     #[test]
-    fn scope_model_builds_ranked_components_for_in_scope_votes() {
+    fn item_page_model_builds_ranked_child_components() {
         let mut reduced = ReducerState::default();
         apply_ingest(
             &mut reduced,
             1,
             "@00000000-0000-0000-0000-000000000000:test:local/test\n\
+             /topic {root}\n\
              /topic/a {alpha}\n\
              /topic/b {beta}\n\
-             /topic/a 3:1 /topic/b {a beats b}\n",
+             /topic/a 3:1 /topic/b {a beats b}\n\
+             /topic/kid1 {k1}\n\
+             /topic/kid2 {k2}\n\
+             /topic/kid1/leaf {leaf}\n",
         );
 
-        let model = build_scope_view_model(&reduced, "topic", 50);
-        assert_eq!(model.component_rankings.len(), 1);
-        assert_eq!(model.component_rankings[0].pairs, 1);
-        let names: Vec<&str> = model.component_rankings[0]
+        let model = build_item_page_view_model(&reduced, "topic", ItemTab::Children, 50);
+        assert_eq!(model.child_rankings.component_rankings.len(), 1);
+        assert_eq!(model.child_rankings.component_rankings[0].pairs, 1);
+        let names: Vec<&str> = model.child_rankings.component_rankings[0]
             .ranked
             .iter()
             .map(|r| r.item.as_str())
             .collect();
         assert_eq!(names, vec!["topic/a", "topic/b"]);
+        assert!(
+            model.child_rankings.no_vote_items.contains(&"topic/kid1".to_string())
+                || model.child_rankings.no_vote_items.contains(&"topic/kid2".to_string())
+        );
     }
 }
