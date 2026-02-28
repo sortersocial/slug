@@ -166,14 +166,13 @@ enum Command {
     },
 }
 
-fn print_ranking(tag: &str, aspect: &str, rows: &[RankRow]) {
-    println!("{tag} {aspect}");
+fn print_ranking(aspect: &str, rows: &[RankRow]) {
+    println!("{aspect}");
     println!();
     if rows.is_empty() {
         println!("(no items yet)");
         println!();
         println!("next:");
-        println!("  npx slugsocial tag '{tag}'");
         println!("  npx slugsocial ingest <file.sorter>");
         return;
     }
@@ -182,8 +181,8 @@ fn print_ranking(tag: &str, aspect: &str, rows: &[RankRow]) {
     }
     println!();
     println!("next:");
-    println!("  npx slugsocial pair '{tag}' {aspect}");
-    println!("  npx slugsocial recent '{tag}' {aspect}");
+    println!("  npx slugsocial pair --aspect {aspect}");
+    println!("  npx slugsocial recent --aspect {aspect}");
 }
 
 fn print_next(next: &NextMoves) {
@@ -220,8 +219,8 @@ fn print_threads(resp: &ThreadsResponse) {
             format!("{}d ago", age_secs / 86400)
         };
         println!(
-            "{:<32} {}i {}a {}s  {}",
-            t.thread, t.items, t.aspects, t.subscriber_count, ago
+            "{:<32} {}s  {}",
+            t.thread, t.subscriber_count, ago
         );
     }
     println!();
@@ -230,8 +229,8 @@ fn print_threads(resp: &ThreadsResponse) {
     println!("  npx slugsocial pair --thread <name> --aspect default");
 }
 
-fn print_tag_detail(resp: &TagDetailResponse) {
-    println!("{}", resp.tag);
+fn print_path_detail(resp: &PathDetailResponse) {
+    println!("{}", resp.path);
     if !resp.aspects.is_empty() {
         println!();
         println!("aspects:");
@@ -239,10 +238,10 @@ fn print_tag_detail(resp: &TagDetailResponse) {
             println!("  {a}");
         }
     }
-    if !resp.items.is_empty() {
+    if !resp.children.is_empty() {
         println!();
-        println!("items:");
-        for it in &resp.items {
+        println!("children:");
+        for it in &resp.children {
             println!("  {it}");
         }
     }
@@ -260,20 +259,13 @@ fn print_tag_detail(resp: &TagDetailResponse) {
     }
     println!();
     println!("next:");
-    println!("  npx slugsocial rank '{}' :default", resp.tag);
-    println!("  npx slugsocial pair '{}' :default", resp.tag);
-    println!("  npx slugsocial recent '{}' :default", resp.tag);
+    println!("  npx slugsocial rank --aspect default");
+    println!("  npx slugsocial pair --aspect default");
+    println!("  npx slugsocial recent --aspect default");
 }
 
 fn print_item(resp: &ItemResponse) {
     println!("{}", resp.item);
-    if !resp.tags.is_empty() {
-        println!();
-        println!("tags:");
-        for t in &resp.tags {
-            println!("  {t}");
-        }
-    }
     if let Some(body) = &resp.body {
         println!();
         println!("{body}");
@@ -287,7 +279,7 @@ fn print_recent_votes(resp: &RecentVotesResponse) {
     }
     for v in &resp.votes {
         let who = v.actor.clone().unwrap_or_else(|| "@anon".to_string());
-        println!("{} {}  {}  {}  {}  [{}]", v.tag, v.aspect, v.a, v.ratio, v.b, who);
+        println!("{}  {}  {}  {}  [{}]", v.aspect, v.a, v.ratio, v.b, who);
         println!("{{{}}}", v.body);
         println!();
     }
@@ -363,7 +355,7 @@ async fn main() -> Result<()> {
         }
 
         Command::Rank {
-            thread,
+            thread: _,
             aspect,
             parent,
             limit,
@@ -371,8 +363,7 @@ async fn main() -> Result<()> {
         } => {
             let client = http_client()?;
             let mut url = format!(
-                "{base}/api/v0/rank?tag={}&aspect={}&limit={}",
-                urlencoding::encode(&thread),
+                "{base}/api/v0/rank?aspect={}&limit={}",
                 urlencoding::encode(&aspect),
                 limit
             );
@@ -385,12 +376,12 @@ async fn main() -> Result<()> {
             if json {
                 println!("{}", serde_json::to_string_pretty(&resp)?);
             } else {
-                print_ranking(&resp.tag, &resp.aspect, &resp.ranking);
+                print_ranking(&resp.aspect, &resp.ranking);
             }
         }
 
         Command::Pair {
-            thread,
+            thread: _,
             aspect,
             parent,
             random,
@@ -398,8 +389,7 @@ async fn main() -> Result<()> {
         } => {
             let client = http_client()?;
             let mut url = format!(
-                "{base}/api/v0/pair?tag={}&aspect={}&random={}",
-                urlencoding::encode(&thread),
+                "{base}/api/v0/pair?aspect={}&random={}",
                 urlencoding::encode(&aspect),
                 if random { "true" } else { "false" }
             );
@@ -427,9 +417,9 @@ async fn main() -> Result<()> {
                 }
                 println!();
                 println!("next:");
-                println!("  npx slugsocial pair --thread {} --aspect {}", resp.tag, resp.aspect);
-                println!("  npx slugsocial rank --thread {} --aspect {}", resp.tag, resp.aspect);
-                println!("  npx slugsocial recent --thread {} --aspect {}", resp.tag, resp.aspect);
+                println!("  npx slugsocial pair --aspect {}", resp.aspect);
+                println!("  npx slugsocial rank --aspect {}", resp.aspect);
+                println!("  npx slugsocial recent --aspect {}", resp.aspect);
             }
         }
 
@@ -464,9 +454,9 @@ async fn main() -> Result<()> {
                 } else {
                     println!("✓ ingested");
                     println!("events: {}", resp.events_appended);
-                    if !resp.tags.is_empty() {
-                        println!("tags:");
-                        for t in &resp.tags {
+                    if !resp.threads.is_empty() {
+                        println!("threads:");
+                        for t in &resp.threads {
                             println!("  {t}");
                         }
                     }
@@ -507,9 +497,9 @@ async fn main() -> Result<()> {
                     println!("{}", serde_json::to_string_pretty(&resp)?);
                 } else {
                     println!("✓ check ok (dry-run)");
-                    if !resp.tags.is_empty() {
-                        println!("tags:");
-                        for t in &resp.tags {
+                    if !resp.threads.is_empty() {
+                        println!("threads:");
+                        for t in &resp.threads {
                             println!("  {t}");
                         }
                     }
@@ -519,7 +509,7 @@ async fn main() -> Result<()> {
                     } else {
                         for g in &resp.groups {
                             println!();
-                            print_ranking(&g.tag, &g.aspect, &g.ranking);
+                            print_ranking(&g.aspect, &g.ranking);
                         }
                     }
                     if !resp.next.is_empty() {
@@ -548,12 +538,12 @@ async fn main() -> Result<()> {
 
         Command::Thread { thread, json } => {
             let client = http_client()?;
-            let url = format!("{base}/api/v0/tag?tag={}", urlencoding::encode(&thread));
-            let resp: TagDetailResponse = expect_json(client.get(url).send().await?).await?;
+            let url = format!("{base}/api/v0/path?path={}", urlencoding::encode(&thread));
+            let resp: PathDetailResponse = expect_json(client.get(url).send().await?).await?;
             if json {
                 println!("{}", serde_json::to_string_pretty(&resp)?);
             } else {
-                print_tag_detail(&resp);
+                print_path_detail(&resp);
             }
         }
 
@@ -568,11 +558,10 @@ async fn main() -> Result<()> {
             }
         }
 
-        Command::Recent { thread, aspect, json } => {
+        Command::Recent { thread: _, aspect, json } => {
             let client = http_client()?;
             let url = format!(
-                "{base}/api/v0/recent_votes?tag={}&aspect={}",
-                urlencoding::encode(&thread),
+                "{base}/api/v0/recent_votes?aspect={}",
                 urlencoding::encode(&aspect),
             );
             let resp: RecentVotesResponse = expect_json(client.get(url).send().await?).await?;

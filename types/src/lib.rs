@@ -16,14 +16,12 @@ pub struct RankRow {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RankResponse {
-    pub tag: String,
     pub aspect: String,
     pub ranking: Vec<RankRow>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PairResponse {
-    pub tag: String,
     pub aspect: String,
     pub left: String,
     pub right: String,
@@ -39,15 +37,14 @@ pub struct NextMoves {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct TagsResponse {
-    pub tags: Vec<TagSummary>,
+pub struct PathsResponse {
+    pub paths: Vec<PathSummary>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct TagSummary {
-    pub tag: String,
-    pub items: usize,
-    pub aspects: usize,
+pub struct PathSummary {
+    pub path: String,
+    pub children: usize,
     pub web: String,
 }
 
@@ -61,15 +58,13 @@ pub struct ThreadSummary {
     pub thread: String,
     pub last_activity_ts: i64,
     pub subscriber_count: usize,
-    pub items: usize,
-    pub aspects: usize,
     pub web: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct TagDetailResponse {
-    pub tag: String,
-    pub items: Vec<String>,
+pub struct PathDetailResponse {
+    pub path: String,
+    pub children: Vec<String>,
     pub aspects: Vec<String>,
     pub recent_ingests: Vec<IngestRow>,
 }
@@ -86,7 +81,6 @@ pub struct IngestRow {
 pub struct ItemResponse {
     pub item: String,
     pub body: Option<String>,
-    pub tags: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -97,7 +91,6 @@ pub struct RecentVotesResponse {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct VoteRow {
     pub ts: i64,
-    pub tag: String,
     pub aspect: String,
     pub a: String,
     pub b: String,
@@ -113,7 +106,7 @@ pub struct NotificationsResponse {
     pub notifications: Vec<Notification>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Notification {
     pub ts: i64,
     pub ingest_id: String,
@@ -122,7 +115,7 @@ pub struct Notification {
     pub notification_type: NotificationType,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum NotificationType {
     ThreadActivity {
@@ -141,14 +134,13 @@ pub struct IngestRequest {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct IngestResponse {
     pub ok: bool,
-    pub tags: Vec<String>,
+    pub threads: Vec<String>,
     pub events_appended: usize,
     pub next: NextMoves,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CheckGroup {
-    pub tag: String,
     pub aspect: String,
     pub ranking: Vec<RankRow>,
 }
@@ -156,24 +148,19 @@ pub struct CheckGroup {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CheckResponse {
     pub ok: bool,
-    pub tags: Vec<String>,
+    pub threads: Vec<String>,
     pub groups: Vec<CheckGroup>,
     pub next: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct VoteRequest {
-    /// Hashtag namespace (required).
-    pub tag: String,
     pub aspect: String,
     pub a: String,
     pub b: String,
-    /// Ratio string like "3:1" (preferred).
     #[serde(default)]
     pub ratio: Option<String>,
-    /// Required human explanation for the vote (non-empty).
     pub body: String,
-    /// Optional self-declared actor (e.g. "@tommy").
     #[serde(default)]
     pub actor: Option<String>,
 }
@@ -181,7 +168,6 @@ pub struct VoteRequest {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct VoteResponse {
     pub ok: bool,
-    pub tag: String,
     pub aspect: String,
     pub ranking: Vec<RankRow>,
     pub next: NextMoves,
