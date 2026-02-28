@@ -733,13 +733,10 @@ async fn render_aspect_view(
         format!("/~/{tag}")
     };
 
-    let all_aspects = all_aspects(&state).await;
-
     let page = layout(
         &format!("~/{tag} :{aspect}"),
         "view-ontology",
         html! {
-            (render_ontology_header(&all_aspects, &aspect_base, Some(&aspect)))
             nav class="breadcrumb" {
                 (bc_ontology(&tag, Some(&aspect)))
             }
@@ -764,20 +761,23 @@ async fn render_aspect_view(
             @if component_rankings.is_empty() {
                 p class="muted" { "no voted pairs yet in this aspect" }
             } @else {
-                @for (ci, pairs, ranked) in component_rankings.iter() {
-                    div class="component" {
-                        div class="component-header" {
-                            (format!("ordering {} items={} pairs={}", ci + 1, ranked.len(), pairs))
-                        }
-                        ol class="ranking" {
-                            @for r in ranked.iter() {
-                                @let item_url = item_href(&tag, &r.item, Some(&aspect));
-                                li {
-                                    a class="item-link" href=(item_url) { code { "/" (item_display_path(&tag, &r.item)) } }
+                div class="component-groups" {
+                    @for (ci, pairs, ranked) in component_rankings.iter() {
+                        div class="component" {
+                            div class="component-header" {
+                                span class="component-index" { (format!("{}.", ci + 1)) }
+                                span class="component-meta" { (format!("items={} pairs={}", ranked.len(), pairs)) }
+                            }
+                            ol class="ranking" {
+                                @for r in ranked.iter() {
+                                    @let item_url = item_href(&tag, &r.item, Some(&aspect));
+                                    li {
+                                        a class="item-link" href=(item_url) { code { "/" (item_display_path(&tag, &r.item)) } }
+                                    }
                                 }
                             }
                         }
-                    }
+                    }                    
                 }
             }
 
@@ -814,31 +814,34 @@ async fn render_aspect_view(
             @if component_rankings.is_empty() && no_vote_items.is_empty() && isolate_idxs.is_empty() {
                 p class="muted" { "none yet" }
             } @else {
-                @for (ci, pairs, ranked) in component_rankings.iter() {
-                    div class="component" {
-                        div class="component-header" {
-                            (format!("ordering {} items={} pairs={}", ci + 1, ranked.len(), pairs))
-                        }
-                        ol class="ranking meat" {
-                            @for r in ranked.iter() {
-                                @let item_url = item_href(&tag, &r.item, Some(&aspect));
-                                li {
-                                    div class="item-card" {
-                                        div class="item-card-header" {
-                                            a class="item-link" href=(item_url) { code { "/" (item_display_path(&tag, &r.item)) } }
-                                            span class="score" { (format!("{:.4}", r.score)) }
-                                        }
-                                        @if let Some(body) = bodies.get(&r.item) {
-                                            div class="item-card-body" { (body) }
-                                        } @else {
-                                            div class="item-card-body muted" { "no body yet" }
+                div class="component-groups" {
+                    @for (ci, pairs, ranked) in component_rankings.iter() {
+                        div class="component" {
+                            div class="component-header" {
+                                span class="component-index" { (format!("{}.", ci + 1)) }
+                                span class="component-meta" { (format!("items={} pairs={}", ranked.len(), pairs)) }
+                            }
+                            ol class="ranking meat" {
+                                @for r in ranked.iter() {
+                                    @let item_url = item_href(&tag, &r.item, Some(&aspect));
+                                    li {
+                                        div class="item-card" {
+                                            div class="item-card-header" {
+                                                a class="item-link" href=(item_url) { code { "/" (item_display_path(&tag, &r.item)) } }
+                                                span class="score" { (format!("{:.4}", r.score)) }
+                                            }
+                                            @if let Some(body) = bodies.get(&r.item) {
+                                                div class="item-card-body" { (body) }
+                                            } @else {
+                                                div class="item-card-body muted" { "no body yet" }
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
                     }
-                }
+                }                
 
                 @if !no_vote_items.is_empty() {
                     div class="component unsorted" {
