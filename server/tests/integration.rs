@@ -170,7 +170,7 @@ async fn test_check_endpoint_does_not_commit() {
 }
 
 #[tokio::test]
-async fn test_ontology_item_tabs_rank_and_vote_filtering() {
+async fn test_ontology_item_page_shows_body_children_and_collapsible_votes() {
     let (addr, _tmp, _log, _handle) = create_test_server().await;
     let client = reqwest::Client::new();
 
@@ -194,39 +194,20 @@ async fn test_ontology_item_tabs_rank_and_vote_filtering() {
         .unwrap();
     assert!(ingest_response.status().is_success());
 
-    let body_tab_html = client
-        .get(&format!("http://{}/~/topic/a?tab=body", addr))
+    let item_html = client
+        .get(&format!("http://{}/~/topic/a", addr))
         .send()
         .await
         .unwrap()
         .text()
         .await
         .unwrap();
-    assert!(body_tab_html.contains("ont-tab-panel-body"));
-    assert!(body_tab_html.contains("#1 of 2"));
-    assert!(body_tab_html.contains("alpha body"));
-
-    let children_tab_html = client
-        .get(&format!("http://{}/~/topic?tab=children", addr))
-        .send()
-        .await
-        .unwrap()
-        .text()
-        .await
-        .unwrap();
-    assert!(children_tab_html.contains("ont-tab-panel-children"));
-    assert!(children_tab_html.contains("ranked child groups"));
-
-    let votes_tab_html = client
-        .get(&format!("http://{}/~/topic/a?tab=votes", addr))
-        .send()
-        .await
-        .unwrap()
-        .text()
-        .await
-        .unwrap();
-    assert!(votes_tab_html.contains("ont-tab-panel-votes"));
-    assert!(votes_tab_html.contains("a over b"));
-    assert!(!votes_tab_html.contains("other pair"));
+    assert!(item_html.contains("ont-item-content"));
+    assert!(item_html.contains("#1 of 2"));
+    assert!(item_html.contains("alpha body"));
+    assert!(item_html.contains("ranked child groups"));
+    assert!(item_html.contains("ont-related-votes"));
+    assert!(item_html.contains("a over b"));
+    assert!(!item_html.contains("other pair"));
 }
 

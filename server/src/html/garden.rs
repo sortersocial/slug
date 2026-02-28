@@ -1,9 +1,8 @@
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Path, State},
     response::{Html, IntoResponse},
 };
 use maud::html;
-use serde::Deserialize;
 
 use crate::{
     events::{canonicalize_item, item_parent_path},
@@ -49,7 +48,7 @@ pub async fn garden_index(State(state): State<AppState>) -> impl IntoResponse {
 
     let page = layout(
         "~/",
-        "view-ontology view-ontology-light",
+        "view-ontology view-ontology-dark",
         html! {
             @let root_path = OntologyPath::root();
             nav class="breadcrumb" { (bc_path(&root_path)) }
@@ -76,10 +75,9 @@ pub async fn garden_index(State(state): State<AppState>) -> impl IntoResponse {
 pub async fn ontology_path(
     State(state): State<AppState>,
     Path(path): Path<String>,
-    Query(q): Query<OntologyPathQuery>,
 ) -> impl IntoResponse {
     let path = OntologyPath::from_input(&path);
-    render_scope_view(state, path, ItemTab::from_query(q.tab.as_deref())).await
+    render_scope_view(state, path).await
 }
 
 #[derive(Debug, Clone)]
@@ -95,37 +93,6 @@ struct ChildrenRankings {
     no_vote_items: Vec<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ItemTab {
-    Body,
-    Children,
-    Votes,
-}
-
-impl ItemTab {
-    fn from_query(v: Option<&str>) -> Self {
-        match v.unwrap_or("body") {
-            "children" => Self::Children,
-            "votes" => Self::Votes,
-            _ => Self::Body,
-        }
-    }
-
-    fn as_query_value(self) -> &'static str {
-        match self {
-            Self::Body => "body",
-            Self::Children => "children",
-            Self::Votes => "votes",
-        }
-    }
-}
-
-#[derive(Debug, Deserialize)]
-pub struct OntologyPathQuery {
-    #[serde(default)]
-    tab: Option<String>,
-}
-
 #[derive(Debug, Clone)]
 struct SiblingRank {
     position: usize,
@@ -137,7 +104,6 @@ struct SiblingRank {
 struct ItemPageViewModel {
     item: String,
     body: Option<String>,
-    selected_tab: ItemTab,
     sibling_rank: Option<SiblingRank>,
     child_rankings: ChildrenRankings,
     touching_votes: Vec<crate::reducer::VoteData>,
@@ -280,7 +246,6 @@ fn build_sibling_rank(
 fn build_item_page_view_model(
     reduced: &crate::reducer::ReducerState,
     item: &str,
-    selected_tab: ItemTab,
     vote_limit: usize,
 ) -> ItemPageViewModel {
     let item = canonicalize_item(item);
@@ -294,28 +259,26 @@ fn build_item_page_view_model(
     ItemPageViewModel {
         item: item.clone(),
         body: reduced.item_bodies.get(&item).cloned(),
-        selected_tab,
         sibling_rank: build_sibling_rank(reduced, &item),
         child_rankings,
         touching_votes,
     }
 }
 
-async fn render_scope_view(state: AppState, path: OntologyPath, selected_tab: ItemTab) -> axum::response::Response {
+async fn render_scope_view(state: AppState, path: OntologyPath) -> axum::response::Response {
     let model = {
         let reduced = state.reduced.read().await;
-        build_item_page_view_model(&reduced, path.as_str(), selected_tab, 50)
+        build_item_page_view_model(&reduced, path.as_str(), 50)
     };
-    let base_href = item_href(&model.item);
 
     let page = layout(
         &format!("~/{}", path.as_str()),
-        "view-ontology view-ontology-light",
+        "view-ontology view-ontology-dark",
         html! {
             nav class="breadcrumb" { (bc_path(&path)) }
             section class="ont-item-shell" {
                 header class="ont-item-meta" {
-                    code { "/" (item_display_path(&model.item)) }
+                    span class="ont-item-title" { "/" (item_display_path(&model.item)) }
                     @if let Some(rank) = &model.sibling_rank {
                         span class="ont-rank-badge" {
                             (format!("#{} of {}", rank.position, rank.component_size))
@@ -325,94 +288,24 @@ async fn render_scope_view(state: AppState, path: OntologyPath, selected_tab: It
                         span class="muted" { "unranked among siblings" }
                     }
                 }
-            }
-
-            nav class="ont-tabs" {
-                @for tab in [ItemTab::Body, ItemTab::Children, ItemTab::Votes] {
-                    @let label = match tab {
-                        ItemTab::Body => "body",
-                        ItemTab::Children => "children",
-                        ItemTab::Votes => "votes",
-                    };
-                    @let class_name = if tab == model.selected_tab { "ont-tab is-active" } else { "ont-tab" };
-                    a class=(class_name)
-                      data-tab=(tab.as_query_value())
-                      href=(format!("{}?tab={}", base_href, tab.as_query_value())) {
-                        (label)
+                @if let Some(body) = &model.body {
+                    div class="ont-item-content" {
+                        pre { (maud::PreEscaped(linkify_slugs(body))) }
                     }
+                } @else {
+                    div class="ont-item-content" { p class="muted" { "no body yet" } }
                 }
             }
 
-            @if model.selected_tab == ItemTab::Body {
-                section class="ont-tab-panel ont-tab-panel-body" {
-                    @if let Some(body) = &model.body {
-                        div class="ont-item-content" {
-                            pre { (maud::PreEscaped(linkify_slugs(body))) }
-                        }
-                    } @else {
-                        p class="muted" { "no body yet" }
-                    }
+            details class="ont-related-votes" {
+                summary {
+                    "related votes "
+                    span class="muted" { (format!("({})", model.touching_votes.len())) }
                 }
-            }
-
-            @if model.selected_tab == ItemTab::Children {
-                section class="ont-tab-panel ont-tab-panel-children" {
-                    h3 { "ranked child groups" }
-                    @if model.child_rankings.component_rankings.is_empty() {
-                        p class="muted" { "no voted pairs yet in this scope" }
-                    } @else {
-                        @for (ci, comp) in model.child_rankings.component_rankings.iter().enumerate() {
-                            div class="ont-group-shell" {
-                                div class="ont-group-meta" {
-                                    (format!("ordering {} items={} pairs={}", ci + 1, comp.ranked.len(), comp.pairs))
-                                }
-                                ol class="ont-ranking-list" {
-                                    @for r in comp.ranked.iter() {
-                                        @let item_url = item_href(&r.item);
-                                        li {
-                                            a class="item-link" href=(item_url) { code { "/" (item_display_path(&r.item)) } }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    @if !model.child_rankings.isolate_items.is_empty() {
-                        div class="ont-group-shell ont-group-unsorted" {
-                            div class="ont-group-meta" { "isolates" }
-                            ul class="ont-group-list" {
-                                @for name in &model.child_rankings.isolate_items {
-                                    li {
-                                        @let href = item_href(&name);
-                                        a class="item-link" href=(href) { code { "/" (item_display_path(&name)) } }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    @if !model.child_rankings.no_vote_items.is_empty() {
-                        div class="ont-group-shell ont-group-unsorted" {
-                            div class="ont-group-meta" { "not yet compared" }
-                            ul class="ont-group-list" {
-                                @for it in &model.child_rankings.no_vote_items {
-                                    li {
-                                        @let href = item_href(it);
-                                        a class="item-link" href=(href) { code { "/" (item_display_path(it)) } }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            @if model.selected_tab == ItemTab::Votes {
-                section class="ont-tab-panel ont-tab-panel-votes" {
-                    @if model.touching_votes.is_empty() {
-                        p class="muted" { "no votes touch this item yet" }
-                    } @else {
+                @if model.touching_votes.is_empty() {
+                    p class="muted" { "no votes touch this item yet" }
+                } @else {
+                    section class="ont-tab-panel ont-tab-panel-votes" {
                         @let now = now_ms();
                         @for v in model.touching_votes.iter() {
                             @let pct = ratio_pct(v.ratio_left, v.ratio_right);
@@ -441,6 +334,57 @@ async fn render_scope_view(state: AppState, path: OntologyPath, selected_tab: It
                     }
                 }
             }
+
+            section class="ont-tab-panel ont-tab-panel-children" {
+                h3 { "ranked child groups" }
+                @if model.child_rankings.component_rankings.is_empty() {
+                    p class="muted" { "no voted pairs yet in this scope" }
+                } @else {
+                    @for (ci, comp) in model.child_rankings.component_rankings.iter().enumerate() {
+                        div class="ont-group-shell" {
+                            div class="ont-group-meta" {
+                                (format!("ordering {} items={} pairs={}", ci + 1, comp.ranked.len(), comp.pairs))
+                            }
+                            ol class="ont-ranking-list" {
+                                @for r in comp.ranked.iter() {
+                                    @let item_url = item_href(&r.item);
+                                    li {
+                                        a class="item-link" href=(item_url) { code { "/" (item_display_path(&r.item)) } }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                @if !model.child_rankings.isolate_items.is_empty() {
+                    div class="ont-group-shell ont-group-unsorted" {
+                        div class="ont-group-meta" { "isolates" }
+                        ul class="ont-group-list" {
+                            @for name in &model.child_rankings.isolate_items {
+                                li {
+                                    @let href = item_href(&name);
+                                    a class="item-link" href=(href) { code { "/" (item_display_path(&name)) } }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                @if !model.child_rankings.no_vote_items.is_empty() {
+                    div class="ont-group-shell ont-group-unsorted" {
+                        div class="ont-group-meta" { "not yet compared" }
+                        ul class="ont-group-list" {
+                            @for it in &model.child_rankings.no_vote_items {
+                                li {
+                                    @let href = item_href(it);
+                                    a class="item-link" href=(href) { code { "/" (item_display_path(it)) } }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         },
     );
 
@@ -449,7 +393,7 @@ async fn render_scope_view(state: AppState, path: OntologyPath, selected_tab: It
 
 #[cfg(test)]
 mod tests {
-    use super::{build_item_page_view_model, ItemTab};
+    use super::build_item_page_view_model;
     use crate::{
         events::{Event, Ingest},
         reducer::ReducerState,
@@ -466,14 +410,6 @@ mod tests {
     }
 
     #[test]
-    fn item_tab_parsing_defaults_to_body() {
-        assert_eq!(ItemTab::from_query(None), ItemTab::Body);
-        assert_eq!(ItemTab::from_query(Some("invalid")), ItemTab::Body);
-        assert_eq!(ItemTab::from_query(Some("children")), ItemTab::Children);
-        assert_eq!(ItemTab::from_query(Some("votes")), ItemTab::Votes);
-    }
-
-    #[test]
     fn item_page_model_includes_body_and_unranked_without_votes() {
         let mut reduced = ReducerState::default();
         apply_ingest(
@@ -485,7 +421,7 @@ mod tests {
              /topic/b {beta}\n",
         );
 
-        let model = build_item_page_view_model(&reduced, "topic/a", ItemTab::Body, 50);
+        let model = build_item_page_view_model(&reduced, "topic/a", 50);
         assert_eq!(model.body.as_deref(), Some("alpha"));
         assert!(model.sibling_rank.is_none());
         assert!(model.child_rankings.component_rankings.is_empty());
@@ -506,7 +442,7 @@ mod tests {
              /other/x 4:1 /other/y {other vote}\n",
         );
 
-        let model = build_item_page_view_model(&reduced, "topic/a", ItemTab::Votes, 50);
+        let model = build_item_page_view_model(&reduced, "topic/a", 50);
         assert_eq!(model.touching_votes.len(), 1);
         assert_eq!(model.touching_votes[0].a, "topic/a");
         assert_eq!(model.touching_votes[0].b, "topic/b");
@@ -526,7 +462,7 @@ mod tests {
              /topic/a 2:1 /topic/b {a beats b}\n",
         );
 
-        let model = build_item_page_view_model(&reduced, "topic/a", ItemTab::Body, 50);
+        let model = build_item_page_view_model(&reduced, "topic/a", 50);
         let rank = model.sibling_rank.expect("expected sibling rank");
         assert_eq!(rank.position, 1);
         assert_eq!(rank.component_size, 2);
@@ -549,7 +485,7 @@ mod tests {
              /topic/kid1/leaf {leaf}\n",
         );
 
-        let model = build_item_page_view_model(&reduced, "topic", ItemTab::Children, 50);
+        let model = build_item_page_view_model(&reduced, "topic", 50);
         assert_eq!(model.child_rankings.component_rankings.len(), 1);
         assert_eq!(model.child_rankings.component_rankings[0].pairs, 1);
         let names: Vec<&str> = model.child_rankings.component_rankings[0]
