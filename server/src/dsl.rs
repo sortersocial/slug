@@ -23,7 +23,6 @@ pub enum Stmt {
         /// Required non-empty explanation (from trailing `{ ... }`).
         explanation: String,
     },
-    Attribute { name: String },
     Prose { text: String },
 }
 
@@ -446,14 +445,9 @@ fn parse_line(masked_line: &str, masker: &BlockMasker) -> Result<Vec<Stmt>, DslE
                 name: rest.to_string(),
             }])
         }
-        ':' => {
-            // Legacy aspect marker; parsed but ignored (one-ranking model).
-            let rest = stripped[1..].trim();
-            let name = if rest.is_empty() { "default" } else { rest };
-            Ok(vec![Stmt::Attribute {
-                name: name.to_string(),
-            }])
-        }
+        ':' => Err(DslError::Parse(
+            "leading ':' is not supported".to_string(),
+        )),
         '@' => {
             // Actor signature (`@name`). Email addresses are not part of the DSL.
             let tok = stripped.trim();
@@ -727,15 +721,15 @@ signature: thanks
     }
 
     #[test]
-    fn parse_accepts_aspect_declarations_as_ignored_attribute() {
-        // One-ranking: :aspect is parsed for backward compatibility but ignored by reducer.
-        let inputs = [":beauty", ":x"];
+    fn parse_rejects_leading_colon() {
+        let inputs = [":beauty", ":x", ":"];
         for input in &inputs {
             let result = parse(input);
-            assert!(result.is_ok(), "expected parse ok for {input}: {:?}", result);
-            let doc = result.unwrap();
-            assert_eq!(doc.statements.len(), 1);
-            assert!(matches!(&doc.statements[0], Stmt::Attribute { name } if !name.is_empty()));
+            assert!(result.is_err(), "expected parse error for {input:?}");
+            assert!(
+                result.unwrap_err().to_string().contains("leading ':' is not supported"),
+                "wrong error for {input:?}"
+            );
         }
     }
 

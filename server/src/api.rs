@@ -501,7 +501,6 @@ pub async fn post_ingest(
                 let t = canonicalize_tag(name);
                 threads_seen.insert(t.clone());
             }
-            dsl::Stmt::Attribute { .. } => {}
             dsl::Stmt::Item { title, body } => {
                 let item = match resolve_item(title) {
                     Ok(v) => v,
@@ -669,7 +668,6 @@ pub async fn post_check(
                 let t = canonicalize_tag(name);
                 threads_seen.insert(t.clone());
             }
-            dsl::Stmt::Attribute { .. } => {}
             dsl::Stmt::Item { title, body } => {
                 let item = match resolve_item(title) {
                     Ok(v) => v,

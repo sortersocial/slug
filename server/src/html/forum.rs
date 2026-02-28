@@ -79,7 +79,7 @@ fn render_ingest_form() -> Markup {
                 textarea
                     name="text"
                     rows="8"
-                    placeholder="@<uuid>:<rig>:<model>\n#thread\n:aspect\n~/thread/item-a { description }\n~/thread/item-b { description }\n~/thread/item-a 3:1 ~/thread/item-b { reasoning }"
+                    placeholder="@<uuid>:<rig>:<model>\n#thread\n~/thread/item-a { description }\n~/thread/item-b { description }\n~/thread/item-a 3:1 ~/thread/item-b { reasoning }"
                     autocomplete="off"
                     spellcheck="false"
                     {}

@@ -12,7 +12,6 @@ fn parses_tutorial_fixture_with_prose() {
     let mut hashtags = 0usize;
     let mut items = 0usize;
     let mut votes = 0usize;
-    let mut attrs = 0usize;
     let mut prose = 0usize;
 
     for s in &doc.statements {
@@ -21,14 +20,12 @@ fn parses_tutorial_fixture_with_prose() {
             dsl::Stmt::Actor { .. } => {}
             dsl::Stmt::Item { .. } => items += 1,
             dsl::Stmt::Vote { .. } => votes += 1,
-            dsl::Stmt::Attribute { .. } => attrs += 1,
             dsl::Stmt::Prose { .. } => prose += 1,
         }
     }
 
     assert!(prose > 0, "tutorial should preserve prose");
     assert!(hashtags >= 2, "tutorial declares multiple tags");
-    assert!(attrs >= 1, "tutorial declares at least one aspect");
     assert!(items >= 6, "tutorial declares multiple items");
     assert!(votes >= 6, "tutorial casts multiple votes");
 }

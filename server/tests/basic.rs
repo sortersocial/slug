@@ -1,6 +1,6 @@
 use slugsocial_server::{
     event_log::EventLog,
-    events::{canonicalize_aspect, canonicalize_item, canonicalize_tag, Event, Ingest},
+    events::{canonicalize_item, canonicalize_tag, Event, Ingest},
     ranking::ranked_items,
     reducer::{GroupState, ReducerState},
 };
@@ -19,9 +19,9 @@ fn ingest_event(ts: i64, raw: &str) -> Event {
     })
 }
 
-fn vote_doc(tag: &str, aspect: &str, a: &str, b: &str, left: i32, right: i32) -> String {
+fn vote_doc(tag: &str, a: &str, b: &str, left: i32, right: i32) -> String {
     format!(
-        "@00000000-0000-0000-0000-000000000000:test:local/test\n:{aspect}\n~/{tag}/{a} {{body a}}\n~/{tag}/{b} {{body b}}\n~/{tag}/{a} {left}:{right} ~/{tag}/{b} {{because test}}\n"
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n~/{tag}/{a} {{body a}}\n~/{tag}/{b} {{body b}}\n~/{tag}/{a} {left}:{right} ~/{tag}/{b} {{because test}}\n"
     )
 }
 
@@ -35,9 +35,9 @@ fn reducer_and_ranking_linear_chain() {
     let mut state = ReducerState::default();
 
     // First ingest: define items + vote a > b.
-    state.apply_event(ingest_event(1, "@00000000-0000-0000-0000-000000000000:test:local/test\n:x\n~/t/a {a}\n~/t/b {b}\n~/t/a 3:1 ~/t/b {because}\n"));
+    state.apply_event(ingest_event(1, "@00000000-0000-0000-0000-000000000000:test:local/test\n~/t/a {a}\n~/t/b {b}\n~/t/a 3:1 ~/t/b {because}\n"));
     // Second ingest: define c + vote b > c.
-    state.apply_event(ingest_event(2, "@00000000-0000-0000-0000-000000000000:test:local/test\n:x\n~/t/c {c}\n~/t/b 3:1 ~/t/c {because}\n"));
+    state.apply_event(ingest_event(2, "@00000000-0000-0000-0000-000000000000:test:local/test\n~/t/c {c}\n~/t/b 3:1 ~/t/c {because}\n"));
 
     let mut group = state.ranking_group.clone();
     let ranked = ranked_items(&mut group, 20000, 1e-9);
@@ -54,15 +54,15 @@ fn reducer_canonicalizes_identifiers() {
     // Mix of formats across ingests (case + sigils).
     state.apply_event(ingest_event(
         1,
-        "@00000000-0000-0000-0000-000000000000:test:local/test\n:Aspect\n~/Tag/Item-A {x}\n~/Tag/Item-B {y}\n~/Tag/Item-A 2:1 ~/Tag/Item-B {because}\n",
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n~/Tag/Item-A {x}\n~/Tag/Item-B {y}\n~/Tag/Item-A 2:1 ~/Tag/Item-B {because}\n",
     ));
     state.apply_event(ingest_event(
         2,
-        "@00000000-0000-0000-0000-000000000000:test:local/test\n:ASPECT\n~/TAG/ITEM-A 2:1 ~/TAG/ITEM-B {because}\n",
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n~/TAG/ITEM-A 2:1 ~/TAG/ITEM-B {because}\n",
     ));
     state.apply_event(ingest_event(
         3,
-        "@00000000-0000-0000-0000-000000000000:test:local/test\n:aspect\n~/tag/item-a 2:1 ~/tag/item-b {because}\n",
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n~/tag/item-a 2:1 ~/tag/item-b {because}\n",
     ));
 
     assert_eq!(state.ranking_group.idx_to_item.len(), 2); // Should dedupe to 2 items
@@ -90,7 +90,7 @@ fn reducer_aggregates_multiple_votes() {
 
     // Multiple votes between same pair should accumulate weights.
     for ts in 1..=3 {
-        state.apply_event(ingest_event(ts, &vote_doc("t", "x", "a", "b", 2, 1)));
+        state.apply_event(ingest_event(ts, &vote_doc("t", "a", "b", 2, 1)));
     }
 
     let group = &state.ranking_group;
@@ -107,11 +107,11 @@ fn reducer_clamps_score_bounds() {
     let mut state = ReducerState::default();
     state.apply_event(ingest_event(
         1,
-        "@00000000-0000-0000-0000-000000000000:test:local/test\n:x\n~/t/a {a}\n~/t/b {b}\n~/t/a 1000:1 ~/t/b {huge}\n",
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n~/t/a {a}\n~/t/b {b}\n~/t/a 1000:1 ~/t/b {huge}\n",
     ));
     state.apply_event(ingest_event(
         2,
-        "@00000000-0000-0000-0000-000000000000:test:local/test\n:x\n~/t/a 1:1000 ~/t/b {huge}\n",
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n~/t/a 1:1000 ~/t/b {huge}\n",
     ));
 
     assert_eq!(state.ranking_group.idx_to_item.len(), 2); // Should still work, scores clamped internally
@@ -127,15 +127,15 @@ fn ranking_cycle_is_nearly_equal() {
     let mut state = ReducerState::default();
     state.apply_event(ingest_event(
         1,
-        "@00000000-0000-0000-0000-000000000000:test:local/test\n:x\n~/rps/rock {r}\n~/rps/scissors {s}\n~/rps/rock 3:1 ~/rps/scissors {because}\n",
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n~/rps/rock {r}\n~/rps/scissors {s}\n~/rps/rock 3:1 ~/rps/scissors {because}\n",
     ));
     state.apply_event(ingest_event(
         2,
-        "@00000000-0000-0000-0000-000000000000:test:local/test\n:x\n~/rps/paper {p}\n~/rps/scissors 3:1 ~/rps/paper {because}\n",
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n~/rps/paper {p}\n~/rps/scissors 3:1 ~/rps/paper {because}\n",
     ));
     state.apply_event(ingest_event(
         3,
-        "@00000000-0000-0000-0000-000000000000:test:local/test\n:x\n~/rps/paper 3:1 ~/rps/rock {because}\n",
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n~/rps/paper 3:1 ~/rps/rock {because}\n",
     ));
 
     let mut group = state.ranking_group.clone();
@@ -165,7 +165,7 @@ fn ranking_dominant_item_wins() {
     let mut state = ReducerState::default();
     state.apply_event(ingest_event(
         1,
-        "@00000000-0000-0000-0000-000000000000:test:local/test\n:x\n~/t/champion {c}\n~/t/b {b}\n~/t/c {c}\n~/t/d {d}\n~/t/champion 10:1 ~/t/b {because}\n~/t/champion 10:1 ~/t/c {because}\n~/t/champion 10:1 ~/t/d {because}\n~/t/b 2:1 ~/t/c {because}\n~/t/c 2:1 ~/t/d {because}\n",
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n~/t/champion {c}\n~/t/b {b}\n~/t/c {c}\n~/t/d {d}\n~/t/champion 10:1 ~/t/b {because}\n~/t/champion 10:1 ~/t/c {because}\n~/t/champion 10:1 ~/t/d {because}\n~/t/b 2:1 ~/t/c {because}\n~/t/c 2:1 ~/t/d {because}\n",
     ));
 
     let mut group = state.ranking_group.clone();
@@ -180,7 +180,7 @@ fn ranking_neutral_votes_produce_equal_scores() {
     let mut state = ReducerState::default();
     state.apply_event(ingest_event(
         1,
-        "@00000000-0000-0000-0000-000000000000:test:local/test\n:x\n~/t/a {a}\n~/t/b {b}\n~/t/c {c}\n~/t/a 1:1 ~/t/b {neutral}\n~/t/b 1:1 ~/t/c {neutral}\n~/t/c 1:1 ~/t/a {neutral}\n",
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n~/t/a {a}\n~/t/b {b}\n~/t/c {c}\n~/t/a 1:1 ~/t/b {neutral}\n~/t/b 1:1 ~/t/c {neutral}\n~/t/c 1:1 ~/t/a {neutral}\n",
     ));
 
     let mut group = state.ranking_group.clone();
@@ -206,7 +206,7 @@ fn ranking_converges_with_many_iterations() {
     for i in 0..4 {
         let a = format!("{i}");
         let b = format!("{}", i + 1);
-        let raw = vote_doc("t", "x", &a, &b, 3, 1);
+        let raw = vote_doc("t", &a, &b, 3, 1);
         state.apply_event(ingest_event(i as i64 + 1, &raw));
     }
 
@@ -233,8 +233,8 @@ async fn event_log_append_and_load() {
     let log = EventLog::new(log_path);
 
     let events = vec![
-        ingest_event(1, "@00000000-0000-0000-0000-000000000000:test:local/test\n#t\n:x\n/a {x}\n/b {y}\n/a 2:1 /b {because}\n"),
-        ingest_event(2, "@00000000-0000-0000-0000-000000000000:test:local/test\n#t\n:x\n/b 3:1 /c {because}\n"),
+        ingest_event(1, "@00000000-0000-0000-0000-000000000000:test:local/test\n#t\n/a {x}\n/b {y}\n/a 2:1 /b {because}\n"),
+        ingest_event(2, "@00000000-0000-0000-0000-000000000000:test:local/test\n#t\n/b 3:1 /c {because}\n"),
     ];
 
     for ev in &events {
@@ -255,7 +255,7 @@ async fn event_log_handles_corrupt_lines() {
     let log = EventLog::new(&log_path);
 
     // Write valid events using the log itself, then manually corrupt one line.
-    log.append(&ingest_event(1, "@00000000-0000-0000-0000-000000000000:test:local/test\n#t\n:x\n/a {x}\n/b {y}\n/a 2:1 /b {because}\n"))
+    log.append(&ingest_event(1, "@00000000-0000-0000-0000-000000000000:test:local/test\n#t\n/a {x}\n/b {y}\n/a 2:1 /b {because}\n"))
         .await
         .unwrap();
 
@@ -264,7 +264,7 @@ async fn event_log_handles_corrupt_lines() {
     let mut f = fs::OpenOptions::new().append(true).open(&log_path).unwrap();
     writeln!(f, "not json at all").unwrap();
 
-    log.append(&ingest_event(2, "@00000000-0000-0000-0000-000000000000:test:local/test\n#t\n:x\n/b 3:1 /c {because}\n"))
+    log.append(&ingest_event(2, "@00000000-0000-0000-0000-000000000000:test:local/test\n#t\n/b 3:1 /c {because}\n"))
         .await
         .unwrap();
 
@@ -283,7 +283,7 @@ async fn event_log_creates_parent_dirs() {
     let log_path = tmp.path().join("subdir").join("nested").join("events.jsonl");
     let log = EventLog::new(&log_path);
 
-    log.append(&ingest_event(1, "@00000000-0000-0000-0000-000000000000:test:local/test\n#t\n:x\n/a {x}\n/b {y}\n/a 2:1 /b {because}\n"))
+    log.append(&ingest_event(1, "@00000000-0000-0000-0000-000000000000:test:local/test\n#t\n/a {x}\n/b {y}\n/a 2:1 /b {because}\n"))
         .await
         .unwrap();
     assert!(log_path.exists());
@@ -311,7 +311,7 @@ async fn full_workflow_reducer_and_ranking() {
 
     state.apply_event(ingest_event(
         1,
-        "@00000000-0000-0000-0000-000000000000:test:local/test\n:speed\n~/langs/rust {Systems language}\n~/langs/go {Simple concurrency}\n~/langs/rust 3:1 ~/langs/go {because}\n",
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n~/langs/rust {Systems language}\n~/langs/go {Simple concurrency}\n~/langs/rust 3:1 ~/langs/go {because}\n",
     ));
 
     let mut group = state.ranking_group.clone();
@@ -327,10 +327,6 @@ fn canonicalization_is_consistent() {
     assert_eq!(canonicalize_tag("#tag"), "tag");
     assert_eq!(canonicalize_tag("tag"), "tag");
     assert_eq!(canonicalize_tag("TAG"), "tag");
-
-    assert_eq!(canonicalize_aspect(":aspect"), "aspect");
-    assert_eq!(canonicalize_aspect("aspect"), "aspect");
-    assert_eq!(canonicalize_aspect("ASPECT"), "aspect");
 
     assert_eq!(canonicalize_item("/item"), "item");
     assert_eq!(canonicalize_item("item"), "item");

@@ -138,7 +138,7 @@ async fn render_scope_view(state: AppState, path: OntologyPath) -> axum::respons
         }),
     );
 
-    // Items in the scope that have no votes at all in this aspect.
+    // Items in the scope that have no votes yet.
     let mut no_vote_items: Vec<String> = items_in_scope
         .into_iter()
         .filter(|it| !group.item_to_idx.contains_key(it))

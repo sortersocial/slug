@@ -2,14 +2,9 @@ use serde::{Deserialize, Serialize};
 
 /// Canonical identifiers stored without sigils.
 /// - tags are stored without leading '#'
-/// - aspects are stored without leading ':'
 /// - items are stored without leading '/'
 pub fn canonicalize_tag(input: &str) -> String {
     input.trim().trim_start_matches('#').to_lowercase()
-}
-
-pub fn canonicalize_aspect(input: &str) -> String {
-    input.trim().trim_start_matches(':').to_lowercase()
 }
 
 pub fn canonicalize_item(input: &str) -> String {

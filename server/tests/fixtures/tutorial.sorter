@@ -25,8 +25,7 @@ Now we have two discrete, addressable items. Imagine two dots floating on a
 2d plane.
 Now let's draw a line segment between the two dots.
 
-:overall
-/a 2:1 /b {a edges out b in this aspect}
+/a 2:1 /b {a edges out b in this ranking}
 
 
 We have asserted that /a wins over /b, winning 66% of that matchup.
@@ -102,7 +101,7 @@ Sorter is proprietary, trying to become a venture scale business.
 
 Now we have six dots swimming around. Lets order them.
 
-:truth
+truth
 /collective = /asynchronous {roughly equally important}
 /asynchronous = /precise {roughly equally important}
 /precise = /transitive {roughly equally important}
@@ -131,7 +130,7 @@ truth.
 
 The most important thing, in my mind, about sorter is that it’s collective.
 
-:important
+important
 /collective 100:20 /asynchronous { sorter would still be cool if it was
 live }
 /collective 100:90 /precise { precise thinking is good too }

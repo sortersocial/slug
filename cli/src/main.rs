@@ -97,7 +97,7 @@ enum Command {
         json: bool,
     },
 
-    /// Show thread details (items, aspects, recent ingests)
+    /// Show thread details (items, recent ingests)
     Thread {
         /// Thread name (without # prefix)
         #[arg(long)]

@@ -125,7 +125,7 @@ async fn test_rank_endpoint() {
 
     // Then query ranking
     let response = client
-        .get(&format!("http://{}/api/v0/rank?aspect=default", addr))
+        .get(&format!("http://{}/api/v0/rank", addr))
         .send()
         .await
         .unwrap();

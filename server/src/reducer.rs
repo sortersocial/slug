@@ -195,7 +195,6 @@ impl ReducerState {
                             touched_threads.insert(t.clone());
                             current_thread = Some(t);
                         }
-                        crate::dsl::Stmt::Attribute { .. } => {}
                         crate::dsl::Stmt::Actor { name } => {
                             current_actor = Some(canonicalize_actor(&name));
                         }
