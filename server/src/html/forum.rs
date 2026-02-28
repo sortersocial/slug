@@ -12,8 +12,7 @@ use crate::{
 };
 
 use super::{
-    bc_thread, layout, now_ms, recency_class,
-    entry::{actor_label, linkify_slugs},
+    actor_label, bc_threads, layout, linkify_slugs, now_ms, recency_class,
 };
 
 #[derive(Clone)]
@@ -52,7 +51,6 @@ fn render_thread_feed(rows: &[ThreadRow], now: i64) -> Markup {
                 ul class="thread-feed" {
                     @for r in rows {
                         @let thread_href = format!("/t/{}", r.tag);
-                        @let garden_href = format!("/~/{}", r.tag);
                         @let hover = timeago::rfc3339_utc(r.last_ts);
                         @let ago = timeago::timeago(now, r.last_ts);
                         @let age_cls = recency_class(now, r.last_ts);
@@ -64,8 +62,6 @@ fn render_thread_feed(rows: &[ThreadRow], now: i64) -> Markup {
                                 " · "
                                 (format!("{}n {}s", r.ingests, r.subscriber_count))
                             }
-                            " "
-                            a href=(garden_href) class="muted" { "~" }
                         }
                     }
                 }
@@ -194,10 +190,7 @@ pub async fn index(State(state): State<AppState>) -> impl IntoResponse {
         "slug.social",
         "view-thread",
         html! {
-            nav class="breadcrumb" {
-                a href="/" class="bc-current" { "slug.social" }
-                span class="bc-side" { a href="/~" { "~" } }
-            }
+            nav class="breadcrumb" { (bc_threads(None)) }
             h2 { "threads" }
             (render_thread_feed(&rows, now))
             (render_ingest_form())
@@ -232,7 +225,7 @@ pub async fn thread_view(
         &format!("#{tag}"),
         "view-thread",
         html! {
-            nav class="breadcrumb" { (bc_thread(&tag)) }
+            nav class="breadcrumb" { (bc_threads(Some(&tag))) }
             h2 { "#" (tag) }
             div id="presence-bar" class="presence-bar muted" data-thread-tag=(tag) {
                 span { "viewing now: " span id="presence-global" { (presence.global_viewers) } }

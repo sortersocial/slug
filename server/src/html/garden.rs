@@ -13,8 +13,7 @@ use crate::{
 };
 
 use super::{
-    bc_path, bc_segment, layout, now_ms, ratio_pct,
-    entry::actor_label,
+    actor_label, bc_path, bc_segment, layout, now_ms, ratio_pct,
 };
 
 /// Display path for an item. No namespace stripping: paths are first-class.
