@@ -1,4 +1,5 @@
-{:tasks
+{:paths ["."]
+ :tasks
  {:requires ([babashka.process :as p]
              [clojure.string :as str])
 
