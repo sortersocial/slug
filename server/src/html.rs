@@ -662,36 +662,6 @@ async fn render_item_page(
                 })))
             }
 
-            @if aspects.is_empty() {
-                p class="muted" { "no votes yet for this item" }
-            } @else {
-                h2 { "aspects" }
-                ul {
-                    @for (aspect, (count, last_ts)) in aspects.iter() {
-                        // Aspect link goes to the aspect ranking page.
-                        @let href = format!("/~/{ns}?aspect={aspect}&parent={}", parent_scope);
-                        @let hover = timeago::rfc3339_utc(*last_ts);
-                        @let ago = timeago::timeago(now, *last_ts);
-                        @let rank = aspect_ranks.get(aspect).cloned().flatten();
-                        li {
-                            @if selected_aspect.as_deref() == Some(aspect.as_str()) {
-                                a href=(href) class="bc-current" { ":" (aspect) }
-                            } @else {
-                                a href=(href) { ":" (aspect) }
-                            }
-                            " "
-                            span class="muted" title=(hover) {
-                                @if let Some((pos, n, score)) = rank {
-                                    (format!("votes={count} · rank={pos}/{n} · score={score:.4} · last {ago}"))
-                                } @else {
-                                    (format!("votes={count} · rank=— · last {ago}"))
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
             div class="item-card" {
                 div class="item-card-header" {
                     code { "/" (item) }
@@ -707,11 +677,34 @@ async fn render_item_page(
                 }
             }
 
+            @if !aspects.is_empty() {
+                div class="aspect-selector" {
+                    label for="aspect-select" { "aspect" }
+                    select id="aspect-select" onchange="window.location.href=this.value" {
+                        option value=(this_item_href) selected[selected_aspect.is_none()] { "all" }
+                        @for (aspect, (count, _last_ts)) in aspects.iter() {
+                            @let href = format!("{}?aspect={}", this_item_href, aspect);
+                            @let rank_str = aspect_ranks.get(aspect).cloned().flatten()
+                                .map(|(pos, n, _)| format!(" · rank {pos}/{n}"))
+                                .unwrap_or_default();
+                            option value=(href) selected[selected_aspect.as_deref() == Some(aspect.as_str())] {
+                                ":" (aspect)
+                                " (" (count) ")"
+                                (rank_str)
+                            }
+                        }
+                    }
+                    @if let Some(ref a) = selected_aspect {
+                        a class="aspect-ranking-link" href={(format!("/~/{ns}?aspect={a}&parent={}", parent_scope))} { "→ ranking" }
+                    }
+                }
+            }
+
             h2 { "votes over time" }
             @if votes.is_empty() {
                 p class="muted" { "none yet" }
             } @else {
-                @for v in votes.iter().take(200) {
+                @for v in votes.iter().filter(|v| selected_aspect.as_ref().map_or(true, |a| &v.aspect == a)).take(200) {
                     @let pct = ratio_pct(v.ratio_left, v.ratio_right);
                     @let hover = timeago::rfc3339_utc(v.ts);
                     @let ago = timeago::timeago(now, v.ts);

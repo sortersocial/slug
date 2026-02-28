@@ -1,5 +1,12 @@
 /* Browser defaults. Nothing. */
 
+/* Tight layout (retro loads standalone; match default's constraints) */
+body {
+  margin: 0 auto;
+  max-width: 560px;
+  padding: 0 16px 48px;
+}
+
 /* Thread feed recency coloring */
 .age-fresh  a { color: #00ff41; }   /* matrix green: < 1h  */
 .age-recent a { color: #ffcc00; }   /* amber:        < 1d  */
