@@ -19,11 +19,11 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Command {
-    /// Fetch and print a ranking for a thread/aspect
+    /// Fetch and print a ranking for an aspect
     Rank {
-        /// Thread name (without # prefix)
+        /// Thread name (unused, kept for compatibility)
         #[arg(long)]
-        thread: String,
+        thread: Option<String>,
         /// Aspect name (without : prefix, defaults to "default")
         #[arg(long, default_value = "default")]
         aspect: String,
@@ -40,9 +40,9 @@ enum Command {
 
     /// Get a suggested pair of items to compare next
     Pair {
-        /// Thread name (without # prefix)
+        /// Thread name (unused, kept for compatibility)
         #[arg(long)]
-        thread: String,
+        thread: Option<String>,
         /// Aspect name (without : prefix, defaults to "default")
         #[arg(long, default_value = "default")]
         aspect: String,
@@ -123,11 +123,11 @@ enum Command {
         json: bool,
     },
 
-    /// Show recent votes for a thread/aspect
+    /// Show recent votes for an aspect
     Recent {
-        /// Thread name (without # prefix)
+        /// Thread name (unused, kept for compatibility)
         #[arg(long)]
-        thread: String,
+        thread: Option<String>,
         /// Aspect name (without : prefix, defaults to "default")
         #[arg(long, default_value = "default")]
         aspect: String,
