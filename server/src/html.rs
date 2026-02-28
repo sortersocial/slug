@@ -1,13 +1,11 @@
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Path, State},
     http::{header, StatusCode},
-    response::{Html, IntoResponse, Redirect, Response},
+    response::{Html, IntoResponse, Response},
 };
 use maud::{html, Markup, DOCTYPE};
-use serde::Deserialize;
-
 use crate::{
-    events::{canonicalize_aspect, canonicalize_item, canonicalize_tag},
+    events::{canonicalize_item, canonicalize_tag},
     ranking::{connected_components_from_voted_pairs, ranked_items_subset},
     reducer::{GroupKey, ReducerState},
     state::AppState,
@@ -203,18 +201,6 @@ fn ratio_pct(left: i32, right: i32) -> f64 {
     (l / denom) * 100.0
 }
 
-fn with_query_param(url: &str, key: &str, value: &str) -> String {
-    let sep = if url.contains('?') { '&' } else { '?' };
-    format!("{url}{sep}{key}={value}")
-}
-
-fn with_aspect(url: &str, aspect: Option<&str>) -> String {
-    match aspect {
-        Some(a) => with_query_param(url, "aspect", a),
-        None => url.to_string(),
-    }
-}
-
 /// Render a single breadcrumb segment with `/` separator.
 fn bc_segment(label: &str, href: &str, is_current: bool) -> Markup {
     html! {
@@ -224,17 +210,6 @@ fn bc_segment(label: &str, href: &str, is_current: bool) -> Markup {
         } @else {
             a href=(href) { (label) }
         }
-    }
-}
-
-/// Render the ontology path breadcrumb: `slug.social / ~ / ns`.
-fn bc_ontology(ns: &str, aspect: Option<&str>) -> Markup {
-    let root_href = with_aspect("/~", aspect);
-    let ns_href = with_aspect(&format!("/~/{ns}"), aspect);
-    html! {
-        a href="/" { "slug.social" }
-        (bc_segment("~", &root_href, false))
-        (bc_segment(ns, &ns_href, true))
     }
 }
 
@@ -299,8 +274,8 @@ fn item_display_path(ns: &str, item: &str) -> String {
 }
 
 /// The URL for an item under `/~`.
-fn item_href(ns: &str, item: &str, aspect: Option<&str>) -> String {
-    with_aspect(&format!("/~/{}/{}", ns, item_display_path(ns, item)), aspect)
+fn item_href(ns: &str, item: &str) -> String {
+    format!("/~/{}/{}", ns, item_display_path(ns, item))
 }
 
 /// Collect thread rows from reducer state (unsorted).
@@ -508,22 +483,9 @@ pub async fn index(State(state): State<AppState>) -> impl IntoResponse {
     Html(page.into_string())
 }
 
-/// Ontology index — root-level items (children of ""), light view.
-/// Requires ?aspect= to show content; without it, only the aspect selector menu is shown.
-pub async fn garden_index(
-    State(state): State<AppState>,
-    Query(query): Query<ThreadQuery>,
-) -> Response {
-    let aspects = all_aspects(&state).await;
-    let selected_aspect = query.aspect.map(|a| canonicalize_aspect(&a));
-    if selected_aspect.is_none() {
-        if let Some(default_aspect) = default_aspect_for_scope(&state, None).await {
-            let target = with_aspect("/~", Some(&default_aspect));
-            return Redirect::temporary(&target).into_response();
-        }
-    }
-
-    let roots: Vec<(String, usize)> = if selected_aspect.is_some() {
+/// Ontology index — root-level namespaces.
+pub async fn garden_index(State(state): State<AppState>) -> impl IntoResponse {
+    let roots: Vec<(String, usize)> = {
         let reduced = state.reduced.read().await;
         let mut v: Vec<(String, usize)> = reduced
             .item_children
@@ -537,88 +499,35 @@ pub async fn garden_index(
             .unwrap_or_default();
         v.sort_by(|a, b| a.0.cmp(&b.0));
         v
-    } else {
-        vec![]
     };
 
     let page = layout(
         "~/",
         "view-ontology",
         html! {
-            @if selected_aspect.is_some() {
-                nav class="breadcrumb" {
-                    a href="/" { "slug.social" }
-                    (bc_segment("~", &with_aspect("/~", selected_aspect.as_deref()), true))
-                }
-                h2 { "paths" }
-                @if roots.is_empty() {
-                    p class="muted" { "no items yet" }
-                } @else {
-                    ul {
-                        @for (path, children) in &roots {
-                            @let href = with_aspect(&format!("/~/{}", path), selected_aspect.as_deref());
-                            li {
-                                a href=(href) { "~/" (path) }
-                                " "
-                                span class="muted" { (format!("{}c", children)) }
-                            }
+            nav class="breadcrumb" {
+                a href="/" { "slug.social" }
+                (bc_segment("~", "/~", true))
+            }
+            h2 { "paths" }
+            @if roots.is_empty() {
+                p class="muted" { "no items yet" }
+            } @else {
+                ul {
+                    @for (path, children) in &roots {
+                        li {
+                            a href=(format!("/~/{}", path)) { "~/" (path) }
+                            " "
+                            span class="muted" { (format!("{}c", children)) }
                         }
                     }
                 }
-            } @else if aspects.is_empty() {
-                p class="muted" { "no aspects yet — add votes to create aspects" }
             }
         },
     );
-    Html(page.into_string()).into_response()
+    Html(page.into_string())
 }
 
-#[derive(Deserialize)]
-pub struct ThreadQuery {
-    aspect: Option<String>,
-    parent: Option<String>,
-}
-
-/// All aspects in the system (from ranking groups).
-async fn all_aspects(state: &AppState) -> Vec<String> {
-    let reduced = state.reduced.read().await;
-    let mut a: Vec<String> = reduced.groups.keys().map(|k| k.aspect.clone()).collect();
-    a.sort();
-    a
-}
-
-async fn default_aspect_for_scope(state: &AppState, scope: Option<&str>) -> Option<String> {
-    let reduced = state.reduced.read().await;
-    let mut best: Option<(String, usize, usize, usize)> = None;
-    let scope = scope.map(canonicalize_item).filter(|s| !s.is_empty());
-
-    for (k, group) in reduced.groups.iter() {
-        let total = group.idx_to_item.len();
-        let scoped = if let Some(ref s) = scope {
-            let prefix = format!("{s}/");
-            group
-                .idx_to_item
-                .iter()
-                .filter(|it| it.as_str() == s.as_str() || it.starts_with(&prefix))
-                .count()
-        } else {
-            total
-        };
-        if scoped == 0 {
-            continue;
-        }
-        let candidate = (k.aspect.clone(), scoped, total, k.aspect.len());
-        if best
-            .as_ref()
-            .map(|(_, bs, bt, bl)| (scoped, total, k.aspect.len()) > (*bs, *bt, *bl))
-            .unwrap_or(true)
-        {
-            best = Some(candidate);
-        }
-    }
-
-    best.map(|(aspect, _, _, _)| aspect)
-}
 
 /// Thread view — `/t/:tag` — dark, recent ingests only.
 pub async fn thread_view(
@@ -680,86 +589,54 @@ pub async fn thread_view(
 pub async fn ontology_path(
     State(state): State<AppState>,
     Path(path): Path<String>,
-    Query(query): Query<ThreadQuery>,
 ) -> impl IntoResponse {
     let path = canonicalize_item(&path);
-    let selected_aspect = query.aspect.map(|a| canonicalize_aspect(&a));
-    render_path_view(state, path, selected_aspect).await
-}
-
-/// Generic tree view for any path under /~. Works identically at every depth.
-/// Requires ?aspect= to show content; without it, only the aspect selector menu is shown.
-/// With ?aspect=X delegates to the ranking view scoped to this subtree.
-async fn render_path_view(
-    state: AppState,
-    path: String,
-    selected_aspect: Option<String>,
-) -> axum::response::Response {
     let ns = path.split('/').next().unwrap_or(&path).to_string();
-
-    // ?aspect=X: ranking view scoped to this path's subtree.
-    if let Some(aspect) = selected_aspect.clone() {
-        let parent_scope = Some(path.clone());
-        return render_aspect_view(state, ns, aspect, None, parent_scope).await;
-    }
-
-    // No aspect: redirect to the default aspect for this scope.
-    if let Some(default_aspect) = default_aspect_for_scope(&state, Some(&path)).await {
-        let target = with_aspect(&format!("/~/{path}"), Some(&default_aspect));
-        return Redirect::temporary(&target).into_response();
-    }
-
-    // No aspects exist yet for this scope; show an empty-state page.
-    let page = layout(
-        &format!("~/{path}"),
-        "view-ontology",
-        html! {
-            p class="muted" { "no aspects yet — add votes to create aspects" }
-        },
-    );
-    return Html(page.into_string()).into_response();
+    render_scope_view(state, ns, path).await
 }
 
-async fn render_aspect_view(
+async fn render_scope_view(
     state: AppState,
     tag: String,
-    aspect: String,
-    selected_item: Option<String>,
-    selected_parent: Option<String>,
+    path: String,
 ) -> axum::response::Response {
-    let parent_scope = selected_parent.unwrap_or_else(|| tag.clone());
-    let (group, items_in_scope, mut aspects_for_tag): (crate::reducer::GroupState, Vec<String>, Vec<String>) = {
+    let aspect = "default".to_string();
+    let parent_scope = path.clone();
+    let (group_opt, items_in_scope): (Option<crate::reducer::GroupState>, Vec<String>) = {
         let reduced = state.reduced.read().await;
         let key = GroupKey { aspect: aspect.clone() };
-        let Some(group) = reduced.groups.get(&key) else {
-            let page = layout(
-                "not found",
-                "view-ontology",
-                html! {
-                    nav class="breadcrumb" {
-                        a href="/" { "slug.social" }
-                        (bc_segment("~", "/~", false))
-                    }
-                    h1 { "not found" }
-                },
-            );
-            return (StatusCode::NOT_FOUND, Html(page.into_string())).into_response();
-        };
+        let group = reduced.groups.get(&key).cloned();
         let items_in_scope = reduced
             .item_children
             .get(&parent_scope)
             .map(|s| s.iter().cloned().collect())
             .unwrap_or_else(Vec::new);
-        // Aspects available on items under this parent scope.
-        let mut aspects: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-        for it in &items_in_scope {
-            if let Some(votes) = reduced.item_votes.get(it) {
-                for v in votes {
-                    aspects.insert(v.aspect.clone());
-                }
-            }
+        (group, items_in_scope)
+    };
+
+    let group = match group_opt {
+        Some(g) => g,
+        None => {
+            // No votes yet at all — show the path with empty state.
+            let page = layout(
+                &format!("~/{path}"),
+                "view-ontology",
+                html! {
+                    nav class="breadcrumb" { (bc_path(&path)) }
+                    h2 { "~/" (path) }
+                    @if items_in_scope.is_empty() {
+                        p class="muted" { "no items yet" }
+                    } @else {
+                        ul {
+                            @for it in &items_in_scope {
+                                li { a href=(item_href(&tag, it)) { code { "/" (item_display_path(&tag, it)) } } }
+                            }
+                        }
+                    }
+                },
+            );
+            return Html(page.into_string()).into_response();
         }
-        (group.clone(), items_in_scope, aspects.into_iter().collect())
     };
 
     // Build scoped components for direct children under parent_scope only.
@@ -827,39 +704,15 @@ async fn render_aspect_view(
         out
     };
 
-    let aspect_base = if let Some(ref it) = selected_item {
-        item_href(&tag, it, None)
-    } else {
-        format!("/~/{tag}")
-    };
-
     let page = layout(
-        &format!("~/{tag} :{aspect}"),
+        &format!("~/{path}"),
         "view-ontology",
         html! {
-            nav class="breadcrumb" {
-                (bc_ontology(&tag, Some(&aspect)))
-            }
-
-            @if !aspects_for_tag.is_empty() {
-                h2 { "aspects" }
-                ul {
-                    @for a in aspects_for_tag.drain(..) {
-                        @let href = with_query_param(&with_aspect(&aspect_base, Some(&a)), "parent", &parent_scope);
-                        li {
-                            @if a == aspect {
-                                a href=(href) class="bc-current" { ":" (a) }
-                            } @else {
-                                a href=(href) { ":" (a) }
-                            }
-                        }
-                    }
-                }
-            }
+            nav class="breadcrumb" { (bc_path(&path)) }
 
             h2 { "titles" }
             @if component_rankings.is_empty() {
-                p class="muted" { "no voted pairs yet in this aspect" }
+                p class="muted" { "no voted pairs yet" }
             } @else {
                 @for (ci, pairs, ranked) in component_rankings.iter() {
                     div class="component" {
@@ -868,7 +721,7 @@ async fn render_aspect_view(
                         }
                         ol class="ranking" {
                             @for r in ranked.iter() {
-                                @let item_url = item_href(&tag, &r.item, Some(&aspect));
+                                @let item_url = item_href(&tag, &r.item);
                                 li {
                                     a class="item-link" href=(item_url) { code { "/" (item_display_path(&tag, &r.item)) } }
                                 }
@@ -885,7 +738,7 @@ async fn render_aspect_view(
                         @for idx in &isolate_idxs {
                             @let name = group.idx_to_item.get(*idx).cloned().unwrap_or_default();
                             li {
-                                @let href = item_href(&tag, &name, Some(&aspect));
+                                @let href = item_href(&tag, &name);
                                 a class="item-link" href=(href) { code { "/" (item_display_path(&tag, &name)) } }
                             }
                         }
@@ -899,7 +752,7 @@ async fn render_aspect_view(
                     ul {
                         @for it in &no_vote_items {
                             li {
-                                @let href = item_href(&tag, it, Some(&aspect));
+                                @let href = item_href(&tag, it);
                                 a class="item-link" href=(href) { code { "/" (item_display_path(&tag, it)) } }
                             }
                         }
@@ -918,7 +771,7 @@ async fn render_aspect_view(
                         }
                         ol class="ranking meat" {
                             @for r in ranked.iter() {
-                                @let item_url = item_href(&tag, &r.item, Some(&aspect));
+                                @let item_url = item_href(&tag, &r.item);
                                 li {
                                     div class="item-card" {
                                         div class="item-card-header" {
@@ -941,7 +794,7 @@ async fn render_aspect_view(
                     div class="component unsorted" {
                         div class="component-header" { "not yet compared" }
                         @for it in no_vote_items.iter() {
-                            @let href = item_href(&tag, it, Some(&aspect));
+                            @let href = item_href(&tag, it);
                             div class="item-card" {
                                 div class="item-card-header" {
                                     a class="item-link" href=(href) { code { "/" (item_display_path(&tag, it)) } }
@@ -966,18 +819,15 @@ async fn render_aspect_view(
                         @let pct = ratio_pct(v.ratio_left, v.ratio_right);
                         @let hover = timeago::rfc3339_utc(v.ts);
                         @let ago = timeago::timeago(now, v.ts);
-                        @let current = selected_item.as_ref();
                         div class="vote" {
                             div class="vote-header" {
-                                a class="item-link" href=(with_aspect(&format!("/~/{}", v.a), Some(&aspect))) { code class="vote-left" { "/" (v.a) } }
+                                a class="item-link" href=(format!("/~/{}", v.a)) { code class="vote-left" { "/" (v.a) } }
                                 span class="vote-ratio" { (format!("{}:{}", v.ratio_left, v.ratio_right)) }
-                                a class="item-link" href=(with_aspect(&format!("/~/{}", v.b), Some(&aspect))) { code class="vote-right" { "/" (v.b) } }
+                                a class="item-link" href=(format!("/~/{}", v.b)) { code class="vote-right" { "/" (v.b) } }
                             }
                             div class="ratio-bar" aria-label={(format!("ratio {}:{}", v.ratio_left, v.ratio_right))} {
-                                @let left_class = format!("ratio-left{}", if current == Some(&v.a) { " current" } else { "" });
-                                @let right_class = format!("ratio-right{}", if current == Some(&v.b) { " current" } else { "" });
-                                div class=(left_class) style={(format!("width: {:.3}%;", pct))} {}
-                                div class=(right_class) style={(format!("width: {:.3}%;", 100.0 - pct))} {}
+                                div class="ratio-left" style={(format!("width: {:.3}%;", pct))} {}
+                                div class="ratio-right" style={(format!("width: {:.3}%;", 100.0 - pct))} {}
                             }
                             div class="vote-body" { (v.body) }
                             div class="vote-meta" title=(hover) {
