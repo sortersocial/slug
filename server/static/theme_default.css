@@ -694,12 +694,18 @@ body.view-ontology-dark .ont-vote-body {
 /* ================================================================
    ONTOLOGY ITEM PAGE — LIGHT VARIANT
    ================================================================ */
-body.view-ontology-light .ont-item-shell,
-body.view-ontology-light .ont-group-shell,
-body.view-ontology-light .ont-vote-entry {
+body.view-ontology-light .ont-item-shell {
   background: var(--g2);
   border: var(--bv-lg) solid;
   border-color: var(--hi) var(--lo) var(--lo) var(--hi);
+  margin: 6px 0;
+  width: fit-content;
+  max-width: 100%;
+}
+body.view-ontology-light .ont-group-shell,
+body.view-ontology-light .ont-vote-entry {
+  background: var(--g2);
+  border: 1px solid var(--lo);
   margin: 6px 0;
   width: fit-content;
   max-width: 100%;
@@ -708,8 +714,8 @@ body.view-ontology-light .ont-item-meta,
 body.view-ontology-light .ont-group-meta,
 body.view-ontology-light .ont-vote-meta {
   align-items: center;
-  background: var(--g3);
-  border-bottom: 2px solid var(--lo);
+  background: var(--g2);
+  border-bottom: 1px solid var(--lo);
   color: var(--ui);
   display: flex;
   gap: 8px;
@@ -764,20 +770,22 @@ body.view-ontology-light .ont-tab.is-active {
 body.view-ontology-light .ont-tab-panel { margin: 6px 0 10px; }
 body.view-ontology-light details.ont-related-votes {
   background: var(--g2);
-  border: var(--bv-lg) solid;
-  border-color: var(--hi) var(--lo) var(--lo) var(--hi);
+  border: 1px solid var(--lo);
   margin: 6px 0;
   width: fit-content;
   max-width: 100%;
 }
 body.view-ontology-light details.ont-related-votes > summary {
   background: var(--g3);
-  border-bottom: 2px solid var(--lo);
+  border: var(--bv) solid;
+  border-color: var(--hi) var(--lo) var(--lo) var(--hi);
   color: var(--ui);
-  padding: 4px 10px;
+  margin: 6px;
+  padding: 3px 10px;
 }
 body.view-ontology-light details.ont-related-votes[open] > summary {
   color: var(--signal);
+  border-color: var(--lo) var(--hi) var(--hi) var(--lo);
 }
 body.view-ontology-light .ont-group-unsorted {
   border-color: var(--meta) var(--lo) var(--lo) var(--meta);
@@ -794,9 +802,8 @@ body.view-ontology-light .ont-ranking-list {
 body.view-ontology-light .ont-group-list li,
 body.view-ontology-light .ont-ranking-list li {
   align-items: center;
-  background: var(--g3);
-  border: var(--bv) solid;
-  border-color: var(--hi) var(--lo) var(--lo) var(--hi);
+  background: var(--g2);
+  border: 1px solid var(--lo);
   display: flex;
   gap: 8px;
   padding: 4px 10px;
@@ -817,7 +824,7 @@ body.view-ontology-light .ont-ranking-list li::before {
 }
 body.view-ontology-light .ont-vote-header {
   align-items: center;
-  background: var(--g3);
+  background: var(--g2);
   border-bottom: 1px solid var(--lo);
   display: flex;
   flex-wrap: wrap;
