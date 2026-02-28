@@ -165,8 +165,6 @@ pub(super) fn bc_segment(label: &str, href: &str, is_current: bool) -> Markup {
 /// Breadcrumb for any canonical path, e.g. "parables" or "parables/counting-the-cost".
 pub(super) fn bc_path(path: &str) -> Markup {
     let segs: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-    let ns = segs.first().copied().unwrap_or(path);
-    let thread_href = format!("/t/{ns}");
     html! {
         a href="/" { "slug.social" }
         (bc_segment("~", "/~", false))
@@ -175,25 +173,15 @@ pub(super) fn bc_path(path: &str) -> Markup {
             @let is_last = i == segs.len() - 1;
             (bc_segment(seg, &href, is_last))
         }
-        span class="bc-side" {
-            a href=(thread_href) { "#" (ns) }
-        }
     }
 }
 
 /// Render the thread path breadcrumb: `slug.social / #tag`
 /// with an optional side-link to the ontology root for this tag.
-pub(super) fn bc_thread(tag: &str, side_ontology: bool) -> Markup {
-    let thread_href = format!("/t/{tag}");
-    let ontology_href = format!("/~/{tag}");
+pub(super) fn bc_thread(tag: &str) -> Markup {
     html! {
-        a href="/" { "slug.social" }
-        (bc_segment(&format!("#{tag}"), &thread_href, true))
-        @if side_ontology {
-            span class="bc-side" {
-                a href=(ontology_href) { "~" }
-            }
-        }
+        a href="/~" { "slug.social" }
+        (bc_segment(&format!("#{tag}"), &format!("/t/{tag}"), true))
     }
 }
 
