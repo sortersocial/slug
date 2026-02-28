@@ -867,6 +867,59 @@ pub async fn get_notifications(
 }
 
 // ============================================================================
+// Presence (thread pages)
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+pub struct PresencePingRequest {
+    pub session_id: String,
+    pub thread_tag: String,
+    #[serde(default)]
+    pub cursor_anchor: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PresencePingResponse {
+    pub ok: bool,
+    pub global_viewers: usize,
+    pub local_viewers: usize,
+}
+
+pub async fn post_presence_ping(
+    State(state): State<AppState>,
+    Json(req): Json<PresencePingRequest>,
+) -> impl IntoResponse {
+    let session_id = req.session_id.trim().to_string();
+    if session_id.is_empty() {
+        return api_error(
+            StatusCode::BAD_REQUEST,
+            "missing session_id",
+            Some("provide a stable client session id".to_string()),
+        );
+    }
+
+    let thread_tag = canonicalize_tag(&req.thread_tag);
+    if thread_tag.is_empty() {
+        return api_error(
+            StatusCode::BAD_REQUEST,
+            "missing thread_tag",
+            Some("presence is only valid for /t/:tag pages".to_string()),
+        );
+    }
+
+    let counts = state
+        .upsert_presence(session_id, thread_tag, req.cursor_anchor)
+        .await;
+
+    Json(PresencePingResponse {
+        ok: true,
+        global_viewers: counts.global_viewers,
+        local_viewers: counts.local_viewers,
+    })
+    .into_response()
+}
+
+// ============================================================================
 // SSE streams
 // ============================================================================
 
