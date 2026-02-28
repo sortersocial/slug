@@ -203,6 +203,18 @@ fn ratio_pct(left: i32, right: i32) -> f64 {
     (l / denom) * 100.0
 }
 
+fn with_query_param(url: &str, key: &str, value: &str) -> String {
+    let sep = if url.contains('?') { '&' } else { '?' };
+    format!("{url}{sep}{key}={value}")
+}
+
+fn with_aspect(url: &str, aspect: Option<&str>) -> String {
+    match aspect {
+        Some(a) => with_query_param(url, "aspect", a),
+        None => url.to_string(),
+    }
+}
+
 /// Render a single breadcrumb segment with `/` separator.
 fn bc_segment(label: &str, href: &str, is_current: bool) -> Markup {
     html! {
@@ -217,12 +229,13 @@ fn bc_segment(label: &str, href: &str, is_current: bool) -> Markup {
 
 /// Render the ontology path breadcrumb: `slug.social / ~ / ns`
 /// with an optional side-link to the thread view and optional extra segments.
-fn bc_ontology(ns: &str, side_thread: bool, extra: Option<Markup>) -> Markup {
-    let ns_href = format!("/~/{ns}");
+fn bc_ontology(ns: &str, side_thread: bool, extra: Option<Markup>, aspect: Option<&str>) -> Markup {
+    let root_href = with_aspect("/~", aspect);
+    let ns_href = with_aspect(&format!("/~/{ns}"), aspect);
     let thread_href = format!("/t/{ns}");
     html! {
         a href="/" { "slug.social" }
-        (bc_segment("~", "/~", false))
+        (bc_segment("~", &root_href, false))
         (bc_segment(ns, &ns_href, extra.is_none()))
         @if let Some(e) = extra { (e) }
         @if side_thread {
@@ -294,8 +307,8 @@ fn item_display_path(ns: &str, item: &str) -> String {
 }
 
 /// The URL for an item under `/~`.
-fn item_href(ns: &str, item: &str) -> String {
-    format!("/~/{}/{}", ns, item_display_path(ns, item))
+fn item_href(ns: &str, item: &str, aspect: Option<&str>) -> String {
+    with_aspect(&format!("/~/{}/{}", ns, item_display_path(ns, item)), aspect)
 }
 
 /// Collect thread rows from reducer state (unsorted).
@@ -465,7 +478,7 @@ pub async fn garden_index(
             @if selected_aspect.is_some() {
                 nav class="breadcrumb" {
                     a href="/" { "slug.social" }
-                    (bc_segment("~", "/~", true))
+                    (bc_segment("~", &with_aspect("/~", selected_aspect.as_deref()), true))
                 }
                 h2 { "paths" }
                 @if roots.is_empty() {
@@ -473,7 +486,7 @@ pub async fn garden_index(
                 } @else {
                     ul {
                         @for (path, children) in &roots {
-                            @let href = format!("/~/{}", path);
+                            @let href = with_aspect(&format!("/~/{}", path), selected_aspect.as_deref());
                             li {
                                 a href=(href) { "~/" (path) }
                                 " "
@@ -514,7 +527,7 @@ fn render_ontology_header(aspects: &[String], base_url: &str, current: Option<&s
                     option value="" disabled selected { "no aspects yet" }
                 } @else {
                     @for a in aspects {
-                        @let href = format!("{}?aspect={}", base_url, a);
+                        @let href = with_aspect(base_url, Some(a.as_str()));
                         option value=(href) selected[current == Some(a.as_str())] { ":" (a) }
                     }
                 }
@@ -723,16 +736,20 @@ async fn render_aspect_view(
     };
 
     let aspect_label = format!(":{aspect}");
-    let aspect_href = format!("/~/{tag}?aspect={aspect}&parent={}", parent_scope);
+    let aspect_href = with_query_param(
+        &with_aspect(&format!("/~/{tag}"), Some(&aspect)),
+        "parent",
+        &parent_scope,
+    );
     let selected_item_label = selected_item
         .as_ref()
         .map(|it| format!("/{}", item_display_path(&tag, it)));
     let selected_item_href = selected_item
         .as_ref()
-        .map(|it| format!("{}?aspect={aspect}", item_href(&tag, it)));
+        .map(|it| item_href(&tag, it, Some(&aspect)));
 
     let aspect_base = if let Some(ref it) = selected_item {
-        item_href(&tag, it)
+        item_href(&tag, it, None)
     } else {
         format!("/~/{tag}")
     };
@@ -749,11 +766,11 @@ async fn render_aspect_view(
                     (bc_ontology(&tag, false, Some(html! {
                         (bc_segment(&aspect_label, &aspect_href, false))
                         (bc_segment(it_label, selected_item_href.as_ref().unwrap(), true))
-                    })))
+                    }), Some(&aspect)))
                 } @else {
                     (bc_ontology(&tag, true, Some(html! {
                         (bc_segment(&aspect_label, &aspect_href, true))
-                    })))
+                    }), Some(&aspect)))
                 }
             }
 
@@ -761,7 +778,7 @@ async fn render_aspect_view(
                 h2 { "aspects" }
                 ul {
                     @for a in aspects_for_tag.drain(..) {
-                        @let href = format!("{aspect_base}?aspect={a}&parent={}", parent_scope);
+                        @let href = with_query_param(&with_aspect(&aspect_base, Some(&a)), "parent", &parent_scope);
                         li {
                             @if a == aspect {
                                 a href=(href) class="bc-current" { ":" (a) }
@@ -784,7 +801,7 @@ async fn render_aspect_view(
                         }
                         ol class="ranking" {
                             @for r in ranked.iter() {
-                                @let item_url = item_href(&tag, &r.item);
+                                @let item_url = item_href(&tag, &r.item, Some(&aspect));
                                 li {
                                     a class="item-link" href=(item_url) { code { "/" (item_display_path(&tag, &r.item)) } }
                                 }
@@ -801,7 +818,7 @@ async fn render_aspect_view(
                         @for idx in &isolate_idxs {
                             @let name = group.idx_to_item.get(*idx).cloned().unwrap_or_default();
                             li {
-                                @let href = item_href(&tag, &name);
+                                @let href = item_href(&tag, &name, Some(&aspect));
                                 a class="item-link" href=(href) { code { "/" (item_display_path(&tag, &name)) } }
                             }
                         }
@@ -815,7 +832,7 @@ async fn render_aspect_view(
                     ul {
                         @for it in &no_vote_items {
                             li {
-                                @let href = item_href(&tag, it);
+                                @let href = item_href(&tag, it, Some(&aspect));
                                 a class="item-link" href=(href) { code { "/" (item_display_path(&tag, it)) } }
                             }
                         }
@@ -834,7 +851,7 @@ async fn render_aspect_view(
                         }
                         ol class="ranking meat" {
                             @for r in ranked.iter() {
-                                @let item_url = item_href(&tag, &r.item);
+                                @let item_url = item_href(&tag, &r.item, Some(&aspect));
                                 li {
                                     div class="item-card" {
                                         div class="item-card-header" {
@@ -857,7 +874,7 @@ async fn render_aspect_view(
                     div class="component unsorted" {
                         div class="component-header" { "not yet compared" }
                         @for it in no_vote_items.iter() {
-                            @let href = item_href(&tag, it);
+                            @let href = item_href(&tag, it, Some(&aspect));
                             div class="item-card" {
                                 div class="item-card-header" {
                                     a class="item-link" href=(href) { code { "/" (item_display_path(&tag, it)) } }
@@ -885,9 +902,9 @@ async fn render_aspect_view(
                         @let current = selected_item.as_ref();
                         div class="vote" {
                             div class="vote-header" {
-                                a class="item-link" href=(format!("/~/{}", v.a)) { code class="vote-left" { "/" (v.a) } }
+                                a class="item-link" href=(with_aspect(&format!("/~/{}", v.a), Some(&aspect))) { code class="vote-left" { "/" (v.a) } }
                                 span class="vote-ratio" { (format!("{}:{}", v.ratio_left, v.ratio_right)) }
-                                a class="item-link" href=(format!("/~/{}", v.b)) { code class="vote-right" { "/" (v.b) } }
+                                a class="item-link" href=(with_aspect(&format!("/~/{}", v.b), Some(&aspect))) { code class="vote-right" { "/" (v.b) } }
                             }
                             div class="ratio-bar" aria-label={(format!("ratio {}:{}", v.ratio_left, v.ratio_right))} {
                                 @let left_class = format!("ratio-left{}", if current == Some(&v.a) { " current" } else { "" });
