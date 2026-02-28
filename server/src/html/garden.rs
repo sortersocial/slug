@@ -7,13 +7,13 @@ use maud::html;
 use crate::{
     events::canonicalize_item,
     ranking::{connected_components_from_voted_pairs, ranked_items_subset},
-    reducer::GroupKey,
     state::AppState,
     timeago,
 };
 
 use super::{
     actor_label, bc_path, layout, now_ms, ratio_pct,
+    breadcrumb_path::OntologyPath,
 };
 
 /// Display path for an item. No namespace stripping: paths are first-class.
@@ -50,7 +50,8 @@ pub async fn garden_index(State(state): State<AppState>) -> impl IntoResponse {
         "~/",
         "view-ontology",
         html! {
-            nav class="breadcrumb" { (bc_path("")) }
+            @let root_path = OntologyPath::root();
+            nav class="breadcrumb" { (bc_path(&root_path)) }
             h2 { "paths" }
             @if roots.is_empty() {
                 p class="muted" { "no items yet" }
@@ -75,19 +76,15 @@ pub async fn ontology_path(
     State(state): State<AppState>,
     Path(path): Path<String>,
 ) -> impl IntoResponse {
-    let path = canonicalize_item(&path);
+    let path = OntologyPath::from_input(&path);
     render_scope_view(state, path).await
 }
 
-async fn render_scope_view(state: AppState, path: String) -> axum::response::Response {
-    let aspect = "default".to_string();
-    let parent_scope = path.clone();
+async fn render_scope_view(state: AppState, path: OntologyPath) -> axum::response::Response {
+    let parent_scope = path.as_str().to_string();
     let (group_opt, items_in_scope): (Option<crate::reducer::GroupState>, Vec<String>) = {
         let reduced = state.reduced.read().await;
-        let key = GroupKey {
-            aspect: aspect.clone(),
-        };
-        let group = reduced.groups.get(&key).cloned();
+        let group = Some(reduced.ranking_group.clone());
         let items_in_scope = reduced
             .item_children
             .get(&parent_scope)
@@ -101,11 +98,11 @@ async fn render_scope_view(state: AppState, path: String) -> axum::response::Res
         None => {
             // No votes yet at all — show the path with empty state.
             let page = layout(
-                &format!("~/{path}"),
+                &format!("~/{}", path.as_str()),
                 "view-ontology",
                 html! {
                     nav class="breadcrumb" { (bc_path(&path)) }
-                    h2 { "~/" (path) }
+                    h2 { "~/" (path.as_str()) }
                     @if items_in_scope.is_empty() {
                         p class="muted" { "no items yet" }
                     } @else {
@@ -187,7 +184,7 @@ async fn render_scope_view(state: AppState, path: String) -> axum::response::Res
     };
 
     let page = layout(
-        &format!("~/{path}"),
+        &format!("~/{}", path.as_str()),
         "view-ontology",
         html! {
             nav class="breadcrumb" { (bc_path(&path)) }

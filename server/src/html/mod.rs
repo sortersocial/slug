@@ -164,14 +164,13 @@ pub(super) fn bc_segment(label: &str, href: &str, is_current: bool) -> Markup {
 }
 
 /// Breadcrumb for any canonical path, e.g. "parables" or "parables/counting-the-cost".
-pub(super) fn bc_path(path: &str) -> Markup {
-    let p = OntologyPath::parse(path);
+fn bc_path(path: &OntologyPath) -> Markup {
     html! {
-        a href=(p.slug_root_href()) { "slug.social" }
-        (bc_segment("~", "/~", p.is_root()))
-        @for (i, seg) in p.segments().iter().enumerate() {
-            @let href = format!("/~/{}", p.segments()[..=i].join("/"));
-            @let is_last = i == p.segments().len() - 1;
+        a href=(path.slug_root_href()) { "slug.social" }
+        (bc_segment("~", "/~", path.is_root()))
+        @for (i, seg) in path.segments().iter().enumerate() {
+            @let href = format!("/~/{}", path.segments()[..=i].join("/"));
+            @let is_last = i == path.segments().len() - 1;
             (bc_segment(seg, &href, is_last))
         }
     }

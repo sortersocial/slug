@@ -447,9 +447,12 @@ fn parse_line(masked_line: &str, masker: &BlockMasker) -> Result<Vec<Stmt>, DslE
             }])
         }
         ':' => {
-            Err(DslError::Parse(
-                "aspect declarations are not supported: sorter uses one ranking".to_string(),
-            ))
+            // Legacy aspect marker; parsed but ignored (one-ranking model).
+            let rest = stripped[1..].trim();
+            let name = if rest.is_empty() { "default" } else { rest };
+            Ok(vec![Stmt::Attribute {
+                name: name.to_string(),
+            }])
         }
         '@' => {
             // Actor signature (`@name`). Email addresses are not part of the DSL.
@@ -724,15 +727,15 @@ signature: thanks
     }
 
     #[test]
-    fn parse_rejects_aspect_declarations() {
-        let inputs = [":beauty", ":depth :comfort", ":x"];
+    fn parse_accepts_aspect_declarations_as_ignored_attribute() {
+        // One-ranking: :aspect is parsed for backward compatibility but ignored by reducer.
+        let inputs = [":beauty", ":x"];
         for input in &inputs {
             let result = parse(input);
-            assert!(result.is_err(), "expected error for {input}");
-            assert!(
-                result.unwrap_err().to_string().contains("aspect declarations are not supported"),
-                "wrong error for {input}"
-            );
+            assert!(result.is_ok(), "expected parse ok for {input}: {:?}", result);
+            let doc = result.unwrap();
+            assert_eq!(doc.statements.len(), 1);
+            assert!(matches!(&doc.statements[0], Stmt::Attribute { name } if !name.is_empty()));
         }
     }
 

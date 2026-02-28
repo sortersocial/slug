@@ -2,10 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use tokio::sync::{broadcast, RwLock};
 
-use crate::{
-    event_log::EventLog,
-    reducer::{GroupKey, ReducerState},
-};
+use crate::{event_log::EventLog, reducer::ReducerState};
 
 const PRESENCE_TTL_MS: i64 = 60_000;
 
@@ -95,11 +92,6 @@ impl AppState {
             stream_tx,
             html_tx,
         }
-    }
-
-    pub async fn group_keys(&self) -> Vec<GroupKey> {
-        let s = self.reduced.read().await;
-        s.groups.keys().cloned().collect()
     }
 
     /// Update one viewer heartbeat and return (global, local) active counts.

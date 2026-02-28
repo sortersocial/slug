@@ -2,7 +2,7 @@ use slugsocial_server::{
     event_log::EventLog,
     events::{canonicalize_aspect, canonicalize_item, canonicalize_tag, Event, Ingest},
     ranking::ranked_items,
-    reducer::{GroupKey, GroupState, ReducerState},
+    reducer::{GroupState, ReducerState},
 };
 
 use tempfile::TempDir;
@@ -39,12 +39,7 @@ fn reducer_and_ranking_linear_chain() {
     // Second ingest: define c + vote b > c.
     state.apply_event(ingest_event(2, "@00000000-0000-0000-0000-000000000000:test:local/test\n:x\n~/t/c {c}\n~/t/b 3:1 ~/t/c {because}\n"));
 
-    let key = GroupKey {
-        tag: "t".to_string(),
-        aspect: "x".to_string(),
-    };
-    let mut group = state.groups.remove(&key).expect("group exists");
-
+    let mut group = state.ranking_group.clone();
     let ranked = ranked_items(&mut group, 20000, 1e-9);
     assert_eq!(ranked.len(), 3);
     assert_eq!(ranked[0].item, "t/a");
@@ -70,13 +65,7 @@ fn reducer_canonicalizes_identifiers() {
         "@00000000-0000-0000-0000-000000000000:test:local/test\n:aspect\n~/tag/item-a 2:1 ~/tag/item-b {because}\n",
     ));
 
-    let key = GroupKey {
-        tag: canonicalize_tag("tag"),
-        aspect: canonicalize_aspect("aspect"),
-    };
-    assert!(state.groups.contains_key(&key));
-    let group = &state.groups[&key];
-    assert_eq!(group.idx_to_item.len(), 2); // Should dedupe to 2 items
+    assert_eq!(state.ranking_group.idx_to_item.len(), 2); // Should dedupe to 2 items
 }
 
 #[test]
@@ -92,7 +81,7 @@ fn reducer_handles_item_and_body_from_ingest() {
         state.item_bodies.get("t/test-item"),
         Some(&"Description here".to_string())
     );
-    assert!(state.tags.get("t").unwrap().contains("t/test-item"));
+    assert!(state.item_children.get("t").map(|c| c.contains("t/test-item")).unwrap_or(false));
 }
 
 #[test]
@@ -104,11 +93,7 @@ fn reducer_aggregates_multiple_votes() {
         state.apply_event(ingest_event(ts, &vote_doc("t", "x", "a", "b", 2, 1)));
     }
 
-    let key = GroupKey {
-        tag: "t".to_string(),
-        aspect: "x".to_string(),
-    };
-    let group = &state.groups[&key];
+    let group = &state.ranking_group;
     let a_idx = group.item_to_idx["t/a"];
     let b_idx = group.item_to_idx["t/b"];
 
@@ -129,13 +114,7 @@ fn reducer_clamps_score_bounds() {
         "@00000000-0000-0000-0000-000000000000:test:local/test\n:x\n~/t/a 1:1000 ~/t/b {huge}\n",
     ));
 
-    let key = GroupKey {
-        tag: "t".to_string(),
-        aspect: "x".to_string(),
-    };
-    let group = &state.groups[&key];
-    // Should still work, scores clamped internally.
-    assert_eq!(group.idx_to_item.len(), 2);
+    assert_eq!(state.ranking_group.idx_to_item.len(), 2); // Should still work, scores clamped internally
 }
 
 // ============================================================================
@@ -159,12 +138,7 @@ fn ranking_cycle_is_nearly_equal() {
         "@00000000-0000-0000-0000-000000000000:test:local/test\n:x\n~/rps/paper 3:1 ~/rps/rock {because}\n",
     ));
 
-    let key = GroupKey {
-        tag: "rps".to_string(),
-        aspect: "x".to_string(),
-    };
-    let mut group = state.groups.remove(&key).expect("group exists");
-
+    let mut group = state.ranking_group.clone();
     let ranked = ranked_items(&mut group, 50000, 1e-9);
     assert_eq!(ranked.len(), 3);
     let mean = ranked.iter().map(|r| r.score).sum::<f64>() / 3.0;
@@ -180,7 +154,7 @@ fn ranking_cycle_is_nearly_equal() {
 
 #[test]
 fn ranking_empty_group() {
-    let mut group = GroupState::new("t".to_string(), "x".to_string());
+    let mut group = GroupState::new();
     let ranked = ranked_items(&mut group, 1000, 1e-9);
     assert_eq!(ranked.len(), 0);
 }
@@ -194,11 +168,7 @@ fn ranking_dominant_item_wins() {
         "@00000000-0000-0000-0000-000000000000:test:local/test\n:x\n~/t/champion {c}\n~/t/b {b}\n~/t/c {c}\n~/t/d {d}\n~/t/champion 10:1 ~/t/b {because}\n~/t/champion 10:1 ~/t/c {because}\n~/t/champion 10:1 ~/t/d {because}\n~/t/b 2:1 ~/t/c {because}\n~/t/c 2:1 ~/t/d {because}\n",
     ));
 
-    let key = GroupKey {
-        tag: "t".to_string(),
-        aspect: "x".to_string(),
-    };
-    let mut group = state.groups.remove(&key).expect("group exists");
+    let mut group = state.ranking_group.clone();
     let ranked = ranked_items(&mut group, 20000, 1e-9);
 
     assert_eq!(ranked[0].item, "t/champion");
@@ -213,11 +183,7 @@ fn ranking_neutral_votes_produce_equal_scores() {
         "@00000000-0000-0000-0000-000000000000:test:local/test\n:x\n~/t/a {a}\n~/t/b {b}\n~/t/c {c}\n~/t/a 1:1 ~/t/b {neutral}\n~/t/b 1:1 ~/t/c {neutral}\n~/t/c 1:1 ~/t/a {neutral}\n",
     ));
 
-    let key = GroupKey {
-        tag: "t".to_string(),
-        aspect: "x".to_string(),
-    };
-    let mut group = state.groups.remove(&key).expect("group exists");
+    let mut group = state.ranking_group.clone();
     let ranked = ranked_items(&mut group, 20000, 1e-9);
 
     assert_eq!(ranked.len(), 3);
@@ -244,11 +210,7 @@ fn ranking_converges_with_many_iterations() {
         state.apply_event(ingest_event(i as i64 + 1, &raw));
     }
 
-    let key = GroupKey {
-        tag: "t".to_string(),
-        aspect: "x".to_string(),
-    };
-    let group = state.groups.get(&key).expect("group exists").clone();
+    let group = state.ranking_group.clone();
 
     let ranked_short = ranked_items(&mut group.clone(), 10, 1e-3);
     let ranked_long = ranked_items(&mut group.clone(), 50000, 1e-9);
@@ -352,11 +314,7 @@ async fn full_workflow_reducer_and_ranking() {
         "@00000000-0000-0000-0000-000000000000:test:local/test\n:speed\n~/langs/rust {Systems language}\n~/langs/go {Simple concurrency}\n~/langs/rust 3:1 ~/langs/go {because}\n",
     ));
 
-    let key = GroupKey {
-        tag: "langs".to_string(),
-        aspect: "speed".to_string(),
-    };
-    let mut group = state.groups.remove(&key).expect("group exists");
+    let mut group = state.ranking_group.clone();
     let ranked = ranked_items(&mut group, 20000, 1e-9);
 
     assert_eq!(ranked.len(), 2);

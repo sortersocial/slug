@@ -11,9 +11,8 @@ use std::collections::{BTreeSet, HashSet};
 
 use crate::{
     dsl,
-    events::{canonicalize_actor, canonicalize_aspect, canonicalize_item, canonicalize_tag, Event},
+    events::{canonicalize_actor, canonicalize_item, canonicalize_tag, Event},
     ranking::{ranked_items, ranked_items_subset},
-    reducer::GroupKey,
     state::AppState,
 };
 use crate::events::Ingest;
@@ -91,12 +90,11 @@ fn validate_actor_format(actor: &str) -> Result<(), String> {
 }
 
 // ============================================================================
-// Rank / Pair — aspect-scoped, parent-path-filtered
+// Rank / Pair — one-ranking (parent-path-filtered)
 // ============================================================================
 
 #[derive(Debug, Deserialize)]
 pub struct RankQuery {
-    pub aspect: String,
     #[serde(default)]
     pub parent: Option<String>,
     #[serde(default)]
@@ -104,14 +102,12 @@ pub struct RankQuery {
 }
 
 pub async fn get_rank(State(state): State<AppState>, Query(q): Query<RankQuery>) -> impl IntoResponse {
-    let aspect = canonicalize_aspect(&q.aspect);
     let limit = q.limit.unwrap_or(50).clamp(1, 500);
 
     let ranking = {
         let reduced = state.reduced.read().await;
-        let key = GroupKey { aspect: aspect.clone() };
-        let group = reduced.groups.get(&key);
-        if let Some(g) = group {
+        let group = &reduced.ranking_group;
+        if !group.idx_to_item.is_empty() {
             let idxs: Vec<usize> = match &q.parent {
                 Some(parent) => {
                     let parent = canonicalize_item(parent);
@@ -121,12 +117,12 @@ pub async fn get_rank(State(state): State<AppState>, Query(q): Query<RankQuery>)
                         .map(|s| s.iter().cloned().collect::<Vec<_>>())
                         .unwrap_or_default()
                         .iter()
-                        .filter_map(|it| g.item_to_idx.get(it).copied())
+                        .filter_map(|it| group.item_to_idx.get(it).copied())
                         .collect()
                 }
-                None => (0..g.idx_to_item.len()).collect(),
+                None => (0..group.idx_to_item.len()).collect(),
             };
-            ranked_items_subset(g, &idxs, 10000, 1e-8)
+            ranked_items_subset(group, &idxs, 10000, 1e-8)
                 .into_iter()
                 .take(limit)
                 .map(|r| RankRow { item: format!("/{}", r.item), score: r.score })
@@ -136,12 +132,11 @@ pub async fn get_rank(State(state): State<AppState>, Query(q): Query<RankQuery>)
         }
     };
 
-    Json(RankResponse { aspect: format!(":{aspect}"), ranking }).into_response()
+    Json(RankResponse { ranking }).into_response()
 }
 
 #[derive(Debug, Deserialize)]
 pub struct PairQuery {
-    pub aspect: String,
     #[serde(default)]
     pub parent: Option<String>,
     #[serde(default)]
@@ -150,7 +145,6 @@ pub struct PairQuery {
 
 #[derive(Debug, Serialize)]
 pub struct PairResponseLocal {
-    pub aspect: String,
     pub left: String,
     pub right: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -186,7 +180,6 @@ fn is_pair_voted(group: &crate::reducer::GroupState, a: &str, b: &str) -> bool {
 }
 
 pub async fn get_pair(State(state): State<AppState>, Query(q): Query<PairQuery>) -> impl IntoResponse {
-    let aspect = canonicalize_aspect(&q.aspect);
     let force_random = q.random.unwrap_or(false);
 
     // Pool: direct children of parent scope, or all items in the group.
@@ -199,12 +192,7 @@ pub async fn get_pair(State(state): State<AppState>, Query(q): Query<PairQuery>)
                     .map(|s| s.iter().cloned().collect())
                     .unwrap_or_default()
             }
-            None => {
-                let key = GroupKey { aspect: aspect.clone() };
-                reduced.groups.get(&key)
-                    .map(|g| g.idx_to_item.clone())
-                    .unwrap_or_default()
-            }
+            None => reduced.ranking_group.idx_to_item.clone(),
         }
     };
 
@@ -226,7 +214,6 @@ pub async fn get_pair(State(state): State<AppState>, Query(q): Query<PairQuery>)
             (reduced.item_bodies.get(&left).cloned(), reduced.item_bodies.get(&right).cloned())
         };
         return Json(PairResponseLocal {
-            aspect: format!(":{aspect}"),
             left: format!("/{}", left),
             right: format!("/{}", right),
             left_body,
@@ -236,10 +223,10 @@ pub async fn get_pair(State(state): State<AppState>, Query(q): Query<PairQuery>)
 
     let selected: Option<(String, String)> = {
         let mut reduced = state.reduced.write().await;
-        let key = GroupKey { aspect: aspect.clone() };
-        match reduced.groups.get_mut(&key) {
-            None => pick_random_distinct(&pool),
-            Some(group) => {
+        let group = &mut reduced.ranking_group;
+        if group.idx_to_item.is_empty() {
+            pick_random_distinct(&pool)
+        } else {
                 let mut rng = rand::thread_rng();
                 let idxs: Vec<usize> = pool.iter()
                     .filter_map(|it| group.item_to_idx.get(it).copied())
@@ -285,7 +272,6 @@ pub async fn get_pair(State(state): State<AppState>, Query(q): Query<PairQuery>)
                     }
                 }
                 pick.or_else(|| pick_random_distinct(&pool))
-            }
         }
     };
 
@@ -298,7 +284,6 @@ pub async fn get_pair(State(state): State<AppState>, Query(q): Query<PairQuery>)
         (reduced.item_bodies.get(&left).cloned(), reduced.item_bodies.get(&right).cloned())
     };
     Json(PairResponseLocal {
-        aspect: format!(":{aspect}"),
         left: format!("/{}", left),
         right: format!("/{}", right),
         left_body,
@@ -370,16 +355,6 @@ pub async fn get_path(State(state): State<AppState>, Query(q): Query<PathDetailQ
         .unwrap_or_default();
     children.sort();
 
-    // Aspects: any aspect group that has voted on items under this path.
-    let mut aspects: BTreeSet<String> = BTreeSet::new();
-    for child in &children {
-        if let Some(votes) = reduced.item_votes.get(child) {
-            for v in votes {
-                aspects.insert(v.aspect.clone());
-            }
-        }
-    }
-
     let recent_ingests: Vec<IngestRow> = {
         // Path-first: gather ingests that touched this path or its direct children.
         let mut ingest_ids: Vec<String> = Vec::new();
@@ -418,7 +393,6 @@ pub async fn get_path(State(state): State<AppState>, Query(q): Query<PathDetailQ
     Json(PathDetailResponse {
         path: format!("~/{}", path),
         children: children.into_iter().map(|it| format!("/{}", it)).collect(),
-        aspects: aspects.into_iter().map(|a| format!(":{a}")).collect(),
         recent_ingests,
     }).into_response()
 }
@@ -442,7 +416,6 @@ pub async fn get_item(State(state): State<AppState>, Query(q): Query<ItemQuery>)
 
 #[derive(Debug, Deserialize)]
 pub struct RecentVotesQuery {
-    pub aspect: String,
     #[serde(default)]
     pub limit: Option<usize>,
 }
@@ -451,18 +424,13 @@ pub async fn get_recent_votes(
     State(state): State<AppState>,
     Query(q): Query<RecentVotesQuery>,
 ) -> impl IntoResponse {
-    let aspect = canonicalize_aspect(&q.aspect);
     let limit = q.limit.unwrap_or(25).clamp(1, 200);
 
     let reduced = state.reduced.read().await;
-    let key = GroupKey { aspect };
-    let Some(group) = reduced.groups.get(&key) else {
-        return Json(RecentVotesResponse { votes: vec![] }).into_response();
-    };
+    let group = &reduced.ranking_group;
 
     let out: Vec<VoteRow> = group.recent_votes.iter().take(limit).map(|v| VoteRow {
         ts: v.ts,
-        aspect: format!(":{}", v.aspect),
         a: format!("/{}", v.a),
         b: format!("/{}", v.b),
         ratio: format!("{}:{}", v.ratio_left, v.ratio_right),
@@ -491,16 +459,10 @@ pub struct IngestResponse {
 }
 
 #[derive(Debug, Serialize)]
-pub struct CheckGroup {
-    pub aspect: String,
-    pub ranking: Vec<RankRow>,
-}
-
-#[derive(Debug, Serialize)]
 pub struct CheckResponse {
     pub ok: bool,
     pub threads: Vec<String>,
-    pub groups: Vec<CheckGroup>,
+    pub ranking: Vec<RankRow>,
     pub next: Vec<String>,
 }
 
@@ -519,7 +481,6 @@ pub async fn post_ingest(
         }
     };
 
-    let mut current_aspect: String = "default".to_string();
     let ts = now_ms();
 
     let mut threads_seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
@@ -540,9 +501,7 @@ pub async fn post_ingest(
                 let t = canonicalize_tag(name);
                 threads_seen.insert(t.clone());
             }
-            dsl::Stmt::Attribute { name } => {
-                current_aspect = canonicalize_aspect(name);
-            }
+            dsl::Stmt::Attribute { .. } => {}
             dsl::Stmt::Item { title, body } => {
                 let item = match resolve_item(title) {
                     Ok(v) => v,
@@ -656,8 +615,8 @@ pub async fn post_ingest(
         threads: threads_vec.iter().map(|t| format!("#{t}")).collect(),
         events_appended: 1,
         next: NextMoves {
-            pair: format!("npx slugsocial pair --aspect {}", current_aspect),
-            rank: format!("npx slugsocial rank --aspect {}", current_aspect),
+            pair: "npx slugsocial pair".to_string(),
+            rank: "npx slugsocial rank".to_string(),
             web: format!("https://slug.social/t/{}", primary_thread),
         },
     }).into_response()
@@ -691,12 +650,10 @@ pub async fn post_check(
 
     let mut current_actor: Option<String> = None;
     let mut voter_key_id: String = "anon".to_string();
-    let mut current_aspect: String = "default".to_string();
     let ts = now_ms();
 
     let mut threads_seen: BTreeSet<String> = BTreeSet::new();
     let mut defined_in_doc: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let mut aspects_touched: BTreeSet<String> = BTreeSet::new();
 
     for s in &doc.statements {
         match s {
@@ -712,9 +669,7 @@ pub async fn post_check(
                 let t = canonicalize_tag(name);
                 threads_seen.insert(t.clone());
             }
-            dsl::Stmt::Attribute { name } => {
-                current_aspect = canonicalize_aspect(name);
-            }
+            dsl::Stmt::Attribute { .. } => {}
             dsl::Stmt::Item { title, body } => {
                 let item = match resolve_item(title) {
                     Ok(v) => v,
@@ -745,7 +700,6 @@ pub async fn post_check(
                     Ok(v) => v,
                     Err(msg) => return api_error(StatusCode::BAD_REQUEST, "invalid vote item path", Some(msg)),
                 };
-                aspects_touched.insert(current_aspect.clone());
                 {
                     let reduced = state.reduced.read().await;
                     let missing: Vec<String> = [&a, &b]
@@ -797,24 +751,11 @@ pub async fn post_check(
     let mut simulated = { state.reduced.read().await.clone() };
     simulated.apply_event(event);
 
-    let mut groups: Vec<CheckGroup> = Vec::new();
-    for aspect in aspects_touched {
-        let key = GroupKey { aspect: canonicalize_aspect(&aspect) };
-        let ranking = simulated
-            .groups
-            .get_mut(&key)
-            .map(|g| ranked_items(g, 10000, 1e-8))
-            .unwrap_or_default()
-            .into_iter()
-            .take(25)
-            .map(|r| RankRow { item: format!("/{}", r.item), score: r.score })
-            .collect();
-        groups.push(CheckGroup {
-            aspect: format!(":{}", key.aspect),
-            ranking,
-        });
-    }
-    groups.sort_by(|a, b| a.aspect.cmp(&b.aspect));
+    let ranking = ranked_items(&mut simulated.ranking_group, 10000, 1e-8)
+        .into_iter()
+        .take(25)
+        .map(|r| RankRow { item: format!("/{}", r.item), score: r.score })
+        .collect();
 
     let threads_vec: Vec<String> = threads_seen.into_iter().collect();
     let primary_thread = threads_vec.first().cloned().unwrap_or_else(|| "untagged".to_string());
@@ -822,7 +763,7 @@ pub async fn post_check(
     Json(CheckResponse {
         ok: true,
         threads: threads_vec.iter().map(|t| format!("#{t}")).collect(),
-        groups,
+        ranking,
         next: vec![
             "npx slugsocial ingest <file.sorter>".to_string(),
             "npx slugsocial threads".to_string(),

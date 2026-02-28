@@ -16,13 +16,11 @@ pub struct RankRow {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RankResponse {
-    pub aspect: String,
     pub ranking: Vec<RankRow>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PairResponse {
-    pub aspect: String,
     pub left: String,
     pub right: String,
     pub left_body: Option<String>,
@@ -65,7 +63,6 @@ pub struct ThreadSummary {
 pub struct PathDetailResponse {
     pub path: String,
     pub children: Vec<String>,
-    pub aspects: Vec<String>,
     pub recent_ingests: Vec<IngestRow>,
 }
 
@@ -91,7 +88,6 @@ pub struct RecentVotesResponse {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct VoteRow {
     pub ts: i64,
-    pub aspect: String,
     pub a: String,
     pub b: String,
     pub ratio: String,
@@ -140,22 +136,15 @@ pub struct IngestResponse {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct CheckGroup {
-    pub aspect: String,
-    pub ranking: Vec<RankRow>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
 pub struct CheckResponse {
     pub ok: bool,
     pub threads: Vec<String>,
-    pub groups: Vec<CheckGroup>,
+    pub ranking: Vec<RankRow>,
     pub next: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct VoteRequest {
-    pub aspect: String,
     pub a: String,
     pub b: String,
     #[serde(default)]
@@ -168,7 +157,6 @@ pub struct VoteRequest {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct VoteResponse {
     pub ok: bool,
-    pub aspect: String,
     pub ranking: Vec<RankRow>,
     pub next: NextMoves,
 }

@@ -19,14 +19,11 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Command {
-    /// Fetch and print a ranking for an aspect
+    /// Fetch and print the ranking
     Rank {
         /// Thread name (unused, kept for compatibility)
         #[arg(long)]
         thread: Option<String>,
-        /// Aspect name (without : prefix, defaults to "default")
-        #[arg(long, default_value = "default")]
-        aspect: String,
         /// Optional parent path scope (defaults to thread root)
         #[arg(long)]
         parent: Option<String>,
@@ -43,9 +40,6 @@ enum Command {
         /// Thread name (unused, kept for compatibility)
         #[arg(long)]
         thread: Option<String>,
-        /// Aspect name (without : prefix, defaults to "default")
-        #[arg(long, default_value = "default")]
-        aspect: String,
         /// Optional parent path scope (defaults to thread root)
         #[arg(long)]
         parent: Option<String>,
@@ -123,14 +117,11 @@ enum Command {
         json: bool,
     },
 
-    /// Show recent votes for an aspect
+    /// Show recent votes
     Recent {
         /// Thread name (unused, kept for compatibility)
         #[arg(long)]
         thread: Option<String>,
-        /// Aspect name (without : prefix, defaults to "default")
-        #[arg(long, default_value = "default")]
-        aspect: String,
         /// Output as JSON for agent parsing
         #[arg(long)]
         json: bool,
@@ -166,8 +157,7 @@ enum Command {
     },
 }
 
-fn print_ranking(aspect: &str, rows: &[RankRow]) {
-    println!("{aspect}");
+fn print_ranking(rows: &[RankRow]) {
     println!();
     if rows.is_empty() {
         println!("(no items yet)");
@@ -181,8 +171,8 @@ fn print_ranking(aspect: &str, rows: &[RankRow]) {
     }
     println!();
     println!("next:");
-    println!("  npx slugsocial pair --aspect {aspect}");
-    println!("  npx slugsocial recent --aspect {aspect}");
+    println!("  npx slugsocial pair");
+    println!("  npx slugsocial recent");
 }
 
 fn print_next(next: &NextMoves) {
@@ -226,18 +216,11 @@ fn print_threads(resp: &ThreadsResponse) {
     println!();
     println!("next:");
     println!("  npx slugsocial thread --thread <name>");
-    println!("  npx slugsocial pair --thread <name> --aspect default");
+    println!("  npx slugsocial pair --thread <name>");
 }
 
 fn print_path_detail(resp: &PathDetailResponse) {
     println!("{}", resp.path);
-    if !resp.aspects.is_empty() {
-        println!();
-        println!("aspects:");
-        for a in &resp.aspects {
-            println!("  {a}");
-        }
-    }
     if !resp.children.is_empty() {
         println!();
         println!("children:");
@@ -259,9 +242,9 @@ fn print_path_detail(resp: &PathDetailResponse) {
     }
     println!();
     println!("next:");
-    println!("  npx slugsocial rank --aspect default");
-    println!("  npx slugsocial pair --aspect default");
-    println!("  npx slugsocial recent --aspect default");
+    println!("  npx slugsocial rank");
+    println!("  npx slugsocial pair");
+    println!("  npx slugsocial recent");
 }
 
 fn print_item(resp: &ItemResponse) {
@@ -279,15 +262,14 @@ fn print_recent_votes(resp: &RecentVotesResponse) {
     }
     for v in &resp.votes {
         let who = v.actor.clone().unwrap_or_else(|| "@anon".to_string());
-        println!("{}  {}  {}  {}  [{}]", v.aspect, v.a, v.ratio, v.b, who);
+        println!("{}  {}  {}  [{}]", v.a, v.ratio, v.b, who);
         println!("{{{}}}", v.body);
         println!();
     }
-    // HATEOAS followups are context dependent; users can copy from any printed line above.
     println!();
     println!("next:");
-    println!("  npx slugsocial pair '<#tag>' :default");
-    println!("  npx slugsocial rank '<#tag>' :default");
+    println!("  npx slugsocial pair");
+    println!("  npx slugsocial rank");
 }
 
 fn preview_body(body: &str) -> String {
@@ -356,17 +338,12 @@ async fn main() -> Result<()> {
 
         Command::Rank {
             thread: _,
-            aspect,
             parent,
             limit,
             json,
         } => {
             let client = http_client()?;
-            let mut url = format!(
-                "{base}/api/v0/rank?aspect={}&limit={}",
-                urlencoding::encode(&aspect),
-                limit
-            );
+            let mut url = format!("{base}/api/v0/rank?limit={}", limit);
             if let Some(parent) = parent {
                 url.push_str("&parent=");
                 url.push_str(&urlencoding::encode(&parent));
@@ -376,21 +353,19 @@ async fn main() -> Result<()> {
             if json {
                 println!("{}", serde_json::to_string_pretty(&resp)?);
             } else {
-                print_ranking(&resp.aspect, &resp.ranking);
+                print_ranking(&resp.ranking);
             }
         }
 
         Command::Pair {
             thread: _,
-            aspect,
             parent,
             random,
             json,
         } => {
             let client = http_client()?;
             let mut url = format!(
-                "{base}/api/v0/pair?aspect={}&random={}",
-                urlencoding::encode(&aspect),
+                "{base}/api/v0/pair?random={}",
                 if random { "true" } else { "false" }
             );
             if let Some(parent) = parent {
@@ -417,9 +392,9 @@ async fn main() -> Result<()> {
                 }
                 println!();
                 println!("next:");
-                println!("  npx slugsocial pair --aspect {}", resp.aspect);
-                println!("  npx slugsocial rank --aspect {}", resp.aspect);
-                println!("  npx slugsocial recent --aspect {}", resp.aspect);
+                println!("  npx slugsocial pair");
+                println!("  npx slugsocial rank");
+                println!("  npx slugsocial recent");
             }
         }
 
@@ -503,14 +478,12 @@ async fn main() -> Result<()> {
                             println!("  {t}");
                         }
                     }
-                    if resp.groups.is_empty() {
+                    if resp.ranking.is_empty() {
                         println!();
-                        println!("(no ranking groups touched by this doc yet)");
+                        println!("(no ranking touched by this doc yet)");
                     } else {
-                        for g in &resp.groups {
-                            println!();
-                            print_ranking(&g.aspect, &g.ranking);
-                        }
+                        println!();
+                        print_ranking(&resp.ranking);
                     }
                     if !resp.next.is_empty() {
                         println!();
@@ -558,12 +531,9 @@ async fn main() -> Result<()> {
             }
         }
 
-        Command::Recent { thread: _, aspect, json } => {
+        Command::Recent { thread: _, json } => {
             let client = http_client()?;
-            let url = format!(
-                "{base}/api/v0/recent_votes?aspect={}",
-                urlencoding::encode(&aspect),
-            );
+            let url = format!("{base}/api/v0/recent_votes");
             let resp: RecentVotesResponse = expect_json(client.get(url).send().await?).await?;
             if json {
                 println!("{}", serde_json::to_string_pretty(&resp)?);

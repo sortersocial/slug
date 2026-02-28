@@ -4,23 +4,13 @@ use serde::{Deserialize, Serialize};
 pub use slug_types::{Notification, NotificationType};
 
 use crate::events::{
-    canonicalize_actor, canonicalize_aspect, canonicalize_item, canonicalize_tag,
-    item_parent_path, Event, Ingest,
+    canonicalize_actor, canonicalize_item, canonicalize_tag, item_parent_path, Event, Ingest,
 };
-
-/// Key identifying a ranking group: one aspect across all item paths.
-/// Items that have been compared in this aspect form connected components;
-/// the rank-centrality algorithm ranks within each component.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct GroupKey {
-    pub aspect: String,
-}
 
 /// Parsed vote data (internal representation).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct VoteData {
     pub ts: i64,
-    pub aspect: String,
     pub a: String,
     pub b: String,
     pub ratio_left: i32,
@@ -29,10 +19,9 @@ pub struct VoteData {
     pub actor: String,
 }
 
+/// Single ranking group (one-ranking model). All votes contribute to this group.
 #[derive(Debug, Clone)]
 pub struct GroupState {
-    pub key: GroupKey,
-
     pub item_to_idx: HashMap<String, usize>,
     pub idx_to_item: Vec<String>,
 
@@ -48,10 +37,15 @@ pub struct GroupState {
     pub recent_votes: VecDeque<VoteData>,
 }
 
+impl Default for GroupState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GroupState {
-    pub fn new(aspect: String) -> Self {
+    pub fn new() -> Self {
         Self {
-            key: GroupKey { aspect },
             item_to_idx: HashMap::new(),
             idx_to_item: Vec::new(),
             edges: HashMap::new(),
@@ -82,7 +76,6 @@ impl GroupState {
     }
 
     pub fn apply_vote(&mut self, mut vote: VoteData) {
-        vote.aspect = canonicalize_aspect(&vote.aspect);
         vote.a = canonicalize_item(&vote.a);
         vote.b = canonicalize_item(&vote.b);
         vote.actor = canonicalize_actor(&vote.actor);
@@ -125,9 +118,8 @@ pub struct ThreadState {
 
 #[derive(Debug, Default, Clone)]
 pub struct ReducerState {
-    /// Per-aspect ranking groups. Items across all paths are globally rankable
-    /// within an aspect; connected components naturally separate unrelated items.
-    pub groups: HashMap<GroupKey, GroupState>,
+    /// Single ranking group (one-ranking model).
+    pub ranking_group: GroupState,
 
     pub items: HashSet<String>,
     pub item_bodies: HashMap<String, String>,
@@ -138,7 +130,7 @@ pub struct ReducerState {
     /// Thread -> recent ingest ids (most recent first).
     pub ingests_by_thread: HashMap<String, VecDeque<String>>,
 
-    /// Per-item vote history (most recent first), across all aspects.
+    /// Per-item vote history (most recent first).
     pub item_votes: HashMap<String, VecDeque<VoteData>>,
 
     /// Per-item ingest references (most recent first).
@@ -189,7 +181,6 @@ impl ReducerState {
                 };
 
                 let mut current_thread: Option<String> = None;
-                let mut current_aspect: String = "default".to_string();
                 let mut current_actor: Option<String> = Some(ing.actor.clone());
 
                 // Threads explicitly declared with #tag in this ingest.
@@ -204,9 +195,7 @@ impl ReducerState {
                             touched_threads.insert(t.clone());
                             current_thread = Some(t);
                         }
-                        crate::dsl::Stmt::Attribute { name } => {
-                            current_aspect = canonicalize_aspect(&name);
-                        }
+                        crate::dsl::Stmt::Attribute { .. } => {}
                         crate::dsl::Stmt::Actor { name } => {
                             current_actor = Some(canonicalize_actor(&name));
                         }
@@ -241,7 +230,6 @@ impl ReducerState {
                             let actor = current_actor.clone().unwrap_or_else(|| ing.actor.clone());
                             let vote = VoteData {
                                 ts: ing.ts,
-                                aspect: current_aspect.clone(),
                                 a: item_a.clone(),
                                 b: item_b.clone(),
                                 ratio_left,
@@ -258,13 +246,7 @@ impl ReducerState {
                             self.add_child_edge(&item_a);
                             self.add_child_edge(&item_b);
 
-                            let key = GroupKey {
-                                aspect: current_aspect.clone(),
-                            };
-                            let group = self.groups.entry(key.clone()).or_insert_with(|| {
-                                GroupState::new(key.aspect.clone())
-                            });
-                            group.apply_vote(vote.clone());
+                            self.ranking_group.apply_vote(vote.clone());
 
                             // Index vote by item and notify prior voters.
                             for it in [&item_a, &item_b] {
