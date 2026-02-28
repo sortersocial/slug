@@ -161,15 +161,42 @@ pub(super) fn bc_segment(label: &str, href: &str, is_current: bool) -> Markup {
     }
 }
 
+/// Semantic view of an ontology path for breadcrumb rendering.
+struct OntologyPath<'a> {
+    segments: Vec<&'a str>,
+}
+
+impl<'a> OntologyPath<'a> {
+    fn parse(path: &'a str) -> Self {
+        Self {
+            segments: path.split('/').filter(|s| !s.is_empty()).collect(),
+        }
+    }
+
+    fn is_root(&self) -> bool {
+        self.segments.is_empty()
+    }
+
+    /// At ontology root, allow mode toggle to forum (`/`).
+    /// In deeper ontology views, keep root breadcrumb within garden (`/~`).
+    fn slug_root_href(&self) -> &'static str {
+        if self.is_root() {
+            "/"
+        } else {
+            "/~"
+        }
+    }
+}
+
 /// Breadcrumb for any canonical path, e.g. "parables" or "parables/counting-the-cost".
 pub(super) fn bc_path(path: &str) -> Markup {
-    let segs: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    let p = OntologyPath::parse(path);
     html! {
-        a href="/" { "slug.social" }
-        (bc_segment("~", "/~", false))
-        @for (i, seg) in segs.iter().enumerate() {
-            @let href = format!("/~/{}", segs[..=i].join("/"));
-            @let is_last = i == segs.len() - 1;
+        a href=(p.slug_root_href()) { "slug.social" }
+        (bc_segment("~", "/~", p.is_root()))
+        @for (i, seg) in p.segments.iter().enumerate() {
+            @let href = format!("/~/{}", p.segments[..=i].join("/"));
+            @let is_last = i == p.segments.len() - 1;
             (bc_segment(seg, &href, is_last))
         }
     }

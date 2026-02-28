@@ -13,7 +13,7 @@ use crate::{
 };
 
 use super::{
-    actor_label, bc_path, bc_segment, layout, now_ms, ratio_pct,
+    actor_label, bc_path, layout, now_ms, ratio_pct,
 };
 
 /// Display path for an item. No namespace stripping: paths are first-class.
@@ -50,10 +50,7 @@ pub async fn garden_index(State(state): State<AppState>) -> impl IntoResponse {
         "~/",
         "view-ontology",
         html! {
-            nav class="breadcrumb" {
-                a href="/" { "slug.social" }
-                (bc_segment("~", "/~", true))
-            }
+            nav class="breadcrumb" { (bc_path("")) }
             h2 { "paths" }
             @if roots.is_empty() {
                 p class="muted" { "no items yet" }
