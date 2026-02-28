@@ -273,12 +273,19 @@ div.item-card {
 div.item-card-header {
   align-items: baseline;
   background: var(--g3);
-  border-bottom: 2px solid var(--lo);
+  border: var(--bv) solid;
+  border-color: var(--hi) var(--lo) var(--lo) var(--hi);
   display: flex;
   gap: 10px;
+  margin: 6px;
+  margin-bottom: 0;
   padding: 5px 10px;
 }
-div.item-card-body       { color: var(--prose); padding: 7px 10px; }
+div.item-card-header code {
+  color: var(--signal);
+  font-weight: bold;
+}
+div.item-card-body       { color: var(--prose); margin: 6px; padding: 7px 10px; }
 div.item-card-body.muted { color: var(--meta); }
 
 /* ----------------------------------------------------------------
