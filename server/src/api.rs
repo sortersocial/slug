@@ -7,7 +7,7 @@ use axum::{
 use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
 use slug_types::*;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 
 use crate::{
     dsl,
@@ -29,23 +29,13 @@ fn now_ms() -> i64 {
     t.as_millis() as i64
 }
 
-/// Resolve an item path. Multi-segment paths are used as-is.
-/// Single-segment items are qualified with the current thread context.
-fn resolve_item(item: &str, current_thread: Option<&str>) -> Result<String, String> {
+/// Resolve an item path as a first-class canonical path.
+fn resolve_item(item: &str) -> Result<String, String> {
     let canonical = canonicalize_item(item);
     if canonical.is_empty() {
         return Err(format!("empty item path: `{}`", item));
     }
-    if canonical.contains('/') {
-        return Ok(canonical);
-    }
-    if let Some(t) = current_thread {
-        return Ok(format!("{}/{}", canonicalize_tag(t), canonical));
-    }
-    Err(format!(
-        "item `{}` has no path prefix. use `~/prefix/{}` or set `#thread` context first.",
-        item, canonical
-    ))
+    Ok(canonical)
 }
 
 /// Validate actor format: @<uuid>:<rig>:<model>
@@ -324,7 +314,7 @@ pub async fn get_pair(State(state): State<AppState>, Query(q): Query<PairQuery>)
 pub async fn get_paths(State(state): State<AppState>) -> impl IntoResponse {
     let reduced = state.reduced.read().await;
 
-    let mut out: Vec<PathSummary> = reduced
+    let out: Vec<PathSummary> = reduced
         .item_children
         .get("")
         .map(|roots| {
@@ -390,22 +380,40 @@ pub async fn get_path(State(state): State<AppState>, Query(q): Query<PathDetailQ
         }
     }
 
-    let recent_ingests: Vec<IngestRow> = reduced
-        .ingests_by_thread
-        .get(&path)
-        .map(|q| {
-            q.iter()
-                .take(20)
-                .filter_map(|ing_id| reduced.ingests_by_id.get(ing_id))
-                .map(|ing: &Ingest| IngestRow {
-                    ts: ing.ts,
-                    actor: Some(format!("@{}", ing.actor)),
-                    voter_key_id: ing.voter_key_id.clone(),
-                    snippet: ing.raw.chars().take(800).collect(),
-                })
-                .collect()
-        })
-        .unwrap_or_default();
+    let recent_ingests: Vec<IngestRow> = {
+        // Path-first: gather ingests that touched this path or its direct children.
+        let mut ingest_ids: Vec<String> = Vec::new();
+        let mut seen: HashSet<String> = HashSet::new();
+        for item in std::iter::once(path.clone()).chain(children.iter().cloned()) {
+            if let Some(q) = reduced.item_snippets.get(&item) {
+                for ing_id in q.iter() {
+                    if seen.insert(ing_id.clone()) {
+                        ingest_ids.push(ing_id.clone());
+                    }
+                }
+            }
+        }
+
+        ingest_ids.sort_by_key(|id| {
+            reduced
+                .ingests_by_id
+                .get(id)
+                .map(|ing| std::cmp::Reverse(ing.ts))
+                .unwrap_or(std::cmp::Reverse(0))
+        });
+
+        ingest_ids
+            .into_iter()
+            .take(20)
+            .filter_map(|ing_id| reduced.ingests_by_id.get(&ing_id))
+            .map(|ing: &Ingest| IngestRow {
+                ts: ing.ts,
+                actor: Some(format!("@{}", ing.actor)),
+                voter_key_id: ing.voter_key_id.clone(),
+                snippet: ing.raw.chars().take(800).collect(),
+            })
+            .collect()
+    };
 
     Json(PathDetailResponse {
         path: format!("~/{}", path),
@@ -512,7 +520,6 @@ pub async fn post_ingest(
     };
 
     let mut current_aspect: String = "default".to_string();
-    let mut current_thread: Option<String> = None;
     let ts = now_ms();
 
     let mut threads_seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
@@ -532,13 +539,12 @@ pub async fn post_ingest(
             dsl::Stmt::Hashtag { name } => {
                 let t = canonicalize_tag(name);
                 threads_seen.insert(t.clone());
-                current_thread = Some(t);
             }
             dsl::Stmt::Attribute { name } => {
                 current_aspect = canonicalize_aspect(name);
             }
             dsl::Stmt::Item { title, body } => {
-                let item = match resolve_item(title, current_thread.as_deref()) {
+                let item = match resolve_item(title) {
                     Ok(v) => v,
                     Err(msg) => return api_error(StatusCode::BAD_REQUEST, "invalid item path", Some(msg)),
                 };
@@ -559,11 +565,11 @@ pub async fn post_ingest(
                 defined_in_doc.insert(item);
             }
             dsl::Stmt::Vote { item1, item2, .. } => {
-                let a = match resolve_item(item1, current_thread.as_deref()) {
+                let a = match resolve_item(item1) {
                     Ok(v) => v,
                     Err(msg) => return api_error(StatusCode::BAD_REQUEST, "invalid vote item path", Some(msg)),
                 };
-                let b = match resolve_item(item2, current_thread.as_deref()) {
+                let b = match resolve_item(item2) {
                     Ok(v) => v,
                     Err(msg) => return api_error(StatusCode::BAD_REQUEST, "invalid vote item path", Some(msg)),
                 };
@@ -686,7 +692,6 @@ pub async fn post_check(
     let mut current_actor: Option<String> = None;
     let mut voter_key_id: String = "anon".to_string();
     let mut current_aspect: String = "default".to_string();
-    let mut current_thread: Option<String> = None;
     let ts = now_ms();
 
     let mut threads_seen: BTreeSet<String> = BTreeSet::new();
@@ -706,13 +711,12 @@ pub async fn post_check(
             dsl::Stmt::Hashtag { name } => {
                 let t = canonicalize_tag(name);
                 threads_seen.insert(t.clone());
-                current_thread = Some(t);
             }
             dsl::Stmt::Attribute { name } => {
                 current_aspect = canonicalize_aspect(name);
             }
             dsl::Stmt::Item { title, body } => {
-                let item = match resolve_item(title, current_thread.as_deref()) {
+                let item = match resolve_item(title) {
                     Ok(v) => v,
                     Err(msg) => return api_error(StatusCode::BAD_REQUEST, "invalid item path", Some(msg)),
                 };
@@ -733,11 +737,11 @@ pub async fn post_check(
                 defined_in_doc.insert(item);
             }
             dsl::Stmt::Vote { item1, item2, .. } => {
-                let a = match resolve_item(item1, current_thread.as_deref()) {
+                let a = match resolve_item(item1) {
                     Ok(v) => v,
                     Err(msg) => return api_error(StatusCode::BAD_REQUEST, "invalid vote item path", Some(msg)),
                 };
-                let b = match resolve_item(item2, current_thread.as_deref()) {
+                let b = match resolve_item(item2) {
                     Ok(v) => v,
                     Err(msg) => return api_error(StatusCode::BAD_REQUEST, "invalid vote item path", Some(msg)),
                 };

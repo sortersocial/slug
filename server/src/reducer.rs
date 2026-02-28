@@ -164,20 +164,13 @@ impl ReducerState {
             .insert(item.to_string());
     }
 
-    /// Resolve an item path. Multi-segment paths are used as-is.
-    /// Single-segment paths are qualified with the current thread context.
-    fn normalize_item(item: &str, current_thread: &Option<String>) -> Option<String> {
+    /// Resolve an item path as a first-class canonical path.
+    fn normalize_item(item: &str) -> Option<String> {
         let c = canonicalize_item(item);
         if c.is_empty() {
             return None;
         }
-        if c.contains('/') {
-            return Some(c);
-        }
-        // Single-segment: qualify with thread context.
-        current_thread
-            .as_ref()
-            .map(|t| format!("{}/{}", t, c))
+        Some(c)
     }
 
     pub fn apply_event(&mut self, event: Event) {
@@ -218,9 +211,7 @@ impl ReducerState {
                             current_actor = Some(canonicalize_actor(&name));
                         }
                         crate::dsl::Stmt::Item { title, body } => {
-                            let Some(item) =
-                                Self::normalize_item(&title, &current_thread)
-                            else {
+                            let Some(item) = Self::normalize_item(&title) else {
                                 continue;
                             };
                             self.items.insert(item.clone());
@@ -240,14 +231,10 @@ impl ReducerState {
                             ratio_right,
                             explanation,
                         } => {
-                            let Some(item_a) =
-                                Self::normalize_item(&item1, &current_thread)
-                            else {
+                            let Some(item_a) = Self::normalize_item(&item1) else {
                                 continue;
                             };
-                            let Some(item_b) =
-                                Self::normalize_item(&item2, &current_thread)
-                            else {
+                            let Some(item_b) = Self::normalize_item(&item2) else {
                                 continue;
                             };
 
@@ -305,7 +292,7 @@ impl ReducerState {
                                 );
                                 for prior_actor in prior_voters {
                                     // Notify about vote on items they've previously voted on.
-                                    // Thread attribution: use current_thread if set, else item's root.
+                                    // Thread attribution uses explicit ingest thread context when present.
                                     let thread_label = current_thread
                                         .as_deref()
                                         .unwrap_or("unknown");
@@ -333,12 +320,9 @@ impl ReducerState {
                 }
 
                 // Index snippets by item for this ingest.
-                if let Some(ref thread) = current_thread {
-                    let _thread = thread; // keep borrow alive
-                    for item in ingest_items.iter() {
-                        let q = self.item_snippets.entry(item.clone()).or_default();
-                        q.push_front(ing.id.clone());
-                    }
+                for item in ingest_items.iter() {
+                    let q = self.item_snippets.entry(item.clone()).or_default();
+                    q.push_front(ing.id.clone());
                 }
 
                 // Bump thread state and subscriptions for explicitly declared threads.
