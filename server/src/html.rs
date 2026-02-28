@@ -1,7 +1,7 @@
 use axum::{
     extract::{Path, Query, State},
     http::{header, StatusCode},
-    response::{Html, IntoResponse, Response},
+    response::{Html, IntoResponse, Redirect, Response},
 };
 use maud::{html, Markup, DOCTYPE};
 use serde::Deserialize;
@@ -440,9 +440,15 @@ pub async fn index(State(state): State<AppState>) -> impl IntoResponse {
 pub async fn garden_index(
     State(state): State<AppState>,
     Query(query): Query<ThreadQuery>,
-) -> impl IntoResponse {
+) -> Response {
     let aspects = all_aspects(&state).await;
     let selected_aspect = query.aspect.map(|a| canonicalize_aspect(&a));
+    if selected_aspect.is_none() {
+        if let Some(default_aspect) = default_aspect_for_scope(&state, None).await {
+            let target = with_aspect("/~", Some(&default_aspect));
+            return Redirect::temporary(&target).into_response();
+        }
+    }
 
     let roots: Vec<(String, usize)> = if selected_aspect.is_some() {
         let reduced = state.reduced.read().await;
@@ -466,7 +472,6 @@ pub async fn garden_index(
         "~/",
         "view-ontology",
         html! {
-            (render_ontology_header(&aspects, "/~", selected_aspect.as_deref()))
             @if selected_aspect.is_some() {
                 nav class="breadcrumb" {
                     a href="/" { "slug.social" }
@@ -492,7 +497,7 @@ pub async fn garden_index(
             }
         },
     );
-    Html(page.into_string())
+    Html(page.into_string()).into_response()
 }
 
 #[derive(Deserialize)]
@@ -509,23 +514,37 @@ async fn all_aspects(state: &AppState) -> Vec<String> {
     a
 }
 
-/// Ontology header: aspect selector (always first, global). Renders a select that navigates on change.
-fn render_ontology_header(aspects: &[String], base_url: &str, current: Option<&str>) -> Markup {
-    html! {
-        div class="ontology-header" {
-            label for="ontology-aspect-select" { "aspect" }
-            select id="ontology-aspect-select" onchange="if(this.value){window.location.href=this.value}" {
-                @if aspects.is_empty() {
-                    option value="" disabled selected { "no aspects yet" }
-                } @else {
-                    @for a in aspects {
-                        @let href = with_aspect(base_url, Some(a.as_str()));
-                        option value=(href) selected[current == Some(a.as_str())] { ":" (a) }
-                    }
-                }
-            }
+async fn default_aspect_for_scope(state: &AppState, scope: Option<&str>) -> Option<String> {
+    let reduced = state.reduced.read().await;
+    let mut best: Option<(String, usize, usize, usize)> = None;
+    let scope = scope.map(canonicalize_item).filter(|s| !s.is_empty());
+
+    for (k, group) in reduced.groups.iter() {
+        let total = group.idx_to_item.len();
+        let scoped = if let Some(ref s) = scope {
+            let prefix = format!("{s}/");
+            group
+                .idx_to_item
+                .iter()
+                .filter(|it| it.as_str() == s.as_str() || it.starts_with(&prefix))
+                .count()
+        } else {
+            total
+        };
+        if scoped == 0 {
+            continue;
+        }
+        let candidate = (k.aspect.clone(), scoped, total, k.aspect.len());
+        if best
+            .as_ref()
+            .map(|(_, bs, bt, bl)| (scoped, total, k.aspect.len()) > (*bs, *bt, *bl))
+            .unwrap_or(true)
+        {
+            best = Some(candidate);
         }
     }
+
+    best.map(|(aspect, _, _, _)| aspect)
 }
 
 /// Thread view — `/t/:tag` — dark, recent ingests only.
@@ -604,17 +623,18 @@ async fn render_path_view(
         return render_aspect_view(state, ns, aspect, None, parent_scope).await;
     }
 
-    // No aspect: show only aspect selector (menu).
-    let aspects = all_aspects(&state).await;
-    let base_url = format!("/~/{path}");
+    // No aspect: redirect to the default aspect for this scope.
+    if let Some(default_aspect) = default_aspect_for_scope(&state, Some(&path)).await {
+        let target = with_aspect(&format!("/~/{path}"), Some(&default_aspect));
+        return Redirect::temporary(&target).into_response();
+    }
+
+    // No aspects exist yet for this scope; show an empty-state page.
     let page = layout(
         &format!("~/{path}"),
         "view-ontology",
         html! {
-            (render_ontology_header(&aspects, &base_url, None))
-            @if aspects.is_empty() {
-                p class="muted" { "no aspects yet — add votes to create aspects" }
-            }
+            p class="muted" { "no aspects yet — add votes to create aspects" }
         },
     );
     return Html(page.into_string()).into_response();
@@ -761,23 +781,20 @@ async fn render_aspect_view(
             @if component_rankings.is_empty() {
                 p class="muted" { "no voted pairs yet in this aspect" }
             } @else {
-                div class="component-groups" {
-                    @for (ci, pairs, ranked) in component_rankings.iter() {
-                        div class="component" {
-                            div class="component-header" {
-                                span class="component-index" { (format!("{}.", ci + 1)) }
-                                span class="component-meta" { (format!("items={} pairs={}", ranked.len(), pairs)) }
-                            }
-                            ol class="ranking" {
-                                @for r in ranked.iter() {
-                                    @let item_url = item_href(&tag, &r.item, Some(&aspect));
-                                    li {
-                                        a class="item-link" href=(item_url) { code { "/" (item_display_path(&tag, &r.item)) } }
-                                    }
+                @for (ci, pairs, ranked) in component_rankings.iter() {
+                    div class="component" {
+                        div class="component-header" {
+                            (format!("ordering {} items={} pairs={}", ci + 1, ranked.len(), pairs))
+                        }
+                        ol class="ranking" {
+                            @for r in ranked.iter() {
+                                @let item_url = item_href(&tag, &r.item, Some(&aspect));
+                                li {
+                                    a class="item-link" href=(item_url) { code { "/" (item_display_path(&tag, &r.item)) } }
                                 }
                             }
                         }
-                    }                    
+                    }
                 }
             }
 
@@ -814,34 +831,31 @@ async fn render_aspect_view(
             @if component_rankings.is_empty() && no_vote_items.is_empty() && isolate_idxs.is_empty() {
                 p class="muted" { "none yet" }
             } @else {
-                div class="component-groups" {
-                    @for (ci, pairs, ranked) in component_rankings.iter() {
-                        div class="component" {
-                            div class="component-header" {
-                                span class="component-index" { (format!("{}.", ci + 1)) }
-                                span class="component-meta" { (format!("items={} pairs={}", ranked.len(), pairs)) }
-                            }
-                            ol class="ranking meat" {
-                                @for r in ranked.iter() {
-                                    @let item_url = item_href(&tag, &r.item, Some(&aspect));
-                                    li {
-                                        div class="item-card" {
-                                            div class="item-card-header" {
-                                                a class="item-link" href=(item_url) { code { "/" (item_display_path(&tag, &r.item)) } }
-                                                span class="score" { (format!("{:.4}", r.score)) }
-                                            }
-                                            @if let Some(body) = bodies.get(&r.item) {
-                                                div class="item-card-body" { (body) }
-                                            } @else {
-                                                div class="item-card-body muted" { "no body yet" }
-                                            }
+                @for (ci, pairs, ranked) in component_rankings.iter() {
+                    div class="component" {
+                        div class="component-header" {
+                            (format!("ordering {} items={} pairs={}", ci + 1, ranked.len(), pairs))
+                        }
+                        ol class="ranking meat" {
+                            @for r in ranked.iter() {
+                                @let item_url = item_href(&tag, &r.item, Some(&aspect));
+                                li {
+                                    div class="item-card" {
+                                        div class="item-card-header" {
+                                            a class="item-link" href=(item_url) { code { "/" (item_display_path(&tag, &r.item)) } }
+                                            span class="score" { (format!("{:.4}", r.score)) }
+                                        }
+                                        @if let Some(body) = bodies.get(&r.item) {
+                                            div class="item-card-body" { (body) }
+                                        } @else {
+                                            div class="item-card-body muted" { "no body yet" }
                                         }
                                     }
                                 }
                             }
                         }
                     }
-                }                
+                }
 
                 @if !no_vote_items.is_empty() {
                     div class="component unsorted" {

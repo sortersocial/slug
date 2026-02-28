@@ -366,41 +366,23 @@ div.ratio-right.current { background: var(--link); }
 /* ----------------------------------------------------------------
    COMPONENT / RANKING BLOCKS
    ---------------------------------------------------------------- */
-div.component-groups {
-  align-items: flex-start;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin: 6px 0;
-}
 div.component {
   background: var(--g2);
   border: var(--bv-lg) solid;
   border-color: var(--hi) var(--lo) var(--lo) var(--hi);
-  margin: 0;
+  margin: 6px 0;
   width: fit-content;
   max-width: 100%;
 }
 div.component-header {
-  align-items: flex-end;
   background: var(--g3);
   border-bottom: 2px solid var(--lo);
   color: var(--ui);
-  display: flex;
   font-size: 11px;
-  gap: 8px;
   letter-spacing: 0.08em;
   padding: 4px 10px;
   text-transform: uppercase;
 }
-span.component-index {
-  color: var(--signal);
-  font-size: 40px;
-  font-weight: bold;
-  letter-spacing: 0;
-  line-height: 0.9;
-}
-span.component-meta { padding-bottom: 2px; }
 ol.ranking {
   counter-reset: rank;
   display: flex;
