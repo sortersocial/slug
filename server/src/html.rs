@@ -761,11 +761,12 @@ async fn render_item_page(
                     @let ago = timeago::timeago(now, v.ts);
                     div class="vote" {
                         div class="vote-header" {
-                            span class="muted" { ":" (v.aspect) }
+                            @let aspect_href = format!("/~/{}?aspect={}", v.a.split('/').next().unwrap_or(&ns), v.aspect);
+                            a href=(aspect_href) class="muted" { ":" (v.aspect) }
                             " "
-                            code class="vote-left" { "/" (v.a) }
+                            a class="item-link" href=(format!("/~/{}", v.a)) { code class="vote-left" { "/" (v.a) } }
                             span class="vote-ratio" { (format!("{}:{}", v.ratio_left, v.ratio_right)) }
-                            code class="vote-right" { "/" (v.b) }
+                            a class="item-link" href=(format!("/~/{}", v.b)) { code class="vote-right" { "/" (v.b) } }
                         }
                         div class="ratio-bar" aria-label={(format!("ratio {}:{}", v.ratio_left, v.ratio_right))} {
                             div class="ratio-left" style={(format!("width: {:.3}%;", pct))} {}
@@ -1073,9 +1074,9 @@ async fn render_aspect_view(
                         @let ago = timeago::timeago(now, v.ts);
                         div class="vote" {
                             div class="vote-header" {
-                                code class="vote-left" { "/" (v.a) }
+                                a class="item-link" href=(format!("/~/{}", v.a)) { code class="vote-left" { "/" (v.a) } }
                                 span class="vote-ratio" { (format!("{}:{}", v.ratio_left, v.ratio_right)) }
-                                code class="vote-right" { "/" (v.b) }
+                                a class="item-link" href=(format!("/~/{}", v.b)) { code class="vote-right" { "/" (v.b) } }
                             }
                             div class="ratio-bar" aria-label={(format!("ratio {}:{}", v.ratio_left, v.ratio_right))} {
                                 div class="ratio-left" style={(format!("width: {:.3}%;", pct))} {}
