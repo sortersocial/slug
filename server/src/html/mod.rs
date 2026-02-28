@@ -185,19 +185,6 @@ pub(super) fn bc_thread(tag: &str) -> Markup {
     }
 }
 
-/// The display path of an item relative to its namespace root (strips `ns/` prefix).
-pub(super) fn item_display_path(ns: &str, item: &str) -> String {
-    let c = crate::events::canonicalize_item(item);
-    c.strip_prefix(&format!("{ns}/"))
-        .unwrap_or(c.as_str())
-        .to_string()
-}
-
-/// The URL for an item under `/~`.
-pub(super) fn item_href(ns: &str, item: &str) -> String {
-    format!("/~/{}/{}", ns, item_display_path(ns, item))
-}
-
 /// Age bucket for recency coloring of thread entries.
 pub(super) fn recency_class(now_ms: i64, ts_ms: i64) -> &'static str {
     let age_ms = now_ms.saturating_sub(ts_ms);

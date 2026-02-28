@@ -232,7 +232,7 @@ pub async fn thread_view(
         &format!("#{tag}"),
         "view-thread",
         html! {
-            nav class="breadcrumb" { (bc_thread(&tag, true)) }
+            nav class="breadcrumb" { (bc_thread(&tag)) }
             h2 { "#" (tag) }
             div id="presence-bar" class="presence-bar muted" data-thread-tag=(tag) {
                 span { "viewing now: " span id="presence-global" { (presence.global_viewers) } }

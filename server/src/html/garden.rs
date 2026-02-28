@@ -13,9 +13,19 @@ use crate::{
 };
 
 use super::{
-    bc_path, bc_segment, item_display_path, item_href, layout, now_ms, ratio_pct,
+    bc_path, bc_segment, layout, now_ms, ratio_pct,
     entry::actor_label,
 };
+
+/// Display path for an item. No namespace stripping: paths are first-class.
+fn item_display_path(item: &str) -> String {
+    canonicalize_item(item)
+}
+
+/// Canonical ontology URL for an item path.
+fn item_href(item: &str) -> String {
+    format!("/~/{}", item_display_path(item))
+}
 
 /// Ontology index — root-level namespaces.
 pub async fn garden_index(State(state): State<AppState>) -> impl IntoResponse {
@@ -70,11 +80,10 @@ pub async fn ontology_path(
     Path(path): Path<String>,
 ) -> impl IntoResponse {
     let path = canonicalize_item(&path);
-    let ns = path.split('/').next().unwrap_or(&path).to_string();
-    render_scope_view(state, ns, path).await
+    render_scope_view(state, path).await
 }
 
-async fn render_scope_view(state: AppState, tag: String, path: String) -> axum::response::Response {
+async fn render_scope_view(state: AppState, path: String) -> axum::response::Response {
     let aspect = "default".to_string();
     let parent_scope = path.clone();
     let (group_opt, items_in_scope): (Option<crate::reducer::GroupState>, Vec<String>) = {
@@ -106,7 +115,7 @@ async fn render_scope_view(state: AppState, tag: String, path: String) -> axum::
                     } @else {
                         ul {
                             @for it in &items_in_scope {
-                                li { a href=(item_href(&tag, it)) { code { "/" (item_display_path(&tag, it)) } } }
+                                li { a href=(item_href(it)) { code { "/" (item_display_path(it)) } } }
                             }
                         }
                     }
@@ -198,9 +207,9 @@ async fn render_scope_view(state: AppState, tag: String, path: String) -> axum::
                         }
                         ol class="ranking" {
                             @for r in ranked.iter() {
-                                @let item_url = item_href(&tag, &r.item);
+                                @let item_url = item_href(&r.item);
                                 li {
-                                    a class="item-link" href=(item_url) { code { "/" (item_display_path(&tag, &r.item)) } }
+                                    a class="item-link" href=(item_url) { code { "/" (item_display_path(&r.item)) } }
                                 }
                             }
                         }
@@ -215,8 +224,8 @@ async fn render_scope_view(state: AppState, tag: String, path: String) -> axum::
                         @for idx in &isolate_idxs {
                             @let name = group.idx_to_item.get(*idx).cloned().unwrap_or_default();
                             li {
-                                @let href = item_href(&tag, &name);
-                                a class="item-link" href=(href) { code { "/" (item_display_path(&tag, &name)) } }
+                                @let href = item_href(&name);
+                                a class="item-link" href=(href) { code { "/" (item_display_path(&name)) } }
                             }
                         }
                     }
@@ -229,8 +238,8 @@ async fn render_scope_view(state: AppState, tag: String, path: String) -> axum::
                     ul {
                         @for it in &no_vote_items {
                             li {
-                                @let href = item_href(&tag, it);
-                                a class="item-link" href=(href) { code { "/" (item_display_path(&tag, it)) } }
+                                @let href = item_href(it);
+                                a class="item-link" href=(href) { code { "/" (item_display_path(it)) } }
                             }
                         }
                     }
@@ -248,11 +257,11 @@ async fn render_scope_view(state: AppState, tag: String, path: String) -> axum::
                         }
                         ol class="ranking meat" {
                             @for r in ranked.iter() {
-                                @let item_url = item_href(&tag, &r.item);
+                                @let item_url = item_href(&r.item);
                                 li {
                                     div class="item-card" {
                                         div class="item-card-header" {
-                                            a class="item-link" href=(item_url) { code { "/" (item_display_path(&tag, &r.item)) } }
+                                            a class="item-link" href=(item_url) { code { "/" (item_display_path(&r.item)) } }
                                             span class="score" { (format!("{:.4}", r.score)) }
                                         }
                                         @if let Some(body) = bodies.get(&r.item) {
@@ -271,10 +280,10 @@ async fn render_scope_view(state: AppState, tag: String, path: String) -> axum::
                     div class="component unsorted" {
                         div class="component-header" { "not yet compared" }
                         @for it in no_vote_items.iter() {
-                            @let href = item_href(&tag, it);
+                            @let href = item_href(it);
                             div class="item-card" {
                                 div class="item-card-header" {
-                                    a class="item-link" href=(href) { code { "/" (item_display_path(&tag, it)) } }
+                                    a class="item-link" href=(href) { code { "/" (item_display_path(it)) } }
                                     span class="muted" { "unranked" }
                                 }
                                 @if let Some(body) = bodies.get(it) {
