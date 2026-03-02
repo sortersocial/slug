@@ -25,10 +25,7 @@ struct Cli {
 enum Command {
     /// Fetch and print the ranking
     Rank {
-        /// Thread name (unused, kept for compatibility)
-        #[arg(long)]
-        thread: Option<String>,
-        /// Optional parent path scope (defaults to thread root)
+        /// Optional parent path scope (ontology namespace)
         #[arg(long)]
         parent: Option<String>,
         /// Maximum items to return
@@ -41,10 +38,7 @@ enum Command {
 
     /// Get a suggested pair of items to compare next
     Pair {
-        /// Thread name (unused, kept for compatibility)
-        #[arg(long)]
-        thread: Option<String>,
-        /// Optional parent path scope (defaults to thread root)
+        /// Optional parent path scope (ontology namespace)
         #[arg(long)]
         parent: Option<String>,
         /// If true, ignore ranking and return a random pair (useful for "skip")
@@ -220,7 +214,8 @@ fn print_threads(resp: &ThreadsResponse) {
     println!();
     println!("next:");
     println!("  npx slugsocial thread --thread <name>");
-    println!("  npx slugsocial pair --thread <name>");
+    println!("  npx slugsocial pair [--parent <path>]");
+    println!("  npx slugsocial rank [--parent <path>]");
 }
 
 fn print_path_detail(resp: &PathDetailResponse) {
@@ -344,7 +339,6 @@ async fn main() -> Result<()> {
         }
 
         Command::Rank {
-            thread: _,
             parent,
             limit,
             json,
@@ -365,7 +359,6 @@ async fn main() -> Result<()> {
         }
 
         Command::Pair {
-            thread: _,
             parent,
             random,
             json,
