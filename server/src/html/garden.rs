@@ -7,6 +7,7 @@ use maud::html;
 use crate::{
     events::{canonicalize_item, item_parent_path},
     ranking::{connected_components_from_voted_pairs, ranked_items_subset},
+    scope_rank::{build_children_rankings, ChildrenRankings},
     state::AppState,
     timeago,
 };
@@ -81,19 +82,6 @@ pub async fn ontology_path(
 }
 
 #[derive(Debug, Clone)]
-struct ScopedComponent {
-    pairs: usize,
-    ranked: Vec<crate::ranking::RankedItem>,
-}
-
-#[derive(Debug, Clone)]
-struct ChildrenRankings {
-    component_rankings: Vec<ScopedComponent>,
-    isolate_items: Vec<String>,
-    no_vote_items: Vec<String>,
-}
-
-#[derive(Debug, Clone)]
 struct SiblingRank {
     position: usize,
     component_size: usize,
@@ -107,81 +95,6 @@ struct ItemPageViewModel {
     sibling_rank: Option<SiblingRank>,
     child_rankings: ChildrenRankings,
     touching_votes: Vec<crate::reducer::VoteData>,
-}
-
-fn build_children_rankings(
-    reduced: &crate::reducer::ReducerState,
-    parent_scope: &str,
-) -> ChildrenRankings {
-    let group = &reduced.ranking_group;
-    let mut items_in_scope: Vec<String> = reduced
-        .item_children
-        .get(parent_scope)
-        .map(|s| s.iter().cloned().collect())
-        .unwrap_or_default();
-    items_in_scope.sort();
-
-    // Build scoped components for direct children under parent_scope only.
-    let scoped_idxs: Vec<usize> = items_in_scope
-        .iter()
-        .filter_map(|it| group.item_to_idx.get(it).copied())
-        .collect();
-    let local_to_global: Vec<usize> = scoped_idxs.clone();
-    let global_to_local: std::collections::HashMap<usize, usize> = scoped_idxs
-        .iter()
-        .enumerate()
-        .map(|(local, global)| (*global, local))
-        .collect();
-    let (mut comps_local, isolate_local_idxs) = connected_components_from_voted_pairs(
-        scoped_idxs.len(),
-        group.voted_pairs.iter().filter_map(|(i, j)| {
-            let li = global_to_local.get(i).copied()?;
-            let lj = global_to_local.get(j).copied()?;
-            Some((li, lj))
-        }),
-    );
-
-    // Items in the scope that have never been voted.
-    let mut no_vote_items: Vec<String> = items_in_scope
-        .iter()
-        .filter(|it| !group.item_to_idx.contains_key(*it))
-        .cloned()
-        .collect();
-    no_vote_items.sort();
-
-    // Sort components by size descending, then by item indices for stability.
-    comps_local.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
-
-    let component_rankings: Vec<ScopedComponent> = comps_local
-        .iter()
-        .map(|comp_local| {
-            let comp_global: Vec<usize> = comp_local
-                .iter()
-                .filter_map(|li| local_to_global.get(*li).copied())
-                .collect();
-            let comp_set: std::collections::HashSet<usize> = comp_global.iter().copied().collect();
-            let ranked = ranked_items_subset(group, &comp_global, 10000, 1e-8);
-            let pairs = group
-                .voted_pairs
-                .iter()
-                .filter(|(i, j)| comp_set.contains(i) && comp_set.contains(j))
-                .count();
-            ScopedComponent { pairs, ranked }
-        })
-        .collect();
-
-    let mut isolate_items: Vec<String> = isolate_local_idxs
-        .into_iter()
-        .filter_map(|li| local_to_global.get(li).copied())
-        .filter_map(|idx| group.idx_to_item.get(idx).cloned())
-        .collect();
-    isolate_items.sort();
-
-    ChildrenRankings {
-        component_rankings,
-        isolate_items,
-        no_vote_items,
-    }
 }
 
 fn build_sibling_rank(
@@ -357,28 +270,14 @@ async fn render_scope_view(state: AppState, path: OntologyPath) -> axum::respons
                     }
                 }
 
-                @if !model.child_rankings.isolate_items.is_empty() {
+                @if !model.child_rankings.unranked_items.is_empty() {
                     div class="ont-group-shell ont-group-unsorted" {
-                        div class="ont-group-meta" { "isolates" }
+                        div class="ont-group-meta" { "unranked" }
                         ul class="ont-group-list" {
-                            @for name in &model.child_rankings.isolate_items {
+                            @for name in &model.child_rankings.unranked_items {
                                 li {
-                                    @let href = item_href(&name);
-                                    a class="item-link" href=(href) { code { "/" (item_display_path(&name)) } }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                @if !model.child_rankings.no_vote_items.is_empty() {
-                    div class="ont-group-shell ont-group-unsorted" {
-                        div class="ont-group-meta" { "not yet compared" }
-                        ul class="ont-group-list" {
-                            @for it in &model.child_rankings.no_vote_items {
-                                li {
-                                    @let href = item_href(it);
-                                    a class="item-link" href=(href) { code { "/" (item_display_path(it)) } }
+                                    @let href = item_href(name);
+                                    a class="item-link" href=(href) { code { "/" (item_display_path(name)) } }
                                 }
                             }
                         }
@@ -495,8 +394,8 @@ mod tests {
             .collect();
         assert_eq!(names, vec!["topic/a", "topic/b"]);
         assert!(
-            model.child_rankings.no_vote_items.contains(&"topic/kid1".to_string())
-                || model.child_rankings.no_vote_items.contains(&"topic/kid2".to_string())
+            model.child_rankings.unranked_items.contains(&"topic/kid1".to_string())
+                || model.child_rankings.unranked_items.contains(&"topic/kid2".to_string())
         );
     }
 }

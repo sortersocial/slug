@@ -132,10 +132,13 @@ async fn test_rank_endpoint() {
 
     assert!(response.status().is_success());
     let body: serde_json::Value = response.json().await.unwrap();
-    assert!(body["ranking"].is_array());
-    let ranking = body["ranking"].as_array().unwrap();
+    assert!(body["components"].is_array());
+    let components = body["components"].as_array().unwrap();
+    assert_eq!(components.len(), 1);
+    let ranking = components[0]["ranking"].as_array().unwrap();
     assert_eq!(ranking.len(), 2);
     assert_eq!(ranking[0]["item"], "/rust");
+    assert!(body["unranked_items"].is_array());
 }
 
 #[tokio::test]

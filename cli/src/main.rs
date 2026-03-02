@@ -150,22 +150,23 @@ enum Command {
     },
 }
 
+/// Output exactly one line per ranking row so wc -l equals item count.
 fn print_ranking(rows: &[RankRow]) {
-    println!();
-    if rows.is_empty() {
-        println!("(no items yet)");
-        println!();
-        println!("next:");
-        println!("  npx slugsocial ingest <file.sorter>");
-        return;
-    }
     for (i, r) in rows.iter().enumerate() {
         println!("{:>3}. {:<24} {:.6}", i + 1, r.item, r.score);
     }
-    println!();
-    println!("next:");
-    println!("  npx slugsocial pair ~/path");
-    println!("  npx slugsocial recent ~/path");
+}
+
+/// Print rank response: each component's ranking, then unranked (one line per item).
+fn print_rank_response(resp: &RankResponse) {
+    for comp in &resp.components {
+        for (i, r) in comp.ranking.iter().enumerate() {
+            println!("{:>3}. {:<24} {:.6}", i + 1, r.item, r.score);
+        }
+    }
+    for item in &resp.unranked_items {
+        println!("  - {item}  (unranked)");
+    }
 }
 
 fn print_next(next: &NextMoves) {
@@ -176,14 +177,8 @@ fn print_next(next: &NextMoves) {
     println!("  {}", next.web);
 }
 
+/// Output exactly one line per thread so wc -l equals item count.
 fn print_threads(resp: &ThreadsResponse) {
-    if resp.threads.is_empty() {
-        println!("(no threads yet)");
-        println!();
-        println!("next:");
-        println!("  npx slugsocial ingest <file.sorter>");
-        return;
-    }
     for t in &resp.threads {
         let age_secs = {
             let now = std::time::SystemTime::now()
@@ -206,11 +201,6 @@ fn print_threads(resp: &ThreadsResponse) {
             t.thread, t.subscriber_count, ago
         );
     }
-    println!();
-    println!("next:");
-    println!("  npx slugsocial thread <name>");
-    println!("  npx slugsocial pair ~/path");
-    println!("  npx slugsocial rank ~/path");
 }
 
 fn print_path_detail(resp: &PathDetailResponse) {
@@ -233,6 +223,16 @@ fn print_path_detail(resp: &PathDetailResponse) {
             println!("  ts={} {}", ing.ts, who);
             println!("  {}", ing.snippet.replace('\n', "\\n"));
         }
+    }
+    if resp.children.is_empty() && resp.recent_ingests.is_empty() {
+        println!();
+        println!("You can make an item here.");
+        let one_segment = !resp.path.contains('/');
+        if one_segment {
+            println!("Or perhaps you were looking for the thread #{}?", resp.path);
+        }
+        println!();
+        println!("#thread = forum, bump order.  ~/path = garden, ordered by rank centrality votes.");
     }
     println!();
     println!("next:");
@@ -344,22 +344,18 @@ async fn main() -> Result<()> {
 
         Command::Rank {
             path,
-            limit,
+            limit: _,
             json,
         } => {
             validate_ontology_path(&path).map_err(anyhow::Error::msg)?;
             let client = http_client()?;
-            let url = format!(
-                "{base}/api/v0/rank?limit={}&parent={}",
-                limit,
-                urlencoding::encode(&path)
-            );
+            let url = format!("{base}/api/v0/rank?parent={}", urlencoding::encode(&path));
             let resp: RankResponse = expect_json(client.get(url).send().await?).await?;
 
             if json {
                 println!("{}", serde_json::to_string_pretty(&resp)?);
             } else {
-                print_ranking(&resp.ranking);
+                print_rank_response(&resp);
             }
         }
 
@@ -514,7 +510,7 @@ async fn main() -> Result<()> {
 
         Command::Thread { name, json } => {
             let client = http_client()?;
-            let url = format!("{base}/api/v0/path?path={}", urlencoding::encode(&name));
+            let url = format!("{base}/api/v0/thread?tag={}", urlencoding::encode(&name));
             let resp: PathDetailResponse = expect_json(client.get(url).send().await?).await?;
             if json {
                 println!("{}", serde_json::to_string_pretty(&resp)?);

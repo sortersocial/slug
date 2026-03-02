@@ -7,7 +7,7 @@ use axum::{
 use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
 use slug_types::*;
-use std::collections::{BTreeSet, HashSet};
+use std::collections::BTreeSet;
 
 use crate::{
     dsl,
@@ -102,37 +102,35 @@ pub struct RankQuery {
 }
 
 pub async fn get_rank(State(state): State<AppState>, Query(q): Query<RankQuery>) -> impl IntoResponse {
-    let limit = q.limit.unwrap_or(50).clamp(1, 500);
+    let reduced = state.reduced.read().await;
+    let parent_scope = q
+        .parent
+        .as_deref()
+        .map(|p| canonicalize_item(p))
+        .unwrap_or_else(|| "".to_string());
+    let rankings = crate::scope_rank::build_children_rankings(&reduced, &parent_scope);
 
-    let ranking = {
-        let reduced = state.reduced.read().await;
-        let group = &reduced.ranking_group;
-        if !group.idx_to_item.is_empty() {
-            let idxs: Vec<usize> = match &q.parent {
-                Some(parent) => {
-                    let parent = canonicalize_item(parent);
-                    reduced
-                        .item_children
-                        .get(&parent)
-                        .map(|s| s.iter().cloned().collect::<Vec<_>>())
-                        .unwrap_or_default()
-                        .iter()
-                        .filter_map(|it| group.item_to_idx.get(it).copied())
-                        .collect()
-                }
-                None => (0..group.idx_to_item.len()).collect(),
-            };
-            ranked_items_subset(group, &idxs, 10000, 1e-8)
+    let components: Vec<RankComponent> = rankings
+        .component_rankings
+        .into_iter()
+        .map(|c| RankComponent {
+            pairs: c.pairs,
+            ranking: c
+                .ranked
                 .into_iter()
-                .take(limit)
-                .map(|r| RankRow { item: format!("/{}", r.item), score: r.score })
-                .collect()
-        } else {
-            vec![]
-        }
-    };
+                .map(|r| RankRow {
+                    item: format!("/{}", r.item),
+                    score: r.score,
+                })
+                .collect(),
+        })
+        .collect();
 
-    Json(RankResponse { ranking }).into_response()
+    Json(RankResponse {
+        components,
+        unranked_items: rankings.unranked_items,
+    })
+    .into_response()
 }
 
 #[derive(Debug, Deserialize)]
@@ -340,44 +338,31 @@ pub async fn get_threads(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct PathDetailQuery {
-    pub path: String,
+pub struct ThreadDetailQuery {
+    pub tag: String,
 }
 
-pub async fn get_path(State(state): State<AppState>, Query(q): Query<PathDetailQuery>) -> impl IntoResponse {
-    let path = canonicalize_item(&q.path);
+/// Thread (forum) detail by tag — recent ingests in #tag. Not the same as get_path (garden).
+pub async fn get_thread(State(state): State<AppState>, Query(q): Query<ThreadDetailQuery>) -> impl IntoResponse {
+    let tag = canonicalize_tag(&q.tag);
     let reduced = state.reduced.read().await;
 
-    let mut children: Vec<String> = reduced
-        .item_children
-        .get(&path)
-        .map(|s| s.iter().cloned().collect())
+    let ingest_ids = reduced
+        .ingests_by_thread
+        .get(&tag)
+        .map(|q| q.iter().cloned().collect::<Vec<_>>())
         .unwrap_or_default();
-    children.sort();
 
     let recent_ingests: Vec<IngestRow> = {
-        // Path-first: gather ingests that touched this path or its direct children.
-        let mut ingest_ids: Vec<String> = Vec::new();
-        let mut seen: HashSet<String> = HashSet::new();
-        for item in std::iter::once(path.clone()).chain(children.iter().cloned()) {
-            if let Some(q) = reduced.item_snippets.get(&item) {
-                for ing_id in q.iter() {
-                    if seen.insert(ing_id.clone()) {
-                        ingest_ids.push(ing_id.clone());
-                    }
-                }
-            }
-        }
-
-        ingest_ids.sort_by_key(|id| {
+        let mut ids = ingest_ids;
+        ids.sort_by_key(|id| {
             reduced
                 .ingests_by_id
                 .get(id)
                 .map(|ing| std::cmp::Reverse(ing.ts))
                 .unwrap_or(std::cmp::Reverse(0))
         });
-
-        ingest_ids
+        ids
             .into_iter()
             .take(20)
             .filter_map(|ing_id| reduced.ingests_by_id.get(&ing_id))
@@ -391,8 +376,8 @@ pub async fn get_path(State(state): State<AppState>, Query(q): Query<PathDetailQ
     };
 
     Json(PathDetailResponse {
-        path: format!("~/{}", path),
-        children: children.into_iter().map(|it| format!("/{}", it)).collect(),
+        path: format!("#{}", tag),
+        children: vec![],
         recent_ingests,
     }).into_response()
 }

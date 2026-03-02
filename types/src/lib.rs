@@ -15,8 +15,15 @@ pub struct RankRow {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct RankResponse {
+pub struct RankComponent {
+    pub pairs: usize,
     pub ranking: Vec<RankRow>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RankResponse {
+    pub components: Vec<RankComponent>,
+    pub unranked_items: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

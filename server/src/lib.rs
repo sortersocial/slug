@@ -6,6 +6,7 @@ pub mod events;
 pub mod html;
 pub mod ranking;
 pub mod reducer;
+pub mod scope_rank;
 pub mod state;
 pub mod timeago;
 
@@ -23,7 +24,7 @@ pub fn create_app(state: AppState) -> Router {
         .route("/~/*path", axum::routing::get(html::ontology_path))
         .route("/api/v0/paths", axum::routing::get(api::get_paths))
         .route("/api/v0/threads", axum::routing::get(api::get_threads))
-        .route("/api/v0/path", axum::routing::get(api::get_path))
+        .route("/api/v0/thread", axum::routing::get(api::get_thread))
         .route("/api/v0/item", axum::routing::get(api::get_item))
         .route("/api/v0/recent_votes", axum::routing::get(api::get_recent_votes))
         // REMOVED: /api/v0/vote - use /api/v0/ingest instead
