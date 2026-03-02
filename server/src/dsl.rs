@@ -214,10 +214,6 @@ fn is_item_name(s: &str) -> bool {
     true
 }
 
-fn is_word(s: &str) -> bool {
-    !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-}
-
 fn is_actor_name(s: &str) -> bool {
     // Actor token parser guardrail (NOT full validation).
     //
