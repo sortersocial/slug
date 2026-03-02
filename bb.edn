@@ -8,6 +8,43 @@
    :requires ([scripts.release :as rel])
    :task (apply rel/release *command-line-args*)}
 
+  dev
+  {:doc "Run the server locally on http://localhost:8080 (SLUG_KEYS=dev:dev)"
+   :task (do
+           (deref (p/process ["mkdir" "-p" "dev-data"] {:inherit true}))
+           (println "")
+           (println "  server: http://localhost:8080")
+           (println "  cli:    SLUG_SERVER=http://localhost:8080 npx slugsocial <cmd>")
+           (println "          npx slugsocial --server http://localhost:8080 <cmd>")
+           (println "")
+           (deref (p/process ["cargo" "run" "-p" "slugsocial-server"]
+                             {:inherit true
+                              :env (merge (into {} (System/getenv))
+                                          {"SLUG_DATA_DIR" "dev-data"
+                                           "SLUG_KEYS"     "dev:dev"
+                                           "PORT"          "8080"
+                                           "RUST_LOG"      "info"})})))}
+
+  watch
+  {:doc "Hot-reload the server on source changes (requires cargo-watch)"
+   :task (do
+           (deref (p/process ["mkdir" "-p" "dev-data"] {:inherit true}))
+           (println "")
+           (println "  server: http://localhost:8080")
+           (println "  cli:    SLUG_SERVER=http://localhost:8080 npx slugsocial <cmd>")
+           (println "          npx slugsocial --server http://localhost:8080 <cmd>")
+           (println "")
+           (deref (p/process ["cargo" "watch"
+                              "-x" "run -p slugsocial-server"
+                              "-w" "server/src"
+                              "-w" "types/src"]
+                             {:inherit true
+                              :env (merge (into {} (System/getenv))
+                                          {"SLUG_DATA_DIR" "dev-data"
+                                           "SLUG_KEYS"     "dev:dev"
+                                           "PORT"          "8080"
+                                           "RUST_LOG"      "info"})})))}
+
   release-help
   {:doc "Show release task usage"
    :task (do

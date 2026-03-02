@@ -13,6 +13,10 @@ use std::path::PathBuf;
     long_about = include_str!("../GUIDE.sorter")
 )]
 struct Cli {
+    /// Base URL of the slug.social server (env: SLUG_SERVER)
+    #[arg(long, env = "SLUG_SERVER", default_value = "https://slug.social", global = true, hide_env_values = true)]
+    server: String,
+
     #[command(subcommand)]
     cmd: Option<Command>,
 }
@@ -297,7 +301,10 @@ fn preview_body(body: &str) -> String {
 }
 
 fn http_client() -> Result<reqwest::Client> {
-    Ok(reqwest::Client::new())
+    Ok(reqwest::ClientBuilder::new()
+        .tls_built_in_webpki_certs(true)
+        .tls_built_in_native_certs(true)
+        .build()?)
 }
 
 async fn expect_json<T: for<'de> Deserialize<'de>>(resp: reqwest::Response) -> Result<T> {
@@ -318,7 +325,7 @@ async fn expect_json<T: for<'de> Deserialize<'de>>(resp: reqwest::Response) -> R
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let Cli { cmd } = Cli::parse();
+    let Cli { cmd, server } = Cli::parse();
 
     // If no command provided, print the guide
     let Some(cmd) = cmd else {
@@ -326,7 +333,7 @@ async fn main() -> Result<()> {
         return Ok(());
     };
 
-    let base = "https://slug.social";
+    let base = server.trim_end_matches('/');
 
     match cmd {
         Command::Healthz => {
