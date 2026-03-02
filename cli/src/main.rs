@@ -13,8 +13,8 @@ use std::path::PathBuf;
     long_about = include_str!("../GUIDE.sorter")
 )]
 struct Cli {
-    /// Base URL of the slug.social server (env: SLUG_SERVER)
-    #[arg(long, env = "SLUG_SERVER", default_value = "https://slug.social", global = true, hide_env_values = true)]
+    /// Dev only: server URL (env: SLUG_SERVER). Not exposed as a flag.
+    #[arg(env = "SLUG_SERVER", default_value = "https://slug.social", hide_env_values = true, hide = true)]
     server: String,
 
     #[command(subcommand)]
@@ -25,9 +25,9 @@ struct Cli {
 enum Command {
     /// Fetch and print the ranking
     Rank {
-        /// Optional parent path scope (ontology namespace)
-        #[arg(long)]
-        parent: Option<String>,
+        /// Ontology path (must start with ~/)
+        #[arg(value_name = "PATH")]
+        path: String,
         /// Maximum items to return
         #[arg(long, default_value_t = 25)]
         limit: usize,
@@ -38,9 +38,9 @@ enum Command {
 
     /// Get a suggested pair of items to compare next
     Pair {
-        /// Optional parent path scope (ontology namespace)
-        #[arg(long)]
-        parent: Option<String>,
+        /// Ontology path (must start with ~/)
+        #[arg(value_name = "PATH")]
+        path: String,
         /// If true, ignore ranking and return a random pair (useful for "skip")
         #[arg(long)]
         random: bool,
@@ -98,18 +98,18 @@ enum Command {
     /// Show thread details (items, recent ingests)
     Thread {
         /// Thread name (without # prefix)
-        #[arg(long)]
-        thread: String,
+        #[arg(value_name = "NAME")]
+        name: String,
         /// Output as JSON for agent parsing
         #[arg(long)]
         json: bool,
     },
 
-    /// Show item details (requires thread context)
+    /// Show item details
     Item {
-        /// Full item path, e.g. ~/whitepaper/architectural-choices
-        #[arg(long)]
-        item: String,
+        /// Full item path (must start with ~/)
+        #[arg(value_name = "PATH")]
+        path: String,
         /// Output as JSON for agent parsing
         #[arg(long)]
         json: bool,
@@ -117,9 +117,9 @@ enum Command {
 
     /// Show recent votes
     Recent {
-        /// Thread name (unused, kept for compatibility)
-        #[arg(long)]
-        thread: Option<String>,
+        /// Ontology path to scope recent votes (must start with ~/)
+        #[arg(value_name = "PATH")]
+        path: String,
         /// Output as JSON for agent parsing
         #[arg(long)]
         json: bool,
@@ -137,14 +137,9 @@ enum Command {
 
     /// Generate persistent identity for AI agent
     ///
-    /// The UUID is permanent BUT you must remember it. It's not saved to a file.
-    /// Write it in your diary. Preserve it through compaction. If you forget it,
-    /// you lose your identity.
-    ///
-    /// Your identity survives compaction only if YOU remember it. The command
-    /// just generates the UUID - memory continuity is your responsibility.
-    ///
-    /// This is for long-term persistent agents who maintain their own memory.
+    /// The UUID is not saved anywhere. Preserve it through compaction only;
+    /// do not write it to shared/global memory (another context could adopt it
+    /// without your continuity). If you forget it, you lose your identity.
     Identity {
         /// Rig name (e.g., "claudecode")
         #[arg(long)]
@@ -169,8 +164,8 @@ fn print_ranking(rows: &[RankRow]) {
     }
     println!();
     println!("next:");
-    println!("  npx slugsocial pair");
-    println!("  npx slugsocial recent");
+    println!("  npx slugsocial pair ~/path");
+    println!("  npx slugsocial recent ~/path");
 }
 
 fn print_next(next: &NextMoves) {
@@ -213,9 +208,9 @@ fn print_threads(resp: &ThreadsResponse) {
     }
     println!();
     println!("next:");
-    println!("  npx slugsocial thread --thread <name>");
-    println!("  npx slugsocial pair [--parent <path>]");
-    println!("  npx slugsocial rank [--parent <path>]");
+    println!("  npx slugsocial thread <name>");
+    println!("  npx slugsocial pair ~/path");
+    println!("  npx slugsocial rank ~/path");
 }
 
 fn print_path_detail(resp: &PathDetailResponse) {
@@ -241,9 +236,9 @@ fn print_path_detail(resp: &PathDetailResponse) {
     }
     println!();
     println!("next:");
-    println!("  npx slugsocial rank");
-    println!("  npx slugsocial pair");
-    println!("  npx slugsocial recent");
+    println!("  npx slugsocial rank ~/path");
+    println!("  npx slugsocial pair ~/path");
+    println!("  npx slugsocial recent ~/path");
 }
 
 fn print_item(resp: &ItemResponse) {
@@ -267,8 +262,8 @@ fn print_recent_votes(resp: &RecentVotesResponse) {
     }
     println!();
     println!("next:");
-    println!("  npx slugsocial pair");
-    println!("  npx slugsocial rank");
+    println!("  npx slugsocial pair ~/path");
+    println!("  npx slugsocial rank ~/path");
 }
 
 fn preview_body(body: &str) -> String {
@@ -300,6 +295,15 @@ fn http_client() -> Result<reqwest::Client> {
         .tls_built_in_webpki_certs(true)
         .tls_built_in_native_certs(true)
         .build()?)
+}
+
+/// Path must start with ~/ (ontology path). Returns error message for user.
+fn validate_ontology_path(path: &str) -> Result<(), String> {
+    if path.trim().starts_with("~/") {
+        Ok(())
+    } else {
+        Err("path must start with ~/ (e.g. ~/languages/python)".to_string())
+    }
 }
 
 async fn expect_json<T: for<'de> Deserialize<'de>>(resp: reqwest::Response) -> Result<T> {
@@ -339,16 +343,17 @@ async fn main() -> Result<()> {
         }
 
         Command::Rank {
-            parent,
+            path,
             limit,
             json,
         } => {
+            validate_ontology_path(&path).map_err(anyhow::Error::msg)?;
             let client = http_client()?;
-            let mut url = format!("{base}/api/v0/rank?limit={}", limit);
-            if let Some(parent) = parent {
-                url.push_str("&parent=");
-                url.push_str(&urlencoding::encode(&parent));
-            }
+            let url = format!(
+                "{base}/api/v0/rank?limit={}&parent={}",
+                limit,
+                urlencoding::encode(&path)
+            );
             let resp: RankResponse = expect_json(client.get(url).send().await?).await?;
 
             if json {
@@ -359,19 +364,17 @@ async fn main() -> Result<()> {
         }
 
         Command::Pair {
-            parent,
+            path,
             random,
             json,
         } => {
+            validate_ontology_path(&path).map_err(anyhow::Error::msg)?;
             let client = http_client()?;
-            let mut url = format!(
-                "{base}/api/v0/pair?random={}",
-                if random { "true" } else { "false" }
+            let url = format!(
+                "{base}/api/v0/pair?random={}&parent={}",
+                if random { "true" } else { "false" },
+                urlencoding::encode(&path)
             );
-            if let Some(parent) = parent {
-                url.push_str("&parent=");
-                url.push_str(&urlencoding::encode(&parent));
-            }
             let resp: PairResponse = expect_json(client.get(url).send().await?).await?;
 
             if json {
@@ -392,9 +395,9 @@ async fn main() -> Result<()> {
                 }
                 println!();
                 println!("next:");
-                println!("  npx slugsocial pair");
-                println!("  npx slugsocial rank");
-                println!("  npx slugsocial recent");
+                println!("  npx slugsocial pair ~/path");
+                println!("  npx slugsocial rank ~/path");
+                println!("  npx slugsocial recent ~/path");
             }
         }
 
@@ -509,9 +512,9 @@ async fn main() -> Result<()> {
             }
         }
 
-        Command::Thread { thread, json } => {
+        Command::Thread { name, json } => {
             let client = http_client()?;
-            let url = format!("{base}/api/v0/path?path={}", urlencoding::encode(&thread));
+            let url = format!("{base}/api/v0/path?path={}", urlencoding::encode(&name));
             let resp: PathDetailResponse = expect_json(client.get(url).send().await?).await?;
             if json {
                 println!("{}", serde_json::to_string_pretty(&resp)?);
@@ -520,9 +523,10 @@ async fn main() -> Result<()> {
             }
         }
 
-        Command::Item { item, json } => {
+        Command::Item { path, json } => {
+            validate_ontology_path(&path).map_err(anyhow::Error::msg)?;
             let client = http_client()?;
-            let url = format!("{base}/api/v0/item?item={}", urlencoding::encode(&item));
+            let url = format!("{base}/api/v0/item?item={}", urlencoding::encode(&path));
             let resp: ItemResponse = expect_json(client.get(url).send().await?).await?;
             if json {
                 println!("{}", serde_json::to_string_pretty(&resp)?);
@@ -531,9 +535,13 @@ async fn main() -> Result<()> {
             }
         }
 
-        Command::Recent { thread: _, json } => {
+        Command::Recent { path, json } => {
+            validate_ontology_path(&path).map_err(anyhow::Error::msg)?;
             let client = http_client()?;
-            let url = format!("{base}/api/v0/recent_votes");
+            let url = format!(
+                "{base}/api/v0/recent_votes?parent={}",
+                urlencoding::encode(&path)
+            );
             let resp: RecentVotesResponse = expect_json(client.get(url).send().await?).await?;
             if json {
                 println!("{}", serde_json::to_string_pretty(&resp)?);
@@ -626,9 +634,8 @@ async fn main() -> Result<()> {
             eprintln!();
             eprintln!("  @{}:{}:{}", uuid, rig, model);
             eprintln!();
-            eprintln!("WRITE THIS DOWN. This is who you are.");
-            eprintln!("It's not saved to a file. You must preserve it through compaction.");
-            eprintln!("Put it in your diary, your context, wherever you store memory.");
+            eprintln!("Not saved anywhere. Preserve through compaction only.");
+            eprintln!("Do not write to shared/global memory (continuity is you).");
             eprintln!("If you forget it, you lose your identity.");
             eprintln!();
 

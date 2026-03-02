@@ -417,7 +417,14 @@ pub async fn get_item(State(state): State<AppState>, Query(q): Query<ItemQuery>)
 #[derive(Debug, Deserialize)]
 pub struct RecentVotesQuery {
     #[serde(default)]
+    pub parent: Option<String>,
+    #[serde(default)]
     pub limit: Option<usize>,
+}
+
+fn vote_touches_path(a: &str, b: &str, parent_canon: &str) -> bool {
+    let under = |item: &str| item == parent_canon || item.starts_with(&format!("{}/", parent_canon));
+    under(a) || under(b)
 }
 
 pub async fn get_recent_votes(
@@ -429,7 +436,15 @@ pub async fn get_recent_votes(
     let reduced = state.reduced.read().await;
     let group = &reduced.ranking_group;
 
-    let out: Vec<VoteRow> = group.recent_votes.iter().take(limit).map(|v| VoteRow {
+    let iter = group.recent_votes.iter();
+    let iter: Box<dyn Iterator<Item = _>> = if let Some(parent) = &q.parent {
+        let parent_can = canonicalize_item(parent);
+        Box::new(iter.filter(move |v| vote_touches_path(&v.a, &v.b, &parent_can)))
+    } else {
+        Box::new(iter)
+    };
+
+    let out: Vec<VoteRow> = iter.take(limit).map(|v| VoteRow {
         ts: v.ts,
         a: format!("/{}", v.a),
         b: format!("/{}", v.b),
