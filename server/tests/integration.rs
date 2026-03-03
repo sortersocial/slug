@@ -91,7 +91,7 @@ async fn test_vote_endpoint() {
 
     // /api/v0/vote was removed; all votes are submitted via ingest.
     let ingest_payload = serde_json::json!({
-        "text": "@00000000-0000-0000-0000-000000000000:test:local/test\n/clap {cli parser}\n/argh {cli parser}\n/clap 3:1 /argh {because clap is more full-featured}\n",
+        "text": "@00000000-0000-0000-0000-000000000000:test:local/test\n#cli\n/clap {cli parser}\n/argh {cli parser}\n/clap 3:1 /argh {because clap is more full-featured}\n",
     });
 
     let response = client
@@ -114,7 +114,7 @@ async fn test_rank_endpoint() {
 
     // Ingest items + vote (vote endpoint removed).
     let ingest_payload = serde_json::json!({
-        "text": "@00000000-0000-0000-0000-000000000000:test:local/test\n/rust {systems}\n/go {concurrency}\n/rust 3:1 /go {because i prefer rust for systems work}\n",
+        "text": "@00000000-0000-0000-0000-000000000000:test:local/test\n#langs\n/rust {systems}\n/go {concurrency}\n/rust 3:1 /go {because i prefer rust for systems work}\n",
     });
     client
         .post(&format!("http://{}/api/v0/ingest", addr))
@@ -147,7 +147,7 @@ async fn test_check_endpoint_does_not_commit() {
     let client = reqwest::Client::new();
 
     let check_payload = serde_json::json!({
-        "text": "@00000000-0000-0000-0000-000000000000:test:local/test\n/a {x}\n/b {y}\n/a 2:1 /b {because}\n",
+        "text": "@00000000-0000-0000-0000-000000000000:test:local/test\n#t\n/a {x}\n/b {y}\n/a 2:1 /b {because}\n",
     });
     let resp = client
         .post(&format!("http://{}/api/v0/check", addr))
@@ -179,6 +179,7 @@ async fn test_ontology_item_page_shows_body_children_and_collapsible_votes() {
 
     let ingest_payload = serde_json::json!({
         "text": "@00000000-0000-0000-0000-000000000000:test:local/test\n\
+#topic\n\
 /topic {topic body}\n\
 /topic/a {alpha body}\n\
 /topic/b {beta body}\n\

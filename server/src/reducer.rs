@@ -17,6 +17,8 @@ pub struct VoteData {
     pub ratio_right: i32,
     pub body: String,
     pub actor: String,
+    /// Thread tag where this vote was cast. Validation requires every ingest to have a #tag; "untagged" only for replayed legacy events.
+    pub thread: String,
 }
 
 /// Single ranking group (one-ranking model). All votes contribute to this group.
@@ -136,6 +138,9 @@ pub struct ReducerState {
     /// Per-item ingest references (most recent first).
     pub item_snippets: HashMap<String, VecDeque<String>>,
 
+    /// Item path -> thread tags that mention or vote on this item. Connective tissue for garden body/pair/matchup.
+    pub item_threads: HashMap<String, HashSet<String>>,
+
     /// First-class thread state: bump time, subscriber count.
     pub threads: HashMap<String, ThreadState>,
 
@@ -245,6 +250,7 @@ impl ReducerState {
                                 ratio_right,
                                 body: explanation,
                                 actor,
+                                thread: current_thread.clone().unwrap_or_else(|| "untagged".to_string()), // legacy replay: pre-validation events may have no #tag
                             };
 
                             ingest_items.insert(item_a.clone());
@@ -314,6 +320,16 @@ impl ReducerState {
                 for item in ingest_items.iter() {
                     let q = self.item_snippets.entry(item.clone()).or_default();
                     q.push_front(ing.id.clone());
+                }
+
+                // Index item -> threads (connective tissue for garden body/pair/matchup).
+                for item in ingest_items.iter() {
+                    for thread in &touched_threads {
+                        self.item_threads
+                            .entry(item.clone())
+                            .or_default()
+                            .insert(thread.clone());
+                    }
                 }
 
                 // Bump thread state and subscriptions for explicitly declared threads.

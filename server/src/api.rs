@@ -233,12 +233,21 @@ pub fn validate_ingest_document(
         )
     })?;
 
+    let threads: Vec<String> = threads_seen.into_iter().collect();
+    if threads.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "ingest requires at least one #tag".to_string(),
+            Some("declare a thread with #tag, e.g. #sorting-hat".to_string()),
+        ));
+    }
+
     Ok(ValidatedIngest {
         doc,
         ts,
         voter_key_id,
         actor,
-        threads: threads_seen.into_iter().collect(),
+        threads,
         raw_text: text.to_string(),
     })
 }
@@ -1074,9 +1083,18 @@ mod tests {
     }
 
     #[test]
+    fn validate_ingest_document_requires_tag() {
+        let reduced = ReducerState::default();
+        let text = "@00000000-0000-0000-0000-000000000000:test:local/test\n~/t/a {a}\n~/t/b {b}\n";
+        let err = validate_ingest_document(&reduced, text, "need actor").unwrap_err();
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+        assert_eq!(err.1, "ingest requires at least one #tag");
+    }
+
+    #[test]
     fn validate_ingest_document_rejects_item_without_body() {
         let reduced = ReducerState::default();
-        let text = "@00000000-0000-0000-0000-000000000000:test:local/test\n~/t/a\n";
+        let text = "@00000000-0000-0000-0000-000000000000:test:local/test\n#t\n~/t/a\n";
         let err = validate_ingest_document(&reduced, text, "need actor").unwrap_err();
         assert_eq!(err.0, StatusCode::BAD_REQUEST);
         assert!(err.1.contains("missing body"));

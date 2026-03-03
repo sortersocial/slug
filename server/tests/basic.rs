@@ -85,6 +85,28 @@ fn reducer_handles_item_and_body_from_ingest() {
 }
 
 #[test]
+fn reducer_indexes_item_threads_and_vote_thread() {
+    let mut state = ReducerState::default();
+    // Ingest with #tag and items/vote: item_threads should link item -> thread; VoteData should carry thread.
+    state.apply_event(ingest_event(
+        1,
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n\
+         #sorting-hat\n\
+         ~/sorts/insertion { O(n^2) }\n\
+         ~/sorts/mergesort { O(n log n) }\n\
+         ~/sorts/insertion 3:1 ~/sorts/mergesort { simpler for small n }\n",
+    ));
+
+    let threads_for_insertion = state.item_threads.get("sorts/insertion").unwrap();
+    assert!(threads_for_insertion.contains("sorting-hat"));
+    let threads_for_mergesort = state.item_threads.get("sorts/mergesort").unwrap();
+    assert!(threads_for_mergesort.contains("sorting-hat"));
+
+    let vote = state.item_votes.get("sorts/insertion").unwrap().front().unwrap();
+    assert_eq!(vote.thread, "sorting-hat");
+}
+
+#[test]
 fn reducer_aggregates_multiple_votes() {
     let mut state = ReducerState::default();
 
