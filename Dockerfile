@@ -1,4 +1,5 @@
-FROM rust:1.82-slim as builder
+# time 0.3.47+ requires Rust 1.88 (edition 2024)
+FROM rust:1.88-slim as builder
 
 WORKDIR /build
 
