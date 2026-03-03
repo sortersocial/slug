@@ -24,10 +24,13 @@ struct Cli {
 #[derive(Subcommand, Debug)]
 enum Command {
     /// Fetch and print the ranking
+    ///
+    /// Accepts one or more paths. Use ~/path/* for cross-namespace (e.g. ~/ai-models/*).
+    /// Multiple paths merge their child sets before ranking.
     Rank {
-        /// Ontology path (must start with ~/)
-        #[arg(value_name = "PATH")]
-        path: String,
+        /// Path(s); wildcard ~/path/* or multiple PATH to merge scopes
+        #[arg(value_name = "PATH", num_args = 1..)]
+        paths: Vec<String>,
         /// Maximum items to return
         #[arg(long, default_value_t = 25)]
         limit: usize,
@@ -37,10 +40,13 @@ enum Command {
     },
 
     /// Get a suggested pair of items to compare next
+    ///
+    /// Accepts one or more paths. Use ~/path/* for cross-namespace (e.g. ~/ai-models/*).
+    /// Multiple paths merge their child sets for the pair pool.
     Pair {
-        /// Ontology path (must start with ~/)
-        #[arg(value_name = "PATH")]
-        path: String,
+        /// Path(s); wildcard ~/path/* or multiple PATH to merge scopes
+        #[arg(value_name = "PATH", num_args = 1..)]
+        paths: Vec<String>,
         /// If true, ignore ranking and return a random pair (useful for "skip")
         #[arg(long)]
         random: bool,
@@ -297,12 +303,13 @@ fn http_client() -> Result<reqwest::Client> {
         .build()?)
 }
 
-/// Path must start with ~/ (ontology path). Returns error message for user.
+/// Path must start with ~/ (ontology path). Optional trailing /* for wildcard. Returns error message for user.
 fn validate_ontology_path(path: &str) -> Result<(), String> {
-    if path.trim().starts_with("~/") {
+    let p = path.trim();
+    if p.starts_with("~/") {
         Ok(())
     } else {
-        Err("path must start with ~/ (e.g. ~/languages/python)".to_string())
+        Err("path must start with ~/ (e.g. ~/languages/python or ~/ai-models/*)".to_string())
     }
 }
 
@@ -343,13 +350,16 @@ async fn main() -> Result<()> {
         }
 
         Command::Rank {
-            path,
+            paths,
             limit: _,
             json,
         } => {
-            validate_ontology_path(&path).map_err(anyhow::Error::msg)?;
+            for p in &paths {
+                validate_ontology_path(p).map_err(anyhow::Error::msg)?;
+            }
             let client = http_client()?;
-            let url = format!("{base}/api/v0/rank?parent={}", urlencoding::encode(&path));
+            let parent_param = paths.join(",");
+            let url = format!("{base}/api/v0/rank?parent={}", urlencoding::encode(&parent_param));
             let resp: RankResponse = expect_json(client.get(url).send().await?).await?;
 
             if json {
@@ -360,16 +370,19 @@ async fn main() -> Result<()> {
         }
 
         Command::Pair {
-            path,
+            paths,
             random,
             json,
         } => {
-            validate_ontology_path(&path).map_err(anyhow::Error::msg)?;
+            for p in &paths {
+                validate_ontology_path(p).map_err(anyhow::Error::msg)?;
+            }
             let client = http_client()?;
+            let parent_param = paths.join(",");
             let url = format!(
                 "{base}/api/v0/pair?random={}&parent={}",
                 if random { "true" } else { "false" },
-                urlencoding::encode(&path)
+                urlencoding::encode(&parent_param)
             );
             let resp: PairResponse = expect_json(client.get(url).send().await?).await?;
 

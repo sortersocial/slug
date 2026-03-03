@@ -95,20 +95,33 @@ fn validate_actor_format(actor: &str) -> Result<(), String> {
 
 #[derive(Debug, Deserialize)]
 pub struct RankQuery {
+    /// Parent path(s) and/or wildcards. Comma-separated: ~/a,~/b or ~/ai-models/* for cross-namespace.
     #[serde(default)]
     pub parent: Option<String>,
     #[serde(default)]
     pub limit: Option<usize>,
 }
 
+fn parse_parent_specs(parent: Option<&String>) -> Vec<String> {
+    let s = match parent {
+        Some(p) => p.trim(),
+        None => return vec![],
+    };
+    if s.is_empty() {
+        return vec![];
+    }
+    s.split(',').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect()
+}
+
 pub async fn get_rank(State(state): State<AppState>, Query(q): Query<RankQuery>) -> impl IntoResponse {
     let reduced = state.reduced.read().await;
-    let parent_scope = q
-        .parent
-        .as_deref()
-        .map(|p| canonicalize_item(p))
-        .unwrap_or_else(|| "".to_string());
-    let rankings = crate::scope_rank::build_children_rankings(&reduced, &parent_scope);
+    let specs = parse_parent_specs(q.parent.as_ref());
+    let rankings = if specs.is_empty() {
+        crate::scope_rank::build_children_rankings(&reduced, "")
+    } else {
+        let items = crate::scope_rank::resolve_scope(&reduced, &specs);
+        crate::scope_rank::build_rankings_for_item_set(&reduced, &items)
+    };
 
     let components: Vec<RankComponent> = rankings
         .component_rankings
@@ -135,6 +148,7 @@ pub async fn get_rank(State(state): State<AppState>, Query(q): Query<RankQuery>)
 
 #[derive(Debug, Deserialize)]
 pub struct PairQuery {
+    /// Parent path(s) and/or wildcards. Comma-separated: ~/a,~/b or ~/ai-models/* for cross-namespace.
     #[serde(default)]
     pub parent: Option<String>,
     #[serde(default)]
@@ -180,17 +194,13 @@ fn is_pair_voted(group: &crate::reducer::GroupState, a: &str, b: &str) -> bool {
 pub async fn get_pair(State(state): State<AppState>, Query(q): Query<PairQuery>) -> impl IntoResponse {
     let force_random = q.random.unwrap_or(false);
 
-    // Pool: direct children of parent scope, or all items in the group.
     let pool: Vec<String> = {
         let reduced = state.reduced.read().await;
-        match &q.parent {
-            Some(parent) => {
-                let parent = canonicalize_item(parent);
-                reduced.item_children.get(&parent)
-                    .map(|s| s.iter().cloned().collect())
-                    .unwrap_or_default()
-            }
-            None => reduced.ranking_group.idx_to_item.clone(),
+        let specs = parse_parent_specs(q.parent.as_ref());
+        if specs.is_empty() {
+            reduced.ranking_group.idx_to_item.clone()
+        } else {
+            crate::scope_rank::resolve_scope(&reduced, &specs)
         }
     };
 
