@@ -15,6 +15,7 @@ use crate::{
     dsl,
     events::{canonicalize_actor, canonicalize_item, canonicalize_tag, item_parent_path, Event},
     ranking::{ranked_items, ranked_items_subset},
+    reducer::ReducerState,
     state::AppState,
 };
 use crate::events::Ingest;
@@ -89,6 +90,157 @@ fn validate_actor_format(actor: &str) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+/// Result of validating an ingest document. Shared by post_ingest and post_check.
+#[derive(Debug)]
+pub struct ValidatedIngest {
+    pub doc: dsl::Document,
+    pub ts: i64,
+    pub voter_key_id: String,
+    pub actor: String,
+    pub threads: Vec<String>,
+    pub raw_text: String,
+}
+
+/// Parse and validate an ingest document against current reduced state.
+/// Returns a validated struct for commit (ingest) or dry-run (check).
+/// Error is (StatusCode, error message, optional hint).
+pub fn validate_ingest_document(
+    reduced: &ReducerState,
+    text: &str,
+    require_actor_error: &str,
+) -> Result<ValidatedIngest, (StatusCode, String, Option<String>)> {
+    let doc = match dsl::parse_full(text) {
+        Ok(d) => d,
+        Err(e) => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                "parse error".to_string(),
+                Some(format!("{}", e)),
+            ));
+        }
+    };
+
+    let ts = now_ms();
+    let mut current_actor: Option<String> = None;
+    let mut voter_key_id = "anon".to_string();
+    let mut threads_seen: BTreeSet<String> = BTreeSet::new();
+    let mut defined_in_doc: HashSet<String> = HashSet::new();
+
+    for s in &doc.statements {
+        match s {
+            dsl::Stmt::Actor { name } => {
+                if let Err(msg) = validate_actor_format(name) {
+                    return Err((
+                        StatusCode::BAD_REQUEST,
+                        "invalid actor format".to_string(),
+                        Some(msg),
+                    ));
+                }
+                let a = canonicalize_actor(name);
+                current_actor = Some(a.clone());
+                voter_key_id = a;
+            }
+            dsl::Stmt::Hashtag { name } => {
+                let t = canonicalize_tag(name);
+                threads_seen.insert(t);
+            }
+            dsl::Stmt::Item { title, body } => {
+                let item = match resolve_item(title) {
+                    Ok(v) => v,
+                    Err(msg) => {
+                        return Err((StatusCode::BAD_REQUEST, "invalid item path".to_string(), Some(msg)));
+                    }
+                };
+                let Some(body_text) = body else {
+                    return Err((
+                        StatusCode::BAD_REQUEST,
+                        format!("item missing body: /{item}"),
+                        Some("items must be declared with bodies, e.g. `~/path/item { ... }`".to_string()),
+                    ));
+                };
+                if body_text.trim().is_empty() {
+                    return Err((
+                        StatusCode::BAD_REQUEST,
+                        format!("item body is empty: /{item}"),
+                        Some("write at least one sentence inside `{ ... }`".to_string()),
+                    ));
+                }
+                defined_in_doc.insert(item);
+            }
+            dsl::Stmt::Vote { item1, item2, .. } => {
+                let a = match resolve_item(item1) {
+                    Ok(v) => v,
+                    Err(msg) => {
+                        return Err((
+                            StatusCode::BAD_REQUEST,
+                            "invalid vote item path".to_string(),
+                            Some(msg),
+                        ));
+                    }
+                };
+                let b = match resolve_item(item2) {
+                    Ok(v) => v,
+                    Err(msg) => {
+                        return Err((
+                            StatusCode::BAD_REQUEST,
+                            "invalid vote item path".to_string(),
+                            Some(msg),
+                        ));
+                    }
+                };
+                let missing: Vec<String> = [&a, &b]
+                    .into_iter()
+                    .filter(|it| !defined_in_doc.contains(*it) && !reduced.items.contains(*it))
+                    .map(|it| format!("/{it}"))
+                    .collect();
+                if !missing.is_empty() {
+                    return Err((
+                        StatusCode::BAD_REQUEST,
+                        "vote references undefined item(s)".to_string(),
+                        Some(format!(
+                            "define items with bodies before voting. missing: {}",
+                            missing.join(", ")
+                        )),
+                    ));
+                }
+                let missing_body: Vec<String> = [&a, &b]
+                    .into_iter()
+                    .filter(|it| !defined_in_doc.contains(*it) && !reduced.item_bodies.contains_key(*it))
+                    .map(|it| format!("/{it}"))
+                    .collect();
+                if !missing_body.is_empty() {
+                    return Err((
+                        StatusCode::BAD_REQUEST,
+                        "vote references item(s) without bodies".to_string(),
+                        Some(format!(
+                            "missing bodies: {}. Declare each item as `/item {{ ... }}`",
+                            missing_body.join(", ")
+                        )),
+                    ));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let actor = current_actor.ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            require_actor_error.to_string(),
+            Some("add `@yourname` at the start of your document".to_string()),
+        )
+    })?;
+
+    Ok(ValidatedIngest {
+        doc,
+        ts,
+        voter_key_id,
+        actor,
+        threads: threads_seen.into_iter().collect(),
+        raw_text: text.to_string(),
+    })
 }
 
 // ============================================================================
@@ -560,113 +712,21 @@ pub async fn post_ingest(
     _headers: axum::http::HeaderMap,
     Json(req): Json<IngestRequest>,
 ) -> impl IntoResponse {
-    let mut current_actor: Option<String> = None;
-    let mut voter_key_id: String = "anon".to_string();
-
-    let doc = match dsl::parse_full(&req.text) {
-        Ok(d) => d,
-        Err(e) => {
-            return api_error(StatusCode::BAD_REQUEST, "parse error", Some(format!("{}", e)));
-        }
+    let reduced = state.reduced.read().await;
+    let v = match validate_ingest_document(
+        &reduced,
+        &req.text,
+        "ingest requires @actor declaration",
+    ) {
+        Ok(x) => x,
+        Err((status, msg, hint)) => return api_error(status, msg, hint).into_response(),
     };
-
-    let ts = now_ms();
-
-    let mut threads_seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    let mut defined_in_doc: std::collections::HashSet<String> = std::collections::HashSet::new();
-
-    // Validate pass.
-    for s in &doc.statements {
-        match s {
-            dsl::Stmt::Actor { name } => {
-                if let Err(msg) = validate_actor_format(name) {
-                    return api_error(StatusCode::BAD_REQUEST, "invalid actor format", Some(msg));
-                }
-                let a = canonicalize_actor(name);
-                current_actor = Some(a.clone());
-                voter_key_id = a;
-            }
-            dsl::Stmt::Hashtag { name } => {
-                let t = canonicalize_tag(name);
-                threads_seen.insert(t.clone());
-            }
-            dsl::Stmt::Item { title, body } => {
-                let item = match resolve_item(title) {
-                    Ok(v) => v,
-                    Err(msg) => return api_error(StatusCode::BAD_REQUEST, "invalid item path", Some(msg)),
-                };
-                let Some(body_text) = body else {
-                    return api_error(
-                        StatusCode::BAD_REQUEST,
-                        format!("item missing body: /{item}"),
-                        Some("items must be declared with bodies, e.g. `~/path/item { ... }`".to_string()),
-                    );
-                };
-                if body_text.trim().is_empty() {
-                    return api_error(
-                        StatusCode::BAD_REQUEST,
-                        format!("item body is empty: /{item}"),
-                        Some("write at least one sentence inside `{ ... }`".to_string()),
-                    );
-                }
-                defined_in_doc.insert(item);
-            }
-            dsl::Stmt::Vote { item1, item2, .. } => {
-                let a = match resolve_item(item1) {
-                    Ok(v) => v,
-                    Err(msg) => return api_error(StatusCode::BAD_REQUEST, "invalid vote item path", Some(msg)),
-                };
-                let b = match resolve_item(item2) {
-                    Ok(v) => v,
-                    Err(msg) => return api_error(StatusCode::BAD_REQUEST, "invalid vote item path", Some(msg)),
-                };
-                // Validate items exist and have bodies.
-                {
-                    let reduced = state.reduced.read().await;
-                    let missing: Vec<String> = [&a, &b]
-                        .into_iter()
-                        .filter(|it| !defined_in_doc.contains(*it) && !reduced.items.contains(*it))
-                        .map(|it| format!("/{it}"))
-                        .collect();
-                    if !missing.is_empty() {
-                        return api_error(
-                            StatusCode::BAD_REQUEST,
-                            "vote references undefined item(s)",
-                            Some(format!("define items with bodies before voting. missing: {}", missing.join(", "))),
-                        );
-                    }
-                    let missing_body: Vec<String> = [&a, &b]
-                        .into_iter()
-                        .filter(|it| !defined_in_doc.contains(*it) && !reduced.item_bodies.contains_key(*it))
-                        .map(|it| format!("/{it}"))
-                        .collect();
-                    if !missing_body.is_empty() {
-                        return api_error(
-                            StatusCode::BAD_REQUEST,
-                            "vote references item(s) without bodies",
-                            Some(format!("missing bodies: {}. Declare each item as `/item {{ ... }}`", missing_body.join(", "))),
-                        );
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    let Some(actor) = current_actor.clone() else {
-        return api_error(
-            StatusCode::BAD_REQUEST,
-            "ingest requires @actor declaration",
-            Some("add `@yourname` at the start of your document".to_string()),
-        );
-    };
-
-    let threads_vec: Vec<String> = threads_seen.into_iter().collect();
+    drop(reduced);
 
     // Collect parent scopes for all voted items so we can compute ranking deltas.
     let voted_parent_scopes: Vec<String> = {
         let mut parents: HashSet<String> = HashSet::new();
-        for s in &doc.statements {
+        for s in &v.doc.statements {
             if let dsl::Stmt::Vote { item1, item2, .. } = s {
                 if let (Ok(a), Ok(b)) = (resolve_item(item1), resolve_item(item2)) {
                     parents.insert(item_parent_path(&a).unwrap_or_default());
@@ -674,35 +734,35 @@ pub async fn post_ingest(
                 }
             }
         }
-        let mut v: Vec<String> = parents.into_iter().collect();
-        v.sort();
-        v
+        let mut out: Vec<String> = parents.into_iter().collect();
+        out.sort();
+        out
     };
 
     // Snapshot rankings before the event is applied.
-    let pre_rankings: HashMap<String, crate::scope_rank::ChildrenRankings> = if !voted_parent_scopes.is_empty() {
-        let reduced = state.reduced.read().await;
-        voted_parent_scopes.iter()
-            .map(|p| (p.clone(), crate::scope_rank::build_children_rankings(&reduced, p)))
-            .collect()
-    } else {
-        HashMap::new()
-    };
+    let pre_rankings: HashMap<String, crate::scope_rank::ChildrenRankings> =
+        if !voted_parent_scopes.is_empty() {
+            let reduced = state.reduced.read().await;
+            voted_parent_scopes
+                .iter()
+                .map(|p| (p.clone(), crate::scope_rank::build_children_rankings(&reduced, p)))
+                .collect()
+        } else {
+            HashMap::new()
+        };
 
     let event = Event::Ingest(Ingest {
-        ts,
+        ts: v.ts,
         id: uuid::Uuid::new_v4().to_string(),
-        raw: req.text.clone(),
-        voter_key_id: voter_key_id.clone(),
-        actor,
+        raw: v.raw_text.clone(),
+        voter_key_id: v.voter_key_id.clone(),
+        actor: v.actor.clone(),
     });
 
     if let Err(err) = state.event_log.append(&event).await {
         return api_error(StatusCode::INTERNAL_SERVER_ERROR, format!("{err}"), None);
     }
-    let actor_for_stream = match &event {
-        Event::Ingest(ing) => ing.actor.clone(),
-    };
+    let actor_for_stream = v.actor.clone();
     {
         let mut reduced = state.reduced.write().await;
         reduced.apply_event(event);
@@ -711,7 +771,8 @@ pub async fn post_ingest(
     // Snapshot rankings after the event and compute per-scope deltas.
     let ranking_changes: Vec<ScopeRankChanges> = if !voted_parent_scopes.is_empty() {
         let reduced = state.reduced.read().await;
-        voted_parent_scopes.iter()
+        voted_parent_scopes
+            .iter()
             .filter_map(|p| {
                 let before = pre_rankings.get(p)?;
                 let after = crate::scope_rank::build_children_rankings(&reduced, p);
@@ -723,10 +784,10 @@ pub async fn post_ingest(
     };
 
     let _ = state.stream_tx.send(crate::state::StreamEvent {
-        ts,
+        ts: v.ts,
         actor: actor_for_stream,
-        tags: threads_vec.iter().map(|t| format!("#{t}")).collect(),
-        snippet: req.text.chars().take(200).collect(),
+        tags: v.threads.iter().map(|t| format!("#{t}")).collect(),
+        snippet: v.raw_text.chars().take(200).collect(),
     });
 
     {
@@ -737,10 +798,10 @@ pub async fn post_ingest(
         });
     }
 
-    let primary_thread = threads_vec.first().cloned().unwrap_or_else(|| "untagged".to_string());
+    let primary_thread = v.threads.first().cloned().unwrap_or_else(|| "untagged".to_string());
     Json(IngestResponse {
         ok: true,
-        threads: threads_vec.iter().map(|t| format!("#{t}")).collect(),
+        threads: v.threads.iter().map(|t| format!("#{t}")).collect(),
         events_appended: 1,
         next: NextMoves {
             pair: "npx slugsocial pair".to_string(),
@@ -770,110 +831,23 @@ pub async fn post_check(
     _headers: axum::http::HeaderMap,
     Json(req): Json<IngestRequest>,
 ) -> impl IntoResponse {
-    let doc = match dsl::parse_full(&req.text) {
-        Ok(d) => d,
-        Err(e) => {
-            return api_error(StatusCode::BAD_REQUEST, "parse error", Some(format!("{}", e)));
-        }
+    let reduced = state.reduced.read().await;
+    let v = match validate_ingest_document(
+        &reduced,
+        &req.text,
+        "check requires @actor declaration",
+    ) {
+        Ok(x) => x,
+        Err((status, msg, hint)) => return api_error(status, msg, hint).into_response(),
     };
-
-    let mut current_actor: Option<String> = None;
-    let mut voter_key_id: String = "anon".to_string();
-    let ts = now_ms();
-
-    let mut threads_seen: BTreeSet<String> = BTreeSet::new();
-    let mut defined_in_doc: std::collections::HashSet<String> = std::collections::HashSet::new();
-
-    for s in &doc.statements {
-        match s {
-            dsl::Stmt::Actor { name } => {
-                if let Err(msg) = validate_actor_format(name) {
-                    return api_error(StatusCode::BAD_REQUEST, "invalid actor format", Some(msg));
-                }
-                let a = canonicalize_actor(name);
-                current_actor = Some(a.clone());
-                voter_key_id = a;
-            }
-            dsl::Stmt::Hashtag { name } => {
-                let t = canonicalize_tag(name);
-                threads_seen.insert(t.clone());
-            }
-            dsl::Stmt::Item { title, body } => {
-                let item = match resolve_item(title) {
-                    Ok(v) => v,
-                    Err(msg) => return api_error(StatusCode::BAD_REQUEST, "invalid item path", Some(msg)),
-                };
-                let Some(body_text) = body else {
-                    return api_error(
-                        StatusCode::BAD_REQUEST,
-                        format!("item missing body: /{item}"),
-                        Some("items must be declared with bodies, e.g. `~/path/item { ... }`".to_string()),
-                    );
-                };
-                if body_text.trim().is_empty() {
-                    return api_error(
-                        StatusCode::BAD_REQUEST,
-                        format!("item body is empty: /{item}"),
-                        Some("write at least one sentence inside `{ ... }`".to_string()),
-                    );
-                }
-                defined_in_doc.insert(item);
-            }
-            dsl::Stmt::Vote { item1, item2, .. } => {
-                let a = match resolve_item(item1) {
-                    Ok(v) => v,
-                    Err(msg) => return api_error(StatusCode::BAD_REQUEST, "invalid vote item path", Some(msg)),
-                };
-                let b = match resolve_item(item2) {
-                    Ok(v) => v,
-                    Err(msg) => return api_error(StatusCode::BAD_REQUEST, "invalid vote item path", Some(msg)),
-                };
-                {
-                    let reduced = state.reduced.read().await;
-                    let missing: Vec<String> = [&a, &b]
-                        .into_iter()
-                        .filter(|it| !defined_in_doc.contains(*it) && !reduced.items.contains(*it))
-                        .map(|it| format!("/{it}"))
-                        .collect();
-                    if !missing.is_empty() {
-                        return api_error(
-                            StatusCode::BAD_REQUEST,
-                            "vote references undefined item(s)",
-                            Some(format!("define items with bodies before voting. missing: {}", missing.join(", "))),
-                        );
-                    }
-                    let missing_body: Vec<String> = [&a, &b]
-                        .into_iter()
-                        .filter(|it| !defined_in_doc.contains(*it) && !reduced.item_bodies.contains_key(*it))
-                        .map(|it| format!("/{it}"))
-                        .collect();
-                    if !missing_body.is_empty() {
-                        return api_error(
-                            StatusCode::BAD_REQUEST,
-                            "vote references item(s) without bodies",
-                            Some(format!("missing bodies: {}. Declare each item as `/item {{ ... }}`", missing_body.join(", "))),
-                        );
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    let Some(actor) = current_actor.clone() else {
-        return api_error(
-            StatusCode::BAD_REQUEST,
-            "check requires @actor declaration",
-            Some("add `@yourname` at the start of your document".to_string()),
-        );
-    };
+    drop(reduced);
 
     let event = Event::Ingest(Ingest {
-        ts,
+        ts: v.ts,
         id: uuid::Uuid::new_v4().to_string(),
-        raw: req.text.clone(),
-        voter_key_id: voter_key_id.clone(),
-        actor,
+        raw: v.raw_text.clone(),
+        voter_key_id: v.voter_key_id.clone(),
+        actor: v.actor.clone(),
     });
 
     let mut simulated = { state.reduced.read().await.clone() };
@@ -882,15 +856,17 @@ pub async fn post_check(
     let ranking = ranked_items(&mut simulated.ranking_group, 10000, 1e-8)
         .into_iter()
         .take(25)
-        .map(|r| RankRow { item: format!("/{}", r.item), score: r.score })
+        .map(|r| RankRow {
+            item: format!("/{}", r.item),
+            score: r.score,
+        })
         .collect();
 
-    let threads_vec: Vec<String> = threads_seen.into_iter().collect();
-    let primary_thread = threads_vec.first().cloned().unwrap_or_else(|| "untagged".to_string());
+    let primary_thread = v.threads.first().cloned().unwrap_or_else(|| "untagged".to_string());
 
     Json(CheckResponse {
         ok: true,
-        threads: threads_vec.iter().map(|t| format!("#{t}")).collect(),
+        threads: v.threads.iter().map(|t| format!("#{t}")).collect(),
         ranking,
         next: vec![
             "npx slugsocial ingest <file.sorter>".to_string(),
@@ -1039,4 +1015,70 @@ pub async fn get_stream(State(state): State<AppState>) -> impl IntoResponse {
     });
 
     Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::events::Ingest;
+
+    fn apply_ingest(reduced: &mut ReducerState, ts: i64, raw: &str) {
+        reduced.apply_event(Event::Ingest(Ingest {
+            ts,
+            id: format!("test-{ts}"),
+            raw: raw.to_string(),
+            voter_key_id: "test".to_string(),
+            actor: "test".to_string(),
+        }));
+    }
+
+    #[test]
+    fn validate_ingest_document_requires_actor() {
+        let reduced = ReducerState::default();
+        let text = "~/t/a {a}\n~/t/b {b}\n";
+        let err = validate_ingest_document(&reduced, text, "need actor").unwrap_err();
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+        assert_eq!(err.1, "need actor");
+    }
+
+    #[test]
+    fn validate_ingest_document_parse_error() {
+        let reduced = ReducerState::default();
+        let text = "~/t/a { unclosed ";
+        let err = validate_ingest_document(&reduced, text, "need actor").unwrap_err();
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+        assert_eq!(err.1, "parse error");
+    }
+
+    #[test]
+    fn validate_ingest_document_accepts_valid_doc_with_existing_items() {
+        let mut reduced = ReducerState::default();
+        apply_ingest(
+            &mut reduced,
+            1,
+            "@00000000-0000-0000-0000-000000000000:test:local/test\n#t\n~/t/a {a}\n~/t/b {b}\n~/t/a 2:1 ~/t/b {because}\n",
+        );
+        let text = "@00000000-0000-0000-0000-000000000000:test:local/test\n#t\n~/t/a 1:1 ~/t/b {equal}\n";
+        let v = validate_ingest_document(&reduced, text, "need actor").unwrap();
+        assert_eq!(v.actor, "00000000-0000-0000-0000-000000000000:test:local/test");
+        assert_eq!(v.threads, vec!["t"]);
+    }
+
+    #[test]
+    fn validate_ingest_document_rejects_vote_on_undefined_item() {
+        let reduced = ReducerState::default();
+        let text = "@00000000-0000-0000-0000-000000000000:test:local/test\n#t\n~/t/a {a}\n~/t/b 1:1 ~/t/missing {why}\n";
+        let err = validate_ingest_document(&reduced, text, "need actor").unwrap_err();
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+        assert!(err.1.contains("undefined item"));
+    }
+
+    #[test]
+    fn validate_ingest_document_rejects_item_without_body() {
+        let reduced = ReducerState::default();
+        let text = "@00000000-0000-0000-0000-000000000000:test:local/test\n~/t/a\n";
+        let err = validate_ingest_document(&reduced, text, "need actor").unwrap_err();
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+        assert!(err.1.contains("missing body"));
+    }
 }
