@@ -25,9 +25,9 @@ struct Cli {
 enum Command {
     /// Fetch and print the ranking
     ///
-    /// One path = rank items under that parent. Multiple paths = merge those scopes and rank together (e.g. rank ~/models ~/ai-models).
+    /// One path = rank items under that parent. Multiple paths = merge those scopes and rank together (e.g. rank models ai-models).
     Rank {
-        /// Path(s); multiple PATH merge scopes explicitly
+        /// Path(s); no ~ prefix (shell expands ~). Multiple PATH merge scopes explicitly.
         #[arg(value_name = "PATH", num_args = 1..)]
         paths: Vec<String>,
         /// Maximum items to return
@@ -40,9 +40,9 @@ enum Command {
 
     /// Get a suggested pair of items to compare next
     ///
-    /// One path = pair from that parent's children. Multiple paths = merge scopes (e.g. pair ~/models ~/ai-models).
+    /// One path = pair from that parent's children. Multiple paths = merge scopes (e.g. pair models ai-models).
     Pair {
-        /// Path(s); multiple PATH merge scopes explicitly
+        /// Path(s); no ~ prefix (shell expands ~). Multiple PATH merge scopes explicitly.
         #[arg(value_name = "PATH", num_args = 1..)]
         paths: Vec<String>,
         /// If true, ignore ranking and return a random pair (useful for "skip")
@@ -101,7 +101,7 @@ enum Command {
 
     /// Show thread details (items, recent ingests)
     Thread {
-        /// Thread name (without # prefix)
+        /// Thread name; no # prefix (shell treats # as comment)
         #[arg(value_name = "NAME")]
         name: String,
         /// Output as JSON for agent parsing
@@ -111,7 +111,7 @@ enum Command {
 
     /// Show item details
     Item {
-        /// Full item path (must start with ~/)
+        /// Full item path; no ~ prefix (e.g. languages/rust)
         #[arg(value_name = "PATH")]
         path: String,
         /// Output as JSON for agent parsing
@@ -121,7 +121,7 @@ enum Command {
 
     /// Show recent votes
     Recent {
-        /// Ontology path to scope recent votes (must start with ~/)
+        /// Ontology path to scope recent votes; no ~ prefix
         #[arg(value_name = "PATH")]
         path: String,
         /// Output as JSON for agent parsing
@@ -266,13 +266,13 @@ fn print_path_detail(resp: &PathDetailResponse) {
             println!("Or perhaps you were looking for the thread #{}?", resp.path);
         }
         println!();
-        println!("#thread = forum, bump order.  ~/path = garden, ordered by rank centrality votes.");
+        println!("#thread = forum, bump order.  path = garden, ordered by rank centrality votes.");
     }
     println!();
     println!("next:");
-    println!("  npx slugsocial rank ~/path");
-    println!("  npx slugsocial pair ~/path");
-    println!("  npx slugsocial recent ~/path");
+    println!("  npx slugsocial rank path");
+    println!("  npx slugsocial pair path");
+    println!("  npx slugsocial recent path");
 }
 
 
@@ -322,8 +322,8 @@ fn print_recent_votes(resp: &RecentVotesResponse) {
     }
     println!();
     println!("next:");
-    println!("  npx slugsocial pair ~/path");
-    println!("  npx slugsocial rank ~/path");
+    println!("  npx slugsocial pair path");
+    println!("  npx slugsocial rank path");
 }
 
 fn preview_body(body: &str) -> String {
@@ -357,36 +357,44 @@ fn http_client() -> Result<reqwest::Client> {
         .build()?)
 }
 
-/// Path must start with ~/ (ontology path). No wildcards; use multiple paths to merge scopes.
+/// Normalize ontology path for API. Accepts path with or without ~/ (shell expands ~ to $HOME).
+/// Returns path without leading ~ or / so it's safe for URLs and the server canonicalizes.
 fn normalize_ontology_path_input(path: &str) -> Result<String, String> {
     let p = path.trim();
     if p.contains('*') {
         return Err(
-            "path wildcards are not supported; use multiple paths to merge scopes (e.g. rank ~/models ~/ai-models)"
+            "path wildcards are not supported; use multiple paths to merge scopes (e.g. rank models ai-models)"
                 .to_string(),
         );
     }
 
-    if p.starts_with("~/") {
-        return Ok(p.to_string());
-    }
-
-    // Common UX footgun: shells expand `~/x` to `/Users/name/x` before the CLI sees it.
-    // Treat `$HOME/<path>` as `~/<path>` so users can keep typing `~/...` unquoted.
-    if p.starts_with('/') {
+    let without_sigils = if p.starts_with("~/") {
+        p.strip_prefix("~/").unwrap_or(p).trim_start_matches('/')
+    } else if p.starts_with('/') {
+        // Shell may expand ~/x to $HOME/x; treat path under HOME as ontology path.
         if let Ok(home) = std::env::var("HOME") {
             let home = home.trim_end_matches('/');
             if !home.is_empty() && p.starts_with(home) {
-                let mut rest = &p[home.len()..];
-                rest = rest.trim_start_matches('/');
-                if !rest.is_empty() {
-                    return Ok(format!("~/{}", rest));
-                }
+                p.strip_prefix(home).unwrap_or(p).trim_start_matches('/')
+            } else {
+                p.trim_start_matches('/')
             }
+        } else {
+            p.trim_start_matches('/')
         }
-    }
+    } else {
+        p
+    };
 
-    Err("path must start with ~/ (e.g. ~/languages/python)".to_string())
+    if without_sigils.is_empty() {
+        return Err("path must be non-empty (e.g. languages or languages/python)".to_string());
+    }
+    Ok(without_sigils.to_string())
+}
+
+/// Thread name for API; strip leading # so shell users can omit it (# is comment).
+fn normalize_thread_input(name: &str) -> String {
+    name.trim().trim_start_matches('#').to_string()
 }
 
 async fn expect_json<T: for<'de> Deserialize<'de>>(resp: reqwest::Response) -> Result<T> {
@@ -482,9 +490,9 @@ async fn main() -> Result<()> {
                 }
                 println!();
                 println!("next:");
-                println!("  npx slugsocial pair ~/path");
-                println!("  npx slugsocial rank ~/path");
-                println!("  npx slugsocial recent ~/path");
+                println!("  npx slugsocial pair path");
+                println!("  npx slugsocial rank path");
+                println!("  npx slugsocial recent path");
             }
         }
 
@@ -601,8 +609,9 @@ async fn main() -> Result<()> {
         }
 
         Command::Thread { name, json } => {
+            let tag = normalize_thread_input(&name);
             let client = http_client()?;
-            let url = format!("{base}/api/v0/thread?tag={}", urlencoding::encode(&name));
+            let url = format!("{base}/api/v0/thread?tag={}", urlencoding::encode(&tag));
             let resp: ThreadDetailResponse = expect_json(client.get(url).send().await?).await?;
             if json {
                 println!("{}", serde_json::to_string_pretty(&resp)?);
