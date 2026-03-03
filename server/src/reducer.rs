@@ -147,13 +147,22 @@ pub struct ReducerState {
 }
 
 impl ReducerState {
-    /// Register parent→child edge. Root-level items (single segment) get parent "".
+    /// Register parent→child edges for the full ancestor chain.
+    /// For `a/b/c/d` this creates: `a/b/c→d`, `a/b→a/b/c`, `a→a/b`, `""→a`.
+    /// Stops early when an intermediate is already registered (its ancestors must be too).
     fn add_child_edge(&mut self, item: &str) {
-        let parent = item_parent_path(item).unwrap_or_default();
-        self.item_children
-            .entry(parent)
-            .or_default()
-            .insert(item.to_string());
+        let mut child = item.to_string();
+        loop {
+            let parent = item_parent_path(&child).unwrap_or_default();
+            let is_new = self.item_children
+                .entry(parent.clone())
+                .or_default()
+                .insert(child);
+            if parent.is_empty() || !is_new {
+                break;
+            }
+            child = parent;
+        }
     }
 
     /// Resolve an item path as a first-class canonical path.

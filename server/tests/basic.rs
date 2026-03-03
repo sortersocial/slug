@@ -323,6 +323,40 @@ async fn full_workflow_reducer_and_ranking() {
 }
 
 #[test]
+fn reducer_materializes_ancestor_path_segments() {
+    let mut state = ReducerState::default();
+
+    // Ingest deeply nested items — no explicit ~/ai-models/anthropic item exists.
+    state.apply_event(ingest_event(
+        1,
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n~/ai-models/anthropic/claude-opus {opus}\n~/ai-models/anthropic/claude-sonnet {sonnet}\n",
+    ));
+
+    // The intermediate path "ai-models/anthropic" should appear as a child of "ai-models".
+    let ai_models_children = state.item_children.get("ai-models").expect("ai-models should have children");
+    assert!(
+        ai_models_children.contains("ai-models/anthropic"),
+        "ai-models/anthropic should be a child of ai-models"
+    );
+
+    // The leaf items should still be children of "ai-models/anthropic".
+    let anthropic_children = state.item_children.get("ai-models/anthropic").expect("ai-models/anthropic should have children");
+    assert!(anthropic_children.contains("ai-models/anthropic/claude-opus"));
+    assert!(anthropic_children.contains("ai-models/anthropic/claude-sonnet"));
+
+    // Root should contain "ai-models".
+    let root_children = state.item_children.get("").expect("root should have children");
+    assert!(root_children.contains("ai-models"));
+
+    // The phantom intermediates should NOT be in the items set (they weren't explicitly created).
+    assert!(!state.items.contains("ai-models"));
+    assert!(!state.items.contains("ai-models/anthropic"));
+    // But the leaf items should be.
+    assert!(state.items.contains("ai-models/anthropic/claude-opus"));
+    assert!(state.items.contains("ai-models/anthropic/claude-sonnet"));
+}
+
+#[test]
 fn canonicalization_is_consistent() {
     assert_eq!(canonicalize_tag("#tag"), "tag");
     assert_eq!(canonicalize_tag("tag"), "tag");
