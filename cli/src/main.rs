@@ -336,16 +336,35 @@ fn http_client() -> Result<reqwest::Client> {
 }
 
 /// Path must start with ~/ (ontology path). No wildcards; use multiple paths to merge scopes.
-fn validate_ontology_path(path: &str) -> Result<(), String> {
+fn normalize_ontology_path_input(path: &str) -> Result<String, String> {
     let p = path.trim();
     if p.contains('*') {
-        return Err("path wildcards are not supported; use multiple paths to merge scopes (e.g. rank ~/models ~/ai-models)".to_string());
+        return Err(
+            "path wildcards are not supported; use multiple paths to merge scopes (e.g. rank ~/models ~/ai-models)"
+                .to_string(),
+        );
     }
+
     if p.starts_with("~/") {
-        Ok(())
-    } else {
-        Err("path must start with ~/ (e.g. ~/languages/python)".to_string())
+        return Ok(p.to_string());
     }
+
+    // Common UX footgun: shells expand `~/x` to `/Users/name/x` before the CLI sees it.
+    // Treat `$HOME/<path>` as `~/<path>` so users can keep typing `~/...` unquoted.
+    if p.starts_with('/') {
+        if let Ok(home) = std::env::var("HOME") {
+            let home = home.trim_end_matches('/');
+            if !home.is_empty() && p.starts_with(home) {
+                let mut rest = &p[home.len()..];
+                rest = rest.trim_start_matches('/');
+                if !rest.is_empty() {
+                    return Ok(format!("~/{}", rest));
+                }
+            }
+        }
+    }
+
+    Err("path must start with ~/ (e.g. ~/languages/python)".to_string())
 }
 
 async fn expect_json<T: for<'de> Deserialize<'de>>(resp: reqwest::Response) -> Result<T> {
@@ -389,9 +408,10 @@ async fn main() -> Result<()> {
             limit: _,
             json,
         } => {
-            for p in &paths {
-                validate_ontology_path(p).map_err(anyhow::Error::msg)?;
-            }
+            let paths: Vec<String> = paths
+                .iter()
+                .map(|p| normalize_ontology_path_input(p).map_err(anyhow::Error::msg))
+                .collect::<Result<Vec<_>>>()?;
             let client = http_client()?;
             let parent_param = paths.join(",");
             let url = format!("{base}/api/v0/rank?parent={}", urlencoding::encode(&parent_param));
@@ -409,9 +429,10 @@ async fn main() -> Result<()> {
             random,
             json,
         } => {
-            for p in &paths {
-                validate_ontology_path(p).map_err(anyhow::Error::msg)?;
-            }
+            let paths: Vec<String> = paths
+                .iter()
+                .map(|p| normalize_ontology_path_input(p).map_err(anyhow::Error::msg))
+                .collect::<Result<Vec<_>>>()?;
             let client = http_client()?;
             let parent_param = paths.join(",");
             let url = format!(
@@ -568,7 +589,7 @@ async fn main() -> Result<()> {
         }
 
         Command::Item { path, json } => {
-            validate_ontology_path(&path).map_err(anyhow::Error::msg)?;
+            let path = normalize_ontology_path_input(&path).map_err(anyhow::Error::msg)?;
             let client = http_client()?;
             let url = format!("{base}/api/v0/item?item={}", urlencoding::encode(&path));
             let resp: ItemResponse = expect_json(client.get(url).send().await?).await?;
@@ -580,7 +601,7 @@ async fn main() -> Result<()> {
         }
 
         Command::Recent { path, json } => {
-            validate_ontology_path(&path).map_err(anyhow::Error::msg)?;
+            let path = normalize_ontology_path_input(&path).map_err(anyhow::Error::msg)?;
             let client = http_client()?;
             let url = format!(
                 "{base}/api/v0/recent_votes?parent={}",
