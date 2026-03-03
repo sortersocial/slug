@@ -10,7 +10,7 @@ use std::path::PathBuf;
     name = "slugsocial",
     version,
     about = "Slug Social - collective ranking via pairwise comparisons",
-    long_about = include_str!("../GUIDE.sorter")
+    next_line_help = true
 )]
 struct Cli {
     /// Dev only: server URL (env: SLUG_SERVER). Not exposed as a flag.
