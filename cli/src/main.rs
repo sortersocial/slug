@@ -266,12 +266,16 @@ fn print_thread(resp: &ThreadDetailResponse) {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as i64;
-    for post in &resp.posts {
+    for (i, post) in resp.posts.iter().enumerate() {
         let timeago = slug_types::timeago::timeago_compact(now_ms, post.ts);
         let body = escape_xml(&post.body);
         println!("<post timeago=\"{}\">", timeago);
         println!("{}", body);
         println!("</post>");
+        if i + 1 < resp.posts.len() {
+            println!();
+            println!();
+        }
     }
 }
 
