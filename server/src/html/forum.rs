@@ -219,6 +219,10 @@ pub async fn thread_view(
             .collect::<Vec<_>>()
     };
 
+    // ingests_by_thread is newest-first (push_front). Take 50 most recent, render oldest-first.
+    let mut display_ingests: Vec<_> = ingests.iter().take(50).collect();
+    display_ingests.reverse();
+
     let now = now_ms();
 
     let page = layout(
@@ -232,10 +236,10 @@ pub async fn thread_view(
                 " · "
                 span { "neighbors here: " span id="presence-local" { (presence.local_viewers) } }
             }
-            @if ingests.is_empty() {
+            @if display_ingests.is_empty() {
                 p class="muted" { "no activity yet" }
             } @else {
-                @for ing in ingests.iter().rev().take(50) {
+                @for ing in &display_ingests {
                     @let hover = timeago::rfc3339_utc(ing.ts);
                     @let ago = timeago::timeago(now, ing.ts);
                     div class="ingest-entry" data-ingest-id=(ing.id) {

@@ -9,9 +9,11 @@ use serde::{Deserialize, Serialize};
 use slug_types::*;
 use std::collections::{BTreeSet, HashSet};
 
+use std::collections::HashMap;
+
 use crate::{
     dsl,
-    events::{canonicalize_actor, canonicalize_item, canonicalize_tag, Event},
+    events::{canonicalize_actor, canonicalize_item, canonicalize_tag, item_parent_path, Event},
     ranking::{ranked_items, ranked_items_subset},
     state::AppState,
 };
@@ -383,8 +385,8 @@ pub async fn get_thread(State(state): State<AppState>, Query(q): Query<ThreadDet
             reduced
                 .ingests_by_id
                 .get(id)
-                .map(|ing| std::cmp::Reverse(ing.ts))
-                .unwrap_or(std::cmp::Reverse(0))
+                .map(|ing| ing.ts)
+                .unwrap_or(0)
         });
         ids
             .into_iter()
@@ -477,6 +479,8 @@ pub struct IngestResponse {
     pub threads: Vec<String>,
     pub events_appended: usize,
     pub next: NextMoves,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub ranking_changes: Vec<ScopeRankChanges>,
 }
 
 #[derive(Debug, Serialize)]
@@ -485,6 +489,70 @@ pub struct CheckResponse {
     pub threads: Vec<String>,
     pub ranking: Vec<RankRow>,
     pub next: Vec<String>,
+}
+
+/// Compute ranking changes between two snapshots of a parent scope's rankings.
+/// Returns None if nothing changed.
+fn compute_scope_rank_changes(
+    parent: &str,
+    before: &crate::scope_rank::ChildrenRankings,
+    after: &crate::scope_rank::ChildrenRankings,
+) -> Option<ScopeRankChanges> {
+    fn build_positions(rankings: &crate::scope_rank::ChildrenRankings) -> HashMap<String, Option<RankPosition>> {
+        let mut map = HashMap::new();
+        for comp in &rankings.component_rankings {
+            let total = comp.ranked.len();
+            for (i, item) in comp.ranked.iter().enumerate() {
+                map.insert(item.item.clone(), Some(RankPosition { rank: i + 1, of: total }));
+            }
+        }
+        for item in &rankings.unranked_items {
+            map.insert(item.clone(), None);
+        }
+        map
+    }
+
+    let before_pos = build_positions(before);
+    let after_pos = build_positions(after);
+
+    let all_items: std::collections::BTreeSet<String> = before_pos.keys().cloned()
+        .chain(after_pos.keys().cloned())
+        .collect();
+
+    let mut changes: Vec<RankChange> = Vec::new();
+    for item in all_items {
+        let b = before_pos.get(&item).cloned().flatten();
+        let a = after_pos.get(&item).cloned().flatten();
+        let changed = match (&b, &a) {
+            (Some(bp), Some(ap)) => bp.rank != ap.rank || bp.of != ap.of,
+            (None, Some(_)) => true,
+            (Some(_), None) => true,
+            (None, None) => false,
+        };
+        if changed {
+            changes.push(RankChange {
+                item: format!("/{}", item),
+                before: b,
+                after: a,
+            });
+        }
+    }
+
+    if changes.is_empty() {
+        return None;
+    }
+
+    changes.sort_by(|a, b| match (&a.after, &b.after) {
+        (Some(ap), Some(bp)) => ap.rank.cmp(&bp.rank),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => a.item.cmp(&b.item),
+    });
+
+    Some(ScopeRankChanges {
+        parent: if parent.is_empty() { "/".to_string() } else { format!("/{}", parent) },
+        changes,
+    })
 }
 
 pub async fn post_ingest(
@@ -595,6 +663,32 @@ pub async fn post_ingest(
 
     let threads_vec: Vec<String> = threads_seen.into_iter().collect();
 
+    // Collect parent scopes for all voted items so we can compute ranking deltas.
+    let voted_parent_scopes: Vec<String> = {
+        let mut parents: HashSet<String> = HashSet::new();
+        for s in &doc.statements {
+            if let dsl::Stmt::Vote { item1, item2, .. } = s {
+                if let (Ok(a), Ok(b)) = (resolve_item(item1), resolve_item(item2)) {
+                    parents.insert(item_parent_path(&a).unwrap_or_default());
+                    parents.insert(item_parent_path(&b).unwrap_or_default());
+                }
+            }
+        }
+        let mut v: Vec<String> = parents.into_iter().collect();
+        v.sort();
+        v
+    };
+
+    // Snapshot rankings before the event is applied.
+    let pre_rankings: HashMap<String, crate::scope_rank::ChildrenRankings> = if !voted_parent_scopes.is_empty() {
+        let reduced = state.reduced.read().await;
+        voted_parent_scopes.iter()
+            .map(|p| (p.clone(), crate::scope_rank::build_children_rankings(&reduced, p)))
+            .collect()
+    } else {
+        HashMap::new()
+    };
+
     let event = Event::Ingest(Ingest {
         ts,
         id: uuid::Uuid::new_v4().to_string(),
@@ -613,6 +707,20 @@ pub async fn post_ingest(
         let mut reduced = state.reduced.write().await;
         reduced.apply_event(event);
     }
+
+    // Snapshot rankings after the event and compute per-scope deltas.
+    let ranking_changes: Vec<ScopeRankChanges> = if !voted_parent_scopes.is_empty() {
+        let reduced = state.reduced.read().await;
+        voted_parent_scopes.iter()
+            .filter_map(|p| {
+                let before = pre_rankings.get(p)?;
+                let after = crate::scope_rank::build_children_rankings(&reduced, p);
+                compute_scope_rank_changes(p, before, &after)
+            })
+            .collect()
+    } else {
+        vec![]
+    };
 
     let _ = state.stream_tx.send(crate::state::StreamEvent {
         ts,
@@ -639,6 +747,7 @@ pub async fn post_ingest(
             rank: "npx slugsocial rank".to_string(),
             web: format!("https://slug.social/t/{}", primary_thread),
         },
+        ranking_changes,
     }).into_response()
 }
 

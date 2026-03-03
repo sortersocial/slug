@@ -157,12 +157,44 @@ pub struct IngestRequest {
     pub text: String,
 }
 
+/// One item's position within a ranking component.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RankPosition {
+    /// 1-indexed rank within the component.
+    pub rank: usize,
+    /// Total items in this component.
+    pub of: usize,
+}
+
+/// How one item's rank changed after a vote.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RankChange {
+    pub item: String,
+    /// Position before the vote. None = was unranked (no voted connections in this scope).
+    pub before: Option<RankPosition>,
+    /// Position after the vote. None = became unranked (e.g. component split, unlikely).
+    pub after: Option<RankPosition>,
+}
+
+/// Ranking changes for all items in one parent scope after a vote submission.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScopeRankChanges {
+    /// Parent scope path (e.g. "/models" or "/" for root).
+    pub parent: String,
+    /// Items whose position changed, or that entered the ranking for the first time.
+    pub changes: Vec<RankChange>,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct IngestResponse {
     pub ok: bool,
     pub threads: Vec<String>,
     pub events_appended: usize,
     pub next: NextMoves,
+    /// Ranking position changes caused by votes in this ingest, grouped by parent scope.
+    /// Empty when the ingest contained no votes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ranking_changes: Vec<ScopeRankChanges>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

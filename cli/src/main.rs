@@ -188,6 +188,28 @@ fn print_next(next: &NextMoves) {
     println!("  {}", next.web);
 }
 
+fn print_ranking_changes(changes: &[slug_types::ScopeRankChanges]) {
+    if changes.is_empty() {
+        return;
+    }
+    println!();
+    println!("ranking changes:");
+    for scope in changes {
+        println!("  {}:", scope.parent);
+        for c in &scope.changes {
+            let before = match &c.before {
+                Some(p) => format!("#{}/{}", p.rank, p.of),
+                None => "unranked".to_string(),
+            };
+            let after = match &c.after {
+                Some(p) => format!("#{}/{}", p.rank, p.of),
+                None => "unranked".to_string(),
+            };
+            println!("    {}  {} -> {}", c.item, before, after);
+        }
+    }
+}
+
 /// Output exactly one line per thread so wc -l equals item count.
 fn print_threads(resp: &ThreadsResponse) {
     for t in &resp.threads {
@@ -503,6 +525,7 @@ async fn main() -> Result<()> {
                             println!("  {t}");
                         }
                     }
+                    print_ranking_changes(&resp.ranking_changes);
                     print_next(&resp.next);
                 }
             } else {
