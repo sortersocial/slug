@@ -27,6 +27,7 @@ pub fn create_app(state: AppState) -> Router {
         .route("/api/v0/threads", axum::routing::get(api::get_threads))
         .route("/api/v0/thread", axum::routing::get(api::get_thread))
         .route("/api/v0/item", axum::routing::get(api::get_item))
+        .route("/api/v0/matchup", axum::routing::get(api::get_matchup))
         .route("/api/v0/recent_votes", axum::routing::get(api::get_recent_votes))
         // REMOVED: /api/v0/vote - use /api/v0/ingest instead
         .route("/api/v0/ingest", axum::routing::post(api::post_ingest))

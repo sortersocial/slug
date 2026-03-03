@@ -318,15 +318,6 @@ pub struct PairQuery {
     pub random: Option<bool>,
 }
 
-#[derive(Debug, Serialize)]
-pub struct PairResponseLocal {
-    pub left: String,
-    pub right: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub left_body: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub right_body: Option<String>,
-}
 
 fn pick_random_distinct(items: &[String]) -> Option<(String, String)> {
     if items.len() < 2 {
@@ -380,16 +371,29 @@ pub async fn get_pair(State(state): State<AppState>, Query(q): Query<PairQuery>)
         let Some((left, right)) = pick_random_distinct(&pool) else {
             return api_error(StatusCode::BAD_REQUEST, "need at least 2 items", None);
         };
-        let (left_body, right_body) = {
+        let (left_body, right_body, threads) = {
             let reduced = state.reduced.read().await;
-            (reduced.item_bodies.get(&left).cloned(), reduced.item_bodies.get(&right).cloned())
+            let lb = reduced.item_bodies.get(&left).cloned();
+            let rb = reduced.item_bodies.get(&right).cloned();
+            let th: Vec<String> = reduced
+                .item_threads
+                .get(&left)
+                .into_iter()
+                .chain(reduced.item_threads.get(&right))
+                .flat_map(|s| s.iter().cloned())
+                .collect::<std::collections::HashSet<_>>()
+                .into_iter()
+                .collect();
+            (lb, rb, th)
         };
-        return Json(PairResponseLocal {
+        return Json(PairResponse {
             left: format!("/{}", left),
             right: format!("/{}", right),
-            left_body,
-            right_body,
-        }).into_response();
+            left_body: left_body,
+            right_body: right_body,
+            threads,
+        })
+        .into_response();
     }
 
     let selected: Option<(String, String)> = {
@@ -450,16 +454,29 @@ pub async fn get_pair(State(state): State<AppState>, Query(q): Query<PairQuery>)
         return api_error(StatusCode::BAD_REQUEST, "need at least 2 items", None);
     };
 
-    let (left_body, right_body) = {
+    let (left_body, right_body, threads) = {
         let reduced = state.reduced.read().await;
-        (reduced.item_bodies.get(&left).cloned(), reduced.item_bodies.get(&right).cloned())
+        let lb = reduced.item_bodies.get(&left).cloned();
+        let rb = reduced.item_bodies.get(&right).cloned();
+        let th: Vec<String> = reduced
+            .item_threads
+            .get(&left)
+            .into_iter()
+            .chain(reduced.item_threads.get(&right))
+            .flat_map(|s| s.iter().cloned())
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+        (lb, rb, th)
     };
-    Json(PairResponseLocal {
+    Json(PairResponse {
         left: format!("/{}", left),
         right: format!("/{}", right),
         left_body,
         right_body,
-    }).into_response()
+        threads,
+    })
+    .into_response()
 }
 
 // ============================================================================
@@ -576,11 +593,18 @@ pub async fn get_item(State(state): State<AppState>, Query(q): Query<ItemQuery>)
     let reduced = state.reduced.read().await;
 
     let body = reduced.item_bodies.get(&item).cloned();
+    let threads: Vec<String> = reduced
+        .item_threads
+        .get(&item)
+        .map(|s| s.iter().cloned().collect())
+        .unwrap_or_default();
 
     Json(ItemResponse {
         item: format!("/{}", item),
         body,
-    }).into_response()
+        threads,
+    })
+    .into_response()
 }
 
 #[derive(Debug, Deserialize)]
@@ -620,9 +644,52 @@ pub async fn get_recent_votes(
         ratio: format!("{}:{}", v.ratio_left, v.ratio_right),
         actor: Some(format!("@{}", v.actor)),
         body: v.body.clone(),
+        thread: Some(format!("#{}", v.thread)),
     }).collect();
 
     Json(RecentVotesResponse { votes: out }).into_response()
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MatchupQuery {
+    pub item: String,
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+/// Vote history for one item (matchup: wins/losses with thread per vote).
+pub async fn get_matchup(
+    State(state): State<AppState>,
+    Query(q): Query<MatchupQuery>,
+) -> impl IntoResponse {
+    let item = canonicalize_item(&q.item);
+    let limit = q.limit.unwrap_or(50).clamp(1, 200);
+
+    let reduced = state.reduced.read().await;
+    let votes: Vec<VoteRow> = reduced
+        .item_votes
+        .get(&item)
+        .map(|q| {
+            q.iter()
+                .take(limit)
+                .map(|v| VoteRow {
+                    ts: v.ts,
+                    a: format!("/{}", v.a),
+                    b: format!("/{}", v.b),
+                    ratio: format!("{}:{}", v.ratio_left, v.ratio_right),
+                    actor: Some(format!("@{}", v.actor)),
+                    body: v.body.clone(),
+                    thread: Some(format!("#{}", v.thread)),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    Json(MatchupResponse {
+        item: format!("/{}", item),
+        votes,
+    })
+    .into_response()
 }
 
 // ============================================================================

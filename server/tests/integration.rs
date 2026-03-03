@@ -215,3 +215,77 @@ async fn test_ontology_item_page_shows_body_children_and_collapsible_votes() {
     assert!(!item_html.contains("other pair"));
 }
 
+/// Thread connective tissue: item_threads and VoteData.thread are exposed by item, pair, and matchup APIs.
+#[tokio::test]
+async fn test_garden_item_pair_matchup_include_threads() {
+    let (addr, _tmp, _log, _handle) = create_test_server().await;
+    let client = reqwest::Client::new();
+
+    // Ingest with #tag and items/vote so item_threads and vote.thread are populated.
+    let ingest_payload = serde_json::json!({
+        "text": "@00000000-0000-0000-0000-000000000000:test:local/test\n\
+#sorting-hat\n\
+~/sorts/insertion { O(n^2) }\n\
+~/sorts/mergesort { O(n log n) }\n\
+~/sorts/insertion 3:1 ~/sorts/mergesort { simpler for small n }\n",
+    });
+    let ingest_resp = client
+        .post(&format!("http://{}/api/v0/ingest", addr))
+        .json(&ingest_payload)
+        .send()
+        .await
+        .unwrap();
+    assert!(ingest_resp.status().is_success(), "ingest should succeed");
+
+    // GET item: body + threads
+    let item_resp = client
+        .get(&format!("http://{}/api/v0/item", addr))
+        .query(&[("item", "sorts/insertion")])
+        .send()
+        .await
+        .unwrap();
+    assert!(item_resp.status().is_success());
+    let item: serde_json::Value = item_resp.json().await.unwrap();
+    assert_eq!(item["item"], "/sorts/insertion");
+    assert!(item["body"].as_str().unwrap().contains("O(n^2)"));
+    let threads: Vec<&str> = item["threads"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|t| t.as_str())
+        .collect();
+    assert!(threads.contains(&"sorting-hat"), "item threads should contain sorting-hat: {:?}", threads);
+
+    // GET pair (under sorts): left, right, threads
+    let pair_resp = client
+        .get(&format!("http://{}/api/v0/pair", addr))
+        .query(&[("parent", "sorts")])
+        .send()
+        .await
+        .unwrap();
+    assert!(pair_resp.status().is_success());
+    let pair: serde_json::Value = pair_resp.json().await.unwrap();
+    let pair_threads: Vec<&str> = pair["threads"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|t| t.as_str())
+        .collect();
+    assert!(pair_threads.contains(&"sorting-hat"), "pair threads should contain sorting-hat: {:?}", pair_threads);
+
+    // GET matchup: vote history with thread per vote
+    let matchup_resp = client
+        .get(&format!("http://{}/api/v0/matchup", addr))
+        .query(&[("item", "sorts/insertion")])
+        .send()
+        .await
+        .unwrap();
+    assert!(matchup_resp.status().is_success());
+    let matchup: serde_json::Value = matchup_resp.json().await.unwrap();
+    assert_eq!(matchup["item"], "/sorts/insertion");
+    let votes = matchup["votes"].as_array().unwrap();
+    assert!(!votes.is_empty(), "matchup should have at least one vote");
+    let first_thread = votes[0]["thread"].as_str().unwrap();
+    assert_eq!(first_thread, "#sorting-hat", "vote should cite thread");
+}
+

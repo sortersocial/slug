@@ -34,6 +34,9 @@ pub struct PairResponse {
     pub right: String,
     pub left_body: Option<String>,
     pub right_body: Option<String>,
+    /// Thread tags that discuss either item (connective tissue to forum).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub threads: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -108,10 +111,20 @@ pub struct IngestRow {
 pub struct ItemResponse {
     pub item: String,
     pub body: Option<String>,
+    /// Thread tags that mention or vote on this item (connective tissue to forum).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub threads: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RecentVotesResponse {
+    pub votes: Vec<VoteRow>,
+}
+
+/// Vote history for one item (matchup: wins/losses + thread per vote).
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MatchupResponse {
+    pub item: String,
     pub votes: Vec<VoteRow>,
 }
 
@@ -123,6 +136,9 @@ pub struct VoteRow {
     pub ratio: String,
     pub actor: Option<String>,
     pub body: String,
+    /// Thread where this vote was cast (e.g. "#sorting-hat").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

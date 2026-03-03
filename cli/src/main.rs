@@ -114,14 +114,41 @@ enum GardenCmd {
         json: bool,
     },
 
-    /// List and rank items under a path
+    /// Body text for an item plus threads that mention it (connective tissue to forum).
+    Body {
+        #[arg(value_name = "PATH")]
+        path: String,
+        /// Output as JSON for agent parsing
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Ranked children under a path (or merge multiple paths).
     ///
     /// One path = rank items under that parent.
-    /// Multiple paths = merge those scopes and rank together (e.g. garden ls models ai-models).
-    Ls {
-        /// Path(s); no ~ prefix (shell expands ~). Multiple PATH merge scopes.
+    /// Multiple paths = merge those scopes (e.g. garden children models ai-models).
+    Children {
+        /// Path(s); no ~ prefix. Multiple PATH merge scopes.
         #[arg(value_name = "PATH", num_args = 1..)]
         paths: Vec<String>,
+        /// Output as JSON for agent parsing
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Suggest a comparison pair under a path + relevant threads where it's discussed.
+    Pair {
+        #[arg(value_name = "PATH")]
+        path: String,
+        /// Output as JSON for agent parsing
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Vote history for an item (wins/losses) with thread per vote.
+    Matchup {
+        #[arg(value_name = "PATH")]
+        path: String,
         /// Output as JSON for agent parsing
         #[arg(long)]
         json: bool,
@@ -132,6 +159,43 @@ enum GardenCmd {
 fn print_ranking(rows: &[RankRow]) {
     for (i, r) in rows.iter().enumerate() {
         println!("{:>3}. {:<24} {:.6}", i + 1, r.item, r.score);
+    }
+}
+
+fn print_item_response(resp: &ItemResponse) {
+    if let Some(body) = &resp.body {
+        println!("{}", body);
+    } else {
+        println!("(no body)");
+    }
+    if !resp.threads.is_empty() {
+        println!();
+        println!("threads: {}", resp.threads.iter().map(|t| format!("#{t}")).collect::<Vec<_>>().join(" "));
+    }
+}
+
+fn print_pair_response(resp: &PairResponse) {
+    println!("{}  vs  {}", resp.left, resp.right);
+    if let Some(b) = &resp.left_body {
+        println!("  left:  {}", b.lines().next().unwrap_or(b).trim());
+    }
+    if let Some(b) = &resp.right_body {
+        println!("  right: {}", b.lines().next().unwrap_or(b).trim());
+    }
+    if !resp.threads.is_empty() {
+        println!();
+        println!("threads: {}", resp.threads.iter().map(|t| format!("#{t}")).collect::<Vec<_>>().join(" "));
+    }
+}
+
+fn print_matchup_response(resp: &MatchupResponse) {
+    println!("{}", resp.item);
+    for v in &resp.votes {
+        let thread = v.thread.as_deref().unwrap_or("?");
+        println!("  {}  {}  {}  in {}", v.ratio, v.a, v.b, thread);
+        if !v.body.is_empty() {
+            println!("      {}", v.body.lines().next().unwrap_or(&v.body).trim());
+        }
     }
 }
 
@@ -230,7 +294,7 @@ fn normalize_ontology_path_input(path: &str) -> Result<String, String> {
     let p = path.trim();
     if p.contains('*') {
         return Err(
-            "path wildcards are not supported; use multiple paths to merge scopes (e.g. garden ls models ai-models)"
+            "path wildcards are not supported; use multiple paths to merge scopes (e.g. garden children models ai-models)"
                 .to_string(),
         );
     }
@@ -319,7 +383,19 @@ async fn main() -> Result<()> {
                 }
             }
 
-            GardenCmd::Ls { paths, json } => {
+            GardenCmd::Body { path, json } => {
+                let path = normalize_ontology_path_input(&path).map_err(anyhow::Error::msg)?;
+                let client = http_client()?;
+                let url = format!("{base}/api/v0/item?item={}", urlencoding::encode(&path));
+                let resp: ItemResponse = expect_json(client.get(url).send().await?).await?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&resp)?);
+                } else {
+                    print_item_response(&resp);
+                }
+            }
+
+            GardenCmd::Children { paths, json } => {
                 let paths: Vec<String> = paths
                     .iter()
                     .map(|p| normalize_ontology_path_input(p).map_err(anyhow::Error::msg))
@@ -333,6 +409,30 @@ async fn main() -> Result<()> {
                     println!("{}", serde_json::to_string_pretty(&resp)?);
                 } else {
                     print_rank_response(&resp);
+                }
+            }
+
+            GardenCmd::Pair { path, json } => {
+                let path = normalize_ontology_path_input(&path).map_err(anyhow::Error::msg)?;
+                let client = http_client()?;
+                let url = format!("{base}/api/v0/pair?parent={}", urlencoding::encode(&path));
+                let resp: PairResponse = expect_json(client.get(url).send().await?).await?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&resp)?);
+                } else {
+                    print_pair_response(&resp);
+                }
+            }
+
+            GardenCmd::Matchup { path, json } => {
+                let path = normalize_ontology_path_input(&path).map_err(anyhow::Error::msg)?;
+                let client = http_client()?;
+                let url = format!("{base}/api/v0/matchup?item={}", urlencoding::encode(&path));
+                let resp: MatchupResponse = expect_json(client.get(url).send().await?).await?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&resp)?);
+                } else {
+                    print_matchup_response(&resp);
                 }
             }
         },
