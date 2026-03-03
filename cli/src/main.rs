@@ -25,10 +25,9 @@ struct Cli {
 enum Command {
     /// Fetch and print the ranking
     ///
-    /// Accepts one or more paths. Use ~/path/* for cross-namespace (e.g. ~/ai-models/*).
-    /// Multiple paths merge their child sets before ranking.
+    /// One path = rank items under that parent. Multiple paths = merge those scopes and rank together (e.g. rank ~/models ~/ai-models).
     Rank {
-        /// Path(s); wildcard ~/path/* or multiple PATH to merge scopes
+        /// Path(s); multiple PATH merge scopes explicitly
         #[arg(value_name = "PATH", num_args = 1..)]
         paths: Vec<String>,
         /// Maximum items to return
@@ -41,10 +40,9 @@ enum Command {
 
     /// Get a suggested pair of items to compare next
     ///
-    /// Accepts one or more paths. Use ~/path/* for cross-namespace (e.g. ~/ai-models/*).
-    /// Multiple paths merge their child sets for the pair pool.
+    /// One path = pair from that parent's children. Multiple paths = merge scopes (e.g. pair ~/models ~/ai-models).
     Pair {
-        /// Path(s); wildcard ~/path/* or multiple PATH to merge scopes
+        /// Path(s); multiple PATH merge scopes explicitly
         #[arg(value_name = "PATH", num_args = 1..)]
         paths: Vec<String>,
         /// If true, ignore ranking and return a random pair (useful for "skip")
@@ -216,6 +214,7 @@ fn print_threads(resp: &ThreadsResponse) {
     }
 }
 
+#[allow(dead_code)]
 fn print_path_detail(resp: &PathDetailResponse) {
     println!("{}", resp.path);
     if !resp.children.is_empty() {
@@ -252,6 +251,28 @@ fn print_path_detail(resp: &PathDetailResponse) {
     println!("  npx slugsocial rank ~/path");
     println!("  npx slugsocial pair ~/path");
     println!("  npx slugsocial recent ~/path");
+}
+
+
+/// Escape for XML text content: & < >
+fn escape_xml(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+fn print_thread(resp: &ThreadDetailResponse) {
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64;
+    for post in &resp.posts {
+        let timeago = slug_types::timeago::timeago_compact(now_ms, post.ts);
+        let body = escape_xml(&post.body);
+        println!("<post timeago=\"{}\">", timeago);
+        println!("{}", body);
+        println!("</post>");
+    }
 }
 
 fn print_item(resp: &ItemResponse) {
@@ -310,13 +331,16 @@ fn http_client() -> Result<reqwest::Client> {
         .build()?)
 }
 
-/// Path must start with ~/ (ontology path). Optional trailing /* for wildcard. Returns error message for user.
+/// Path must start with ~/ (ontology path). No wildcards; use multiple paths to merge scopes.
 fn validate_ontology_path(path: &str) -> Result<(), String> {
     let p = path.trim();
+    if p.contains('*') {
+        return Err("path wildcards are not supported; use multiple paths to merge scopes (e.g. rank ~/models ~/ai-models)".to_string());
+    }
     if p.starts_with("~/") {
         Ok(())
     } else {
-        Err("path must start with ~/ (e.g. ~/languages/python or ~/ai-models/*)".to_string())
+        Err("path must start with ~/ (e.g. ~/languages/python)".to_string())
     }
 }
 
@@ -531,11 +555,11 @@ async fn main() -> Result<()> {
         Command::Thread { name, json } => {
             let client = http_client()?;
             let url = format!("{base}/api/v0/thread?tag={}", urlencoding::encode(&name));
-            let resp: PathDetailResponse = expect_json(client.get(url).send().await?).await?;
+            let resp: ThreadDetailResponse = expect_json(client.get(url).send().await?).await?;
             if json {
                 println!("{}", serde_json::to_string_pretty(&resp)?);
             } else {
-                print_path_detail(&resp);
+                print_thread(&resp);
             }
         }
 

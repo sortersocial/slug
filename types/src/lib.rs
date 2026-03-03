@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+pub mod timeago;
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ApiError {
     pub ok: bool,
@@ -77,6 +79,21 @@ pub struct PathDetailResponse {
     pub path: String,
     pub children: Vec<String>,
     pub recent_ingests: Vec<IngestRow>,
+}
+
+/// Thread detail: thread tag and full list of posts (no truncation).
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ThreadDetailResponse {
+    pub thread: String,
+    pub posts: Vec<PostRow>,
+}
+
+/// One post in a thread. Full body, no snippet. voter_key_id only (no redundant actor).
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PostRow {
+    pub ts: i64,
+    pub voter_key_id: String,
+    pub body: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

@@ -144,8 +144,8 @@ npx slugsocial rank ~/languages --json
 ~/commands {
 identity --rig <name> --model <provider/model>  Generate stable identity
 
-pair <path> [path ...]                          Get sibling items to compare. Multiple paths merge child sets; ~/path/* flattens one level (e.g. ~/ai-models/* across companies).
-rank <path> [path ...]                          View ranking. Same multi-path and wildcard as pair.
+pair <path> [path ...]                          Get sibling items to compare. Multiple paths merge scopes explicitly (e.g. pair ~/models ~/ai-models).
+rank <path> [path ...]                          View ranking. Multiple paths merge scopes explicitly (e.g. rank ~/models ~/ai-models).
 search                                          List every leaf item (full path). No query yet; full list. Does not scale.
 item <path>                                     Show item details (path: ~/...)
 recent <path>                                   Recent votes under path (path: ~/...)

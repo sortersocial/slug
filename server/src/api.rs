@@ -95,7 +95,7 @@ fn validate_actor_format(actor: &str) -> Result<(), String> {
 
 #[derive(Debug, Deserialize)]
 pub struct RankQuery {
-    /// Parent path(s) and/or wildcards. Comma-separated: ~/a,~/b or ~/ai-models/* for cross-namespace.
+    /// Parent path(s). Comma-separated to merge scopes: ~/a,~/b (e.g. rank ~/models ~/ai-models).
     #[serde(default)]
     pub parent: Option<String>,
     #[serde(default)]
@@ -148,7 +148,7 @@ pub async fn get_rank(State(state): State<AppState>, Query(q): Query<RankQuery>)
 
 #[derive(Debug, Deserialize)]
 pub struct PairQuery {
-    /// Parent path(s) and/or wildcards. Comma-separated: ~/a,~/b or ~/ai-models/* for cross-namespace.
+    /// Parent path(s). Comma-separated to merge scopes: ~/a,~/b (e.g. rank ~/models ~/ai-models).
     #[serde(default)]
     pub parent: Option<String>,
     #[serde(default)]
@@ -366,7 +366,7 @@ pub struct ThreadDetailQuery {
     pub tag: String,
 }
 
-/// Thread (forum) detail by tag — recent ingests in #tag. Not the same as get_path (garden).
+/// Thread (forum) detail by tag — all posts, full body. Not the same as get_path (garden).
 pub async fn get_thread(State(state): State<AppState>, Query(q): Query<ThreadDetailQuery>) -> impl IntoResponse {
     let tag = canonicalize_tag(&q.tag);
     let reduced = state.reduced.read().await;
@@ -377,7 +377,7 @@ pub async fn get_thread(State(state): State<AppState>, Query(q): Query<ThreadDet
         .map(|q| q.iter().cloned().collect::<Vec<_>>())
         .unwrap_or_default();
 
-    let recent_ingests: Vec<IngestRow> = {
+    let posts: Vec<PostRow> = {
         let mut ids = ingest_ids;
         ids.sort_by_key(|id| {
             reduced
@@ -388,21 +388,18 @@ pub async fn get_thread(State(state): State<AppState>, Query(q): Query<ThreadDet
         });
         ids
             .into_iter()
-            .take(20)
             .filter_map(|ing_id| reduced.ingests_by_id.get(&ing_id))
-            .map(|ing: &Ingest| IngestRow {
+            .map(|ing: &Ingest| PostRow {
                 ts: ing.ts,
-                actor: Some(format!("@{}", ing.actor)),
                 voter_key_id: ing.voter_key_id.clone(),
-                snippet: ing.raw.chars().take(800).collect(),
+                body: ing.raw.clone(),
             })
             .collect()
     };
 
-    Json(PathDetailResponse {
-        path: format!("#{}", tag),
-        children: vec![],
-        recent_ingests,
+    Json(ThreadDetailResponse {
+        thread: format!("#{}", tag),
+        posts,
     }).into_response()
 }
 

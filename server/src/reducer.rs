@@ -356,9 +356,6 @@ impl ReducerState {
                 for thread in touched_threads {
                     let q = self.ingests_by_thread.entry(thread).or_default();
                     q.push_front(ing.id.clone());
-                    while q.len() > 25 {
-                        q.pop_back();
-                    }
                 }
             }
         }

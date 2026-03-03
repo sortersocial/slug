@@ -20,27 +20,11 @@ pub struct ChildrenRankings {
     pub unranked_items: Vec<String>,
 }
 
-/// Resolve one scope spec to a set of item paths (direct children).
-/// - Literal path: direct children of that parent.
-/// - Path ending with `/*`: all direct children of any parent that is exactly one segment under the prefix (cross-namespace flatten).
+/// Resolve one scope spec (literal path) to direct children of that parent. No wildcards.
 fn resolve_one_scope(reduced: &ReducerState, spec: &str) -> HashSet<String> {
     let spec = spec.trim();
     if spec.is_empty() {
         return HashSet::new();
-    }
-    if spec.ends_with("/*") {
-        let prefix = canonicalize_item(spec.trim_end_matches('*').trim_end_matches('/'));
-        if prefix.is_empty() {
-            return HashSet::new();
-        }
-        let prefix_slash = format!("{}/", prefix);
-        let mut out = HashSet::new();
-        for (parent, children) in &reduced.item_children {
-            if parent.starts_with(&prefix_slash) && !parent[prefix_slash.len()..].contains('/') {
-                out.extend(children.iter().cloned());
-            }
-        }
-        return out;
     }
     let parent = canonicalize_item(spec);
     reduced
@@ -52,8 +36,8 @@ fn resolve_one_scope(reduced: &ReducerState, spec: &str) -> HashSet<String> {
         .collect()
 }
 
-/// Resolve multiple scope specs (literal paths and/or wildcards) to a single merged, deduplicated list of item paths.
-/// Used for rank/pair with multiple parents or wildcard (e.g. ~/ai-models/*).
+/// Resolve multiple scope specs (literal paths) to a single merged, deduplicated list of item paths.
+/// Used for rank/pair with multiple parents (explicit merge, e.g. rank ~/models ~/ai-models).
 pub fn resolve_scope(reduced: &ReducerState, specs: &[String]) -> Vec<String> {
     let mut set = HashSet::new();
     for spec in specs {
@@ -65,7 +49,7 @@ pub fn resolve_scope(reduced: &ReducerState, specs: &[String]) -> Vec<String> {
 }
 
 /// Build connected-component rankings for an explicit set of item paths.
-/// Use this when scope comes from multiple parents or wildcard (resolve_scope).
+/// Use this when scope comes from multiple parents (resolve_scope).
 pub fn build_rankings_for_item_set(reduced: &ReducerState, items_in_scope: &[String]) -> ChildrenRankings {
     let group = &reduced.ranking_group;
     let mut items_in_scope: Vec<String> = items_in_scope.to_vec();
@@ -171,22 +155,6 @@ mod tests {
         assert_eq!(out.len(), 2);
         assert!(out.contains("models/x"));
         assert!(out.contains("models/y"));
-    }
-
-    #[test]
-    fn resolve_one_scope_wildcard_flattens_one_level() {
-        let reduced = reduced_with_children(&[
-            ("ai-models/anthropic", &["ai-models/anthropic/claude", "ai-models/anthropic/haiku"]),
-            ("ai-models/openai", &["ai-models/openai/gpt4", "ai-models/openai/o1"]),
-            ("ai-models/openai/deep", &["ai-models/openai/deep/x"]), // not one segment under ai-models
-        ]);
-        let out = resolve_one_scope(&reduced, "~/ai-models/*");
-        assert_eq!(out.len(), 4);
-        assert!(out.contains("ai-models/anthropic/claude"));
-        assert!(out.contains("ai-models/anthropic/haiku"));
-        assert!(out.contains("ai-models/openai/gpt4"));
-        assert!(out.contains("ai-models/openai/o1"));
-        assert!(!out.contains("ai-models/openai/deep/x"));
     }
 
     #[test]
