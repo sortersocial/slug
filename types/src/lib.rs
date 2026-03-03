@@ -46,6 +46,12 @@ pub struct PathsResponse {
     pub paths: Vec<PathSummary>,
 }
 
+/// Leaf items only (no children). For search / "full path list" — does not scale, works for now.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct LeavesResponse {
+    pub paths: Vec<String>,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PathSummary {
     pub path: String,

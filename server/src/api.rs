@@ -7,7 +7,7 @@ use axum::{
 use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
 use slug_types::*;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 
 use crate::{
     dsl,
@@ -325,6 +325,20 @@ pub async fn get_paths(State(state): State<AppState>) -> impl IntoResponse {
         .unwrap_or_default();
 
     Json(PathsResponse { paths: out }).into_response()
+}
+
+/// List every leaf item (full path). Items that have no children. Does not scale; works for now.
+pub async fn get_leaves(State(state): State<AppState>) -> impl IntoResponse {
+    let reduced = state.reduced.read().await;
+    let parents: HashSet<&String> = reduced.item_children.keys().collect();
+    let mut paths: Vec<String> = reduced
+        .items
+        .iter()
+        .filter(|p| !parents.contains(p))
+        .cloned()
+        .collect();
+    paths.sort();
+    Json(LeavesResponse { paths }).into_response()
 }
 
 pub async fn get_threads(State(state): State<AppState>) -> impl IntoResponse {

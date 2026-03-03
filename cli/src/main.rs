@@ -131,6 +131,13 @@ enum Command {
         json: bool,
     },
 
+    /// List every leaf item (full path). No query filter yet; full list. Does not scale.
+    Search {
+        /// Output as JSON for agent parsing
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Watch for notifications (blocks until new notification or timeout)
     Watch {
         /// Actor name to watch for (without @ prefix)
@@ -556,6 +563,19 @@ async fn main() -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&resp)?);
             } else {
                 print_recent_votes(&resp);
+            }
+        }
+
+        Command::Search { json } => {
+            let client = http_client()?;
+            let url = format!("{base}/api/v0/leaves");
+            let resp: LeavesResponse = expect_json(client.get(url).send().await?).await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&resp)?);
+            } else {
+                for p in &resp.paths {
+                    println!("~/{}", p);
+                }
             }
         }
 

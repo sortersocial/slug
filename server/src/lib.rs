@@ -23,6 +23,7 @@ pub fn create_app(state: AppState) -> Router {
         .route("/t/:tag", axum::routing::get(html::thread_view))
         .route("/~/*path", axum::routing::get(html::ontology_path))
         .route("/api/v0/paths", axum::routing::get(api::get_paths))
+        .route("/api/v0/leaves", axum::routing::get(api::get_leaves))
         .route("/api/v0/threads", axum::routing::get(api::get_threads))
         .route("/api/v0/thread", axum::routing::get(api::get_thread))
         .route("/api/v0/item", axum::routing::get(api::get_item))
