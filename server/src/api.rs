@@ -1,6 +1,6 @@
 use axum::{
     extract::{Query, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::IntoResponse,
     Json,
 };
@@ -19,6 +19,14 @@ use crate::{
     state::AppState,
 };
 use crate::events::Ingest;
+
+fn channel_from_headers(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get("x-slug-channel")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
 
 fn api_error(status: StatusCode, error: impl Into<String>, hint: Option<String>) -> axum::response::Response {
     (status, Json(ApiError { ok: false, error: error.into(), hint })).into_response()
@@ -276,8 +284,10 @@ fn parse_parent_specs(parent: Option<&String>) -> Vec<String> {
     s.split(',').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect()
 }
 
-pub async fn get_rank(State(state): State<AppState>, Query(q): Query<RankQuery>) -> impl IntoResponse {
-    let reduced = state.reduced.read().await;
+pub async fn get_rank(State(state): State<AppState>, headers: HeaderMap, Query(q): Query<RankQuery>) -> impl IntoResponse {
+    let ch = channel_from_headers(&headers);
+    let (reduced_arc, _) = state.resolve(ch.as_deref()).await;
+    let reduced = reduced_arc.read().await;
     let specs = parse_parent_specs(q.parent.as_ref());
     let rankings = if specs.is_empty() {
         crate::scope_rank::build_children_rankings(&reduced, "")
@@ -345,11 +355,13 @@ fn is_pair_voted(group: &crate::reducer::GroupState, a: &str, b: &str) -> bool {
     group.voted_pairs.contains(&(i, j))
 }
 
-pub async fn get_pair(State(state): State<AppState>, Query(q): Query<PairQuery>) -> impl IntoResponse {
+pub async fn get_pair(State(state): State<AppState>, headers: HeaderMap, Query(q): Query<PairQuery>) -> impl IntoResponse {
+    let ch = channel_from_headers(&headers);
+    let (reduced_arc, _) = state.resolve(ch.as_deref()).await;
     let force_random = q.random.unwrap_or(false);
 
     let pool: Vec<String> = {
-        let reduced = state.reduced.read().await;
+        let reduced = reduced_arc.read().await;
         let specs = parse_parent_specs(q.parent.as_ref());
         if specs.is_empty() {
             reduced.ranking_group.idx_to_item.clone()
@@ -372,7 +384,7 @@ pub async fn get_pair(State(state): State<AppState>, Query(q): Query<PairQuery>)
             return api_error(StatusCode::BAD_REQUEST, "need at least 2 items", None);
         };
         let (left_body, right_body, threads) = {
-            let reduced = state.reduced.read().await;
+            let reduced = reduced_arc.read().await;
             let lb = reduced.item_bodies.get(&left).cloned();
             let rb = reduced.item_bodies.get(&right).cloned();
             let th: Vec<String> = reduced
@@ -397,7 +409,7 @@ pub async fn get_pair(State(state): State<AppState>, Query(q): Query<PairQuery>)
     }
 
     let selected: Option<(String, String)> = {
-        let mut reduced = state.reduced.write().await;
+        let mut reduced = reduced_arc.write().await;
         let group = &mut reduced.ranking_group;
         if group.idx_to_item.is_empty() {
             pick_random_distinct(&pool)
@@ -455,7 +467,7 @@ pub async fn get_pair(State(state): State<AppState>, Query(q): Query<PairQuery>)
     };
 
     let (left_body, right_body, threads) = {
-        let reduced = state.reduced.read().await;
+        let reduced = reduced_arc.read().await;
         let lb = reduced.item_bodies.get(&left).cloned();
         let rb = reduced.item_bodies.get(&right).cloned();
         let th: Vec<String> = reduced
@@ -484,8 +496,10 @@ pub async fn get_pair(State(state): State<AppState>, Query(q): Query<PairQuery>)
 // ============================================================================
 
 /// List root paths (items with parent "").
-pub async fn get_paths(State(state): State<AppState>) -> impl IntoResponse {
-    let reduced = state.reduced.read().await;
+pub async fn get_paths(State(state): State<AppState>, headers: HeaderMap) -> impl IntoResponse {
+    let ch = channel_from_headers(&headers);
+    let (reduced_arc, _) = state.resolve(ch.as_deref()).await;
+    let reduced = reduced_arc.read().await;
 
     let out: Vec<PathSummary> = reduced
         .item_children
@@ -508,8 +522,10 @@ pub async fn get_paths(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 /// List every leaf item (full path). Items that have no children. Does not scale; works for now.
-pub async fn get_leaves(State(state): State<AppState>) -> impl IntoResponse {
-    let reduced = state.reduced.read().await;
+pub async fn get_leaves(State(state): State<AppState>, headers: HeaderMap) -> impl IntoResponse {
+    let ch = channel_from_headers(&headers);
+    let (reduced_arc, _) = state.resolve(ch.as_deref()).await;
+    let reduced = reduced_arc.read().await;
     let parents: HashSet<&String> = reduced.item_children.keys().collect();
     let mut paths: Vec<String> = reduced
         .items
@@ -521,8 +537,10 @@ pub async fn get_leaves(State(state): State<AppState>) -> impl IntoResponse {
     Json(LeavesResponse { paths }).into_response()
 }
 
-pub async fn get_threads(State(state): State<AppState>) -> impl IntoResponse {
-    let reduced = state.reduced.read().await;
+pub async fn get_threads(State(state): State<AppState>, headers: HeaderMap) -> impl IntoResponse {
+    let ch = channel_from_headers(&headers);
+    let (reduced_arc, _) = state.resolve(ch.as_deref()).await;
+    let reduced = reduced_arc.read().await;
 
     let mut out: Vec<ThreadSummary> = reduced
         .threads
@@ -547,9 +565,11 @@ pub struct ThreadDetailQuery {
 }
 
 /// Thread (forum) detail by tag — all posts, full body. Not the same as get_path (garden).
-pub async fn get_thread(State(state): State<AppState>, Query(q): Query<ThreadDetailQuery>) -> impl IntoResponse {
+pub async fn get_thread(State(state): State<AppState>, headers: HeaderMap, Query(q): Query<ThreadDetailQuery>) -> impl IntoResponse {
+    let ch = channel_from_headers(&headers);
+    let (reduced_arc, _) = state.resolve(ch.as_deref()).await;
     let tag = canonicalize_tag(&q.tag);
-    let reduced = state.reduced.read().await;
+    let reduced = reduced_arc.read().await;
 
     let ingest_ids = reduced
         .ingests_by_thread
@@ -588,9 +608,11 @@ pub struct ItemQuery {
     pub item: String,
 }
 
-pub async fn get_item(State(state): State<AppState>, Query(q): Query<ItemQuery>) -> impl IntoResponse {
+pub async fn get_item(State(state): State<AppState>, headers: HeaderMap, Query(q): Query<ItemQuery>) -> impl IntoResponse {
+    let ch = channel_from_headers(&headers);
+    let (reduced_arc, _) = state.resolve(ch.as_deref()).await;
     let item = canonicalize_item(&q.item);
-    let reduced = state.reduced.read().await;
+    let reduced = reduced_arc.read().await;
 
     let body = reduced.item_bodies.get(&item).cloned();
     let threads: Vec<String> = reduced
@@ -622,11 +644,14 @@ fn vote_touches_path(a: &str, b: &str, parent_canon: &str) -> bool {
 
 pub async fn get_recent_votes(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Query(q): Query<RecentVotesQuery>,
 ) -> impl IntoResponse {
+    let ch = channel_from_headers(&headers);
+    let (reduced_arc, _) = state.resolve(ch.as_deref()).await;
     let limit = q.limit.unwrap_or(25).clamp(1, 200);
 
-    let reduced = state.reduced.read().await;
+    let reduced = reduced_arc.read().await;
     let group = &reduced.ranking_group;
 
     let iter = group.recent_votes.iter();
@@ -660,12 +685,15 @@ pub struct MatchupQuery {
 /// Vote history for one item (matchup: wins/losses with thread per vote).
 pub async fn get_matchup(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Query(q): Query<MatchupQuery>,
 ) -> impl IntoResponse {
+    let ch = channel_from_headers(&headers);
+    let (reduced_arc, _) = state.resolve(ch.as_deref()).await;
     let item = canonicalize_item(&q.item);
     let limit = q.limit.unwrap_or(50).clamp(1, 200);
 
-    let reduced = state.reduced.read().await;
+    let reduced = reduced_arc.read().await;
     let votes: Vec<VoteRow> = reduced
         .item_votes
         .get(&item)
@@ -785,10 +813,12 @@ fn compute_scope_rank_changes(
 
 pub async fn post_ingest(
     State(state): State<AppState>,
-    _headers: axum::http::HeaderMap,
+    headers: axum::http::HeaderMap,
     Json(req): Json<IngestRequest>,
 ) -> impl IntoResponse {
-    let reduced = state.reduced.read().await;
+    let ch = channel_from_headers(&headers);
+    let (reduced_arc, event_log) = state.resolve(ch.as_deref()).await;
+    let reduced = reduced_arc.read().await;
     let v = match validate_ingest_document(
         &reduced,
         &req.text,
@@ -818,7 +848,7 @@ pub async fn post_ingest(
     // Snapshot rankings before the event is applied.
     let pre_rankings: HashMap<String, crate::scope_rank::ChildrenRankings> =
         if !voted_parent_scopes.is_empty() {
-            let reduced = state.reduced.read().await;
+            let reduced = reduced_arc.read().await;
             voted_parent_scopes
                 .iter()
                 .map(|p| (p.clone(), crate::scope_rank::build_children_rankings(&reduced, p)))
@@ -835,18 +865,18 @@ pub async fn post_ingest(
         actor: v.actor.clone(),
     });
 
-    if let Err(err) = state.event_log.append(&event).await {
+    if let Err(err) = event_log.append(&event).await {
         return api_error(StatusCode::INTERNAL_SERVER_ERROR, format!("{err}"), None);
     }
     let actor_for_stream = v.actor.clone();
     {
-        let mut reduced = state.reduced.write().await;
+        let mut reduced = reduced_arc.write().await;
         reduced.apply_event(event);
     }
 
     // Snapshot rankings after the event and compute per-scope deltas.
     let ranking_changes: Vec<ScopeRankChanges> = if !voted_parent_scopes.is_empty() {
-        let reduced = state.reduced.read().await;
+        let reduced = reduced_arc.read().await;
         voted_parent_scopes
             .iter()
             .filter_map(|p| {
@@ -859,14 +889,13 @@ pub async fn post_ingest(
         vec![]
     };
 
-    let _ = state.stream_tx.send(crate::state::StreamEvent {
-        ts: v.ts,
-        actor: actor_for_stream,
-        tags: v.threads.iter().map(|t| format!("#{t}")).collect(),
-        snippet: v.raw_text.chars().take(200).collect(),
-    });
-
-    {
+    if ch.is_none() {
+        let _ = state.stream_tx.send(crate::state::StreamEvent {
+            ts: v.ts,
+            actor: actor_for_stream,
+            tags: v.threads.iter().map(|t| format!("#{t}")).collect(),
+            snippet: v.raw_text.chars().take(200).collect(),
+        });
         let html = crate::html::thread_feed_html(&state).await;
         let _ = state.html_tx.send(crate::state::HtmlFragment {
             selector: "#thread-feed".to_string(),
@@ -904,10 +933,12 @@ pub async fn post_web_ingest(
 
 pub async fn post_check(
     State(state): State<AppState>,
-    _headers: axum::http::HeaderMap,
+    headers: axum::http::HeaderMap,
     Json(req): Json<IngestRequest>,
 ) -> impl IntoResponse {
-    let reduced = state.reduced.read().await;
+    let ch = channel_from_headers(&headers);
+    let (reduced_arc, _) = state.resolve(ch.as_deref()).await;
+    let reduced = reduced_arc.read().await;
     let v = match validate_ingest_document(
         &reduced,
         &req.text,
@@ -926,7 +957,7 @@ pub async fn post_check(
         actor: v.actor.clone(),
     });
 
-    let mut simulated = { state.reduced.read().await.clone() };
+    let mut simulated = { reduced_arc.read().await.clone() };
     simulated.apply_event(event);
 
     let ranking = ranked_items(&mut simulated.ranking_group, 10000, 1e-8)
@@ -965,13 +996,16 @@ pub struct NotificationsQuery {
 
 pub async fn get_notifications(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Query(q): Query<NotificationsQuery>,
 ) -> impl IntoResponse {
+    let ch = channel_from_headers(&headers);
+    let (reduced_arc, _) = state.resolve(ch.as_deref()).await;
     let actor = canonicalize_actor(&q.actor);
     let since = q.since.unwrap_or(0);
 
     let notifications = {
-        let reduced = state.reduced.read().await;
+        let reduced = reduced_arc.read().await;
         reduced
             .notifications
             .get(&actor)

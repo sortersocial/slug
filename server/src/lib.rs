@@ -15,6 +15,8 @@ use tower_http::trace::TraceLayer;
 
 use crate::state::AppState;
 
+pub use reducer::ReducerState;
+
 pub fn create_app(state: AppState) -> Router {
     Router::new()
         .route("/healthz", axum::routing::get(|| async { "ok" }))
