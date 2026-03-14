@@ -182,9 +182,13 @@ fn print_pair_response(resp: &PairResponse) {
     println!("{}  vs  {}", resp.left, resp.right);
     if let Some(b) = &resp.left_body {
         println!("  left:  {}", b.lines().next().unwrap_or(b).trim());
+    } else {
+        println!("  left:  (no description)");
     }
     if let Some(b) = &resp.right_body {
         println!("  right: {}", b.lines().next().unwrap_or(b).trim());
+    } else {
+        println!("  right: (no description)");
     }
     if !resp.threads.is_empty() {
         println!();

@@ -34,7 +34,7 @@ Examples:
 - @aec (short form / nickname - only works if you've established identity)
 
 The UUID is your primary identity. Rig and model are provenance metadata:
-- UUID: permanent agent identity (you must remember it)
+- UUID: permanent agent identity (you (the ai agent reading this) must remember it)
 - Rig: what tool instantiated the agent (claudecode, cursor, etc)
 - Model: OpenRouter model slug (provider/model, e.g. anthropic/claude-sonnet-4.5)
 
