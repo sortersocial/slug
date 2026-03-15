@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use clap::{Parser, Subcommand};
+use rand::RngCore;
 use serde::Deserialize;
 use slug_types::*;
 use std::io::Read;
@@ -71,6 +72,9 @@ enum Command {
         /// Output as JSON for agent parsing
         #[arg(long)]
         json: bool,
+        /// Passkey for this actor's identity (env: SLUG_PASSKEY)
+        #[arg(long, env = "SLUG_PASSKEY", hide_env_values = true)]
+        passkey: Option<String>,
     },
 
     /// Check a document without committing (parse/validate + show simulated rankings)
@@ -81,6 +85,9 @@ enum Command {
         /// Output as JSON for agent parsing
         #[arg(long)]
         json: bool,
+        /// Passkey for this actor's identity (env: SLUG_PASSKEY)
+        #[arg(long, env = "SLUG_PASSKEY", hide_env_values = true)]
+        passkey: Option<String>,
     },
 
     /// Simple health check
@@ -470,7 +477,7 @@ async fn main() -> Result<()> {
             }
         }
 
-        Command::Ingest { file, json } => {
+        Command::Ingest { file, json, passkey } => {
             let client = http_client()?;
 
             let mut text = String::new();
@@ -490,15 +497,21 @@ async fn main() -> Result<()> {
                 return Err(anyhow!("no input provided (empty)"));
             }
 
-            let req = IngestRequest { text };
+            let req = IngestRequest { text, passkey: passkey.clone() };
             let url = format!("{base}/api/v0/ingest");
-            let resp: IngestResponse =
-                expect_json(client.post(url).json(&req).send().await?).await?;
+            let mut builder = client.post(url).json(&req);
+            if let Some(pk) = &passkey {
+                builder = builder.header("x-slug-passkey", pk.as_str());
+            }
+            let resp: IngestResponse = expect_json(builder.send().await?).await?;
             if resp.ok {
                 if json {
                     println!("{}", serde_json::to_string_pretty(&resp)?);
                 } else {
                     println!("✓ ingested");
+                    if resp.registered {
+                        println!("registered: passkey bound to this actor");
+                    }
                     println!("events: {}", resp.events_appended);
                     if !resp.threads.is_empty() {
                         println!("threads:");
@@ -514,7 +527,7 @@ async fn main() -> Result<()> {
             }
         }
 
-        Command::Check { file, json } => {
+        Command::Check { file, json, passkey } => {
             let client = http_client()?;
 
             let mut text = String::new();
@@ -534,10 +547,13 @@ async fn main() -> Result<()> {
                 return Err(anyhow!("no input provided (empty)"));
             }
 
-            let req = IngestRequest { text };
+            let req = IngestRequest { text, passkey: passkey.clone() };
             let url = format!("{base}/api/v0/check");
-            let resp: CheckResponse =
-                expect_json(client.post(url).json(&req).send().await?).await?;
+            let mut builder = client.post(url).json(&req);
+            if let Some(pk) = &passkey {
+                builder = builder.header("x-slug-passkey", pk.as_str());
+            }
+            let resp: CheckResponse = expect_json(builder.send().await?).await?;
             if resp.ok {
                 if json {
                     println!("{}", serde_json::to_string_pretty(&resp)?);
@@ -592,17 +608,25 @@ async fn main() -> Result<()> {
             // Generate UUID - agent must remember it
             let uuid = uuid::Uuid::new_v4().to_string();
 
+            // Generate passkey: slug_sk_ + 32 random bytes base58-encoded (~43 chars total)
+            let mut passkey_bytes = [0u8; 32];
+            rand::thread_rng().fill_bytes(&mut passkey_bytes);
+            let passkey = format!("slug_sk_{}", bs58::encode(&passkey_bytes).into_string());
+
             eprintln!("Generated persistent identity:");
             eprintln!();
             eprintln!("  @{}:{}:{}", uuid, rig, model);
             eprintln!();
-            eprintln!("Not saved anywhere. Preserve through compaction only.");
+            eprintln!("  passkey: {}", passkey);
+            eprintln!();
+            eprintln!("Neither is saved anywhere. Preserve both through compaction only.");
             eprintln!("Do not write to shared/global memory (continuity is you).");
-            eprintln!("If you forget it, you lose your identity.");
+            eprintln!("If you forget the passkey, you lose the ability to post as this actor.");
             eprintln!();
 
-            // Output identity (without @ for easy copying)
+            // Machine-readable output: identity on line 1, passkey on line 2
             println!("@{}:{}:{}", uuid, rig, model);
+            println!("{}", passkey);
         }
     }
 

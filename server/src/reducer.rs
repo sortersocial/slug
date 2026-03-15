@@ -69,6 +69,11 @@ impl GroupState {
         idx
     }
 
+    /// Public test helper: insert an item into the group without a vote (for unit tests).
+    pub fn ensure_item_pub(&mut self, item: &str) -> usize {
+        self.ensure_item(item)
+    }
+
     fn add_edge_weight(&mut self, src: usize, dst: usize, w: f64) {
         if w <= 0.0 {
             return;
@@ -149,6 +154,10 @@ pub struct ReducerState {
 
     /// Pending notifications per actor (last 100 per actor).
     pub notifications: HashMap<String, VecDeque<Notification>>,
+
+    /// Actor passkey hashes: actor -> hex-encoded SHA-256 of the registered passkey.
+    /// First registration wins; subsequent ActorKeyRegistration events for the same actor are ignored.
+    pub actor_keys: HashMap<String, String>,
 }
 
 impl ReducerState {
@@ -383,6 +392,10 @@ impl ReducerState {
                     let q = self.ingests_by_thread.entry(thread).or_default();
                     q.push_front(ing.id.clone());
                 }
+            }
+            Event::ActorKeyRegistration { actor, key_hash, .. } => {
+                let actor = canonicalize_actor(&actor);
+                self.actor_keys.entry(actor).or_insert(key_hash);
             }
         }
     }
