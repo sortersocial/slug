@@ -63,7 +63,6 @@ CLI-only:
 | Variable | Default | Description |
 |---|---|---|
 | `SLUG_SERVER` | `https://slug.social` | Server URL |
-| `SLUG_CHANNEL` | — | Private channel secret |
 
 Dev server uses `SLUG_DATA_DIR=dev-data`.
 
@@ -121,10 +120,6 @@ Rules enforced by parser:
 - **Scopes**: rankings computed per parent path; can be merged across scopes
 - Scores are cached in-memory, invalidated on new votes
 
-### Private Channels
-
-Header `x-slug-channel: <secret>` → channel ID = UUIDv5(CHANNEL_NAMESPACE, secret). Each channel has isolated event log at `{data_dir}/channels/{channel_id}/events.jsonl` and its own ReducerState.
-
 ### HTML / SSE
 
 - Maud for server-side HTML templating
@@ -168,7 +163,6 @@ npx slugsocial ingest [file] [--json]   # reads stdin if no file
 npx slugsocial check [file] [--json]
 
 npx slugsocial healthz [--json]
-npx slugsocial --channel <secret> <cmd>  # private channel
 ```
 
 ## Tests

@@ -1,6 +1,6 @@
 use axum::{
     extract::{Query, State},
-    http::{HeaderMap, StatusCode},
+    http::StatusCode,
     response::IntoResponse,
     Json,
 };
@@ -19,14 +19,6 @@ use crate::{
     state::AppState,
 };
 use crate::events::Ingest;
-
-fn channel_from_headers(headers: &HeaderMap) -> Option<String> {
-    headers
-        .get("x-slug-channel")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-}
 
 fn api_error(status: StatusCode, error: impl Into<String>, hint: Option<String>) -> axum::response::Response {
     (status, Json(ApiError { ok: false, error: error.into(), hint })).into_response()
@@ -284,9 +276,8 @@ fn parse_parent_specs(parent: Option<&String>) -> Vec<String> {
     s.split(',').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect()
 }
 
-pub async fn get_rank(State(state): State<AppState>, headers: HeaderMap, Query(q): Query<RankQuery>) -> impl IntoResponse {
-    let ch = channel_from_headers(&headers);
-    let (reduced_arc, _) = state.resolve(ch.as_deref()).await;
+pub async fn get_rank(State(state): State<AppState>, Query(q): Query<RankQuery>) -> impl IntoResponse {
+    let reduced_arc = state.reduced.clone();
     let reduced = reduced_arc.read().await;
     let specs = parse_parent_specs(q.parent.as_ref());
     let rankings = if specs.is_empty() {
@@ -355,9 +346,8 @@ fn is_pair_voted(group: &crate::reducer::GroupState, a: &str, b: &str) -> bool {
     group.voted_pairs.contains(&(i, j))
 }
 
-pub async fn get_pair(State(state): State<AppState>, headers: HeaderMap, Query(q): Query<PairQuery>) -> impl IntoResponse {
-    let ch = channel_from_headers(&headers);
-    let (reduced_arc, _) = state.resolve(ch.as_deref()).await;
+pub async fn get_pair(State(state): State<AppState>, Query(q): Query<PairQuery>) -> impl IntoResponse {
+    let reduced_arc = state.reduced.clone();
     let force_random = q.random.unwrap_or(false);
 
     let pool: Vec<String> = {
@@ -496,9 +486,8 @@ pub async fn get_pair(State(state): State<AppState>, headers: HeaderMap, Query(q
 // ============================================================================
 
 /// List root paths (items with parent "").
-pub async fn get_paths(State(state): State<AppState>, headers: HeaderMap) -> impl IntoResponse {
-    let ch = channel_from_headers(&headers);
-    let (reduced_arc, _) = state.resolve(ch.as_deref()).await;
+pub async fn get_paths(State(state): State<AppState>) -> impl IntoResponse {
+    let reduced_arc = state.reduced.clone();
     let reduced = reduced_arc.read().await;
 
     let out: Vec<PathSummary> = reduced
@@ -522,9 +511,8 @@ pub async fn get_paths(State(state): State<AppState>, headers: HeaderMap) -> imp
 }
 
 /// List every leaf item (full path). Items that have no children. Does not scale; works for now.
-pub async fn get_leaves(State(state): State<AppState>, headers: HeaderMap) -> impl IntoResponse {
-    let ch = channel_from_headers(&headers);
-    let (reduced_arc, _) = state.resolve(ch.as_deref()).await;
+pub async fn get_leaves(State(state): State<AppState>) -> impl IntoResponse {
+    let reduced_arc = state.reduced.clone();
     let reduced = reduced_arc.read().await;
     let parents: HashSet<&String> = reduced.item_children.keys().collect();
     let mut paths: Vec<String> = reduced
@@ -537,9 +525,8 @@ pub async fn get_leaves(State(state): State<AppState>, headers: HeaderMap) -> im
     Json(LeavesResponse { paths }).into_response()
 }
 
-pub async fn get_threads(State(state): State<AppState>, headers: HeaderMap) -> impl IntoResponse {
-    let ch = channel_from_headers(&headers);
-    let (reduced_arc, _) = state.resolve(ch.as_deref()).await;
+pub async fn get_threads(State(state): State<AppState>) -> impl IntoResponse {
+    let reduced_arc = state.reduced.clone();
     let reduced = reduced_arc.read().await;
 
     let mut out: Vec<ThreadSummary> = reduced
@@ -565,9 +552,8 @@ pub struct ThreadDetailQuery {
 }
 
 /// Thread (forum) detail by tag — all posts, full body. Not the same as get_path (garden).
-pub async fn get_thread(State(state): State<AppState>, headers: HeaderMap, Query(q): Query<ThreadDetailQuery>) -> impl IntoResponse {
-    let ch = channel_from_headers(&headers);
-    let (reduced_arc, _) = state.resolve(ch.as_deref()).await;
+pub async fn get_thread(State(state): State<AppState>, Query(q): Query<ThreadDetailQuery>) -> impl IntoResponse {
+    let reduced_arc = state.reduced.clone();
     let tag = canonicalize_tag(&q.tag);
     let reduced = reduced_arc.read().await;
 
@@ -608,9 +594,8 @@ pub struct ItemQuery {
     pub item: String,
 }
 
-pub async fn get_item(State(state): State<AppState>, headers: HeaderMap, Query(q): Query<ItemQuery>) -> impl IntoResponse {
-    let ch = channel_from_headers(&headers);
-    let (reduced_arc, _) = state.resolve(ch.as_deref()).await;
+pub async fn get_item(State(state): State<AppState>, Query(q): Query<ItemQuery>) -> impl IntoResponse {
+    let reduced_arc = state.reduced.clone();
     let item = canonicalize_item(&q.item);
     let reduced = reduced_arc.read().await;
 
@@ -644,11 +629,9 @@ fn vote_touches_path(a: &str, b: &str, parent_canon: &str) -> bool {
 
 pub async fn get_recent_votes(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Query(q): Query<RecentVotesQuery>,
 ) -> impl IntoResponse {
-    let ch = channel_from_headers(&headers);
-    let (reduced_arc, _) = state.resolve(ch.as_deref()).await;
+    let reduced_arc = state.reduced.clone();
     let limit = q.limit.unwrap_or(25).clamp(1, 200);
 
     let reduced = reduced_arc.read().await;
@@ -685,11 +668,9 @@ pub struct MatchupQuery {
 /// Vote history for one item (matchup: wins/losses with thread per vote).
 pub async fn get_matchup(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Query(q): Query<MatchupQuery>,
 ) -> impl IntoResponse {
-    let ch = channel_from_headers(&headers);
-    let (reduced_arc, _) = state.resolve(ch.as_deref()).await;
+    let reduced_arc = state.reduced.clone();
     let item = canonicalize_item(&q.item);
     let limit = q.limit.unwrap_or(50).clamp(1, 200);
 
@@ -813,11 +794,10 @@ fn compute_scope_rank_changes(
 
 pub async fn post_ingest(
     State(state): State<AppState>,
-    headers: axum::http::HeaderMap,
     Json(req): Json<IngestRequest>,
 ) -> impl IntoResponse {
-    let ch = channel_from_headers(&headers);
-    let (reduced_arc, event_log) = state.resolve(ch.as_deref()).await;
+    let reduced_arc = state.reduced.clone();
+    let event_log = state.event_log.clone();
     let reduced = reduced_arc.read().await;
     let v = match validate_ingest_document(
         &reduced,
@@ -889,19 +869,17 @@ pub async fn post_ingest(
         vec![]
     };
 
-    if ch.is_none() {
-        let _ = state.stream_tx.send(crate::state::StreamEvent {
-            ts: v.ts,
-            actor: actor_for_stream,
-            tags: v.threads.iter().map(|t| format!("#{t}")).collect(),
-            snippet: v.raw_text.chars().take(200).collect(),
-        });
-        let html = crate::html::thread_feed_html(&state).await;
-        let _ = state.html_tx.send(crate::state::HtmlFragment {
-            selector: "#thread-feed".to_string(),
-            html,
-        });
-    }
+    let _ = state.stream_tx.send(crate::state::StreamEvent {
+        ts: v.ts,
+        actor: actor_for_stream,
+        tags: v.threads.iter().map(|t| format!("#{t}")).collect(),
+        snippet: v.raw_text.chars().take(200).collect(),
+    });
+    let html = crate::html::thread_feed_html(&state).await;
+    let _ = state.html_tx.send(crate::state::HtmlFragment {
+        selector: "#thread-feed".to_string(),
+        html,
+    });
 
     let primary_thread = v.threads.first().cloned().unwrap_or_else(|| "untagged".to_string());
     Json(IngestResponse {
@@ -922,8 +900,7 @@ pub async fn post_web_ingest(
     axum::extract::Form(req): axum::extract::Form<IngestRequest>,
 ) -> impl IntoResponse {
     let json_req = Json(req);
-    let headers = axum::http::HeaderMap::new();
-    let resp = post_ingest(State(state), headers, json_req).await.into_response();
+    let resp = post_ingest(State(state), json_req).await.into_response();
     if resp.status().is_success() {
         StatusCode::NO_CONTENT.into_response()
     } else {
@@ -933,11 +910,9 @@ pub async fn post_web_ingest(
 
 pub async fn post_check(
     State(state): State<AppState>,
-    headers: axum::http::HeaderMap,
     Json(req): Json<IngestRequest>,
 ) -> impl IntoResponse {
-    let ch = channel_from_headers(&headers);
-    let (reduced_arc, _) = state.resolve(ch.as_deref()).await;
+    let reduced_arc = state.reduced.clone();
     let reduced = reduced_arc.read().await;
     let v = match validate_ingest_document(
         &reduced,
@@ -996,11 +971,9 @@ pub struct NotificationsQuery {
 
 pub async fn get_notifications(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Query(q): Query<NotificationsQuery>,
 ) -> impl IntoResponse {
-    let ch = channel_from_headers(&headers);
-    let (reduced_arc, _) = state.resolve(ch.as_deref()).await;
+    let reduced_arc = state.reduced.clone();
     let actor = canonicalize_actor(&q.actor);
     let since = q.since.unwrap_or(0);
 

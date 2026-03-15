@@ -45,6 +45,11 @@
                                            "PORT"          "8080"
                                            "RUST_LOG"      "info"})})))}
 
+  sanity
+  {:doc "End-to-end sanity check: DSL → CLI → HTTP → JSONL → replay → CLI query"
+   :requires ([scripts.sanity :as s])
+   :task (s/sanity)}
+
   release-help
   {:doc "Show release task usage"
    :task (do
