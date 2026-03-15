@@ -6,20 +6,6 @@ use crate::{event_log::EventLog, reducer::ReducerState};
 
 const PRESENCE_TTL_MS: i64 = 60_000;
 
-/// UUIDv5 namespace for deriving channel IDs from secrets.
-const CHANNEL_NAMESPACE: uuid::Uuid = uuid::Uuid::from_bytes([
-    0x6b, 0xa7, 0xb8, 0x11, 0x9d, 0xad, 0x11, 0xd1,
-    0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30, 0xc8,
-]);
-
-/// A private channel: isolated ReducerState + event log, gated by a shared secret.
-/// The secret is never stored; channel_id is UUIDv5(secret).
-#[derive(Clone)]
-pub struct ChannelData {
-    pub reduced: Arc<RwLock<ReducerState>>,
-    pub event_log: Arc<EventLog>,
-}
-
 /// An SSE event broadcast to all live stream subscribers when an ingest occurs.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct StreamEvent {
@@ -64,7 +50,6 @@ pub struct AppState {
     pub stream_tx: broadcast::Sender<StreamEvent>,
     /// Broadcast channel for web SSE HTML fragments (poem pattern). Capacity = 64.
     pub html_tx: broadcast::Sender<HtmlFragment>,
-    pub channels: Arc<RwLock<HashMap<String, ChannelData>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -106,47 +91,6 @@ impl AppState {
             presence: Arc::new(RwLock::new(HashMap::new())),
             stream_tx,
             html_tx,
-            channels: Arc::new(RwLock::new(HashMap::new())),
-        }
-    }
-
-    /// Derive a stable channel ID from a shared secret (UUIDv5, never stores the secret).
-    pub fn channel_id_from_secret(secret: &str) -> String {
-        uuid::Uuid::new_v5(&CHANNEL_NAMESPACE, secret.as_bytes()).to_string()
-    }
-
-    /// Get or lazily create a private channel by secret.
-    pub async fn get_or_create_channel(&self, secret: &str) -> ChannelData {
-        let id = Self::channel_id_from_secret(secret);
-        {
-            let channels = self.channels.read().await;
-            if let Some(ch) = channels.get(&id) {
-                return ch.clone();
-            }
-        }
-        let mut channels = self.channels.write().await;
-        if let Some(ch) = channels.get(&id) {
-            return ch.clone();
-        }
-        let event_log = Arc::new(EventLog::new(
-            format!("{}/channels/{}/events.jsonl", self.cfg.data_dir, id),
-        ));
-        let ch = ChannelData {
-            reduced: Arc::new(RwLock::new(ReducerState::default())),
-            event_log,
-        };
-        channels.insert(id, ch.clone());
-        ch
-    }
-
-    /// Resolve (reduced_state, event_log) for a given channel secret (or global if None).
-    pub async fn resolve(&self, channel_secret: Option<&str>) -> (Arc<RwLock<ReducerState>>, Arc<EventLog>) {
-        match channel_secret {
-            None => (Arc::clone(&self.reduced), Arc::clone(&self.event_log)),
-            Some(s) => {
-                let ch = self.get_or_create_channel(s).await;
-                (ch.reduced, ch.event_log)
-            }
         }
     }
 

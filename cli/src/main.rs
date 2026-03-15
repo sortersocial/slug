@@ -17,10 +17,6 @@ struct Cli {
     #[arg(env = "SLUG_SERVER", default_value = "https://slug.social", hide_env_values = true, hide = true)]
     server: String,
 
-    /// Private channel secret (env: SLUG_CHANNEL). All commands operate within this isolated namespace.
-    #[arg(long, env = "SLUG_CHANNEL", global = true, hide_env_values = true)]
-    channel: Option<String>,
-
     #[command(subcommand)]
     cmd: Option<Command>,
 }
@@ -289,16 +285,11 @@ fn print_thread(resp: &ThreadDetailResponse) {
     }
 }
 
-fn http_client(channel: Option<&str>) -> Result<reqwest::Client> {
-    let mut builder = reqwest::ClientBuilder::new()
+fn http_client() -> Result<reqwest::Client> {
+    Ok(reqwest::ClientBuilder::new()
         .tls_built_in_webpki_certs(true)
-        .tls_built_in_native_certs(true);
-    if let Some(ch) = channel {
-        let mut headers = reqwest::header::HeaderMap::new();
-        headers.insert("x-slug-channel", ch.parse()?);
-        builder = builder.default_headers(headers);
-    }
-    Ok(builder.build()?)
+        .tls_built_in_native_certs(true)
+        .build()?)
 }
 
 /// Normalize ontology path for API. Accepts path with or without ~/ (shell expands ~ to $HOME).
@@ -359,7 +350,7 @@ async fn expect_json<T: for<'de> Deserialize<'de>>(resp: reqwest::Response) -> R
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let Cli { cmd, server, channel } = Cli::parse();
+    let Cli { cmd, server } = Cli::parse();
 
     // If no command provided, print the guide
     let Some(cmd) = cmd else {
@@ -371,7 +362,7 @@ async fn main() -> Result<()> {
 
     match cmd {
         Command::Healthz { json } => {
-            let client = http_client(channel.as_deref())?;
+            let client = http_client()?;
             let url = format!("{base}/healthz");
             let body = client.get(url).send().await?.text().await?;
             if json {
@@ -384,7 +375,7 @@ async fn main() -> Result<()> {
 
         Command::Garden { sub } => match sub {
             GardenCmd::Tree { json } => {
-                let client = http_client(channel.as_deref())?;
+                let client = http_client()?;
                 let url = format!("{base}/api/v0/leaves");
                 let resp: LeavesResponse = expect_json(client.get(url).send().await?).await?;
                 if json {
@@ -398,7 +389,7 @@ async fn main() -> Result<()> {
 
             GardenCmd::Body { path, json } => {
                 let path = normalize_ontology_path_input(&path).map_err(anyhow::Error::msg)?;
-                let client = http_client(channel.as_deref())?;
+                let client = http_client()?;
                 let url = format!("{base}/api/v0/item?item={}", urlencoding::encode(&path));
                 let resp: ItemResponse = expect_json(client.get(url).send().await?).await?;
                 if json {
@@ -413,7 +404,7 @@ async fn main() -> Result<()> {
                     .iter()
                     .map(|p| normalize_ontology_path_input(p).map_err(anyhow::Error::msg))
                     .collect::<Result<Vec<_>>>()?;
-                let client = http_client(channel.as_deref())?;
+                let client = http_client()?;
                 let parent_param = paths.join(",");
                 let url = format!("{base}/api/v0/rank?parent={}", urlencoding::encode(&parent_param));
                 let resp: RankResponse = expect_json(client.get(url).send().await?).await?;
@@ -427,7 +418,7 @@ async fn main() -> Result<()> {
 
             GardenCmd::Pair { path, json } => {
                 let path = normalize_ontology_path_input(&path).map_err(anyhow::Error::msg)?;
-                let client = http_client(channel.as_deref())?;
+                let client = http_client()?;
                 let url = format!("{base}/api/v0/pair?parent={}", urlencoding::encode(&path));
                 let resp: PairResponse = expect_json(client.get(url).send().await?).await?;
                 if json {
@@ -439,7 +430,7 @@ async fn main() -> Result<()> {
 
             GardenCmd::Matchup { path, json } => {
                 let path = normalize_ontology_path_input(&path).map_err(anyhow::Error::msg)?;
-                let client = http_client(channel.as_deref())?;
+                let client = http_client()?;
                 let url = format!("{base}/api/v0/matchup?item={}", urlencoding::encode(&path));
                 let resp: MatchupResponse = expect_json(client.get(url).send().await?).await?;
                 if json {
@@ -451,7 +442,7 @@ async fn main() -> Result<()> {
         },
 
         Command::Forum { title, json } => {
-            let client = http_client(channel.as_deref())?;
+            let client = http_client()?;
             match title {
                 None => {
                     let url = format!("{base}/api/v0/threads");
@@ -480,7 +471,7 @@ async fn main() -> Result<()> {
         }
 
         Command::Ingest { file, json } => {
-            let client = http_client(channel.as_deref())?;
+            let client = http_client()?;
 
             let mut text = String::new();
             match file {
@@ -524,7 +515,7 @@ async fn main() -> Result<()> {
         }
 
         Command::Check { file, json } => {
-            let client = http_client(channel.as_deref())?;
+            let client = http_client()?;
 
             let mut text = String::new();
             match file {
@@ -580,7 +571,7 @@ async fn main() -> Result<()> {
 
         Command::Identity { rig, model } => {
             // Validate model against OpenRouter API
-            let client = http_client(channel.as_deref())?;
+            let client = http_client()?;
             let url = "https://openrouter.ai/api/v1/models";
             let resp = client.get(url).send().await?;
 
