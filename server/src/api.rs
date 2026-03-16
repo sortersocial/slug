@@ -712,38 +712,6 @@ pub async fn get_matchup(
 // Ingest
 // ============================================================================
 
-#[derive(Debug, Deserialize)]
-pub struct IngestRequest {
-    pub text: String,
-    /// Passkey for the actor (alternative to X-Slug-Passkey header; header takes precedence).
-    #[serde(default)]
-    pub passkey: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct IngestResponse {
-    pub ok: bool,
-    pub threads: Vec<String>,
-    pub events_appended: usize,
-    pub next: NextMoves,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub ranking_changes: Vec<ScopeRankChanges>,
-    /// True when this ingest registered a new passkey for the actor.
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    pub registered: bool,
-    /// The server-generated passkey for this actor, present only on first ingest.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub passkey: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct CheckResponse {
-    pub ok: bool,
-    pub threads: Vec<String>,
-    pub ranking: Vec<RankRow>,
-    pub next: Vec<String>,
-}
-
 /// Compute ranking changes between two snapshots of a parent scope's rankings.
 /// Returns None if nothing changed.
 fn compute_scope_rank_changes(
