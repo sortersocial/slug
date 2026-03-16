@@ -69,8 +69,6 @@ async fn create_test_server_from_log(log_path: PathBuf) -> (SocketAddr, tokio::t
     (addr, handle)
 }
 
-const TEST_ACTOR: &str = "@00000000-0000-0000-0000-000000000001:testrig:test/model";
-const TEST_PASSKEY: &str = "slug_sk_TestPasskeyForIntegrationTests12345";
 const TEST_DOC: &str = "@00000000-0000-0000-0000-000000000001:testrig:test/model\n#passkey-test\n~/pk/a { item a }\n";
 const OTHER_ACTOR_DOC: &str = "@00000000-0000-0000-0000-000000000002:testrig:test/model\n#passkey-test\n~/pk/b { item b }\n";
 
@@ -263,17 +261,19 @@ async fn test_passkey_unregistered_no_passkey_succeeds() {
     let (addr, _tmp, _log, _handle) = create_test_server().await;
     let client = reqwest::Client::new();
 
-    // Unregistered actor, no passkey — backward compat, should succeed.
+    // First ingest without passkey — server generates and returns a passkey.
     let resp = client
         .post(&format!("http://{}/api/v0/ingest", addr))
         .json(&serde_json::json!({ "text": TEST_DOC }))
         .send()
         .await
         .unwrap();
-    assert!(resp.status().is_success(), "unregistered actor without passkey should succeed");
+    assert!(resp.status().is_success(), "first ingest should succeed");
     let body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(body["ok"], true);
-    assert_eq!(body["registered"], serde_json::Value::Null, "registered field should be absent when false");
+    assert_eq!(body["registered"], true, "first ingest auto-registers the actor");
+    let pk = body["passkey"].as_str().expect("passkey should be returned");
+    assert!(pk.starts_with("slug_sk_"), "generated passkey should have slug_sk_ prefix");
 }
 
 #[tokio::test]
@@ -281,19 +281,29 @@ async fn test_passkey_first_ingest_registers() {
     let (addr, _tmp, _log, _handle) = create_test_server().await;
     let client = reqwest::Client::new();
 
-    // First ingest with passkey: should succeed and return registered: true.
+    // First ingest without passkey — server auto-registers, returns passkey, 2 events.
     let resp = client
         .post(&format!("http://{}/api/v0/ingest", addr))
-        .header("x-slug-passkey", TEST_PASSKEY)
         .json(&serde_json::json!({ "text": TEST_DOC }))
         .send()
         .await
         .unwrap();
-    assert!(resp.status().is_success(), "first ingest with passkey should succeed");
+    assert!(resp.status().is_success(), "first ingest should succeed");
     let body: serde_json::Value = resp.json().await.unwrap();
-    assert_eq!(body["ok"], true);
-    assert_eq!(body["registered"], true, "first ingest with passkey should set registered: true");
+    assert_eq!(body["registered"], true, "first ingest should set registered: true");
     assert_eq!(body["events_appended"], 2, "registration + ingest = 2 events");
+
+    // Providing a passkey for an unregistered actor is rejected.
+    let resp2 = client
+        .post(&format!("http://{}/api/v0/ingest", addr))
+        .header("x-slug-passkey", "slug_sk_ShouldBeRejected")
+        .json(&serde_json::json!({ "text": OTHER_ACTOR_DOC }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp2.status(), reqwest::StatusCode::UNAUTHORIZED, "passkey for unregistered actor should 401");
+    let body2: serde_json::Value = resp2.json().await.unwrap();
+    assert!(body2["error"].as_str().unwrap().contains("no passkey registered"));
 }
 
 #[tokio::test]
@@ -301,19 +311,20 @@ async fn test_passkey_second_ingest_correct_passkey_succeeds() {
     let (addr, _tmp, _log, _handle) = create_test_server().await;
     let client = reqwest::Client::new();
 
-    // Register on first ingest.
-    client
+    // First ingest — get the server-generated passkey.
+    let resp1 = client
         .post(&format!("http://{}/api/v0/ingest", addr))
-        .header("x-slug-passkey", TEST_PASSKEY)
         .json(&serde_json::json!({ "text": TEST_DOC }))
         .send()
         .await
         .unwrap();
+    let body1: serde_json::Value = resp1.json().await.unwrap();
+    let passkey = body1["passkey"].as_str().unwrap().to_string();
 
-    // Second ingest with correct passkey — should succeed.
+    // Second ingest with the correct passkey — should succeed.
     let resp = client
         .post(&format!("http://{}/api/v0/ingest", addr))
-        .header("x-slug-passkey", TEST_PASSKEY)
+        .header("x-slug-passkey", &passkey)
         .json(&serde_json::json!({ "text": TEST_DOC }))
         .send()
         .await
@@ -329,10 +340,9 @@ async fn test_passkey_second_ingest_wrong_passkey_401() {
     let (addr, _tmp, _log, _handle) = create_test_server().await;
     let client = reqwest::Client::new();
 
-    // Register.
+    // Register via first ingest (no passkey needed).
     client
         .post(&format!("http://{}/api/v0/ingest", addr))
-        .header("x-slug-passkey", TEST_PASSKEY)
         .json(&serde_json::json!({ "text": TEST_DOC }))
         .send()
         .await
@@ -357,16 +367,15 @@ async fn test_passkey_second_ingest_missing_passkey_401() {
     let (addr, _tmp, _log, _handle) = create_test_server().await;
     let client = reqwest::Client::new();
 
-    // Register.
+    // Register via first ingest (no passkey needed).
     client
         .post(&format!("http://{}/api/v0/ingest", addr))
-        .header("x-slug-passkey", TEST_PASSKEY)
         .json(&serde_json::json!({ "text": TEST_DOC }))
         .send()
         .await
         .unwrap();
 
-    // No passkey — should 401.
+    // No passkey on second ingest — should 401.
     let resp = client
         .post(&format!("http://{}/api/v0/ingest", addr))
         .json(&serde_json::json!({ "text": TEST_DOC }))
@@ -384,16 +393,15 @@ async fn test_passkey_different_actor_unaffected() {
     let (addr, _tmp, _log, _handle) = create_test_server().await;
     let client = reqwest::Client::new();
 
-    // Register TEST_ACTOR.
+    // Register TEST_ACTOR via first ingest.
     client
         .post(&format!("http://{}/api/v0/ingest", addr))
-        .header("x-slug-passkey", TEST_PASSKEY)
         .json(&serde_json::json!({ "text": TEST_DOC }))
         .send()
         .await
         .unwrap();
 
-    // A completely different actor without a passkey should still succeed.
+    // A completely different actor without a passkey should also succeed (auto-registers separately).
     let resp = client
         .post(&format!("http://{}/api/v0/ingest", addr))
         .json(&serde_json::json!({ "text": OTHER_ACTOR_DOC }))
@@ -408,16 +416,27 @@ async fn test_passkey_passkey_in_json_body_works() {
     let (addr, _tmp, _log, _handle) = create_test_server().await;
     let client = reqwest::Client::new();
 
-    // Pass passkey in JSON body instead of header — should register.
+    // Register via first ingest — get the server-generated passkey.
+    let resp1 = client
+        .post(&format!("http://{}/api/v0/ingest", addr))
+        .json(&serde_json::json!({ "text": TEST_DOC }))
+        .send()
+        .await
+        .unwrap();
+    let body1: serde_json::Value = resp1.json().await.unwrap();
+    let passkey = body1["passkey"].as_str().unwrap().to_string();
+
+    // Second ingest: pass the correct passkey in the JSON body instead of header.
     let resp = client
         .post(&format!("http://{}/api/v0/ingest", addr))
-        .json(&serde_json::json!({ "text": TEST_DOC, "passkey": TEST_PASSKEY }))
+        .json(&serde_json::json!({ "text": TEST_DOC, "passkey": passkey }))
         .send()
         .await
         .unwrap();
     assert!(resp.status().is_success(), "passkey in JSON body should work");
     let body: serde_json::Value = resp.json().await.unwrap();
-    assert_eq!(body["registered"], true);
+    assert_eq!(body["ok"], true);
+    assert_ne!(body["registered"], true, "second ingest should not re-register");
 }
 
 #[tokio::test]
@@ -426,15 +445,16 @@ async fn test_passkey_event_replay_restores_actor_keys() {
     let client = reqwest::Client::new();
     let log_path = tmp.path().join("events.jsonl");
 
-    // Register actor via first ingest.
+    // Register actor via first ingest — capture the server-generated passkey.
     let resp = client
         .post(&format!("http://{}/api/v0/ingest", addr))
-        .header("x-slug-passkey", TEST_PASSKEY)
         .json(&serde_json::json!({ "text": TEST_DOC }))
         .send()
         .await
         .unwrap();
     assert!(resp.status().is_success());
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let passkey = body["passkey"].as_str().unwrap().to_string();
 
     // Boot a second server from the same log file (simulates restart).
     let (addr2, _handle2) = create_test_server_from_log(log_path).await;
@@ -442,7 +462,7 @@ async fn test_passkey_event_replay_restores_actor_keys() {
     // Correct passkey should succeed on the new server (actor_keys restored from log).
     let resp2 = client
         .post(&format!("http://{}/api/v0/ingest", addr2))
-        .header("x-slug-passkey", TEST_PASSKEY)
+        .header("x-slug-passkey", &passkey)
         .json(&serde_json::json!({ "text": TEST_DOC }))
         .send()
         .await
@@ -458,30 +478,6 @@ async fn test_passkey_event_replay_restores_actor_keys() {
         .await
         .unwrap();
     assert_eq!(resp3.status(), reqwest::StatusCode::UNAUTHORIZED, "wrong passkey should still fail after replay");
-}
-
-#[tokio::test]
-async fn test_passkey_web_form_blocks_registered_actor() {
-    let (addr, _tmp, _log, _handle) = create_test_server().await;
-    let client = reqwest::Client::new();
-
-    // Register via API.
-    client
-        .post(&format!("http://{}/api/v0/ingest", addr))
-        .header("x-slug-passkey", TEST_PASSKEY)
-        .json(&serde_json::json!({ "text": TEST_DOC }))
-        .send()
-        .await
-        .unwrap();
-
-    // Web form ingest with same registered actor — should be 403.
-    let resp = client
-        .post(&format!("http://{}/web/ingest", addr))
-        .form(&[("text", TEST_DOC)])
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), reqwest::StatusCode::FORBIDDEN, "web form should block registered actor");
 }
 
 /// Thread connective tissue: item_threads and VoteData.thread are exposed by item, pair, and matchup APIs.

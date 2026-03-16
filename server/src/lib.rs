@@ -40,7 +40,6 @@ pub fn create_app(state: AppState) -> Router {
         .route("/api/v0/presence/ping", axum::routing::post(api::post_presence_ping))
         .route("/api/v0/stream", axum::routing::get(api::get_stream))
         .route("/sse", axum::routing::get(api::get_html_stream))
-        .route("/web/ingest", axum::routing::post(api::post_web_ingest))
         .route("/static/:filename", axum::routing::get(html::serve_theme_css))
         .with_state(state)
         .layer(TraceLayer::new_for_http())

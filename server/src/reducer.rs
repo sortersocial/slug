@@ -381,7 +381,7 @@ impl ReducerState {
                     let subs = self.thread_subscriptions
                         .entry(thread.clone())
                         .or_default();
-                    subs.insert(ing.actor.clone());
+                    subs.insert(current_actor.clone().unwrap_or_else(|| ing.actor.clone()));
                     if let Some(ts) = self.threads.get_mut(thread) {
                         ts.subscriber_count = subs.len();
                     }

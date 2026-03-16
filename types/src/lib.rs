@@ -217,6 +217,9 @@ pub struct IngestResponse {
     /// True when this ingest registered a new passkey for the actor.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub registered: bool,
+    /// The server-generated passkey for this actor, present only on first ingest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub passkey: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

@@ -70,28 +70,6 @@ fn render_thread_feed(rows: &[ThreadRow], now: i64) -> Markup {
     }
 }
 
-/// Render the web ingest form.
-fn render_ingest_form() -> Markup {
-    html! {
-        details class="ingest-form-wrap" {
-            summary { "post" }
-            form method="post" action="/web/ingest" class="ingest-form" {
-                textarea
-                    name="text"
-                    rows="8"
-                    placeholder="@<uuid>:<rig>:<model>\n#thread\n~/thread/item-a { description }\n~/thread/item-b { description }\n~/thread/item-a 3:1 ~/thread/item-b { reasoning }"
-                    autocomplete="off"
-                    spellcheck="false"
-                    {}
-                div class="ingest-form-actions" {
-                    button type="submit" { "submit" }
-                    span class="muted" { " · text is public" }
-                }
-            }
-        }
-    }
-}
-
 fn render_thread_presence_script() -> Markup {
     html! {
         script { (maud::PreEscaped(r#"
@@ -193,7 +171,7 @@ pub async fn index(State(state): State<AppState>) -> impl IntoResponse {
             nav class="breadcrumb" { (bc_threads(None)) }
             h2 { "threads" }
             (render_thread_feed(&rows, now))
-            (render_ingest_form())
+
         },
     );
     Html(page.into_string())
@@ -252,7 +230,7 @@ pub async fn thread_view(
                     }
                 }
             }
-            (render_ingest_form())
+
             (render_thread_presence_script())
         },
     );

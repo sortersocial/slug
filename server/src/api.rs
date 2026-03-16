@@ -31,18 +31,6 @@ fn sha256_hex(s: &str) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-/// Quick actor extraction for web-form guard (no full validation).
-fn extract_actor_quick(text: &str) -> Option<String> {
-    for line in text.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with('@') {
-            let token = trimmed.split_whitespace().next()?;
-            return Some(canonicalize_actor(token));
-        }
-    }
-    None
-}
-
 fn now_ms() -> i64 {
     let t = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -743,6 +731,9 @@ pub struct IngestResponse {
     /// True when this ingest registered a new passkey for the actor.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub registered: bool,
+    /// The server-generated passkey for this actor, present only on first ingest.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub passkey: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -843,7 +834,8 @@ pub async fn post_ingest(
         .or_else(|| req.passkey.clone());
 
     // Passkey auth gate.
-    let should_register: bool = {
+    // generated_passkey is Some when this is a new actor's first ingest (server-generated key).
+    let generated_passkey: Option<String> = {
         let reduced = reduced_arc.read().await;
         match reduced.actor_keys.get(&v.actor) {
             Some(stored_hash) => {
@@ -862,19 +854,26 @@ pub async fn post_ingest(
                         }
                     }
                 }
-                false
+                None
             }
             None => {
-                // Actor NOT registered — register on first ingest with a passkey.
-                passkey.is_some()
+                // Actor NOT registered — server generates passkey on first ingest.
+                if passkey.is_some() {
+                    return api_error(
+                        StatusCode::UNAUTHORIZED,
+                        "no passkey registered for this account",
+                        Some("do not supply a passkey for a new actor; the server will generate one".to_string()),
+                    );
+                }
+                Some(format!("slug_sk_{}", uuid::Uuid::new_v4().simple()))
             }
         }
     };
 
     // If registering: append ActorKeyRegistration event before the Ingest event.
     let mut events_appended: usize = 0;
-    if should_register {
-        let key_hash = sha256_hex(passkey.as_deref().unwrap());
+    if let Some(ref pk) = generated_passkey {
+        let key_hash = sha256_hex(pk);
         let reg_event = crate::events::Event::ActorKeyRegistration {
             ts: v.ts,
             actor: v.actor.clone(),
@@ -969,7 +968,8 @@ pub async fn post_ingest(
         ok: true,
         threads: v.threads.iter().map(|t| format!("#{t}")).collect(),
         events_appended,
-        registered: should_register,
+        registered: generated_passkey.is_some(),
+        passkey: generated_passkey,
         next: NextMoves {
             pair: "npx slugsocial pair".to_string(),
             rank: "npx slugsocial rank".to_string(),
@@ -977,32 +977,6 @@ pub async fn post_ingest(
         },
         ranking_changes,
     }).into_response()
-}
-
-pub async fn post_web_ingest(
-    State(state): State<AppState>,
-    axum::extract::Form(req): axum::extract::Form<IngestRequest>,
-) -> impl IntoResponse {
-    // Web form cannot carry a passkey. If the actor is already registered, reject with a
-    // helpful message directing them to the CLI instead of an opaque 401.
-    {
-        let reduced = state.reduced.read().await;
-        if let Some(actor) = extract_actor_quick(&req.text) {
-            if reduced.actor_keys.contains_key(&actor) {
-                return api_error(
-                    StatusCode::FORBIDDEN,
-                    "this actor is passkey-protected; use the CLI",
-                    Some("npx slugsocial ingest --passkey <slug_sk_...>".to_string()),
-                );
-            }
-        }
-    }
-    let resp = post_ingest(State(state), HeaderMap::new(), Json(req)).await.into_response();
-    if resp.status().is_success() {
-        StatusCode::NO_CONTENT.into_response()
-    } else {
-        resp
-    }
 }
 
 pub async fn post_check(
