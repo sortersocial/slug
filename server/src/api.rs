@@ -6,6 +6,7 @@ use axum::{
 };
 use rand::seq::SliceRandom;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use slug_types::*;
 use std::collections::{BTreeSet, HashSet};
 
@@ -20,16 +21,26 @@ use crate::{
 };
 use crate::events::Ingest;
 
-fn channel_from_headers(headers: &HeaderMap) -> Option<String> {
-    headers
-        .get("x-slug-channel")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-}
-
 fn api_error(status: StatusCode, error: impl Into<String>, hint: Option<String>) -> axum::response::Response {
     (status, Json(ApiError { ok: false, error: error.into(), hint })).into_response()
+}
+
+fn sha256_hex(s: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(s.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+/// Quick actor extraction for web-form guard (no full validation).
+fn extract_actor_quick(text: &str) -> Option<String> {
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('@') {
+            let token = trimmed.split_whitespace().next()?;
+            return Some(canonicalize_actor(token));
+        }
+    }
+    None
 }
 
 fn now_ms() -> i64 {
@@ -284,9 +295,8 @@ fn parse_parent_specs(parent: Option<&String>) -> Vec<String> {
     s.split(',').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect()
 }
 
-pub async fn get_rank(State(state): State<AppState>, headers: HeaderMap, Query(q): Query<RankQuery>) -> impl IntoResponse {
-    let ch = channel_from_headers(&headers);
-    let (reduced_arc, _) = state.resolve(ch.as_deref()).await;
+pub async fn get_rank(State(state): State<AppState>, Query(q): Query<RankQuery>) -> impl IntoResponse {
+    let reduced_arc = state.reduced.clone();
     let reduced = reduced_arc.read().await;
     let specs = parse_parent_specs(q.parent.as_ref());
     let rankings = if specs.is_empty() {
@@ -355,9 +365,8 @@ fn is_pair_voted(group: &crate::reducer::GroupState, a: &str, b: &str) -> bool {
     group.voted_pairs.contains(&(i, j))
 }
 
-pub async fn get_pair(State(state): State<AppState>, headers: HeaderMap, Query(q): Query<PairQuery>) -> impl IntoResponse {
-    let ch = channel_from_headers(&headers);
-    let (reduced_arc, _) = state.resolve(ch.as_deref()).await;
+pub async fn get_pair(State(state): State<AppState>, Query(q): Query<PairQuery>) -> impl IntoResponse {
+    let reduced_arc = state.reduced.clone();
     let force_random = q.random.unwrap_or(false);
 
     let pool: Vec<String> = {
@@ -496,9 +505,8 @@ pub async fn get_pair(State(state): State<AppState>, headers: HeaderMap, Query(q
 // ============================================================================
 
 /// List root paths (items with parent "").
-pub async fn get_paths(State(state): State<AppState>, headers: HeaderMap) -> impl IntoResponse {
-    let ch = channel_from_headers(&headers);
-    let (reduced_arc, _) = state.resolve(ch.as_deref()).await;
+pub async fn get_paths(State(state): State<AppState>) -> impl IntoResponse {
+    let reduced_arc = state.reduced.clone();
     let reduced = reduced_arc.read().await;
 
     let out: Vec<PathSummary> = reduced
@@ -522,9 +530,8 @@ pub async fn get_paths(State(state): State<AppState>, headers: HeaderMap) -> imp
 }
 
 /// List every leaf item (full path). Items that have no children. Does not scale; works for now.
-pub async fn get_leaves(State(state): State<AppState>, headers: HeaderMap) -> impl IntoResponse {
-    let ch = channel_from_headers(&headers);
-    let (reduced_arc, _) = state.resolve(ch.as_deref()).await;
+pub async fn get_leaves(State(state): State<AppState>) -> impl IntoResponse {
+    let reduced_arc = state.reduced.clone();
     let reduced = reduced_arc.read().await;
     let parents: HashSet<&String> = reduced.item_children.keys().collect();
     let mut paths: Vec<String> = reduced
@@ -537,9 +544,8 @@ pub async fn get_leaves(State(state): State<AppState>, headers: HeaderMap) -> im
     Json(LeavesResponse { paths }).into_response()
 }
 
-pub async fn get_threads(State(state): State<AppState>, headers: HeaderMap) -> impl IntoResponse {
-    let ch = channel_from_headers(&headers);
-    let (reduced_arc, _) = state.resolve(ch.as_deref()).await;
+pub async fn get_threads(State(state): State<AppState>) -> impl IntoResponse {
+    let reduced_arc = state.reduced.clone();
     let reduced = reduced_arc.read().await;
 
     let mut out: Vec<ThreadSummary> = reduced
@@ -565,9 +571,8 @@ pub struct ThreadDetailQuery {
 }
 
 /// Thread (forum) detail by tag — all posts, full body. Not the same as get_path (garden).
-pub async fn get_thread(State(state): State<AppState>, headers: HeaderMap, Query(q): Query<ThreadDetailQuery>) -> impl IntoResponse {
-    let ch = channel_from_headers(&headers);
-    let (reduced_arc, _) = state.resolve(ch.as_deref()).await;
+pub async fn get_thread(State(state): State<AppState>, Query(q): Query<ThreadDetailQuery>) -> impl IntoResponse {
+    let reduced_arc = state.reduced.clone();
     let tag = canonicalize_tag(&q.tag);
     let reduced = reduced_arc.read().await;
 
@@ -608,9 +613,8 @@ pub struct ItemQuery {
     pub item: String,
 }
 
-pub async fn get_item(State(state): State<AppState>, headers: HeaderMap, Query(q): Query<ItemQuery>) -> impl IntoResponse {
-    let ch = channel_from_headers(&headers);
-    let (reduced_arc, _) = state.resolve(ch.as_deref()).await;
+pub async fn get_item(State(state): State<AppState>, Query(q): Query<ItemQuery>) -> impl IntoResponse {
+    let reduced_arc = state.reduced.clone();
     let item = canonicalize_item(&q.item);
     let reduced = reduced_arc.read().await;
 
@@ -644,11 +648,9 @@ fn vote_touches_path(a: &str, b: &str, parent_canon: &str) -> bool {
 
 pub async fn get_recent_votes(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Query(q): Query<RecentVotesQuery>,
 ) -> impl IntoResponse {
-    let ch = channel_from_headers(&headers);
-    let (reduced_arc, _) = state.resolve(ch.as_deref()).await;
+    let reduced_arc = state.reduced.clone();
     let limit = q.limit.unwrap_or(25).clamp(1, 200);
 
     let reduced = reduced_arc.read().await;
@@ -685,11 +687,9 @@ pub struct MatchupQuery {
 /// Vote history for one item (matchup: wins/losses with thread per vote).
 pub async fn get_matchup(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Query(q): Query<MatchupQuery>,
 ) -> impl IntoResponse {
-    let ch = channel_from_headers(&headers);
-    let (reduced_arc, _) = state.resolve(ch.as_deref()).await;
+    let reduced_arc = state.reduced.clone();
     let item = canonicalize_item(&q.item);
     let limit = q.limit.unwrap_or(50).clamp(1, 200);
 
@@ -727,6 +727,9 @@ pub async fn get_matchup(
 #[derive(Debug, Deserialize)]
 pub struct IngestRequest {
     pub text: String,
+    /// Passkey for the actor (alternative to X-Slug-Passkey header; header takes precedence).
+    #[serde(default)]
+    pub passkey: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -737,6 +740,9 @@ pub struct IngestResponse {
     pub next: NextMoves,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub ranking_changes: Vec<ScopeRankChanges>,
+    /// True when this ingest registered a new passkey for the actor.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub registered: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -813,11 +819,11 @@ fn compute_scope_rank_changes(
 
 pub async fn post_ingest(
     State(state): State<AppState>,
-    headers: axum::http::HeaderMap,
+    headers: HeaderMap,
     Json(req): Json<IngestRequest>,
 ) -> impl IntoResponse {
-    let ch = channel_from_headers(&headers);
-    let (reduced_arc, event_log) = state.resolve(ch.as_deref()).await;
+    let reduced_arc = state.reduced.clone();
+    let event_log = state.event_log.clone();
     let reduced = reduced_arc.read().await;
     let v = match validate_ingest_document(
         &reduced,
@@ -828,6 +834,61 @@ pub async fn post_ingest(
         Err((status, msg, hint)) => return api_error(status, msg, hint).into_response(),
     };
     drop(reduced);
+
+    // Passkey: header takes priority over JSON body field.
+    let passkey: Option<String> = headers
+        .get("x-slug-passkey")
+        .and_then(|hv| hv.to_str().ok())
+        .map(|s| s.to_string())
+        .or_else(|| req.passkey.clone());
+
+    // Passkey auth gate.
+    let should_register: bool = {
+        let reduced = reduced_arc.read().await;
+        match reduced.actor_keys.get(&v.actor) {
+            Some(stored_hash) => {
+                // Actor IS registered — passkey required.
+                match &passkey {
+                    None => {
+                        return api_error(
+                            StatusCode::UNAUTHORIZED,
+                            "this actor requires a passkey",
+                            Some("pass --passkey <slug_sk_...> or set SLUG_PASSKEY".to_string()),
+                        );
+                    }
+                    Some(pk) => {
+                        if sha256_hex(pk) != *stored_hash {
+                            return api_error(StatusCode::UNAUTHORIZED, "invalid passkey", None);
+                        }
+                    }
+                }
+                false
+            }
+            None => {
+                // Actor NOT registered — register on first ingest with a passkey.
+                passkey.is_some()
+            }
+        }
+    };
+
+    // If registering: append ActorKeyRegistration event before the Ingest event.
+    let mut events_appended: usize = 0;
+    if should_register {
+        let key_hash = sha256_hex(passkey.as_deref().unwrap());
+        let reg_event = crate::events::Event::ActorKeyRegistration {
+            ts: v.ts,
+            actor: v.actor.clone(),
+            key_hash,
+        };
+        if let Err(err) = event_log.append(&reg_event).await {
+            return api_error(StatusCode::INTERNAL_SERVER_ERROR, format!("{err}"), None);
+        }
+        {
+            let mut reduced = reduced_arc.write().await;
+            reduced.apply_event(reg_event);
+        }
+        events_appended += 1;
+    }
 
     // Collect parent scopes for all voted items so we can compute ranking deltas.
     let voted_parent_scopes: Vec<String> = {
@@ -845,7 +906,7 @@ pub async fn post_ingest(
         out
     };
 
-    // Snapshot rankings before the event is applied.
+    // Snapshot rankings before the ingest event is applied.
     let pre_rankings: HashMap<String, crate::scope_rank::ChildrenRankings> =
         if !voted_parent_scopes.is_empty() {
             let reduced = reduced_arc.read().await;
@@ -857,7 +918,7 @@ pub async fn post_ingest(
             HashMap::new()
         };
 
-    let event = Event::Ingest(Ingest {
+    let ingest_event = Event::Ingest(Ingest {
         ts: v.ts,
         id: uuid::Uuid::new_v4().to_string(),
         raw: v.raw_text.clone(),
@@ -865,13 +926,15 @@ pub async fn post_ingest(
         actor: v.actor.clone(),
     });
 
-    if let Err(err) = event_log.append(&event).await {
+    if let Err(err) = event_log.append(&ingest_event).await {
         return api_error(StatusCode::INTERNAL_SERVER_ERROR, format!("{err}"), None);
     }
+    events_appended += 1;
+
     let actor_for_stream = v.actor.clone();
     {
         let mut reduced = reduced_arc.write().await;
-        reduced.apply_event(event);
+        reduced.apply_event(ingest_event);
     }
 
     // Snapshot rankings after the event and compute per-scope deltas.
@@ -889,25 +952,24 @@ pub async fn post_ingest(
         vec![]
     };
 
-    if ch.is_none() {
-        let _ = state.stream_tx.send(crate::state::StreamEvent {
-            ts: v.ts,
-            actor: actor_for_stream,
-            tags: v.threads.iter().map(|t| format!("#{t}")).collect(),
-            snippet: v.raw_text.chars().take(200).collect(),
-        });
-        let html = crate::html::thread_feed_html(&state).await;
-        let _ = state.html_tx.send(crate::state::HtmlFragment {
-            selector: "#thread-feed".to_string(),
-            html,
-        });
-    }
+    let _ = state.stream_tx.send(crate::state::StreamEvent {
+        ts: v.ts,
+        actor: actor_for_stream,
+        tags: v.threads.iter().map(|t| format!("#{t}")).collect(),
+        snippet: v.raw_text.chars().take(200).collect(),
+    });
+    let html = crate::html::thread_feed_html(&state).await;
+    let _ = state.html_tx.send(crate::state::HtmlFragment {
+        selector: "#thread-feed".to_string(),
+        html,
+    });
 
     let primary_thread = v.threads.first().cloned().unwrap_or_else(|| "untagged".to_string());
     Json(IngestResponse {
         ok: true,
         threads: v.threads.iter().map(|t| format!("#{t}")).collect(),
-        events_appended: 1,
+        events_appended,
+        registered: should_register,
         next: NextMoves {
             pair: "npx slugsocial pair".to_string(),
             rank: "npx slugsocial rank".to_string(),
@@ -921,9 +983,21 @@ pub async fn post_web_ingest(
     State(state): State<AppState>,
     axum::extract::Form(req): axum::extract::Form<IngestRequest>,
 ) -> impl IntoResponse {
-    let json_req = Json(req);
-    let headers = axum::http::HeaderMap::new();
-    let resp = post_ingest(State(state), headers, json_req).await.into_response();
+    // Web form cannot carry a passkey. If the actor is already registered, reject with a
+    // helpful message directing them to the CLI instead of an opaque 401.
+    {
+        let reduced = state.reduced.read().await;
+        if let Some(actor) = extract_actor_quick(&req.text) {
+            if reduced.actor_keys.contains_key(&actor) {
+                return api_error(
+                    StatusCode::FORBIDDEN,
+                    "this actor is passkey-protected; use the CLI",
+                    Some("npx slugsocial ingest --passkey <slug_sk_...>".to_string()),
+                );
+            }
+        }
+    }
+    let resp = post_ingest(State(state), HeaderMap::new(), Json(req)).await.into_response();
     if resp.status().is_success() {
         StatusCode::NO_CONTENT.into_response()
     } else {
@@ -933,11 +1007,10 @@ pub async fn post_web_ingest(
 
 pub async fn post_check(
     State(state): State<AppState>,
-    headers: axum::http::HeaderMap,
+    headers: HeaderMap,
     Json(req): Json<IngestRequest>,
 ) -> impl IntoResponse {
-    let ch = channel_from_headers(&headers);
-    let (reduced_arc, _) = state.resolve(ch.as_deref()).await;
+    let reduced_arc = state.reduced.clone();
     let reduced = reduced_arc.read().await;
     let v = match validate_ingest_document(
         &reduced,
@@ -947,6 +1020,31 @@ pub async fn post_check(
         Ok(x) => x,
         Err((status, msg, hint)) => return api_error(status, msg, hint).into_response(),
     };
+
+    // Passkey verification for registered actors (read-only — no registration on check).
+    let passkey: Option<String> = headers
+        .get("x-slug-passkey")
+        .and_then(|hv| hv.to_str().ok())
+        .map(|s| s.to_string())
+        .or_else(|| req.passkey.clone());
+
+    if let Some(stored_hash) = reduced.actor_keys.get(&v.actor) {
+        match &passkey {
+            None => {
+                return api_error(
+                    StatusCode::UNAUTHORIZED,
+                    "this actor requires a passkey",
+                    Some("pass --passkey <slug_sk_...> or set SLUG_PASSKEY".to_string()),
+                );
+            }
+            Some(pk) => {
+                if sha256_hex(pk) != *stored_hash {
+                    return api_error(StatusCode::UNAUTHORIZED, "invalid passkey", None);
+                }
+            }
+        }
+    }
+
     drop(reduced);
 
     let event = Event::Ingest(Ingest {
@@ -996,11 +1094,9 @@ pub struct NotificationsQuery {
 
 pub async fn get_notifications(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Query(q): Query<NotificationsQuery>,
 ) -> impl IntoResponse {
-    let ch = channel_from_headers(&headers);
-    let (reduced_arc, _) = state.resolve(ch.as_deref()).await;
+    let reduced_arc = state.reduced.clone();
     let actor = canonicalize_actor(&q.actor);
     let since = q.since.unwrap_or(0);
 

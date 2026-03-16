@@ -1,13 +1,10 @@
-use std::sync::Arc;
-use tokio::sync::RwLock;
 use axum::Router;
 use tracing_subscriber::EnvFilter;
 
 use slugsocial_server::{
     event_log::EventLog,
     create_app,
-    reducer::ReducerState,
-    state::{AppConfig, AppState, ChannelData, KeyRecord},
+    state::{AppConfig, AppState, KeyRecord},
 };
 
 fn env_var(name: &str) -> Option<String> {
@@ -75,32 +72,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut reduced = state.reduced.write().await;
         for ev in events {
             reduced.apply_event(ev);
-        }
-    }
-
-    // Load existing private channel event logs from {data_dir}/channels/*/events.jsonl.
-    let channels_dir = std::path::PathBuf::from(format!("{data_dir}/channels"));
-    if let Ok(mut dir) = tokio::fs::read_dir(&channels_dir).await {
-        while let Ok(Some(entry)) = dir.next_entry().await {
-            if !entry.file_type().await.map(|t| t.is_dir()).unwrap_or(false) {
-                continue;
-            }
-            let channel_id = entry.file_name().to_string_lossy().to_string();
-            let log_path = entry.path().join("events.jsonl");
-            let event_log = EventLog::new(&log_path);
-            let (events, bad) = event_log.load_all().await.unwrap_or_default();
-            if !bad.is_empty() {
-                tracing::warn!(channel_id = %channel_id, bad_lines = bad.len(), "skipped corrupt channel JSONL lines");
-            }
-            let mut reduced = ReducerState::default();
-            for ev in events {
-                reduced.apply_event(ev);
-            }
-            let ch_data = ChannelData {
-                reduced: Arc::new(RwLock::new(reduced)),
-                event_log: Arc::new(event_log),
-            };
-            state.channels.write().await.insert(channel_id, ch_data);
         }
     }
 

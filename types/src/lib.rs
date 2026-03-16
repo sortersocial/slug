@@ -171,6 +171,9 @@ pub enum NotificationType {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct IngestRequest {
     pub text: String,
+    /// Passkey for the actor (alternative to X-Slug-Passkey header; header takes precedence).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub passkey: Option<String>,
 }
 
 /// One item's position within a ranking component.
@@ -211,6 +214,9 @@ pub struct IngestResponse {
     /// Empty when the ingest contained no votes.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ranking_changes: Vec<ScopeRankChanges>,
+    /// True when this ingest registered a new passkey for the actor.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub registered: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

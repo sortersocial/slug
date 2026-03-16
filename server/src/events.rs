@@ -55,6 +55,14 @@ pub enum Event {
     /// are inferred from parsing the `raw` field.
     Ingest(Ingest),
 
+    /// First-come-first-serve passkey registration for an actor.
+    /// The passkey itself is never stored — only the hex-encoded SHA-256 hash.
+    ActorKeyRegistration {
+        ts: i64,
+        actor: String,
+        key_hash: String,
+    },
+
     // Future: non-DSL events like payments, subscriptions, etc.
     // Payment { ... },
     // Subscription { ... },
