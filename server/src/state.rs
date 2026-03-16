@@ -4,8 +4,6 @@ use tokio::sync::{broadcast, RwLock};
 
 use crate::{event_log::EventLog, reducer::ReducerState};
 
-const PRESENCE_TTL_MS: i64 = 60_000;
-
 /// An SSE event broadcast to all live stream subscribers when an ingest occurs.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct StreamEvent {
@@ -44,8 +42,10 @@ pub struct AppState {
     pub event_log: Arc<EventLog>,
     pub reduced: Arc<RwLock<ReducerState>>,
     pub rate: Arc<RwLock<HashMap<String, RateWindow>>>,
-    /// Active thread-page viewers keyed by stable browser session id.
-    pub presence: Arc<RwLock<HashMap<String, PresenceSession>>>,
+    /// Active SSE viewers per thread (thread_tag → connection count).
+    pub sse_presence: Arc<RwLock<HashMap<String, usize>>>,
+    /// Broadcast channel for presence count updates (JSON string).
+    pub presence_tx: broadcast::Sender<String>,
     /// Broadcast channel for SSE live-streaming. Capacity = 64 events.
     pub stream_tx: broadcast::Sender<StreamEvent>,
     /// Broadcast channel for web SSE HTML fragments (poem pattern). Capacity = 64.
@@ -56,19 +56,6 @@ pub struct AppState {
 pub struct RateWindow {
     pub window_start_ms: i64,
     pub count: u32,
-}
-
-#[derive(Debug, Clone)]
-pub struct PresenceSession {
-    pub thread_tag: String,
-    pub last_seen_ms: i64,
-    pub cursor_anchor: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct PresenceCounts {
-    pub global_viewers: usize,
-    pub local_viewers: usize,
 }
 
 fn now_ms() -> i64 {
@@ -83,61 +70,25 @@ impl AppState {
         let event_log = EventLog::new(cfg.event_log_path.clone());
         let (stream_tx, _) = broadcast::channel(64);
         let (html_tx, _) = broadcast::channel(64);
+        let (presence_tx, _) = broadcast::channel(64);
         Self {
             cfg: Arc::new(cfg),
             event_log: Arc::new(event_log),
             reduced: Arc::new(RwLock::new(ReducerState::default())),
             rate: Arc::new(RwLock::new(HashMap::new())),
-            presence: Arc::new(RwLock::new(HashMap::new())),
+            sse_presence: Arc::new(RwLock::new(HashMap::new())),
+            presence_tx,
             stream_tx,
             html_tx,
         }
     }
 
-    /// Update one viewer heartbeat and return (global, local) active counts.
-    pub async fn upsert_presence(
-        &self,
-        session_id: String,
-        thread_tag: String,
-        cursor_anchor: Option<String>,
-    ) -> PresenceCounts {
-        let now = now_ms();
-        let mut presence = self.presence.write().await;
-        presence.retain(|_, entry| now.saturating_sub(entry.last_seen_ms) <= PRESENCE_TTL_MS);
-        presence.insert(
-            session_id,
-            PresenceSession {
-                thread_tag: thread_tag.clone(),
-                last_seen_ms: now,
-                cursor_anchor,
-            },
-        );
-        let global_viewers = presence.len();
-        let local_viewers = presence
-            .values()
-            .filter(|entry| entry.thread_tag == thread_tag)
-            .count();
-        PresenceCounts {
-            global_viewers,
-            local_viewers,
-        }
-    }
-
-    /// Read presence counts for initial server-rendered thread view.
-    pub async fn presence_counts_for_thread(&self, thread_tag: &str) -> PresenceCounts {
-        let now = now_ms();
-        let mut presence = self.presence.write().await;
-        presence.retain(|_, entry| now.saturating_sub(entry.last_seen_ms) <= PRESENCE_TTL_MS);
-        let global_viewers = presence.len();
-        let local_viewers = presence
-            .values()
-            .filter(|entry| entry.thread_tag == thread_tag)
-            .count();
-        PresenceCounts {
-            global_viewers,
-            local_viewers,
-        }
+    /// Returns (global_viewers, local_viewers) for server-side initial render.
+    pub async fn presence_counts(&self, thread_tag: &str) -> (usize, usize) {
+        let p = self.sse_presence.read().await;
+        let global: usize = p.values().sum();
+        let local = p.get(thread_tag).copied().unwrap_or(0);
+        (global, local)
     }
 }
-
 

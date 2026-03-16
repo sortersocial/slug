@@ -70,78 +70,6 @@ fn render_thread_feed(rows: &[ThreadRow], now: i64) -> Markup {
     }
 }
 
-fn render_thread_presence_script() -> Markup {
-    html! {
-        script { (maud::PreEscaped(r#"
-            (function() {
-                const bar = document.getElementById('presence-bar');
-                if (!bar) return;
-                const threadTag = bar.dataset.threadTag;
-                if (!threadTag) return;
-
-                const globalEl = document.getElementById('presence-global');
-                const localEl = document.getElementById('presence-local');
-                const key = 'slug-presence-session-id';
-                let sessionId = localStorage.getItem(key);
-                if (!sessionId) {
-                    sessionId = (window.crypto && window.crypto.randomUUID)
-                        ? window.crypto.randomUUID()
-                        : ('sess-' + Math.random().toString(36).slice(2) + Date.now().toString(36));
-                    localStorage.setItem(key, sessionId);
-                }
-
-                function nearestIngestAnchor() {
-                    const entries = document.querySelectorAll('.ingest-entry[data-ingest-id]');
-                    if (!entries.length) return null;
-                    const mid = window.innerHeight / 2;
-                    let best = null;
-                    let bestDist = Infinity;
-                    entries.forEach((el) => {
-                        const rect = el.getBoundingClientRect();
-                        const center = rect.top + (rect.height / 2);
-                        const dist = Math.abs(center - mid);
-                        if (dist < bestDist) {
-                            bestDist = dist;
-                            best = el.getAttribute('data-ingest-id');
-                        }
-                    });
-                    return best;
-                }
-
-                async function pingPresence() {
-                    try {
-                        const res = await fetch('/api/v0/presence/ping', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            credentials: 'same-origin',
-                            body: JSON.stringify({
-                                session_id: sessionId,
-                                thread_tag: threadTag,
-                                cursor_anchor: nearestIngestAnchor(),
-                            }),
-                        });
-                        if (!res.ok) return;
-                        const data = await res.json();
-                        if (globalEl && typeof data.global_viewers === 'number') {
-                            globalEl.textContent = String(data.global_viewers);
-                        }
-                        if (localEl && typeof data.local_viewers === 'number') {
-                            localEl.textContent = String(data.local_viewers);
-                        }
-                    } catch (_) {
-                        // Presence is best-effort; ignore transient errors.
-                    }
-                }
-
-                pingPresence();
-                setInterval(pingPresence, 15000);
-                document.addEventListener('visibilitychange', function() {
-                    if (!document.hidden) pingPresence();
-                });
-            })();
-        "#)) }
-    }
-}
 
 /// Returns the current thread feed HTML fragment for SSE broadcast.
 /// selector: `#thread-feed`
@@ -183,7 +111,7 @@ pub async fn thread_view(
     Path(tag): Path<String>,
 ) -> impl IntoResponse {
     let tag = canonicalize_tag(&tag);
-    let presence = state.presence_counts_for_thread(&tag).await;
+    let (global_viewers, local_viewers) = state.presence_counts(&tag).await;
 
     let ingest_ids = {
         let reduced = state.reduced.read().await;
@@ -210,9 +138,9 @@ pub async fn thread_view(
             nav class="breadcrumb" { (bc_threads(Some(&tag))) }
             h2 { "#" (tag) }
             div id="presence-bar" class="presence-bar muted" data-thread-tag=(tag) {
-                span { "viewing now: " span id="presence-global" { (presence.global_viewers) } }
+                span { "viewing now: " span id="presence-global" { (global_viewers) } }
                 " · "
-                span { "neighbors here: " span id="presence-local" { (presence.local_viewers) } }
+                span { "neighbors here: " span id="presence-local" { (local_viewers) } }
             }
             @if display_ingests.is_empty() {
                 p class="muted" { "no activity yet" }
@@ -231,7 +159,6 @@ pub async fn thread_view(
                 }
             }
 
-            (render_thread_presence_script())
         },
     );
     Html(page.into_string()).into_response()

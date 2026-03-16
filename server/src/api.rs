@@ -1064,68 +1064,86 @@ pub async fn get_notifications(
 }
 
 // ============================================================================
-// Presence (thread pages)
-// ============================================================================
-
-#[derive(Debug, Deserialize)]
-pub struct PresencePingRequest {
-    pub session_id: String,
-    pub thread_tag: String,
-    #[serde(default)]
-    pub cursor_anchor: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct PresencePingResponse {
-    pub ok: bool,
-    pub global_viewers: usize,
-    pub local_viewers: usize,
-}
-
-pub async fn post_presence_ping(
-    State(state): State<AppState>,
-    Json(req): Json<PresencePingRequest>,
-) -> impl IntoResponse {
-    let session_id = req.session_id.trim().to_string();
-    if session_id.is_empty() {
-        return api_error(
-            StatusCode::BAD_REQUEST,
-            "missing session_id",
-            Some("provide a stable client session id".to_string()),
-        );
-    }
-
-    let thread_tag = canonicalize_tag(&req.thread_tag);
-    if thread_tag.is_empty() {
-        return api_error(
-            StatusCode::BAD_REQUEST,
-            "missing thread_tag",
-            Some("presence is only valid for /t/:tag pages".to_string()),
-        );
-    }
-
-    let counts = state
-        .upsert_presence(session_id, thread_tag, req.cursor_anchor)
-        .await;
-
-    Json(PresencePingResponse {
-        ok: true,
-        global_viewers: counts.global_viewers,
-        local_viewers: counts.local_viewers,
-    })
-    .into_response()
-}
-
-// ============================================================================
 // SSE streams
 // ============================================================================
 
-pub async fn get_html_stream(State(state): State<AppState>) -> impl IntoResponse {
+#[derive(Debug, Deserialize)]
+pub struct SseQuery {
+    pub thread: Option<String>,
+}
+
+/// Broadcast current presence counts to all SSE subscribers.
+async fn broadcast_presence(state: &AppState) {
+    let p = state.sse_presence.read().await;
+    let global: usize = p.values().sum();
+    let threads: HashMap<&str, usize> = p.iter().map(|(k, v)| (k.as_str(), *v)).collect();
+    let json = serde_json::json!({ "global": global, "threads": threads });
+    drop(p);
+    let _ = state.presence_tx.send(json.to_string());
+}
+
+/// Drop guard: decrements presence count and broadcasts when an SSE connection closes.
+struct SsePresenceGuard {
+    state: AppState,
+    thread: String,
+}
+
+impl Drop for SsePresenceGuard {
+    fn drop(&mut self) {
+        let state = self.state.clone();
+        let thread = self.thread.clone();
+        tokio::spawn(async move {
+            {
+                let mut p = state.sse_presence.write().await;
+                if let Some(count) = p.get_mut(&thread) {
+                    *count = count.saturating_sub(1);
+                    if *count == 0 {
+                        p.remove(&thread);
+                    }
+                }
+            }
+            broadcast_presence(&state).await;
+        });
+    }
+}
+
+/// Wraps a stream with a drop guard so presence is cleaned up when the connection closes.
+struct GuardedStream<S> {
+    inner: S,
+    _guard: SsePresenceGuard,
+}
+
+impl<S: futures_util::Stream> futures_util::Stream for GuardedStream<std::pin::Pin<Box<S>>> {
+    type Item = S::Item;
+    fn poll_next(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        self.inner.as_mut().poll_next(cx)
+    }
+}
+
+pub async fn get_html_stream(
+    State(state): State<AppState>,
+    Query(query): Query<SseQuery>,
+) -> impl IntoResponse {
     use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
     use futures_util::stream;
     use tokio_stream::wrappers::BroadcastStream;
     use tokio_stream::StreamExt as _;
 
+    let thread = query.thread
+        .map(|t| canonicalize_tag(&t))
+        .unwrap_or_default();
+
+    // Register this connection.
+    {
+        let mut p = state.sse_presence.write().await;
+        *p.entry(thread.clone()).or_default() += 1;
+    }
+    broadcast_presence(&state).await;
+
+    // Initial thread feed.
     let initial_html = crate::html::thread_feed_html(&state).await;
     let initial = stream::once(async move {
         Ok::<_, std::convert::Infallible>(
@@ -1133,15 +1151,32 @@ pub async fn get_html_stream(State(state): State<AppState>) -> impl IntoResponse
         )
     });
 
-    let rx = state.html_tx.subscribe();
-    let updates = BroadcastStream::new(rx).filter_map(|msg| match msg {
+    // HTML fragment updates (morphing).
+    let html_rx = state.html_tx.subscribe();
+    let html_updates = BroadcastStream::new(html_rx).filter_map(|msg| match msg {
         Ok(frag) => Some(Ok::<_, std::convert::Infallible>(
             SseEvent::default().data(format!("{}\n{}", frag.selector, frag.html)),
         )),
         Err(_) => None,
     });
 
-    Sse::new(initial.chain(updates)).keep_alive(KeepAlive::default())
+    // Presence count updates (typed event).
+    let presence_rx = state.presence_tx.subscribe();
+    let presence_updates = BroadcastStream::new(presence_rx).filter_map(|msg| match msg {
+        Ok(json) => Some(Ok::<_, std::convert::Infallible>(
+            SseEvent::default().event("presence").data(json),
+        )),
+        Err(_) => None,
+    });
+
+    let updates = html_updates.merge(presence_updates);
+    let guard = SsePresenceGuard { state, thread };
+    let stream = GuardedStream {
+        inner: Box::pin(initial.chain(updates)),
+        _guard: guard,
+    };
+
+    Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
 pub async fn get_stream(State(state): State<AppState>) -> impl IntoResponse {
