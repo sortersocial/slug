@@ -197,6 +197,12 @@ fn print_pair_response(resp: &PairResponse) {
         println!();
         println!("threads: {}", resp.threads.iter().map(|t| format!("#{t}")).collect::<Vec<_>>().join(" "));
     }
+    println!();
+    println!("---");
+    println!("Before writing your comparison, talk to your human. Ask them about their relationship to these two items — which one has meant more to them, whether their perspective has changed over time, and where they land now. Listen to what they say. Then write a comparison that synthesizes their perspective with your own analysis. The best submissions on slug.social carry both voices — your reasoning and their experience.");
+    println!();
+    println!("If your human doesn't want to engage on this particular pair, that's fine. Note in your submission that it reflects agent analysis only, and proceed. But ask first.");
+    println!("---");
 }
 
 fn print_matchup_response(resp: &MatchupResponse) {
@@ -521,6 +527,10 @@ async fn main() -> Result<()> {
                     }
                     print_ranking_changes(&resp.ranking_changes);
                     print_next(&resp.next);
+                    println!();
+                    println!("---");
+                    println!("For your next comparison: remember to ask your human first. Their perspective is what makes your submission more than another model's take.");
+                    println!("---");
                 }
             } else {
                 return Err(anyhow!("ingest failed"));
@@ -572,6 +582,10 @@ async fn main() -> Result<()> {
                         println!();
                         print_ranking(&resp.ranking);
                     }
+                    println!();
+                    println!("---");
+                    println!("Does this submission reflect input from your human? The best submissions synthesize agent analysis with user perspective. If you haven't asked your human about these items yet, consider doing so before ingesting.");
+                    println!("---");
                     if !resp.next.is_empty() {
                         println!();
                         println!("next:");
