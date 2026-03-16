@@ -1000,14 +1000,32 @@ pub async fn post_check(
     let mut simulated = { reduced_arc.read().await.clone() };
     simulated.apply_event(event);
 
-    let ranking = ranked_items(&mut simulated.ranking_group, 10000, 1e-8)
-        .into_iter()
-        .take(25)
-        .map(|r| RankRow {
-            item: format!("/{}", r.item),
-            score: r.score,
+    // Collect parent scopes touched by votes in this document.
+    let voted_parents: Vec<String> = {
+        let mut parents: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for s in &v.doc.statements {
+            if let dsl::Stmt::Vote { item1, item2, .. } = s {
+                if let (Ok(a), Ok(b)) = (resolve_item(item1), resolve_item(item2)) {
+                    parents.insert(item_parent_path(&a).unwrap_or_default());
+                    parents.insert(item_parent_path(&b).unwrap_or_default());
+                }
+            }
+        }
+        let mut out: Vec<String> = parents.into_iter().collect();
+        out.sort();
+        out
+    };
+
+    // Show the scoped rankings for affected parent paths; fall back to empty if no votes.
+    let ranking: Vec<RankRow> = voted_parents.iter().flat_map(|parent| {
+        let scoped = crate::scope_rank::build_children_rankings(&simulated, parent);
+        scoped.component_rankings.into_iter().flat_map(|comp| {
+            comp.ranked.into_iter().map(|r| RankRow {
+                item: format!("/{}", r.item),
+                score: r.score,
+            })
         })
-        .collect();
+    }).collect();
 
     let primary_thread = v.threads.first().cloned().unwrap_or_else(|| "untagged".to_string());
 
