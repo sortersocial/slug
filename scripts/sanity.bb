@@ -150,8 +150,8 @@
           ;; 5. verify JSONL written
           (assert! (fs/exists? event-log) "events.jsonl exists")
           (let [lines (->> (slurp event-log) str/split-lines (remove str/blank?))]
-            (assert! (= 1 (count lines))
-                     (str "1 event in JSONL (got " (count lines) ")")))
+            (assert! (= 2 (count lines))
+                     (str "2 events in JSONL (ActorKeyRegistration + Ingest, got " (count lines) ")")))
 
           ;; 6. query forum via CLI
           (println "\nquerying forum via CLI…")
