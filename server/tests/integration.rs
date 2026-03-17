@@ -554,3 +554,86 @@ async fn test_garden_item_pair_matchup_include_threads() {
     assert_eq!(first_thread, "#sorting-hat", "vote should cite thread");
 }
 
+#[tokio::test]
+async fn test_search_page_and_results() {
+    let (addr, _tmp, _log, _handle) = create_test_server().await;
+    let client = reqwest::Client::new();
+
+    // Ingest some data to search through.
+    let ingest_payload = serde_json::json!({
+        "text": "@00000000-0000-0000-0000-000000000000:test:local/test\n\
+#philosophy\n\
+~/parables/counting-the-cost { A parable about weighing what you give up }\n\
+~/parables/prodigal-son { The famous story of return and forgiveness }\n\
+~/parables/counting-the-cost 3:1 ~/parables/prodigal-son { counting resonates more deeply }\n\
+Some free prose about counting sheep at night.\n",
+    });
+    let resp = client
+        .post(&format!("http://{}/api/v0/ingest", addr))
+        .json(&ingest_payload)
+        .send()
+        .await
+        .unwrap();
+    assert!(resp.status().is_success());
+
+    // Full search page loads.
+    let page = client
+        .get(&format!("http://{}/search", addr))
+        .send()
+        .await
+        .unwrap();
+    assert!(page.status().is_success());
+    let html = page.text().await.unwrap();
+    assert!(html.contains("search-input"), "should have search input");
+
+    // Full page with query param renders results server-side.
+    let page_q = client
+        .get(&format!("http://{}/search?q=counting", addr))
+        .send()
+        .await
+        .unwrap();
+    assert!(page_q.status().is_success());
+    let html_q = page_q.text().await.unwrap();
+    assert!(html_q.contains("counting"), "should contain search term in results");
+    assert!(html_q.contains("search-results"), "should have results container");
+
+    // Fragment endpoint returns just the results div.
+    let frag = client
+        .get(&format!("http://{}/search/results?q=counting", addr))
+        .send()
+        .await
+        .unwrap();
+    assert!(frag.status().is_success());
+    let frag_html = frag.text().await.unwrap();
+    assert!(frag_html.contains("search-results"), "fragment should have results div");
+    assert!(frag_html.contains("<mark>"), "should highlight matching terms");
+    assert!(frag_html.contains("counting"), "should find item with 'counting' in path");
+
+    // Search for thread name.
+    let frag_thread = client
+        .get(&format!("http://{}/search/results?q=philosophy", addr))
+        .send()
+        .await
+        .unwrap();
+    let frag_thread_html = frag_thread.text().await.unwrap();
+    assert!(frag_thread_html.contains("philosophy"), "should find thread by tag");
+
+    // Empty/short query returns no results.
+    let frag_short = client
+        .get(&format!("http://{}/search/results?q=a", addr))
+        .send()
+        .await
+        .unwrap();
+    let frag_short_html = frag_short.text().await.unwrap();
+    assert!(!frag_short_html.contains("<mark>"), "single char query should return no results");
+
+    // No matches.
+    let frag_none = client
+        .get(&format!("http://{}/search/results?q=zzzznotfound", addr))
+        .send()
+        .await
+        .unwrap();
+    let frag_none_html = frag_none.text().await.unwrap();
+    assert!(frag_none_html.contains("no results"), "should show no results message");
+}
+

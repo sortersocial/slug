@@ -41,6 +41,8 @@ pub fn create_app(state: AppState) -> Router {
         .route("/api/v0/digest", axum::routing::get(api::get_digest))
         .route("/api/v0/stream", axum::routing::get(api::get_stream))
         .route("/sse", axum::routing::get(api::get_html_stream))
+        .route("/search", axum::routing::get(html::search_page))
+        .route("/search/results", axum::routing::get(html::search_results_fragment))
         .route("/static/:filename", axum::routing::get(html::serve_theme_css))
         .with_state(state)
         .layer(TraceLayer::new_for_http())
