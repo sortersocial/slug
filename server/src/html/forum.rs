@@ -13,7 +13,7 @@ use crate::{
 };
 
 use super::{
-    actor_label, bc_segment, bc_threads, layout, linkify_slugs, now_ms, recency_class,
+    bc_segment, bc_threads, layout, linkify_slugs, now_ms, recency_class,
 };
 
 #[derive(Clone)]
@@ -163,7 +163,7 @@ pub async fn thread_post_view(
             }
             div class="ingest-entry" data-ingest-id=(ing.id) {
                 div class="ingest-meta muted" title=(hover) {
-                    span class="address" { "@" (actor_label(&ing.actor)) }
+                    span class="post-num" { "#" (index) }
                     " · "
                     (ago)
                 }
@@ -194,9 +194,13 @@ pub async fn thread_view(
             .collect::<Vec<_>>()
     };
 
+    let total = ingests.len();
     // ingests_by_thread is newest-first (push_front). Take 50 most recent, render oldest-first.
-    let mut display_ingests: Vec<_> = ingests.iter().take(50).collect();
+    let display_count = total.min(50);
+    let mut display_ingests: Vec<_> = ingests.iter().take(display_count).collect();
     display_ingests.reverse();
+    // base_idx: chronological index of the oldest displayed post
+    let base_idx = total - display_count;
 
     let now = now_ms();
 
@@ -214,12 +218,14 @@ pub async fn thread_view(
             @if display_ingests.is_empty() {
                 p class="muted" { "no activity yet" }
             } @else {
-                @for ing in &display_ingests {
+                @for (i, ing) in display_ingests.iter().enumerate() {
+                    @let post_idx = base_idx + i;
+                    @let post_href = format!("/t/{tag}/{post_idx}");
                     @let hover = timeago::rfc3339_utc(ing.ts);
                     @let ago = timeago::timeago(now, ing.ts);
                     div class="ingest-entry" data-ingest-id=(ing.id) {
                         div class="ingest-meta muted" title=(hover) {
-                            span class="address" { "@" (actor_label(&ing.actor)) }
+                            a href=(post_href) class="post-num" { "#" (post_idx) }
                             " · "
                             (ago)
                         }

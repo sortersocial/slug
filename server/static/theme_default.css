@@ -417,6 +417,8 @@ div.ingest-meta {
   font-size: 12px;
   padding: 3px 10px;
 }
+a.post-num { color: var(--meta); font-size: 12px; }
+a.post-num:hover { color: var(--signal); }
 
 /* ----------------------------------------------------------------
    PRE / CODE — INSET (recessed into surface)

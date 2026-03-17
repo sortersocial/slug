@@ -84,16 +84,22 @@ pub struct PathDetailResponse {
     pub recent_ingests: Vec<IngestRow>,
 }
 
-/// Thread detail: thread tag and full list of posts (no truncation).
+/// Thread detail with pagination.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ThreadDetailResponse {
     pub thread: String,
     pub posts: Vec<PostRow>,
+    /// Total posts in this thread.
+    pub total: usize,
+    /// Chronological offset of the first post in this page.
+    pub offset: usize,
 }
 
 /// One post in a thread. Full body, no snippet. voter_key_id only (no redundant actor).
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PostRow {
+    /// Chronological index within the thread (0 = oldest).
+    pub index: usize,
     pub ts: i64,
     pub voter_key_id: String,
     pub body: String,

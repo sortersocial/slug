@@ -46,6 +46,13 @@ enum Command {
         /// Output as JSON for agent parsing
         #[arg(long)]
         json: bool,
+        /// Start at this post index (0 = oldest). Default: 0.
+        /// Example: --offset 50 --limit 50 shows posts 50-99.
+        #[arg(long, value_name = "N")]
+        offset: Option<usize>,
+        /// Number of posts to return. Default: 50, max: 500.
+        #[arg(long, value_name = "N")]
+        limit: Option<usize>,
     },
 
     /// Ingest a .sorter document from stdin or file
@@ -284,10 +291,14 @@ fn print_thread(resp: &ThreadDetailResponse) {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as i64;
+    if resp.total > resp.posts.len() {
+        let end = resp.offset + resp.posts.len();
+        eprintln!("# showing {}-{} of {} posts  (--offset N --limit N to paginate)", resp.offset, end.saturating_sub(1), resp.total);
+    }
     for (i, post) in resp.posts.iter().enumerate() {
         let timeago = slug_types::timeago::timeago_compact(now_ms, post.ts);
         let body = escape_xml(&post.body);
-        println!("<post timeago=\"{}\">", timeago);
+        println!("<post index=\"{}\" timeago=\"{}\">", post.index, timeago);
         println!("{}", body);
         println!("</post>");
         if i + 1 < resp.posts.len() {
@@ -453,7 +464,7 @@ async fn main() -> Result<()> {
             }
         },
 
-        Command::Forum { title, json } => {
+        Command::Forum { title, json, offset, limit } => {
             let client = http_client()?;
             match title {
                 None => {
@@ -469,8 +480,9 @@ async fn main() -> Result<()> {
                 }
                 Some(name) => {
                     let tag = normalize_thread_input(&name);
-                    let url =
-                        format!("{base}/api/v0/thread?tag={}", urlencoding::encode(&tag));
+                    let mut url = format!("{base}/api/v0/thread?tag={}", urlencoding::encode(&tag));
+                    if let Some(o) = offset { url.push_str(&format!("&offset={o}")); }
+                    if let Some(l) = limit  { url.push_str(&format!("&limit={l}")); }
                     let resp: ThreadDetailResponse =
                         expect_json(client.get(url).send().await?).await?;
                     if json {

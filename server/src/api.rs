@@ -556,43 +556,50 @@ pub async fn get_threads(State(state): State<AppState>) -> impl IntoResponse {
 #[derive(Debug, Deserialize)]
 pub struct ThreadDetailQuery {
     pub tag: String,
+    /// Chronological offset (0 = oldest). Default: 0.
+    pub offset: Option<usize>,
+    /// Number of posts to return. Default: 50, max: 500.
+    pub limit: Option<usize>,
 }
 
-/// Thread (forum) detail by tag — all posts, full body. Not the same as get_path (garden).
+/// Thread (forum) detail by tag — paginated posts, full body.
 pub async fn get_thread(State(state): State<AppState>, Query(q): Query<ThreadDetailQuery>) -> impl IntoResponse {
     let reduced_arc = state.reduced.clone();
     let tag = canonicalize_tag(&q.tag);
     let reduced = reduced_arc.read().await;
 
-    let ingest_ids = reduced
+    let offset = q.offset.unwrap_or(0);
+    let limit = q.limit.unwrap_or(50).clamp(1, 500);
+
+    // ingests_by_thread is newest-first; reverse to chronological order.
+    let all_ids: Vec<String> = reduced
         .ingests_by_thread
         .get(&tag)
-        .map(|q| q.iter().cloned().collect::<Vec<_>>())
+        .map(|q| q.iter().rev().cloned().collect())
         .unwrap_or_default();
 
-    let posts: Vec<PostRow> = {
-        let mut ids = ingest_ids;
-        ids.sort_by_key(|id| {
-            reduced
-                .ingests_by_id
-                .get(id)
-                .map(|ing| ing.ts)
-                .unwrap_or(0)
-        });
-        ids
-            .into_iter()
-            .filter_map(|ing_id| reduced.ingests_by_id.get(&ing_id))
-            .map(|ing: &Ingest| PostRow {
+    let total = all_ids.len();
+
+    let posts: Vec<PostRow> = all_ids
+        .into_iter()
+        .enumerate()
+        .skip(offset)
+        .take(limit)
+        .filter_map(|(idx, id)| {
+            reduced.ingests_by_id.get(&id).map(|ing| PostRow {
+                index: idx,
                 ts: ing.ts,
                 voter_key_id: ing.voter_key_id.clone(),
                 body: ing.raw.clone(),
             })
-            .collect()
-    };
+        })
+        .collect();
 
     Json(ThreadDetailResponse {
         thread: format!("#{}", tag),
         posts,
+        total,
+        offset,
     }).into_response()
 }
 
