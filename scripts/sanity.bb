@@ -139,11 +139,55 @@
           (println "\ningesting .sorter document via CLI…")
           (let [result (run-cli cli-bin base-url ["ingest" "--json"] :input sorter-doc)]
             (assert! (zero? (:exit result)) "cli ingest exits 0")
-            (let [resp (json/parse-string (:out result) true)]
+            (let [resp (json/parse-string (:out result) true)
+                  actor1-passkey (:passkey resp)]
               (assert! (:ok resp) "ingest response ok=true")
               (assert! (pos? (:events_appended resp)) "events_appended > 0")
               (assert! (some #(= "#sanity-test" %) (:threads resp))
-                       "thread '#sanity-test' in response")))
+                       "thread '#sanity-test' in response")
+              (assert! (some? actor1-passkey) "first ingest returns a passkey")
+
+              ;; private namespace tests
+              (println "\ntesting private diary namespaces…")
+              (let [actor1-uuid "00000000-0000-0000-0000-000000000001"
+                    private-path (str actor1-uuid "/private-note")
+                    private-doc (str/join "\n"
+                                  [actor-1
+                                   "#sanity-test"
+                                   ""
+                                   (str "~/" private-path " { secret diary content }")])]
+
+                ;; ingest the private item (actor1 is now registered, must supply passkey)
+                (let [result (run-cli cli-bin base-url
+                                      ["ingest" "--json" "--passkey" actor1-passkey]
+                                      :input private-doc)]
+                  (assert! (zero? (:exit result))
+                           (str "private item ingest exits 0 (err: " (:err result) ")")))
+
+                ;; garden tree without auth should NOT show private item
+                (let [result (run-cli cli-bin base-url ["garden" "tree" "--json"])]
+                  (assert! (zero? (:exit result)) "garden tree exits 0")
+                  (let [resp (json/parse-string (:out result) true)
+                        paths (:paths resp)]
+                    (assert! (not (some #(str/includes? % actor1-uuid) paths))
+                             "private item NOT visible in unauthenticated garden tree")))
+
+                ;; garden body without auth should return 403
+                (let [result (run-cli cli-bin base-url
+                                      ["garden" "body" private-path "--json"])]
+                  (assert! (not (zero? (:exit result)))
+                           "garden body of private item fails without auth"))
+
+                ;; garden body WITH auth should succeed
+                (let [result (run-cli cli-bin base-url
+                                      ["garden" "body" private-path "--json"
+                                       "--actor" actor-1
+                                       "--passkey" actor1-passkey])]
+                  (assert! (zero? (:exit result))
+                           (str "garden body of private item succeeds with auth (err: " (:err result) ")"))
+                  (let [resp (json/parse-string (:out result) true)]
+                    (assert! (str/includes? (or (:body resp) "") "secret")
+                             "private item body contains 'secret'"))))))
 
           ;; 4. query rankings via CLI
           (println "\nquerying garden children via CLI…")
@@ -159,10 +203,11 @@
                        (str "go is #3 (got " (last ranked) ")"))))
 
           ;; 5. verify JSONL written
+          ;; 3 events: ActorKeyRegistration + Ingest (actor1) + Ingest (private item)
           (assert! (fs/exists? event-log) "events.jsonl exists")
           (let [lines (->> (slurp event-log) str/split-lines (remove str/blank?))]
-            (assert! (= 2 (count lines))
-                     (str "2 events in JSONL after first ingest (ActorKeyRegistration + Ingest, got " (count lines) ")")))
+            (assert! (= 3 (count lines))
+                     (str "3 events in JSONL after actor1 ingests (ActorKeyRegistration + 2x Ingest, got " (count lines) ")")))
 
           ;; 6. query forum via CLI
           (println "\nquerying forum via CLI…")

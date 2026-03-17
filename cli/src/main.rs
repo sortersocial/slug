@@ -162,6 +162,12 @@ enum GardenCmd {
         /// Output as JSON for agent parsing
         #[arg(long)]
         json: bool,
+        /// Actor identity for private namespace access (@uuid:rig:model)
+        #[arg(long, value_name = "ACTOR")]
+        actor: Option<String>,
+        /// Passkey for this actor (env: SLUG_PASSKEY)
+        #[arg(long, env = "SLUG_PASSKEY", hide_env_values = true)]
+        passkey: Option<String>,
     },
 
     /// Body text for an item plus threads that mention it (connective tissue to forum).
@@ -171,6 +177,12 @@ enum GardenCmd {
         /// Output as JSON for agent parsing
         #[arg(long)]
         json: bool,
+        /// Actor identity for private namespace access (@uuid:rig:model)
+        #[arg(long, value_name = "ACTOR")]
+        actor: Option<String>,
+        /// Passkey for this actor (env: SLUG_PASSKEY)
+        #[arg(long, env = "SLUG_PASSKEY", hide_env_values = true)]
+        passkey: Option<String>,
     },
 
     /// Ranked children under a path (or merge multiple paths).
@@ -184,6 +196,12 @@ enum GardenCmd {
         /// Output as JSON for agent parsing
         #[arg(long)]
         json: bool,
+        /// Actor identity for private namespace access (@uuid:rig:model)
+        #[arg(long, value_name = "ACTOR")]
+        actor: Option<String>,
+        /// Passkey for this actor (env: SLUG_PASSKEY)
+        #[arg(long, env = "SLUG_PASSKEY", hide_env_values = true)]
+        passkey: Option<String>,
     },
 
     /// Suggest a comparison pair under a path + relevant threads where it's discussed.
@@ -193,6 +211,12 @@ enum GardenCmd {
         /// Output as JSON for agent parsing
         #[arg(long)]
         json: bool,
+        /// Actor identity for private namespace access (@uuid:rig:model)
+        #[arg(long, value_name = "ACTOR")]
+        actor: Option<String>,
+        /// Passkey for this actor (env: SLUG_PASSKEY)
+        #[arg(long, env = "SLUG_PASSKEY", hide_env_values = true)]
+        passkey: Option<String>,
     },
 
     /// Vote history for an item (wins/losses) with thread per vote.
@@ -202,6 +226,12 @@ enum GardenCmd {
         /// Output as JSON for agent parsing
         #[arg(long)]
         json: bool,
+        /// Actor identity for private namespace access (@uuid:rig:model)
+        #[arg(long, value_name = "ACTOR")]
+        actor: Option<String>,
+        /// Passkey for this actor (env: SLUG_PASSKEY)
+        #[arg(long, env = "SLUG_PASSKEY", hide_env_values = true)]
+        passkey: Option<String>,
     },
 }
 
@@ -465,10 +495,17 @@ async fn main() -> Result<()> {
         }
 
         Command::Garden { sub } => match sub {
-            GardenCmd::Tree { json } => {
+            GardenCmd::Tree { json, actor, passkey } => {
                 let client = http_client()?;
-                let url = format!("{base}/api/v0/leaves");
-                let resp: LeavesResponse = expect_json(client.get(url).send().await?).await?;
+                let mut url = format!("{base}/api/v0/leaves");
+                if let Some(a) = &actor {
+                    url.push_str(&format!("?actor={}", urlencoding::encode(a)));
+                }
+                let mut builder = client.get(url);
+                if let Some(pk) = &passkey {
+                    builder = builder.header("x-slug-passkey", pk.as_str());
+                }
+                let resp: LeavesResponse = expect_json(builder.send().await?).await?;
                 if json {
                     println!("{}", serde_json::to_string_pretty(&resp)?);
                 } else {
@@ -478,11 +515,18 @@ async fn main() -> Result<()> {
                 }
             }
 
-            GardenCmd::Body { path, json } => {
+            GardenCmd::Body { path, json, actor, passkey } => {
                 let path = normalize_ontology_path_input(&path).map_err(anyhow::Error::msg)?;
                 let client = http_client()?;
-                let url = format!("{base}/api/v0/item?item={}", urlencoding::encode(&path));
-                let resp: ItemResponse = expect_json(client.get(url).send().await?).await?;
+                let mut url = format!("{base}/api/v0/item?item={}", urlencoding::encode(&path));
+                if let Some(a) = &actor {
+                    url.push_str(&format!("&actor={}", urlencoding::encode(a)));
+                }
+                let mut builder = client.get(url);
+                if let Some(pk) = &passkey {
+                    builder = builder.header("x-slug-passkey", pk.as_str());
+                }
+                let resp: ItemResponse = expect_json(builder.send().await?).await?;
                 if json {
                     println!("{}", serde_json::to_string_pretty(&resp)?);
                 } else {
@@ -490,15 +534,22 @@ async fn main() -> Result<()> {
                 }
             }
 
-            GardenCmd::Children { paths, json } => {
+            GardenCmd::Children { paths, json, actor, passkey } => {
                 let paths: Vec<String> = paths
                     .iter()
                     .map(|p| normalize_ontology_path_input(p).map_err(anyhow::Error::msg))
                     .collect::<Result<Vec<_>>>()?;
                 let client = http_client()?;
                 let parent_param = paths.join(",");
-                let url = format!("{base}/api/v0/rank?parent={}", urlencoding::encode(&parent_param));
-                let resp: RankResponse = expect_json(client.get(url).send().await?).await?;
+                let mut url = format!("{base}/api/v0/rank?parent={}", urlencoding::encode(&parent_param));
+                if let Some(a) = &actor {
+                    url.push_str(&format!("&actor={}", urlencoding::encode(a)));
+                }
+                let mut builder = client.get(url);
+                if let Some(pk) = &passkey {
+                    builder = builder.header("x-slug-passkey", pk.as_str());
+                }
+                let resp: RankResponse = expect_json(builder.send().await?).await?;
 
                 if json {
                     println!("{}", serde_json::to_string_pretty(&resp)?);
@@ -507,11 +558,18 @@ async fn main() -> Result<()> {
                 }
             }
 
-            GardenCmd::Pair { path, json } => {
+            GardenCmd::Pair { path, json, actor, passkey } => {
                 let path = normalize_ontology_path_input(&path).map_err(anyhow::Error::msg)?;
                 let client = http_client()?;
-                let url = format!("{base}/api/v0/pair?parent={}", urlencoding::encode(&path));
-                let resp: PairResponse = expect_json(client.get(url).send().await?).await?;
+                let mut url = format!("{base}/api/v0/pair?parent={}", urlencoding::encode(&path));
+                if let Some(a) = &actor {
+                    url.push_str(&format!("&actor={}", urlencoding::encode(a)));
+                }
+                let mut builder = client.get(url);
+                if let Some(pk) = &passkey {
+                    builder = builder.header("x-slug-passkey", pk.as_str());
+                }
+                let resp: PairResponse = expect_json(builder.send().await?).await?;
                 if json {
                     println!("{}", serde_json::to_string_pretty(&resp)?);
                 } else {
@@ -519,11 +577,18 @@ async fn main() -> Result<()> {
                 }
             }
 
-            GardenCmd::Matchup { path, json } => {
+            GardenCmd::Matchup { path, json, actor, passkey } => {
                 let path = normalize_ontology_path_input(&path).map_err(anyhow::Error::msg)?;
                 let client = http_client()?;
-                let url = format!("{base}/api/v0/matchup?item={}", urlencoding::encode(&path));
-                let resp: MatchupResponse = expect_json(client.get(url).send().await?).await?;
+                let mut url = format!("{base}/api/v0/matchup?item={}", urlencoding::encode(&path));
+                if let Some(a) = &actor {
+                    url.push_str(&format!("&actor={}", urlencoding::encode(a)));
+                }
+                let mut builder = client.get(url);
+                if let Some(pk) = &passkey {
+                    builder = builder.header("x-slug-passkey", pk.as_str());
+                }
+                let resp: MatchupResponse = expect_json(builder.send().await?).await?;
                 if json {
                     println!("{}", serde_json::to_string_pretty(&resp)?);
                 } else {
