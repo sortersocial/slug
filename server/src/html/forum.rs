@@ -151,7 +151,8 @@ pub async fn thread_post_view(
         "view-thread",
         html! {
             nav class="breadcrumb" { (bc_thread_post(&tag, index)) }
-            div class="post-nav" {
+            div class="post-nav" id="top" {
+                a href="#bottom" class="post-nav-btn" { "↓" }
                 @if let Some(href) = &prev_href {
                     a href=(href) class="post-nav-btn" { "← prev" }
                 } @else {
@@ -163,8 +164,6 @@ pub async fn thread_post_view(
                 } @else {
                     span class="post-nav-btn disabled" { "next →" }
                 }
-                button class="post-nav-btn scroll-btn" onclick="window.scrollBy({top:-window.innerHeight,behavior:'smooth'})" { "↑" }
-                button class="post-nav-btn scroll-btn" onclick="window.scrollBy({top:window.innerHeight,behavior:'smooth'})" { "↓" }
             }
             div class="ingest-entry" data-ingest-id=(ing.id) {
                 div class="ingest-meta muted" title=(hover) {
@@ -173,6 +172,9 @@ pub async fn thread_post_view(
                     (ago)
                 }
                 pre { (maud::PreEscaped(linkify_slugs(&ing.raw))) }
+            }
+            div class="post-nav" id="bottom" {
+                a href="#top" class="post-nav-btn" { "↑" }
             }
         },
     );
@@ -191,13 +193,14 @@ fn render_thread_paginator(tag: &str, offset: usize, total: usize, top: bool) ->
     let older_offset = offset.checked_sub(PAGE_SIZE);
     let latest_offset = total.saturating_sub(PAGE_SIZE);
     let on_latest = offset >= latest_offset;
+    let (id, scroll_href, scroll_label) = if top {
+        ("top", "#bottom", "↓")
+    } else {
+        ("bottom", "#top", "↑")
+    };
     html! {
-        div class="thread-paginator" {
-            @if top {
-                button class="post-nav-btn scroll-btn" onclick="window.scrollBy({top:window.innerHeight,behavior:'smooth'})" { "↓" }
-            } @else {
-                button class="post-nav-btn scroll-btn" onclick="window.scrollBy({top:-window.innerHeight,behavior:'smooth'})" { "↑" }
-            }
+        div class="thread-paginator" id=(id) {
+            a href=(scroll_href) class="post-nav-btn" { (scroll_label) }
             @if let Some(o) = older_offset {
                 a href=(format!("/t/{tag}?offset={o}")) class="post-nav-btn" { "← older" }
             } @else {

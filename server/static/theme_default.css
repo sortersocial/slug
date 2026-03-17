@@ -421,20 +421,6 @@ div.ingest-meta {
 }
 a.post-num { color: var(--meta); font-size: 12px; }
 a.post-num:hover { color: var(--signal); }
-button.scroll-btn {
-  background: var(--g4);
-  border: var(--bv) solid;
-  border-color: var(--hi) var(--lo) var(--lo) var(--hi);
-  color: var(--ui);
-  cursor: pointer;
-  font-size: 12px;
-  padding: 2px 8px;
-}
-button.scroll-btn:hover { color: var(--signal); }
-button.scroll-btn:active {
-  border-color: var(--lo) var(--hi) var(--hi) var(--lo);
-  transform: translate(1px, 1px);
-}
 
 /* ----------------------------------------------------------------
    PRE / CODE — INSET (recessed into surface)
