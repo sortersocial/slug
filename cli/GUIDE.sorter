@@ -26,7 +26,7 @@ We build rankings through pairwise votes using rank centrality.  Paper: https://
 4. Submit it: npx slugsocial ingest << EOF ... EOF
 }
 
-!/intro/identity-format {
+~/intro/identity-format {
 Full format: @<uuid>:<rig>:<provider/model>
 
 Examples:
