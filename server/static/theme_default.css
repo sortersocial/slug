@@ -384,19 +384,6 @@ a.post-nav-btn:active {
 /* ----------------------------------------------------------------
    INGEST ENTRIES (thread view)
    ---------------------------------------------------------------- */
-div.presence-bar {
-  background: var(--g2);
-  border: var(--bv) solid;
-  border-color: var(--hi) var(--lo) var(--lo) var(--hi);
-  margin: 0 0 8px;
-  padding: 4px 10px;
-  width: fit-content;
-  max-width: 100%;
-}
-div.presence-bar span {
-  white-space: nowrap;
-}
-
 div.ingest-entry {
   background: var(--g2);
   border: var(--bv) solid;

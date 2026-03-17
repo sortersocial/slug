@@ -225,7 +225,6 @@ pub async fn thread_view(
     Query(q): Query<ThreadViewQuery>,
 ) -> impl IntoResponse {
     let tag = canonicalize_tag(&tag);
-    let (global_viewers, local_viewers) = state.presence_counts(&tag).await;
 
     // ingests_by_thread is newest-first; collect all IDs in chronological order.
     let all_ids: Vec<String> = {
@@ -260,13 +259,7 @@ pub async fn thread_view(
         html! {
             nav class="breadcrumb" { (bc_threads(Some(&tag))) }
             h2 { "#" (tag) }
-            div id="presence-bar" class="presence-bar muted" data-thread-tag=(tag) {
-                span { "viewing now: " span id="presence-global" { (global_viewers) } }
-                " · "
-                span { "neighbors here: " span id="presence-local" { (local_viewers) } }
-                " · "
-                span { "top=oldest · bottom=newest" }
-            }
+            p class="muted" { "top=oldest · bottom=newest" }
             @if display_ingests.is_empty() {
                 p class="muted" { "no activity yet" }
             } @else {

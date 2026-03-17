@@ -14,12 +14,6 @@ body {
 .age-old    a { color: #666; }      /* dim:          >= 1w */
 
 /* Ingest form (poem pattern) */
-.presence-bar {
-  margin: 0.5rem 0 0.75rem;
-  color: #666;
-  font-size: 0.9rem;
-}
-
 .ingest-form-wrap { margin-top: 1.5rem; }
 .ingest-form-wrap summary { cursor: pointer; color: #555; }
 .ingest-form-wrap summary:hover { color: #00ff41; }

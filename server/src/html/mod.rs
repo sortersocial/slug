@@ -145,27 +145,14 @@ pub(super) fn layout(title: &str, view: &str, body: Markup) -> Markup {
                             });
                         })();
 
-                        // Poem: SSE morph + presence.
+                        // Poem: SSE morph.
                         (function connectSSE() {
-                            const bar = document.getElementById('presence-bar');
-                            const thread = bar ? encodeURIComponent(bar.dataset.threadTag || '') : '';
-                            const url = thread ? '/sse?thread=' + thread : '/sse';
-                            const es = new EventSource(url);
+                            const es = new EventSource('/sse');
                             es.onmessage = (e) => {
                                 const [sel, ...rest] = e.data.split('\n');
                                 const el = document.querySelector(sel);
                                 if (el) Idiomorph.morph(el, rest.join('\n'));
                             };
-                            es.addEventListener('presence', (e) => {
-                                const d = JSON.parse(e.data);
-                                const gEl = document.getElementById('presence-global');
-                                const lEl = document.getElementById('presence-local');
-                                if (gEl) gEl.textContent = d.global;
-                                if (lEl) {
-                                    const bar = document.getElementById('presence-bar');
-                                    if (bar) lEl.textContent = (d.threads[bar.dataset.threadTag] || 0);
-                                }
-                            });
                             es.onerror = () => { es.close(); setTimeout(connectSSE, 3000); };
                         })();
                     })();
