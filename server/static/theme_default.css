@@ -693,6 +693,12 @@ body.view-ontology-dark .ont-ranking-list li::before {
   min-width: 18px;
   text-align: right;
 }
+body.view-ontology-dark .ont-rank-score {
+  font-size: 1.25rem;
+  font-weight: bold;
+  color: var(--signal);
+  margin-left: auto;
+}
 body.view-ontology-dark .ont-vote-header {
   align-items: center;
   background: var(--g3);
@@ -837,6 +843,12 @@ body.view-ontology-light .ont-ranking-list li::before {
   font-size: 11px;
   min-width: 18px;
   text-align: right;
+}
+body.view-ontology-light .ont-rank-score {
+  font-size: 1.25rem;
+  font-weight: bold;
+  color: var(--signal);
+  margin-left: auto;
 }
 body.view-ontology-light .ont-vote-header {
   align-items: center;

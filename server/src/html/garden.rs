@@ -310,8 +310,10 @@ async fn render_scope_view(state: AppState, path: OntologyPath) -> axum::respons
                             ol class="ont-ranking-list" {
                                 @for r in comp.ranked.iter() {
                                     @let item_url = item_href(&r.item);
+                                    @let score_str = format!("{:.3}", r.score);
                                     li {
                                         a class="item-link" href=(item_url) { code { "/" (item_display_path(&r.item)) } }
+                                        span class="ont-rank-score" { (score_str) }
                                     }
                                 }
                             }
