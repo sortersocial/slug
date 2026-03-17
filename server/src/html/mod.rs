@@ -10,7 +10,7 @@ mod forum;
 mod garden;
 use breadcrumb_path::OntologyPath;
 
-pub use forum::{index, thread_feed_html, thread_view};
+pub use forum::{index, thread_feed_html, thread_post_view, thread_view};
 pub use garden::{garden_index, ontology_path};
 
 // Embed CSS files at compile time
