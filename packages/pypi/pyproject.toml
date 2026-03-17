@@ -15,6 +15,10 @@ dependencies = []
 slugsocial = "slugsocial.__main__:main"
 
 [tool.hatch.build]
+# artifacts ensures the CI-copied binary is bundled even though it is not VCS-tracked.
+artifacts = [
+  "slugsocial/bin/*",
+]
 include = [
   "slugsocial/**",
   "README.md",
