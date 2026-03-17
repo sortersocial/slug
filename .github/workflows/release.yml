@@ -152,12 +152,9 @@ jobs:
           python-version: "3.12"
 
       - name: Install build tools
-        run: pip install build wheel twine
+        run: pip install build wheel
 
-      - name: Build platform wheels and publish to PyPI
-        env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
+      - name: Build platform wheels
         shell: bash
         run: |
           set -euxo pipefail
@@ -209,7 +206,9 @@ jobs:
             rm packages/pypi/slugsocial/bin/slugsocial
           done
 
-          # Upload all four platform wheels
-          twine upload packages/pypi/dist/*.whl
+      - name: Publish to PyPI (trusted publisher / OIDC)
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: packages/pypi/dist/
 
 
