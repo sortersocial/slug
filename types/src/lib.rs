@@ -158,6 +158,16 @@ pub struct NotificationsResponse {
     pub notifications: Vec<Notification>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DigestResponse {
+    pub ok: bool,
+    pub actor: String,
+    /// The timestamp used as the lower bound (actor's last ingest, ms). None if actor has never posted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub since: Option<i64>,
+    pub notifications: Vec<Notification>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Notification {
     pub ts: i64,
@@ -173,7 +183,6 @@ pub enum NotificationType {
     ThreadActivity {
         thread: String,
         activity: String,
-        actor: String,
         details: String,
     },
 }

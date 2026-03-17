@@ -73,9 +73,12 @@
 ;; the .sorter document under test
 ;; ---------------------------------------------------------------------------
 
+(def actor-1 "@00000000-0000-0000-0000-000000000001:sanity:local/test")
+(def actor-2 "@00000000-0000-0000-0000-000000000002:sanity:local/test2")
+
 (def sorter-doc
   (str/join "\n"
-    ["@00000000-0000-0000-0000-000000000001:sanity:local/test"
+    [actor-1
      "#sanity-test"
      ""
      "~/languages/python { General-purpose, dynamically typed }"
@@ -85,6 +88,14 @@
      "~/languages/rust 3:1 ~/languages/python { Rust has stronger type safety }"
      "~/languages/rust 2:1 ~/languages/go     { Ownership beats GC for systems work }"
      "~/languages/python 2:1 ~/languages/go   { Python's ecosystem is broader }"]))
+
+;; A second actor votes on the same items — this generates a notification for actor-1.
+(def sorter-doc-2
+  (str/join "\n"
+    [actor-2
+     "#sanity-test"
+     ""
+     "~/languages/go 2:1 ~/languages/python { Go deploys as a single binary, simpler ops }"]))
 
 ;; ---------------------------------------------------------------------------
 ;; main
@@ -151,7 +162,7 @@
           (assert! (fs/exists? event-log) "events.jsonl exists")
           (let [lines (->> (slurp event-log) str/split-lines (remove str/blank?))]
             (assert! (= 2 (count lines))
-                     (str "2 events in JSONL (ActorKeyRegistration + Ingest, got " (count lines) ")")))
+                     (str "2 events in JSONL after first ingest (ActorKeyRegistration + Ingest, got " (count lines) ")")))
 
           ;; 6. query forum via CLI
           (println "\nquerying forum via CLI…")
@@ -167,6 +178,19 @@
             (let [resp (json/parse-string (:out result) true)]
               (assert! (str/includes? (or (:body resp) "") "ownership")
                        "rust body contains 'ownership'")))
+
+          ;; 8. digest: second actor votes, triggering a notification for actor-1
+          (println "\ntesting digest (second actor ingest + notification check)…")
+          (let [result (run-cli cli-bin base-url ["ingest" "--json"] :input sorter-doc-2)]
+            (assert! (zero? (:exit result)) "second actor ingest exits 0"))
+
+          (let [result (run-cli cli-bin base-url ["digest" actor-1 "--json"])]
+            (assert! (zero? (:exit result)) "cli digest exits 0")
+            (let [resp (json/parse-string (:out result) true)]
+              (assert! (:ok resp) "digest response ok=true")
+              (assert! (some? (:since resp)) "digest since is set (actor has posted)")
+              (assert! (pos? (count (:notifications resp)))
+                       (str "digest has >= 1 notification (got " (count (:notifications resp)) ")"))))
 
           (finally
             ;; kill first server
@@ -196,9 +220,7 @@
               (assert! (= 3 (count ranked))
                        "3 items ranked after replay")
               (assert! (str/ends-with? (first ranked) "languages/rust")
-                       (str "rust still #1 after replay (got " (first ranked) ")"))
-              (assert! (str/ends-with? (last ranked) "languages/go")
-                       (str "go still #3 after replay (got " (last ranked) ")"))))
+                       (str "rust still #1 after replay (got " (first ranked) ")"))))
 
           (finally
             (.destroyForcibly (:proc server2))

@@ -158,6 +158,9 @@ pub struct ReducerState {
     /// Actor passkey hashes: actor -> hex-encoded SHA-256 of the registered passkey.
     /// First registration wins; subsequent ActorKeyRegistration events for the same actor are ignored.
     pub actor_keys: HashMap<String, String>,
+
+    /// Last ingest timestamp (ms) per actor. Used by the digest endpoint to default `since`.
+    pub actor_last_post_ts: HashMap<String, i64>,
 }
 
 impl ReducerState {
@@ -309,7 +312,6 @@ impl ReducerState {
                                         notification_type: NotificationType::ThreadActivity {
                                             thread: format!("#{}", thread_label),
                                             activity: "vote".to_string(),
-                                            actor: vote.actor.clone(),
                                             details: detail.clone(),
                                         },
                                     };
@@ -366,7 +368,6 @@ impl ReducerState {
                                 notification_type: NotificationType::ThreadActivity {
                                     thread: format!("#{}", thread),
                                     activity: "ingest".to_string(),
-                                    actor: ing.actor.clone(),
                                     details: snippet.clone(),
                                 },
                             };
@@ -392,6 +393,8 @@ impl ReducerState {
                     let q = self.ingests_by_thread.entry(thread).or_default();
                     q.push_front(ing.id.clone());
                 }
+
+                self.actor_last_post_ts.insert(ing.actor.clone(), ing.ts);
             }
             Event::ActorKeyRegistration { actor, key_hash, .. } => {
                 let actor = canonicalize_actor(&actor);

@@ -1130,6 +1130,50 @@ pub async fn get_notifications(
 }
 
 // ============================================================================
+// Digest
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+pub struct DigestQuery {
+    pub actor: String,
+    /// Override the lower bound (ms). Defaults to actor's last ingest timestamp.
+    #[serde(default)]
+    pub since: Option<i64>,
+}
+
+pub async fn get_digest(
+    State(state): State<AppState>,
+    Query(q): Query<DigestQuery>,
+) -> impl IntoResponse {
+    let reduced_arc = state.reduced.clone();
+    let actor = canonicalize_actor(&q.actor);
+
+    let (since, notifications) = {
+        let reduced = reduced_arc.read().await;
+        let since = q.since.or_else(|| reduced.actor_last_post_ts.get(&actor).copied());
+        let cutoff = since.unwrap_or(0);
+        let notifications = reduced
+            .notifications
+            .get(&actor)
+            .map(|queue| {
+                queue.iter()
+                    .filter(|n| n.ts > cutoff)
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        (since, notifications)
+    };
+
+    Json(DigestResponse {
+        ok: true,
+        actor: format!("@{}", actor),
+        since,
+        notifications,
+    }).into_response()
+}
+
+// ============================================================================
 // SSE streams
 // ============================================================================
 
