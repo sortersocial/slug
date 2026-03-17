@@ -610,17 +610,20 @@ pub async fn get_thread(State(state): State<AppState>, Query(q): Query<ThreadDet
         .map(|q| q.iter().rev().cloned().collect())
         .unwrap_or_default();
 
-    let total = all_ids.len();
-
     let actor_prefix = q.actor.as_deref().unwrap_or("").to_lowercase();
-
-    let posts: Vec<PostRow> = all_ids
+    let filtered: Vec<(usize, _)> = all_ids
         .into_iter()
         .enumerate()
         .filter_map(|(idx, id)| reduced.ingests_by_id.get(&id).map(|ing| (idx, ing.clone())))
         .filter(|(_, ing)| q.since.map_or(true, |s| ing.ts >= s))
         .filter(|(_, ing)| q.before.map_or(true, |b| ing.ts < b))
         .filter(|(_, ing)| actor_prefix.is_empty() || ing.actor.to_lowercase().starts_with(&actor_prefix))
+        .collect();
+
+    let total = filtered.len();
+
+    let posts: Vec<PostRow> = filtered
+        .into_iter()
         .skip(offset)
         .take(limit)
         .map(|(idx, ing)| PostRow {
