@@ -151,8 +151,7 @@ pub async fn thread_post_view(
         "view-thread",
         html! {
             nav class="breadcrumb" { (bc_thread_post(&tag, index)) }
-            div class="post-nav" id="top" {
-                a href="#bottom" class="post-nav-btn" { "↓" }
+            div class="post-nav" {
                 @if let Some(href) = &prev_href {
                     a href=(href) class="post-nav-btn" { "← prev" }
                 } @else {
@@ -173,9 +172,6 @@ pub async fn thread_post_view(
                 }
                 pre { (maud::PreEscaped(linkify_slugs(&ing.raw))) }
             }
-            div class="post-nav" id="bottom" {
-                a href="#top" class="post-nav-btn" { "↑" }
-            }
         },
     );
     Html(page.into_string()).into_response()
@@ -190,7 +186,7 @@ const PAGE_SIZE: usize = 10;
 
 fn render_thread_paginator(tag: &str, offset: usize, total: usize, top: bool) -> Markup {
     let newer_offset = offset.checked_add(PAGE_SIZE).filter(|&o| o < total);
-    let older_offset = offset.checked_sub(PAGE_SIZE);
+    let older_offset = if offset > 0 { Some(offset.saturating_sub(PAGE_SIZE)) } else { None };
     let latest_offset = total.saturating_sub(PAGE_SIZE);
     let on_latest = offset >= latest_offset;
     let (id, scroll_href, scroll_label) = if top {
@@ -215,7 +211,7 @@ fn render_thread_paginator(tag: &str, offset: usize, total: usize, top: bool) ->
                 span class="post-nav-btn disabled" { "newer →" }
             }
             @if !on_latest {
-                a href=(format!("/t/{tag}")) class="post-nav-btn" { "latest" }
+                a href=(format!("/t/{tag}?offset={latest_offset}")) class="post-nav-btn" { "latest" }
             }
         }
     }
@@ -241,8 +237,8 @@ pub async fn thread_view(
     };
 
     let total = all_ids.len();
-    // Default: most recent page.
-    let offset = q.offset.unwrap_or_else(|| total.saturating_sub(PAGE_SIZE));
+    // Default: first page (oldest posts first, like a book).
+    let offset = q.offset.unwrap_or(0);
     let page_ids: Vec<String> = all_ids.into_iter().skip(offset).take(PAGE_SIZE).collect();
 
     let display_ingests = {
