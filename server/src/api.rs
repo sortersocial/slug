@@ -306,11 +306,42 @@ pub fn validate_ingest_document(
 
     let threads: Vec<String> = threads_seen.into_iter().collect();
     if threads.is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "ingest requires at least one #tag".to_string(),
-            Some("declare a thread with #tag, e.g. #sorting-hat".to_string()),
-        ));
+        // Thread is optional only when every item and vote is under the actor's private namespace.
+        // Pure prose posts and public items still require a #tag.
+        let all_private = {
+            let mut has_content = false;
+            let mut all_under_actor = true;
+            for s in &doc.statements {
+                match s {
+                    dsl::Stmt::Item { title, .. } => {
+                        has_content = true;
+                        let item = canonicalize_item(title);
+                        if crate::events::path_owner_uuid(&item) != Some(actor_u.as_str()) {
+                            all_under_actor = false;
+                        }
+                    }
+                    dsl::Stmt::Vote { item1, item2, .. } => {
+                        has_content = true;
+                        let a = canonicalize_item(item1);
+                        let b = canonicalize_item(item2);
+                        if crate::events::path_owner_uuid(&a) != Some(actor_u.as_str())
+                            || crate::events::path_owner_uuid(&b) != Some(actor_u.as_str())
+                        {
+                            all_under_actor = false;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            has_content && all_under_actor
+        };
+        if !all_private {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                "ingest requires at least one #tag".to_string(),
+                Some("declare a thread with #tag, e.g. #sorting-hat\n(#tag is optional only when all items are in your private ~/uuid/ namespace)".to_string()),
+            ));
+        }
     }
 
     Ok(ValidatedIngest {

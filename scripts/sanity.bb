@@ -151,9 +151,9 @@
               (println "\ntesting private diary namespaces…")
               (let [actor1-uuid "00000000-0000-0000-0000-000000000001"
                     private-path (str actor1-uuid "/private-note")
+                    ;; No #tag — private-only ingests don't need a thread
                     private-doc (str/join "\n"
                                   [actor-1
-                                   "#sanity-test"
                                    ""
                                    (str "~/" private-path " { secret diary content }")])]
 
