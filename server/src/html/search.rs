@@ -172,43 +172,66 @@ fn search(state: &ReducerState, q: &str, limit: usize) -> SearchResults {
 
 // --- Snippet highlighting ---
 
+/// Snap a byte offset to the nearest char boundary at or before `pos`.
+fn floor_char_boundary(s: &str, pos: usize) -> usize {
+    if pos >= s.len() { return s.len(); }
+    let mut i = pos;
+    while i > 0 && !s.is_char_boundary(i) { i -= 1; }
+    i
+}
+
+/// Snap a byte offset to the nearest char boundary at or after `pos`.
+fn ceil_char_boundary(s: &str, pos: usize) -> usize {
+    if pos >= s.len() { return s.len(); }
+    let mut i = pos;
+    while i < s.len() && !s.is_char_boundary(i) { i += 1; }
+    i
+}
+
 fn highlight_snippet(text: &str, words: &[String], max_len: usize) -> String {
-    let text_lower = text.to_lowercase();
+    // Work entirely on the escaped string so all byte offsets are consistent.
+    let escaped_full = escape_html(text);
+    let escaped_lower = escaped_full.to_lowercase();
 
     let first_pos = words
         .iter()
-        .filter_map(|w| text_lower.find(w.as_str()))
+        .filter_map(|w| escaped_lower.find(w.as_str()))
         .min()
         .unwrap_or(0);
 
-    let start = first_pos.saturating_sub(max_len / 3);
-    let end = (start + max_len).min(text.len());
-
-    let start = if start > 0 {
-        text[start..].find(' ').map(|i| start + i + 1).unwrap_or(start)
+    let raw_start = first_pos.saturating_sub(max_len / 3);
+    let start = if raw_start > 0 {
+        let snapped = ceil_char_boundary(&escaped_full, raw_start);
+        // Try to snap to a word boundary (space)
+        escaped_full[snapped..].find(' ').map(|i| snapped + i + 1).unwrap_or(snapped)
     } else {
         0
     };
+    let start = ceil_char_boundary(&escaped_full, start);
+    let end = floor_char_boundary(&escaped_full, (start + max_len).min(escaped_full.len()));
 
-    let snippet = &text[start..end];
-    let escaped = escape_html(snippet);
-    let escaped_lower = escaped.to_lowercase();
+    let snippet = &escaped_full[start..end];
+    let snippet_lower = &escaped_lower[start..end];
 
     let mut marks: Vec<(usize, usize)> = Vec::new();
     for word in words {
         let mut search_from = 0;
-        while let Some(pos) = escaped_lower[search_from..].find(word.as_str()) {
+        while let Some(pos) = snippet_lower[search_from..].find(word.as_str()) {
             let abs_pos = search_from + pos;
-            marks.push((abs_pos, abs_pos + word.len()));
-            search_from = abs_pos + word.len();
+            let mark_end = abs_pos + word.len();
+            // Only mark if boundaries are valid
+            if snippet.is_char_boundary(abs_pos) && snippet.is_char_boundary(mark_end) {
+                marks.push((abs_pos, mark_end));
+            }
+            search_from = abs_pos + word.len().max(1);
         }
     }
 
     if marks.is_empty() {
         let mut result = String::new();
         if start > 0 { result.push('\u{2026}'); }
-        result.push_str(&escaped);
-        if end < text.len() { result.push('\u{2026}'); }
+        result.push_str(snippet);
+        if end < escaped_full.len() { result.push('\u{2026}'); }
         return result;
     }
 
@@ -228,14 +251,14 @@ fn highlight_snippet(text: &str, words: &[String], max_len: usize) -> String {
     if start > 0 { result.push('\u{2026}'); }
     let mut cursor = 0;
     for (s, e) in &merged {
-        result.push_str(&escaped[cursor..*s]);
+        result.push_str(&snippet[cursor..*s]);
         result.push_str("<mark>");
-        result.push_str(&escaped[*s..*e]);
+        result.push_str(&snippet[*s..*e]);
         result.push_str("</mark>");
         cursor = *e;
     }
-    result.push_str(&escaped[cursor..]);
-    if end < text.len() { result.push('\u{2026}'); }
+    result.push_str(&snippet[cursor..]);
+    if end < escaped_full.len() { result.push('\u{2026}'); }
     result
 }
 

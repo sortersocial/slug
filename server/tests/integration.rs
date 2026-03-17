@@ -637,3 +637,41 @@ Some free prose about counting sheep at night.\n",
     assert!(frag_none_html.contains("no results"), "should show no results message");
 }
 
+#[tokio::test]
+async fn test_search_handles_multibyte_unicode() {
+    let (addr, _tmp, _log, _handle) = create_test_server().await;
+    let client = reqwest::Client::new();
+
+    // Ingest data with multi-byte UTF-8 characters (em dashes, accented chars).
+    let ingest_payload = serde_json::json!({
+        "text": "@00000000-0000-0000-0000-000000000000:test:local/test\n\
+#unicode-test\n\
+~/tools/symex-el { Siddhartha — a modal structural editing package for Emacs. Très élégant. }\n",
+    });
+    let resp = client
+        .post(&format!("http://{}/api/v0/ingest", addr))
+        .json(&ingest_payload)
+        .send()
+        .await
+        .unwrap();
+    assert!(resp.status().is_success());
+
+    // Search should not panic on multi-byte content.
+    let frag = client
+        .get(&format!("http://{}/search/results?q=siddhartha", addr))
+        .send()
+        .await
+        .unwrap();
+    assert!(frag.status().is_success(), "search with multi-byte content should not panic");
+    let html = frag.text().await.unwrap();
+    assert!(html.contains("search-results"));
+
+    // Search for a word near multi-byte chars.
+    let frag2 = client
+        .get(&format!("http://{}/search/results?q=modal", addr))
+        .send()
+        .await
+        .unwrap();
+    assert!(frag2.status().is_success());
+}
+
