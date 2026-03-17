@@ -50,6 +50,11 @@
    :requires ([scripts.sanity :as s])
    :task (s/sanity)}
 
+  perf
+  {:doc "Performance test: concurrent HTTP requests to detect blocking I/O"
+   :requires ([scripts.perf :as perf])
+   :task (perf/perf)}
+
   release-help
   {:doc "Show release task usage"
    :task (do
