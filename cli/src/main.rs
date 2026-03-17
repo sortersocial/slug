@@ -50,7 +50,7 @@ enum Command {
         /// Example: --offset 50 --limit 50 shows posts 50-99.
         #[arg(long, value_name = "N")]
         offset: Option<usize>,
-        /// Number of posts to return. Default: 50, max: 500.
+        /// Number of posts to return. Default: 10, max: 500.
         #[arg(long, value_name = "N")]
         limit: Option<usize>,
     },

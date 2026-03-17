@@ -558,7 +558,7 @@ pub struct ThreadDetailQuery {
     pub tag: String,
     /// Chronological offset (0 = oldest). Default: 0.
     pub offset: Option<usize>,
-    /// Number of posts to return. Default: 50, max: 500.
+    /// Number of posts to return. Default: 10, max: 500.
     pub limit: Option<usize>,
 }
 
@@ -569,7 +569,7 @@ pub async fn get_thread(State(state): State<AppState>, Query(q): Query<ThreadDet
     let reduced = reduced_arc.read().await;
 
     let offset = q.offset.unwrap_or(0);
-    let limit = q.limit.unwrap_or(50).clamp(1, 500);
+    let limit = q.limit.unwrap_or(10).clamp(1, 500);
 
     // ingests_by_thread is newest-first; reverse to chronological order.
     let all_ids: Vec<String> = reduced
