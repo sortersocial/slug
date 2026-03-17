@@ -108,9 +108,11 @@ pub async fn index(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 fn bc_thread_post(tag: &str, index: usize) -> Markup {
+    let page_offset = (index / PAGE_SIZE) * PAGE_SIZE;
+    let thread_href = format!("/t/{tag}?offset={page_offset}");
     html! {
         a href="/" { "slug.social" }
-        (bc_segment(&format!("#{tag}"), &format!("/t/{tag}"), false))
+        (bc_segment(&format!("#{tag}"), &thread_href, false))
         (bc_segment(&index.to_string(), &format!("/t/{tag}/{index}"), true))
     }
 }

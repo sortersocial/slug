@@ -53,6 +53,22 @@ enum Command {
         /// Number of posts to return. Default: 10, max: 500.
         #[arg(long, value_name = "N")]
         limit: Option<usize>,
+        /// Only posts at or after this time. Accepts Unix ms or YYYY-MM-DD.
+        /// Example: --since 2026-01-01
+        #[arg(long, value_name = "DATE_OR_MS")]
+        since: Option<String>,
+        /// Only posts strictly before this time. Accepts Unix ms or YYYY-MM-DD.
+        /// Example: --before 2026-06-01
+        #[arg(long, value_name = "DATE_OR_MS")]
+        before: Option<String>,
+        /// Filter to posts from this actor (UUID prefix match).
+        /// Example: --actor 4d9d6173
+        #[arg(long, value_name = "PREFIX")]
+        actor: Option<String>,
+        /// Fetch a single post by its ingest ID (from --json output).
+        /// Example: --post a3f2c1d0-...
+        #[arg(long, value_name = "ID")]
+        post: Option<String>,
     },
 
     /// Ingest a .sorter document from stdin or file
@@ -308,6 +324,37 @@ fn print_thread(resp: &ThreadDetailResponse) {
     }
 }
 
+/// Parse a Unix ms timestamp or YYYY-MM-DD date string to ms since epoch.
+fn parse_ts(s: &str) -> Result<i64> {
+    if let Ok(ms) = s.parse::<i64>() {
+        return Ok(ms);
+    }
+    // YYYY-MM-DD
+    let b = s.as_bytes();
+    if b.len() == 10 && b[4] == b'-' && b[7] == b'-' {
+        let y: i32 = s[0..4].parse().context("bad year")?;
+        let m: u32 = s[5..7].parse().context("bad month")?;
+        let d: u32 = s[8..10].parse().context("bad day")?;
+        let days = days_from_epoch(y, m, d)?;
+        return Ok(days * 86_400_000);
+    }
+    Err(anyhow!("expected Unix ms timestamp or YYYY-MM-DD, got '{s}'"))
+}
+
+/// Days from Unix epoch (1970-01-01) to the given Gregorian date.
+/// Uses Howard Hinnant's civil calendar algorithm.
+fn days_from_epoch(y: i32, m: u32, d: u32) -> Result<i64> {
+    if m < 1 || m > 12 || d < 1 || d > 31 {
+        return Err(anyhow!("date out of range"));
+    }
+    let (y, m) = if m <= 2 { (y - 1, m + 12) } else { (y, m) };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = (y - era * 400) as i64;
+    let doy = (153 * (m as i64 - 3) + 2) / 5 + d as i64 - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    Ok(era as i64 * 146_097 + doe - 719_468)
+}
+
 fn http_client() -> Result<reqwest::Client> {
     Ok(reqwest::ClientBuilder::new()
         .tls_built_in_webpki_certs(true)
@@ -464,7 +511,7 @@ async fn main() -> Result<()> {
             }
         },
 
-        Command::Forum { title, json, offset, limit } => {
+        Command::Forum { title, json, offset, limit, since, before, actor, post } => {
             let client = http_client()?;
             match title {
                 None => {
@@ -481,8 +528,12 @@ async fn main() -> Result<()> {
                 Some(name) => {
                     let tag = normalize_thread_input(&name);
                     let mut url = format!("{base}/api/v0/thread?tag={}", urlencoding::encode(&tag));
-                    if let Some(o) = offset { url.push_str(&format!("&offset={o}")); }
-                    if let Some(l) = limit  { url.push_str(&format!("&limit={l}")); }
+                    if let Some(o) = offset  { url.push_str(&format!("&offset={o}")); }
+                    if let Some(l) = limit   { url.push_str(&format!("&limit={l}")); }
+                    if let Some(s) = since   { url.push_str(&format!("&since={}", parse_ts(&s)?)); }
+                    if let Some(b) = before  { url.push_str(&format!("&before={}", parse_ts(&b)?)); }
+                    if let Some(a) = actor   { url.push_str(&format!("&actor={}", urlencoding::encode(&a))); }
+                    if let Some(p) = post    { url.push_str(&format!("&post_id={}", urlencoding::encode(&p))); }
                     let resp: ThreadDetailResponse =
                         expect_json(client.get(url).send().await?).await?;
                     if json {
