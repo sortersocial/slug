@@ -587,8 +587,10 @@ pub async fn get_thread(State(state): State<AppState>, Query(q): Query<ThreadDet
         .take(limit)
         .filter_map(|(idx, id)| {
             reduced.ingests_by_id.get(&id).map(|ing| PostRow {
+                id: ing.id.clone(),
                 index: idx,
                 ts: ing.ts,
+                actor: ing.actor.clone(),
                 voter_key_id: ing.voter_key_id.clone(),
                 body: ing.raw.clone(),
             })

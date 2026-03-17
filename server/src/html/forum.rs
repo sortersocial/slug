@@ -182,7 +182,7 @@ pub struct ThreadViewQuery {
     pub offset: Option<usize>,
 }
 
-const PAGE_SIZE: usize = 50;
+const PAGE_SIZE: usize = 10;
 
 fn render_thread_paginator(tag: &str, offset: usize, total: usize) -> Markup {
     let newer_offset = offset.checked_add(PAGE_SIZE).filter(|&o| o < total);
@@ -191,6 +191,8 @@ fn render_thread_paginator(tag: &str, offset: usize, total: usize) -> Markup {
     let on_latest = offset >= latest_offset;
     html! {
         div class="thread-paginator" {
+            button class="post-nav-btn scroll-btn" onclick="window.scrollBy({top:-window.innerHeight,behavior:'smooth'})" { "↑" }
+            button class="post-nav-btn scroll-btn" onclick="window.scrollBy({top:window.innerHeight,behavior:'smooth'})" { "↓" }
             @if let Some(o) = older_offset {
                 a href=(format!("/t/{tag}?offset={o}")) class="post-nav-btn" { "← older" }
             } @else {

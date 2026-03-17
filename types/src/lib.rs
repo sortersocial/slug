@@ -95,12 +95,16 @@ pub struct ThreadDetailResponse {
     pub offset: usize,
 }
 
-/// One post in a thread. Full body, no snippet. voter_key_id only (no redundant actor).
+/// One post in a thread. Full body, no snippet.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PostRow {
+    /// Stable ingest ID (UUID). Use with `--post <id>` to fetch this post directly.
+    pub id: String,
     /// Chronological index within the thread (0 = oldest).
     pub index: usize,
     pub ts: i64,
+    /// Self-declared actor (`@uuid:rig:model`).
+    pub actor: String,
     pub voter_key_id: String,
     pub body: String,
 }
