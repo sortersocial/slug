@@ -544,6 +544,22 @@ details > summary::-webkit-details-marker { display: none; }
   border-color: var(--lo) var(--hi) var(--hi) var(--lo);
   transform: translate(1px, 1px);
 }
+#search-btn {
+  background: var(--g4);
+  border: var(--bv) solid;
+  border-color: var(--hi) var(--lo) var(--lo) var(--hi);
+  color: var(--ui);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px 10px;
+  text-decoration: none;
+  user-select: none;
+}
+#search-btn:hover  { color: var(--signal); }
+#search-btn:active {
+  border-color: var(--lo) var(--hi) var(--hi) var(--lo);
+  transform: translate(1px, 1px);
+}
 
 /* ----------------------------------------------------------------
    RECENCY

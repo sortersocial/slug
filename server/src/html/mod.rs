@@ -58,6 +58,7 @@ pub(super) fn layout(title: &str, view: &str, body: Markup) -> Markup {
                         span { "spread" }
                         input type="range" id="spread-slider" min="0" max="1" step="0.05" value="1";
                     }
+                    a id="search-btn" href="/search" { "search" }
                     div id="theme-switcher" { "theme" }
                 }
                 script { (maud::PreEscaped(r#"
@@ -305,13 +306,6 @@ pub(super) fn cli_panel(cmd: &str) -> Markup {
             span class="cli-panel-label muted" { "cli" }
             code class="cli-panel-cmd" { (cmd) }
         }
-    }
-}
-
-/// Search link for the right side of breadcrumb bars.
-pub(super) fn bc_search_link() -> Markup {
-    html! {
-        span class="bc-side" { a href="/search" { "search" } }
     }
 }
 

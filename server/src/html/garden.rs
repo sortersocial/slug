@@ -13,7 +13,7 @@ use crate::{
 };
 
 use super::{
-    actor_label, bc_path, bc_search_link, cli_panel, layout, linkify_slugs, now_ms, ratio_pct,
+    actor_label, bc_path, cli_panel, layout, linkify_slugs, now_ms, ratio_pct,
     breadcrumb_path::OntologyPath,
 };
 
@@ -52,7 +52,7 @@ pub async fn garden_index(State(state): State<AppState>) -> impl IntoResponse {
         "view-ontology view-ontology-dark",
         html! {
             @let root_path = OntologyPath::root();
-            nav class="breadcrumb" { (bc_path(&root_path)) (bc_search_link()) }
+            nav class="breadcrumb" { (bc_path(&root_path)) }
             p class="muted" { "light = vote-ranked · dark = time-ordered" }
             h2 { "paths" }
             @if roots.is_empty() {
@@ -200,7 +200,7 @@ async fn render_scope_view(state: AppState, path: OntologyPath) -> axum::respons
         &format!("~/{}", path.as_str()),
         "view-ontology view-ontology-dark",
         html! {
-            nav class="breadcrumb" { (bc_path(&path)) (bc_search_link()) }
+            nav class="breadcrumb" { (bc_path(&path)) }
             section class="ont-item-shell" {
                 header class="ont-item-meta" {
                     span class="ont-item-title" { "/" (item_display_path(&model.item)) }
