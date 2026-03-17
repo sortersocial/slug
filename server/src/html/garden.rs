@@ -5,7 +5,7 @@ use axum::{
 use maud::html;
 
 use crate::{
-    events::{canonicalize_item, item_parent_path},
+    events::{canonicalize_item, item_parent_path, path_owner_uuid},
     ranking::{connected_components_from_voted_pairs, ranked_items_subset},
     scope_rank::{build_children_rankings, ChildrenRankings},
     state::AppState,
@@ -27,7 +27,7 @@ fn item_href(item: &str) -> String {
     format!("/~/{}", item_display_path(item))
 }
 
-/// Ontology index — root-level paths.
+/// Ontology index — root-level paths. Private (UUID) roots are excluded.
 pub async fn garden_index(State(state): State<AppState>) -> impl IntoResponse {
     let roots: Vec<(String, usize)> = {
         let reduced = state.reduced.read().await;
@@ -36,6 +36,7 @@ pub async fn garden_index(State(state): State<AppState>) -> impl IntoResponse {
             .get("")
             .map(|s| {
                 s.iter()
+                    .filter(|path| path_owner_uuid(path).is_none())
                     .map(|path| {
                         let children = reduced.item_children.get(path).map(|c| c.len()).unwrap_or(0);
                         (path.clone(), children)
@@ -75,11 +76,28 @@ pub async fn garden_index(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 /// Single public handler for all `/~/*path` routes.
+/// Private (UUID-owned) paths return 403; use API/CLI with actor + passkey to view.
 pub async fn ontology_path(
     State(state): State<AppState>,
     Path(path): Path<String>,
 ) -> impl IntoResponse {
     let path = OntologyPath::from_input(&path);
+    if path_owner_uuid(path.as_str()).is_some() {
+        let page = layout(
+            "Private",
+            "view-ontology view-ontology-dark",
+            html! {
+                nav class="breadcrumb" { (bc_path(&path)) }
+                section class="ont-item-shell" {
+                    p class="muted" {
+                        "This item is in a private namespace. Use the API or CLI with your actor and passkey to view it."
+                    }
+                    (cli_panel("npx slugsocial garden body ~/... --actor @uuid:rig:model --passkey <your-passkey>"))
+                }
+            },
+        );
+        return (axum::http::StatusCode::FORBIDDEN, Html(page.into_string())).into_response();
+    }
     render_scope_view(state, path).await
 }
 
@@ -191,10 +209,19 @@ fn build_item_page_view_model(
 }
 
 async fn render_scope_view(state: AppState, path: OntologyPath) -> axum::response::Response {
-    let model = {
+    let mut model = {
         let reduced = state.reduced.read().await;
         build_item_page_view_model(&reduced, path.as_str(), 50)
     };
+    // Strip private (UUID-owned) items from unauthenticated HTML view.
+    for comp in &mut model.child_rankings.component_rankings {
+        comp.ranked.retain(|r| path_owner_uuid(&r.item).is_none());
+    }
+    model.child_rankings.component_rankings.retain(|comp| !comp.ranked.is_empty());
+    model.child_rankings.unranked_items.retain(|item| path_owner_uuid(item).is_none());
+    model.touching_votes.retain(|v| {
+        path_owner_uuid(&v.a).is_none() && path_owner_uuid(&v.b).is_none()
+    });
 
     let page = layout(
         &format!("~/{}", path.as_str()),
