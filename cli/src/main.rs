@@ -133,6 +133,20 @@ enum Command {
         json: bool,
     },
 
+    /// Search items, threads, and posts
+    ///
+    /// Examples:
+    ///   npx slugsocial search counting
+    ///   npx slugsocial search "structural editing"
+    Search {
+        /// Search query (at least 2 characters)
+        #[arg(value_name = "QUERY")]
+        query: String,
+        /// Output as JSON for agent parsing
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Simple health check
     Healthz {
         /// Output as JSON for agent parsing
@@ -491,6 +505,55 @@ async fn main() -> Result<()> {
                 println!("{}", serde_json::json!({ "ok": true, "body": body.trim() }));
             } else {
                 println!("{body}");
+            }
+        }
+
+        Command::Search { query, json } => {
+            let client = http_client()?;
+            let url = format!("{base}/api/v0/search?q={}", urlencoding::encode(&query));
+            let resp: slug_types::SearchResponse = expect_json(client.get(url).send().await?).await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&resp)?);
+            } else {
+                if !resp.items.is_empty() {
+                    println!("items ({})", resp.items.len());
+                    for item in &resp.items {
+                        print!("  {}", item.path);
+                        if let Some(body) = &item.body {
+                            let first_line = body.lines().next().unwrap_or("").trim();
+                            if !first_line.is_empty() {
+                                print!("  {}", first_line);
+                            }
+                        }
+                        println!();
+                    }
+                }
+                if !resp.threads.is_empty() {
+                    if !resp.items.is_empty() { println!(); }
+                    println!("threads ({})", resp.threads.len());
+                    let now_ms = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis() as i64;
+                    for t in &resp.threads {
+                        println!("  {}  {}n  {}", t.tag, t.post_count, slug_types::timeago::timeago(now_ms, t.last_activity));
+                    }
+                }
+                if !resp.posts.is_empty() {
+                    if !resp.items.is_empty() || !resp.threads.is_empty() { println!(); }
+                    println!("posts ({})", resp.posts.len());
+                    let now_ms = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis() as i64;
+                    for p in &resp.posts {
+                        let first_line = p.snippet.lines().next().unwrap_or("").trim();
+                        println!("  {} · {}  {}", p.thread, slug_types::timeago::timeago(now_ms, p.ts), first_line);
+                    }
+                }
+                if resp.items.is_empty() && resp.threads.is_empty() && resp.posts.is_empty() {
+                    println!("no results");
+                }
             }
         }
 

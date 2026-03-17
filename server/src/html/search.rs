@@ -365,7 +365,7 @@ pub async fn search_page(
                     value=(query) autocomplete="off" autofocus;
             }
             (render_search_results(&results, &query))
-            (cli_panel("npx slugsocial garden tree"))
+            (cli_panel("npx slugsocial search <query>"))
         },
     );
     Html(page.into_string())

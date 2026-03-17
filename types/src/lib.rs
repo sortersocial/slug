@@ -250,6 +250,35 @@ pub struct CheckResponse {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct SearchResponse {
+    pub items: Vec<SearchItemHit>,
+    pub threads: Vec<SearchThreadHit>,
+    pub posts: Vec<SearchPostHit>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SearchItemHit {
+    pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SearchThreadHit {
+    pub tag: String,
+    pub post_count: usize,
+    pub last_activity: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SearchPostHit {
+    pub thread: String,
+    pub actor: String,
+    pub snippet: String,
+    pub ts: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct VoteRequest {
     pub a: String,
     pub b: String,
