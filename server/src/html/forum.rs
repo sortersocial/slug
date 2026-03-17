@@ -94,6 +94,7 @@ pub async fn index(State(state): State<AppState>) -> impl IntoResponse {
     // Bump order: most recently active first.
     rows.sort_by(|a, b| b.last_ts.cmp(&a.last_ts));
 
+    let views = state.views.get_views("/");
     let page = layout(
         "slug.social",
         "view-thread",
@@ -104,6 +105,7 @@ pub async fn index(State(state): State<AppState>) -> impl IntoResponse {
             (render_thread_feed(&rows, now))
             (cli_panel("npx slugsocial forum"))
         },
+        Some(views),
     );
     Html(page.into_string())
 }
@@ -147,6 +149,7 @@ pub async fn thread_post_view(
     let prev_href = (index > 0).then(|| format!("/t/{tag}/{}", index - 1));
     let next_href = (index + 1 < total).then(|| format!("/t/{tag}/{}", index + 1));
 
+    let views = state.views.get_views(&format!("/t/{tag}/{index}"));
     let page = layout(
         &format!("#{tag}/{index}"),
         "view-thread",
@@ -174,6 +177,7 @@ pub async fn thread_post_view(
                 pre { (maud::PreEscaped(linkify_slugs(&ing.raw))) }
             }
         },
+        Some(views),
     );
     Html(page.into_string()).into_response()
 }
@@ -253,6 +257,7 @@ pub async fn thread_view(
     let paginator_top = render_thread_paginator(&tag, offset, total, true);
     let paginator_bot = render_thread_paginator(&tag, offset, total, false);
 
+    let views = state.views.get_views(&format!("/t/{tag}"));
     let page = layout(
         &format!("#{tag}"),
         "view-thread",
@@ -282,6 +287,7 @@ pub async fn thread_view(
             }
             (cli_panel(&format!("npx slugsocial forum {tag}")))
         },
+        Some(views),
     );
     Html(page.into_string()).into_response()
 }

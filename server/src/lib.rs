@@ -4,20 +4,23 @@ pub mod dsl;
 pub mod event_log;
 pub mod events;
 pub mod html;
+pub mod middleware;
 pub mod ranking;
 pub mod reducer;
 pub mod scope_rank;
 pub mod state;
 pub mod timeago;
+pub mod views;
 
-use axum::Router;
+use axum::{middleware as axum_middleware, Router};
 use tower_http::trace::TraceLayer;
 
-use crate::state::AppState;
+use crate::{middleware::view_count_middleware, state::AppState};
 
 pub use reducer::ReducerState;
 
 pub fn create_app(state: AppState) -> Router {
+    let state_for_middleware = state.clone();
     Router::new()
         .route("/healthz", axum::routing::get(|| async { "ok" }))
         .route("/", axum::routing::get(html::index))
@@ -46,6 +49,10 @@ pub fn create_app(state: AppState) -> Router {
         .route("/search/results", axum::routing::get(html::search_results_fragment))
         .route("/static/:filename", axum::routing::get(html::serve_theme_css))
         .with_state(state)
+        .layer(axum_middleware::from_fn_with_state(
+            state_for_middleware,
+            view_count_middleware,
+        ))
         .layer(TraceLayer::new_for_http())
 }
 

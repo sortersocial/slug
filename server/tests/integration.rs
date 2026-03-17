@@ -20,6 +20,7 @@ async fn create_test_server() -> (SocketAddr, TempDir, EventLog, tokio::task::Jo
             secret: "test-secret".to_string(),
         }],
         rate_limit_per_minute: 1000,
+        views_path: None,
     };
 
     let state = AppState::new(cfg);
@@ -37,7 +38,10 @@ async fn create_test_server() -> (SocketAddr, TempDir, EventLog, tokio::task::Jo
 }
 
 /// Spin up a server that replays all events already present in the given log file.
+/// Uses a separate temp dir for views.redb so it doesn't conflict with the original server.
 async fn create_test_server_from_log(log_path: PathBuf) -> (SocketAddr, tokio::task::JoinHandle<()>) {
+    let views_tmp = TempDir::new().unwrap();
+    let views_path = views_tmp.path().join("views.json");
     let cfg = AppConfig {
         data_dir: log_path.parent().unwrap().to_string_lossy().to_string(),
         event_log_path: log_path.to_string_lossy().to_string(),
@@ -46,6 +50,7 @@ async fn create_test_server_from_log(log_path: PathBuf) -> (SocketAddr, tokio::t
             secret: "test-secret".to_string(),
         }],
         rate_limit_per_minute: 1000,
+        views_path: Some(views_path.to_string_lossy().to_string()),
     };
 
     let state = AppState::new(cfg.clone());
@@ -635,6 +640,44 @@ Some free prose about counting sheep at night.\n",
         .unwrap();
     let frag_none_html = frag_none.text().await.unwrap();
     assert!(frag_none_html.contains("no results"), "should show no results message");
+}
+
+#[tokio::test]
+async fn test_view_counts_increment_and_display() {
+    let (addr, _tmp, _log, _handle) = create_test_server().await;
+    let client = reqwest::Client::new();
+
+    // Counts are kept in-memory and updated synchronously before the handler reads them,
+    // so the displayed count is inclusive of the current request.
+    // First view: 1
+    let r1 = client.get(&format!("http://{}/", addr)).send().await.unwrap();
+    assert!(r1.status().is_success());
+    let html1 = r1.text().await.unwrap();
+    assert!(html1.contains("1 views"), "first view should show 1 views, got: {html1}");
+
+    // Second view: 2
+    let r2 = client.get(&format!("http://{}/", addr)).send().await.unwrap();
+    assert!(r2.status().is_success());
+    let html2 = r2.text().await.unwrap();
+    assert!(html2.contains("2 views"), "second view should show 2 views, got: {html2}");
+
+    // Third view: 3
+    let r3 = client.get(&format!("http://{}/", addr)).send().await.unwrap();
+    assert!(r3.status().is_success());
+    let html3 = r3.text().await.unwrap();
+    assert!(html3.contains("3 views"), "third view should show 3 views, got: {html3}");
+
+    // Ontology index /~ has its own counter — starts at 1 on first view
+    let r4 = client.get(&format!("http://{}/~", addr)).send().await.unwrap();
+    assert!(r4.status().is_success());
+    let html4 = r4.text().await.unwrap();
+    assert!(html4.contains("1 views"), "first /~ view should show 1 views, got: {html4}");
+
+    // API and non-HTML routes must not bump any counter
+    let _ = client.get(&format!("http://{}/healthz", addr)).send().await.unwrap();
+    let r5 = client.get(&format!("http://{}/", addr)).send().await.unwrap();
+    let html5 = r5.text().await.unwrap();
+    assert!(html5.contains("4 views"), "after healthz, / should show 4 views, got: {html5}");
 }
 
 #[tokio::test]

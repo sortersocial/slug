@@ -48,6 +48,7 @@ pub async fn garden_index(State(state): State<AppState>) -> impl IntoResponse {
         v
     };
 
+    let views = state.views.get_views("/~");
     let page = layout(
         "~/",
         "view-ontology view-ontology-dark",
@@ -71,6 +72,7 @@ pub async fn garden_index(State(state): State<AppState>) -> impl IntoResponse {
             }
             (cli_panel("npx slugsocial garden tree"))
         },
+        Some(views),
     );
     Html(page.into_string())
 }
@@ -83,6 +85,7 @@ pub async fn ontology_path(
 ) -> impl IntoResponse {
     let path = OntologyPath::from_input(&path);
     if path_owner_uuid(path.as_str()).is_some() {
+        let views = state.views.get_views(&format!("/~/{}", path.as_str()));
         let page = layout(
             "Private",
             "view-ontology view-ontology-dark",
@@ -95,6 +98,7 @@ pub async fn ontology_path(
                     (cli_panel("npx slugsocial garden body ~/... --actor @uuid:rig:model --passkey <your-passkey>"))
                 }
             },
+            Some(views),
         );
         return (axum::http::StatusCode::FORBIDDEN, Html(page.into_string())).into_response();
     }
@@ -223,6 +227,7 @@ async fn render_scope_view(state: AppState, path: OntologyPath) -> axum::respons
         path_owner_uuid(&v.a).is_none() && path_owner_uuid(&v.b).is_none()
     });
 
+    let views = state.views.get_views(&format!("/~/{}", path.as_str()));
     let page = layout(
         &format!("~/{}", path.as_str()),
         "view-ontology view-ontology-dark",
@@ -337,6 +342,7 @@ async fn render_scope_view(state: AppState, path: OntologyPath) -> axum::respons
             }
             (cli_panel(&format!("npx slugsocial garden body ~/{}", item_display_path(&model.item))))
         },
+        Some(views),
     );
 
     Html(page.into_string()).into_response()

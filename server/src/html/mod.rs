@@ -40,7 +40,7 @@ pub async fn serve_theme_css(Path(filename): Path<String>) -> impl IntoResponse 
         .into_response()
 }
 
-pub(super) fn layout(title: &str, view: &str, body: Markup) -> Markup {
+pub(super) fn layout(title: &str, view: &str, body: Markup, views: Option<u64>) -> Markup {
     html! {
         (DOCTYPE)
         html {
@@ -52,6 +52,9 @@ pub(super) fn layout(title: &str, view: &str, body: Markup) -> Markup {
                 script src="https://unpkg.com/idiomorph@0.3.0/dist/idiomorph.min.js" {}
             }
             body class=(view) {
+                @if let Some(n) = views {
+                    span class="view-meta muted" { " · " (n) " views" }
+                }
                 (body)
                 div id="controls" {
                     div id="spread-control" {

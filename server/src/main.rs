@@ -59,6 +59,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         event_log_path: event_log_path.clone(),
         keys,
         rate_limit_per_minute,
+        views_path: None,
     };
 
     let state = AppState::new(cfg);

@@ -367,6 +367,7 @@ pub async fn search_page(
             (render_search_results(&results, &query))
             (cli_panel("npx slugsocial search <query>"))
         },
+        None,
     );
     Html(page.into_string())
 }
