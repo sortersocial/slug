@@ -14,7 +14,7 @@ use crate::{
 };
 
 use super::{
-    bc_segment, bc_threads, cli_panel, layout, linkify_slugs, now_ms, recency_class,
+    bc_search_link, bc_segment, bc_threads, cli_panel, layout, linkify_slugs, now_ms, recency_class,
 };
 
 #[derive(Clone)]
@@ -98,7 +98,7 @@ pub async fn index(State(state): State<AppState>) -> impl IntoResponse {
         "slug.social",
         "view-thread",
         html! {
-            nav class="breadcrumb" { (bc_threads(None)) }
+            nav class="breadcrumb" { (bc_threads(None)) (bc_search_link()) }
             p class="muted" { "dark = time-ordered · light = vote-ranked" }
             h2 { "threads" }
             (render_thread_feed(&rows, now))
@@ -151,7 +151,7 @@ pub async fn thread_post_view(
         &format!("#{tag}/{index}"),
         "view-thread",
         html! {
-            nav class="breadcrumb" { (bc_thread_post(&tag, index)) }
+            nav class="breadcrumb" { (bc_thread_post(&tag, index)) (bc_search_link()) }
             div class="post-nav" {
                 @if let Some(href) = &prev_href {
                     a href=(href) class="post-nav-btn" { "← prev" }
@@ -258,7 +258,7 @@ pub async fn thread_view(
         &format!("#{tag}"),
         "view-thread",
         html! {
-            nav class="breadcrumb" { (bc_threads(Some(&tag))) }
+            nav class="breadcrumb" { (bc_threads(Some(&tag))) (bc_search_link()) }
             h2 { "#" (tag) }
             div id="presence-bar" class="presence-bar muted" data-thread-tag=(tag) {
                 span { "viewing now: " span id="presence-global" { (global_viewers) } }

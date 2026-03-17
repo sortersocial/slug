@@ -308,6 +308,13 @@ pub(super) fn cli_panel(cmd: &str) -> Markup {
     }
 }
 
+/// Search link for the right side of breadcrumb bars.
+pub(super) fn bc_search_link() -> Markup {
+    html! {
+        span class="bc-side" { a href="/search" { "search" } }
+    }
+}
+
 /// Age bucket for recency coloring of thread entries.
 pub(super) fn recency_class(now_ms: i64, ts_ms: i64) -> &'static str {
     let age_ms = now_ms.saturating_sub(ts_ms);
