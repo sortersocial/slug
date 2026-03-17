@@ -14,7 +14,7 @@ use crate::{
 };
 
 use super::{
-    bc_segment, bc_threads, layout, linkify_slugs, now_ms, recency_class,
+    bc_segment, bc_threads, cli_panel, layout, linkify_slugs, now_ms, recency_class,
 };
 
 #[derive(Clone)]
@@ -99,9 +99,10 @@ pub async fn index(State(state): State<AppState>) -> impl IntoResponse {
         "view-thread",
         html! {
             nav class="breadcrumb" { (bc_threads(None)) }
+            p class="muted" { "dark = time-ordered · light = vote-ranked" }
             h2 { "threads" }
             (render_thread_feed(&rows, now))
-
+            (cli_panel("npx slugsocial forum"))
         },
     );
     Html(page.into_string())
@@ -263,6 +264,8 @@ pub async fn thread_view(
                 span { "viewing now: " span id="presence-global" { (global_viewers) } }
                 " · "
                 span { "neighbors here: " span id="presence-local" { (local_viewers) } }
+                " · "
+                span { "top=oldest · bottom=newest" }
             }
             @if display_ingests.is_empty() {
                 p class="muted" { "no activity yet" }
@@ -284,6 +287,7 @@ pub async fn thread_view(
                 }
                 (paginator_bot)
             }
+            (cli_panel(&format!("npx slugsocial forum {tag}")))
         },
     );
     Html(page.into_string()).into_response()

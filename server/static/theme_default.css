@@ -421,6 +421,7 @@ div.ingest-meta {
 }
 a.post-num { color: var(--meta); font-size: 12px; }
 a.post-num:hover { color: var(--signal); }
+div.ont-item-threads { font-size: 13px; margin: 6px 0; }
 
 /* ----------------------------------------------------------------
    PRE / CODE — INSET (recessed into surface)
@@ -448,6 +449,37 @@ code {
   font-family: monospace;
   font-size: 12px;
   padding: 1px 4px;
+}
+
+/* ----------------------------------------------------------------
+   CLI PANEL — how to view this page from the terminal
+   ---------------------------------------------------------------- */
+div.cli-panel {
+  align-items: baseline;
+  background: var(--g1);
+  border: var(--bv) solid;
+  border-color: var(--lo) var(--hi) var(--hi) var(--lo); /* inset */
+  display: flex;
+  gap: 10px;
+  margin: 8px 0;
+  padding: 5px 10px;
+  width: fit-content;
+  max-width: 100%;
+}
+.cli-panel-label {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+.cli-panel-cmd {
+  background: none;
+  border: none;
+  color: var(--code-fg);
+  font-family: monospace;
+  font-size: 12px;
+  padding: 0;
+  user-select: all;
 }
 
 /* ----------------------------------------------------------------

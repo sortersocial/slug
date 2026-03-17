@@ -13,7 +13,7 @@ use crate::{
 };
 
 use super::{
-    actor_label, bc_path, layout, linkify_slugs, now_ms, ratio_pct,
+    actor_label, bc_path, cli_panel, layout, linkify_slugs, now_ms, ratio_pct,
     breadcrumb_path::OntologyPath,
 };
 
@@ -53,6 +53,7 @@ pub async fn garden_index(State(state): State<AppState>) -> impl IntoResponse {
         html! {
             @let root_path = OntologyPath::root();
             nav class="breadcrumb" { (bc_path(&root_path)) }
+            p class="muted" { "light = vote-ranked · dark = time-ordered" }
             h2 { "paths" }
             @if roots.is_empty() {
                 p class="muted" { "no items yet" }
@@ -67,6 +68,7 @@ pub async fn garden_index(State(state): State<AppState>) -> impl IntoResponse {
                     }
                 }
             }
+            (cli_panel("npx slugsocial garden tree"))
         },
     );
     Html(page.into_string())
@@ -95,6 +97,8 @@ struct ItemPageViewModel {
     sibling_rank: Option<SiblingRank>,
     child_rankings: ChildrenRankings,
     touching_votes: Vec<crate::reducer::VoteData>,
+    /// Forum threads that mention or vote on this item.
+    threads: Vec<String>,
 }
 
 fn build_sibling_rank(
@@ -169,12 +173,20 @@ fn build_item_page_view_model(
         .map(|q| q.iter().take(vote_limit).cloned().collect())
         .unwrap_or_default();
 
+    let mut threads: Vec<String> = reduced
+        .item_threads
+        .get(&item)
+        .map(|s| s.iter().cloned().collect())
+        .unwrap_or_default();
+    threads.sort();
+
     ItemPageViewModel {
         item: item.clone(),
         body: reduced.item_bodies.get(&item).cloned(),
         sibling_rank: build_sibling_rank(reduced, &item),
         child_rankings,
         touching_votes,
+        threads,
     }
 }
 
@@ -248,6 +260,16 @@ async fn render_scope_view(state: AppState, path: OntologyPath) -> axum::respons
                 }
             }
 
+            @if !model.threads.is_empty() {
+                div class="ont-item-threads" {
+                    span class="muted" { "discussed in " }
+                    @for (i, tag) in model.threads.iter().enumerate() {
+                        @if i > 0 { span class="muted" { " · " } }
+                        a href=(format!("/t/{tag}")) { "#" (tag) }
+                    }
+                }
+            }
+
             section class="ont-tab-panel ont-tab-panel-children" {
                 h3 { "ranked child groups" }
                 @if model.child_rankings.component_rankings.is_empty() {
@@ -284,6 +306,7 @@ async fn render_scope_view(state: AppState, path: OntologyPath) -> axum::respons
                     }
                 }
             }
+            (cli_panel(&format!("npx slugsocial garden body ~/{}", item_display_path(&model.item))))
         },
     );
 

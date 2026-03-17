@@ -271,6 +271,16 @@ pub(super) fn linkify_slugs(raw: &str) -> String {
     out
 }
 
+/// Small CLI hint panel showing how to look up this page from the terminal.
+pub(super) fn cli_panel(cmd: &str) -> Markup {
+    html! {
+        div class="cli-panel" {
+            span class="cli-panel-label muted" { "cli" }
+            code class="cli-panel-cmd" { (cmd) }
+        }
+    }
+}
+
 /// Age bucket for recency coloring of thread entries.
 pub(super) fn recency_class(now_ms: i64, ts_ms: i64) -> &'static str {
     let age_ms = now_ms.saturating_sub(ts_ms);
