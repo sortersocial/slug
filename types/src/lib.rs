@@ -241,11 +241,23 @@ pub struct IngestResponse {
     pub passkey: Option<String>,
 }
 
+/// One scoped ranking preview for `check` (dry-run), grouped into components.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CheckScopeRanking {
+    /// Parent scope path (e.g. "/models" or "/" for root).
+    pub parent: String,
+    pub components: Vec<RankComponent>,
+    pub unranked_items: Vec<String>,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CheckResponse {
     pub ok: bool,
     pub threads: Vec<String>,
-    pub ranking: Vec<RankRow>,
+    /// Ranking previews for each parent scope touched by votes in this doc.
+    /// Empty when the doc contains no votes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rankings: Vec<CheckScopeRanking>,
     pub next: Vec<String>,
 }
 

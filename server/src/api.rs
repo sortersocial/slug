@@ -1276,22 +1276,47 @@ pub async fn post_check(
     };
 
     // Show the scoped rankings for affected parent paths; fall back to empty if no votes.
-    let ranking: Vec<RankRow> = voted_parents.iter().flat_map(|parent| {
-        let scoped = crate::scope_rank::build_children_rankings(&simulated, parent);
-        scoped.component_rankings.into_iter().flat_map(|comp| {
-            comp.ranked.into_iter().map(|r| RankRow {
-                item: format!("/{}", r.item),
-                score: r.score,
-            })
+    let rankings: Vec<slug_types::CheckScopeRanking> = voted_parents
+        .iter()
+        .map(|parent| {
+            let scoped = crate::scope_rank::build_children_rankings(&simulated, parent);
+            let components: Vec<RankComponent> = scoped
+                .component_rankings
+                .into_iter()
+                .map(|comp| RankComponent {
+                    pairs: comp.pairs,
+                    ranking: comp
+                        .ranked
+                        .into_iter()
+                        .map(|r| RankRow {
+                            item: format!("/{}", r.item),
+                            score: r.score,
+                        })
+                        .collect(),
+                })
+                .collect();
+            slug_types::CheckScopeRanking {
+                parent: if parent.is_empty() {
+                    "/".to_string()
+                } else {
+                    format!("/{}", parent)
+                },
+                components,
+                unranked_items: scoped
+                    .unranked_items
+                    .into_iter()
+                    .map(|it| format!("/{}", it))
+                    .collect(),
+            }
         })
-    }).collect();
+        .collect();
 
     let primary_thread = v.threads.first().cloned().unwrap_or_else(|| "untagged".to_string());
 
     Json(CheckResponse {
         ok: true,
         threads: v.threads.iter().map(|t| format!("#{t}")).collect(),
-        ranking,
+        rankings,
         next: vec![
             "npx slugsocial ingest <file.sorter>".to_string(),
             "npx slugsocial threads".to_string(),

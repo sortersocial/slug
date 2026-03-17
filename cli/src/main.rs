@@ -315,6 +315,24 @@ fn print_rank_response(resp: &RankResponse) {
     }
 }
 
+fn print_check_rankings(rankings: &[CheckScopeRanking]) {
+    for scope in rankings {
+        println!("scope: {}", scope.parent);
+        for comp in &scope.components {
+            if scope.components.len() > 1 {
+                println!("(component: {} pairs)", comp.pairs);
+            }
+            for (i, r) in comp.ranking.iter().enumerate() {
+                println!("{:>3}. {:<24} {:.6}", i + 1, r.item, r.score);
+            }
+        }
+        for item in &scope.unranked_items {
+            println!("  - {item}  (unranked)");
+        }
+        println!();
+    }
+}
+
 fn print_next(next: &NextMoves) {
     println!();
     println!("next:");
@@ -789,12 +807,12 @@ async fn main() -> Result<()> {
                             println!("  {t}");
                         }
                     }
-                    if resp.ranking.is_empty() {
+                    if resp.rankings.is_empty() {
                         println!();
                         println!("(no ranking touched by this doc yet)");
                     } else {
                         println!();
-                        print_ranking(&resp.ranking);
+                        print_check_rankings(&resp.rankings);
                     }
                     println!();
                     println!("---");

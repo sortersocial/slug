@@ -97,6 +97,20 @@
      ""
      "~/languages/go 2:1 ~/languages/python { Go deploys as a single binary, simpler ops }"]))
 
+;; A check-only document that creates TWO disconnected components under one parent scope.
+(def check-doc-disconnected
+  (str/join "\n"
+    [actor-1
+     "#sanity-test"
+     ""
+     "~/disc/a { a }"
+     "~/disc/b { b }"
+     "~/disc/c { c }"
+     "~/disc/d { d }"
+     ""
+     "~/disc/a 2:1 ~/disc/b { first component }"
+     "~/disc/c 2:1 ~/disc/d { second component }"]))
+
 ;; ---------------------------------------------------------------------------
 ;; main
 ;; ---------------------------------------------------------------------------
@@ -134,6 +148,21 @@
 
         (try
           (assert! (wait-for-server base-url 10000) "server responds to /healthz")
+
+          ;; 2.5 check endpoint returns grouped rankings (not flattened)
+          (println "\nchecking (dry-run) returns discrete ranking groups…")
+          (let [result (run-cli cli-bin base-url ["check" "--json"] :input check-doc-disconnected)]
+            (assert! (zero? (:exit result)) "cli check exits 0")
+            (let [resp (json/parse-string (:out result) true)]
+              (assert! (:ok resp) "check response ok=true")
+              (assert! (= 1 (count (:rankings resp))) "check returns one touched parent scope")
+              (let [scope (first (:rankings resp))]
+                (assert! (= "/disc" (:parent scope)) "check scope parent is /disc")
+                (assert! (= 2 (count (:components scope))) "check preserves two disconnected components")
+                (assert! (every? #(= 2 (count (:ranking %))) (:components scope))
+                         "each component ranks 2 items")
+                (assert! (empty? (:unranked_items scope)) "no unranked items for disconnected check doc"))))
+          (assert! (not (fs/exists? event-log)) "check does not create events.jsonl")
 
           ;; 3. ingest via CLI
           (println "\ningesting .sorter document via CLI…")
