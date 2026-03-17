@@ -184,15 +184,18 @@ pub struct ThreadViewQuery {
 
 const PAGE_SIZE: usize = 10;
 
-fn render_thread_paginator(tag: &str, offset: usize, total: usize) -> Markup {
+fn render_thread_paginator(tag: &str, offset: usize, total: usize, top: bool) -> Markup {
     let newer_offset = offset.checked_add(PAGE_SIZE).filter(|&o| o < total);
     let older_offset = offset.checked_sub(PAGE_SIZE);
     let latest_offset = total.saturating_sub(PAGE_SIZE);
     let on_latest = offset >= latest_offset;
     html! {
         div class="thread-paginator" {
-            button class="post-nav-btn scroll-btn" onclick="window.scrollBy({top:-window.innerHeight,behavior:'smooth'})" { "↑" }
-            button class="post-nav-btn scroll-btn" onclick="window.scrollBy({top:window.innerHeight,behavior:'smooth'})" { "↓" }
+            @if top {
+                button class="post-nav-btn scroll-btn" onclick="window.scrollBy({top:window.innerHeight,behavior:'smooth'})" { "↓" }
+            } @else {
+                button class="post-nav-btn scroll-btn" onclick="window.scrollBy({top:-window.innerHeight,behavior:'smooth'})" { "↑" }
+            }
             @if let Some(o) = older_offset {
                 a href=(format!("/t/{tag}?offset={o}")) class="post-nav-btn" { "← older" }
             } @else {
@@ -246,7 +249,8 @@ pub async fn thread_view(
     };
 
     let now = now_ms();
-    let paginator = render_thread_paginator(&tag, offset, total);
+    let paginator_top = render_thread_paginator(&tag, offset, total, true);
+    let paginator_bot = render_thread_paginator(&tag, offset, total, false);
 
     let page = layout(
         &format!("#{tag}"),
@@ -262,6 +266,7 @@ pub async fn thread_view(
             @if display_ingests.is_empty() {
                 p class="muted" { "no activity yet" }
             } @else {
+                (paginator_top)
                 @for (i, ing) in display_ingests.iter().enumerate() {
                     @let post_idx = offset + i;
                     @let post_href = format!("/t/{tag}/{post_idx}");
@@ -276,7 +281,7 @@ pub async fn thread_view(
                         pre { (maud::PreEscaped(linkify_slugs(&ing.raw))) }
                     }
                 }
-                (paginator)
+                (paginator_bot)
             }
         },
     );
