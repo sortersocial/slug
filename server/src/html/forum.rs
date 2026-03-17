@@ -1,8 +1,9 @@
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::{Html, IntoResponse},
 };
+use serde::Deserialize;
 use maud::{html, Markup};
 
 use crate::{
@@ -160,6 +161,8 @@ pub async fn thread_post_view(
                 } @else {
                     span class="post-nav-btn disabled" { "next →" }
                 }
+                button class="post-nav-btn scroll-btn" onclick="window.scrollBy({top:-window.innerHeight,behavior:'smooth'})" { "↑" }
+                button class="post-nav-btn scroll-btn" onclick="window.scrollBy({top:window.innerHeight,behavior:'smooth'})" { "↓" }
             }
             div class="ingest-entry" data-ingest-id=(ing.id) {
                 div class="ingest-meta muted" title=(hover) {
@@ -174,35 +177,74 @@ pub async fn thread_post_view(
     Html(page.into_string()).into_response()
 }
 
-/// Thread view — `/t/:tag` — dark, recent ingests only.
+#[derive(Debug, Deserialize)]
+pub struct ThreadViewQuery {
+    pub offset: Option<usize>,
+}
+
+const PAGE_SIZE: usize = 50;
+
+fn render_thread_paginator(tag: &str, offset: usize, total: usize) -> Markup {
+    let newer_offset = offset.checked_add(PAGE_SIZE).filter(|&o| o < total);
+    let older_offset = offset.checked_sub(PAGE_SIZE);
+    let latest_offset = total.saturating_sub(PAGE_SIZE);
+    let on_latest = offset >= latest_offset;
+    html! {
+        div class="thread-paginator" {
+            @if let Some(o) = older_offset {
+                a href=(format!("/t/{tag}?offset={o}")) class="post-nav-btn" { "← older" }
+            } @else {
+                span class="post-nav-btn disabled" { "← older" }
+            }
+            span class="post-nav-pos muted" {
+                (offset + 1) "–" (total.min(offset + PAGE_SIZE)) " / " (total)
+            }
+            @if let Some(o) = newer_offset {
+                a href=(format!("/t/{tag}?offset={o}")) class="post-nav-btn" { "newer →" }
+            } @else {
+                span class="post-nav-btn disabled" { "newer →" }
+            }
+            @if !on_latest {
+                a href=(format!("/t/{tag}")) class="post-nav-btn" { "latest" }
+            }
+        }
+    }
+}
+
+/// Thread view — `/t/:tag` — dark, paginated.
 pub async fn thread_view(
     State(state): State<AppState>,
     Path(tag): Path<String>,
+    Query(q): Query<ThreadViewQuery>,
 ) -> impl IntoResponse {
     let tag = canonicalize_tag(&tag);
     let (global_viewers, local_viewers) = state.presence_counts(&tag).await;
 
-    let ingest_ids = {
+    // ingests_by_thread is newest-first; collect all IDs in chronological order.
+    let all_ids: Vec<String> = {
         let reduced = state.reduced.read().await;
-        reduced.ingests_by_thread.get(&tag).cloned().unwrap_or_default()
+        reduced
+            .ingests_by_thread
+            .get(&tag)
+            .map(|q| q.iter().rev().cloned().collect())
+            .unwrap_or_default()
     };
-    let ingests = {
+
+    let total = all_ids.len();
+    // Default: most recent page.
+    let offset = q.offset.unwrap_or_else(|| total.saturating_sub(PAGE_SIZE));
+    let page_ids: Vec<String> = all_ids.into_iter().skip(offset).take(PAGE_SIZE).collect();
+
+    let display_ingests = {
         let reduced = state.reduced.read().await;
-        ingest_ids
+        page_ids
             .iter()
             .filter_map(|id| reduced.ingests_by_id.get(id).cloned())
             .collect::<Vec<_>>()
     };
 
-    let total = ingests.len();
-    // ingests_by_thread is newest-first (push_front). Take 50 most recent, render oldest-first.
-    let display_count = total.min(50);
-    let mut display_ingests: Vec<_> = ingests.iter().take(display_count).collect();
-    display_ingests.reverse();
-    // base_idx: chronological index of the oldest displayed post
-    let base_idx = total - display_count;
-
     let now = now_ms();
+    let paginator = render_thread_paginator(&tag, offset, total);
 
     let page = layout(
         &format!("#{tag}"),
@@ -219,7 +261,7 @@ pub async fn thread_view(
                 p class="muted" { "no activity yet" }
             } @else {
                 @for (i, ing) in display_ingests.iter().enumerate() {
-                    @let post_idx = base_idx + i;
+                    @let post_idx = offset + i;
                     @let post_href = format!("/t/{tag}/{post_idx}");
                     @let hover = timeago::rfc3339_utc(ing.ts);
                     @let ago = timeago::timeago(now, ing.ts);
@@ -232,8 +274,8 @@ pub async fn thread_view(
                         pre { (maud::PreEscaped(linkify_slugs(&ing.raw))) }
                     }
                 }
+                (paginator)
             }
-
         },
     );
     Html(page.into_string()).into_response()

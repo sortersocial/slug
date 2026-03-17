@@ -354,14 +354,16 @@ ol.ranking.meat li div.item-card { margin: 0; border: none; }
 div.component.unsorted { border-color: var(--meta) var(--lo) var(--lo) var(--meta); }
 
 /* ----------------------------------------------------------------
-   POST NAV — prev/next for permalink views
+   POST NAV — prev/next for permalink views; paginator for thread view
    ---------------------------------------------------------------- */
-div.post-nav {
+div.post-nav,
+div.thread-paginator {
   align-items: center;
   display: flex;
   gap: 10px;
   margin: 6px 0;
 }
+div.thread-paginator { margin-top: 10px; }
 .post-nav-btn {
   background: var(--g4);
   border: var(--bv) solid;
@@ -419,6 +421,20 @@ div.ingest-meta {
 }
 a.post-num { color: var(--meta); font-size: 12px; }
 a.post-num:hover { color: var(--signal); }
+button.scroll-btn {
+  background: var(--g4);
+  border: var(--bv) solid;
+  border-color: var(--hi) var(--lo) var(--lo) var(--hi);
+  color: var(--ui);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px 8px;
+}
+button.scroll-btn:hover { color: var(--signal); }
+button.scroll-btn:active {
+  border-color: var(--lo) var(--hi) var(--hi) var(--lo);
+  transform: translate(1px, 1px);
+}
 
 /* ----------------------------------------------------------------
    PRE / CODE — INSET (recessed into surface)
