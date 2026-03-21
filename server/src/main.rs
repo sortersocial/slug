@@ -143,7 +143,6 @@ async fn shutdown_signal() {
                 tracing::info!("shutdown: sigint");
             }
         }
-        return;
     }
 
     #[cfg(not(unix))]

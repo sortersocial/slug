@@ -45,6 +45,11 @@
                                            "PORT"          "8080"
                                            "RUST_LOG"      "info"})})))}
 
+  sanity
+  {:doc "Full round-trip integration test: build → ingest → query → kill → replay → verify"
+   :requires ([scripts.sanity])
+   :task (scripts.sanity/sanity)}
+
   release-help
   {:doc "Show release task usage"
    :task (do

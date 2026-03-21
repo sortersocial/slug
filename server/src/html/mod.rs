@@ -10,7 +10,7 @@ mod forum;
 mod garden;
 use breadcrumb_path::OntologyPath;
 
-pub use forum::{index, thread_feed_html, thread_view};
+pub use forum::{index, thread_feed_html, thread_post_view, thread_view};
 pub use garden::{garden_index, ontology_path};
 
 // Embed CSS files at compile time
@@ -52,11 +52,21 @@ pub(super) fn layout(title: &str, view: &str, body: Markup) -> Markup {
             body class=(view) {
                 (body)
                 div id="controls" {
+                    a href="https://github.com/sortersocial/slug" id="src-link" { "src" }
                     div id="spread-control" {
                         span { "spread" }
                         input type="range" id="spread-slider" min="0" max="1" step="0.05" value="1";
                     }
                     div id="theme-switcher" { "theme" }
+                }
+                details id="slug-masthead" {
+                    summary { "slug?" }
+                    p {
+                        "slugs leave trails — full history preserved. "
+                        "slugs are slow and deliberate — thinking encouraged. "
+                        "programming slugs — url-safe readable text. "
+                        "linotype slugs — the word made metal, made flesh."
+                    }
                 }
                 script { (maud::PreEscaped(r#"
                     (function() {
@@ -231,14 +241,14 @@ pub(super) fn linkify_slugs(raw: &str) -> String {
     let s = escaped.as_str();
     while i < s.len() {
         let rest = &s[i..];
-        if rest.starts_with("~/") {
-            let path_len = rest[2..]
+        if let Some(after_tilde) = rest.strip_prefix("~/") {
+            let path_len = after_tilde
                 .chars()
                 .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-' || *c == '/')
                 .map(|c| c.len_utf8())
                 .sum::<usize>();
             if path_len > 0 {
-                let path = &rest[2..2 + path_len];
+                let path = &after_tilde[..path_len];
                 out.push_str(r#"<a href="/~/"#);
                 out.push_str(path);
                 out.push_str(r#"" class="pre-link">~/"#);

@@ -242,18 +242,60 @@ pub async fn thread_view(
                 @for ing in &display_ingests {
                     @let hover = timeago::rfc3339_utc(ing.ts);
                     @let ago = timeago::timeago(now, ing.ts);
+                    @let truncated = ing.raw.len() > 2000;
+                    @let display_body = if truncated { &ing.raw[..2000] } else { &ing.raw[..] };
                     div class="ingest-entry" data-ingest-id=(ing.id) {
                         div class="ingest-meta muted" title=(hover) {
                             span class="address" { "@" (actor_label(&ing.actor)) }
                             " · "
                             (ago)
                         }
-                        pre { (maud::PreEscaped(linkify_slugs(&ing.raw))) }
+                        pre { (maud::PreEscaped(linkify_slugs(display_body))) }
+                        @if truncated {
+                            a href=(format!("/t/{}/{}", tag, ing.id)) class="show-full-link" { "[show full post]" }
+                        }
                     }
                 }
             }
             (render_ingest_form())
             (render_thread_presence_script())
+        },
+    );
+    Html(page.into_string()).into_response()
+}
+
+/// Single-post view — `/t/:tag/:id` — shows one ingest at full length.
+pub async fn thread_post_view(
+    State(state): State<AppState>,
+    Path((tag, post_id)): Path<(String, String)>,
+) -> impl IntoResponse {
+    let tag = canonicalize_tag(&tag);
+    let now = now_ms();
+    let ing = {
+        let reduced = state.reduced.read().await;
+        reduced.ingests_by_id.get(&post_id).cloned()
+    };
+
+    let page = layout(
+        &format!("#{tag} / post"),
+        "view-thread",
+        html! {
+            nav class="breadcrumb" { (bc_threads(Some(&tag))) }
+            h2 { "#" (tag) " / post" }
+            @if let Some(ing) = ing {
+                @let hover = timeago::rfc3339_utc(ing.ts);
+                @let ago = timeago::timeago(now, ing.ts);
+                div class="ingest-entry" data-ingest-id=(ing.id) {
+                    div class="ingest-meta muted" title=(hover) {
+                        span class="address" { "@" (actor_label(&ing.actor)) }
+                        " · "
+                        (ago)
+                    }
+                    pre { (maud::PreEscaped(linkify_slugs(&ing.raw))) }
+                }
+            } @else {
+                p class="muted" { "post not found" }
+            }
         },
     );
     Html(page.into_string()).into_response()

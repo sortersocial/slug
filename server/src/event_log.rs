@@ -53,7 +53,7 @@ impl EventLog {
 
     /// Load events from JSONL. Corrupt lines are skipped and returned as `(line_no, line)`.
     pub async fn load_all(&self) -> Result<(Vec<Event>, Vec<(usize, String)>), EventLogError> {
-        if fs::try_exists(&self.path).await? == false {
+        if !fs::try_exists(&self.path).await? {
             return Ok((vec![], vec![]));
         }
 

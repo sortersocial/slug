@@ -47,6 +47,9 @@ enum Command {
         /// If omitted, lists the 10 most recently active threads.
         #[arg(value_name = "TITLE")]
         title: Option<String>,
+        /// Show a single post at full length by its ID (bypasses truncation).
+        #[arg(long)]
+        post: Option<String>,
         /// Output as JSON for agent parsing
         #[arg(long)]
         json: bool,
@@ -135,6 +138,31 @@ enum GardenCmd {
         /// Path(s); no ~ prefix. Multiple PATH merge scopes.
         #[arg(value_name = "PATH", num_args = 1..)]
         paths: Vec<String>,
+        /// How many levels deep to resolve (default 1 = direct children only).
+        #[arg(long)]
+        depth: Option<usize>,
+        /// Output as JSON for agent parsing
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Global ranking across all items (or a scoped subtree), with pagination.
+    ///
+    /// Examples:
+    ///   npx slugsocial garden rank
+    ///   npx slugsocial garden rank --limit 20
+    ///   npx slugsocial garden rank --offset 20 --limit 20
+    ///   npx slugsocial garden rank --percent
+    Rank {
+        /// Maximum number of items to show (default: all).
+        #[arg(long)]
+        limit: Option<usize>,
+        /// Skip the first N items (for pagination).
+        #[arg(long)]
+        offset: Option<usize>,
+        /// Show each item's score as a percentage of the top score in its component.
+        #[arg(long)]
+        percent: bool,
         /// Output as JSON for agent parsing
         #[arg(long)]
         json: bool,
@@ -208,10 +236,16 @@ fn print_matchup_response(resp: &MatchupResponse) {
 }
 
 /// Print rank response: each component's ranking, then unranked (one line per item).
-fn print_rank_response(resp: &RankResponse) {
+fn print_rank_response(resp: &RankResponse, offset: usize) {
+    let mut n = offset + 1;
     for comp in &resp.components {
-        for (i, r) in comp.ranking.iter().enumerate() {
-            println!("{:>3}. {:<24} {:.6}", i + 1, r.item, r.score);
+        for r in &comp.ranking {
+            if let Some(pct) = r.percent {
+                println!("{:>3}. {:<32} {:.6}  ({:.1}%)", n, r.item, r.score, pct);
+            } else {
+                println!("{:>3}. {:<32} {:.6}", n, r.item, r.score);
+            }
+            n += 1;
         }
     }
     for item in &resp.unranked_items {
@@ -281,6 +315,10 @@ fn print_thread(resp: &ThreadDetailResponse) {
         let body = escape_xml(&post.body);
         println!("<post timeago=\"{}\">", timeago);
         println!("{}", body);
+        if post.truncated {
+            println!();
+            println!("[truncated — run with --post {} to see full]", post.id);
+        }
         println!("</post>");
         if i + 1 < resp.posts.len() {
             println!();
@@ -408,20 +446,45 @@ async fn main() -> Result<()> {
                 }
             }
 
-            GardenCmd::Children { paths, json } => {
+            GardenCmd::Children { paths, depth, json } => {
                 let paths: Vec<String> = paths
                     .iter()
                     .map(|p| normalize_ontology_path_input(p).map_err(anyhow::Error::msg))
                     .collect::<Result<Vec<_>>>()?;
                 let client = http_client(channel.as_deref())?;
                 let parent_param = paths.join(",");
-                let url = format!("{base}/api/v0/rank?parent={}", urlencoding::encode(&parent_param));
+                let mut url = format!("{base}/api/v0/rank?parent={}", urlencoding::encode(&parent_param));
+                if let Some(d) = depth {
+                    url.push_str(&format!("&depth={d}"));
+                }
                 let resp: RankResponse = expect_json(client.get(url).send().await?).await?;
 
                 if json {
                     println!("{}", serde_json::to_string_pretty(&resp)?);
                 } else {
-                    print_rank_response(&resp);
+                    print_rank_response(&resp, 0);
+                }
+            }
+
+            GardenCmd::Rank { limit, offset, percent, json } => {
+                let client = http_client(channel.as_deref())?;
+                let off = offset.unwrap_or(0);
+                let mut url = format!("{base}/api/v0/rank?parent=~");
+                if let Some(l) = limit {
+                    url.push_str(&format!("&limit={l}"));
+                }
+                if off > 0 {
+                    url.push_str(&format!("&offset={off}"));
+                }
+                if percent {
+                    url.push_str("&percent=true");
+                }
+                let resp: RankResponse = expect_json(client.get(url).send().await?).await?;
+
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&resp)?);
+                } else {
+                    print_rank_response(&resp, off);
                 }
             }
 
@@ -450,7 +513,7 @@ async fn main() -> Result<()> {
             }
         },
 
-        Command::Forum { title, json } => {
+        Command::Forum { title, post, json } => {
             let client = http_client(channel.as_deref())?;
             match title {
                 None => {
@@ -466,8 +529,11 @@ async fn main() -> Result<()> {
                 }
                 Some(name) => {
                     let tag = normalize_thread_input(&name);
-                    let url =
+                    let mut url =
                         format!("{base}/api/v0/thread?tag={}", urlencoding::encode(&tag));
+                    if let Some(pid) = &post {
+                        url.push_str(&format!("&post_id={}", urlencoding::encode(pid)));
+                    }
                     let resp: ThreadDetailResponse =
                         expect_json(client.get(url).send().await?).await?;
                     if json {

@@ -7,7 +7,7 @@ pub fn timeago(now_ms: i64, ts_ms: i64) -> String {
     if delta_ms < 0 {
         delta_ms = 0;
     }
-    let mut secs = (delta_ms / 1000) as i64;
+    let mut secs = delta_ms / 1000;
 
     let days = secs / 86_400;
     secs %= 86_400;
@@ -21,15 +21,11 @@ pub fn timeago(now_ms: i64, ts_ms: i64) -> String {
     if days > 0 {
         out.push_str(&format!("{days}d"));
     }
-    if hours > 0 || !out.is_empty() {
-        if hours > 0 {
-            out.push_str(&format!("{hours}h"));
-        }
+    if hours > 0 {
+        out.push_str(&format!("{hours}h"));
     }
-    if mins > 0 || !out.is_empty() {
-        if mins > 0 {
-            out.push_str(&format!("{mins}m"));
-        }
+    if mins > 0 {
+        out.push_str(&format!("{mins}m"));
     }
     out.push_str(&format!("{s}s ago"));
     out
@@ -41,7 +37,7 @@ pub fn timeago_compact(now_ms: i64, ts_ms: i64) -> String {
     if delta_ms < 0 {
         delta_ms = 0;
     }
-    let secs = (delta_ms / 1000) as u64;
+    let secs = delta_ms / 1000;
     let d = secs / 86_400;
     let h = (secs % 86_400) / 3_600;
     let m = (secs % 3_600) / 60;

@@ -48,6 +48,38 @@ pub fn resolve_scope(reduced: &ReducerState, specs: &[String]) -> Vec<String> {
     out
 }
 
+/// Resolve scope specs recursively up to `depth` levels deep.
+/// depth=1 is equivalent to resolve_scope (direct children only).
+/// depth=2 includes grandchildren, etc.
+pub fn resolve_scope_recursive(reduced: &ReducerState, specs: &[String], depth: usize) -> Vec<String> {
+    if depth == 0 {
+        return vec![];
+    }
+    let mut visited: HashSet<String> = HashSet::new();
+    let mut frontier: Vec<String> = specs.iter().map(|s| canonicalize_item(s)).collect();
+
+    for _level in 0..depth {
+        let mut next_frontier: Vec<String> = Vec::new();
+        for parent in &frontier {
+            if let Some(children) = reduced.item_children.get(parent) {
+                for child in children {
+                    if visited.insert(child.clone()) {
+                        next_frontier.push(child.clone());
+                    }
+                }
+            }
+        }
+        if next_frontier.is_empty() {
+            break;
+        }
+        frontier = next_frontier;
+    }
+
+    let mut out: Vec<String> = visited.into_iter().collect();
+    out.sort();
+    out
+}
+
 /// Build connected-component rankings for an explicit set of item paths.
 /// Use this when scope comes from multiple parents (resolve_scope).
 pub fn build_rankings_for_item_set(reduced: &ReducerState, items_in_scope: &[String]) -> ChildrenRankings {

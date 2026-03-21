@@ -10,10 +10,12 @@ pub struct ApiError {
     pub hint: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RankRow {
     pub item: String,
     pub score: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub percent: Option<f64>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -91,12 +93,15 @@ pub struct ThreadDetailResponse {
     pub posts: Vec<PostRow>,
 }
 
-/// One post in a thread. Full body, no snippet. voter_key_id only (no redundant actor).
+/// One post in a thread. voter_key_id only (no redundant actor).
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PostRow {
     pub ts: i64,
     pub voter_key_id: String,
+    pub id: String,
+    pub actor: String,
     pub body: String,
+    pub truncated: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
