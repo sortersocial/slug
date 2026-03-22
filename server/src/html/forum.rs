@@ -221,7 +221,7 @@ pub async fn thread_view(
                         }
                         pre { (maud::PreEscaped(linkify_slugs(display_body))) }
                         @if truncated {
-                            a href=(format!("/t/{}/{}", tag, ing.id)) class="show-full-link" { "[show full post]" }
+                            a href=(post_href) class="show-full-link" { "[show full post]" }
                         }
                     }
                 }
@@ -234,25 +234,29 @@ pub async fn thread_view(
     Html(page.into_string()).into_response()
 }
 
-/// Single-post view — `/t/:tag/:id` — shows one ingest at full length.
+/// Single-post view — `/t/:tag/:index` — shows one ingest at full length.
 pub async fn thread_post_view(
     State(state): State<AppState>,
-    Path((tag, post_id)): Path<(String, String)>,
+    Path((tag, index_str)): Path<(String, String)>,
 ) -> impl IntoResponse {
     let tag = canonicalize_tag(&tag);
     let now = now_ms();
+    let index: usize = index_str.parse().unwrap_or(0);
     let ing = {
         let reduced = state.reduced.read().await;
-        reduced.ingests_by_id.get(&post_id).cloned()
+        // ingests_by_thread is most-recent-first; chronological index 0 = oldest = last in deque.
+        reduced.ingests_by_thread.get(&tag)
+            .and_then(|q| q.iter().rev().nth(index))
+            .and_then(|id| reduced.ingests_by_id.get(id).cloned())
     };
 
-    let views = state.views.get_views(&format!("/t/{tag}/{post_id}"));
+    let views = state.views.get_views(&format!("/t/{tag}/{index}"));
     let page = layout(
-        &format!("#{tag} / post"),
+        &format!("#{tag} / post #{index}"),
         "view-thread",
         html! {
             nav class="breadcrumb" { (bc_threads(Some(&tag))) }
-            h2 { "#" (tag) " / post" }
+            h2 { "#" (tag) " / post #" (index) }
             @if let Some(ing) = ing {
                 @let hover = timeago::rfc3339_utc(ing.ts);
                 @let ago = timeago::timeago(now, ing.ts);
