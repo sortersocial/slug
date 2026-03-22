@@ -206,34 +206,70 @@ impl ReducerState {
         Some(c)
     }
 
-    /// 1-indexed rank of `item` within its parent scope. 0 if unranked or scope unknown.
+    /// 1-indexed rank of `item` within its connected component in the parent scope.
+    /// 0 if the item has no votes connecting it to siblings (unranked).
     fn scope_rank_of(group: &GroupState, item: &str, item_children: &HashMap<String, HashSet<String>>) -> usize {
         let scope = item_parent_path(item).unwrap_or_default();
         let children = match item_children.get(&scope) {
             None => return 0,
             Some(c) => c,
         };
-        let &idx = match group.item_to_idx.get(item) {
+        let &item_global_idx = match group.item_to_idx.get(item) {
             None => return 0,
             Some(i) => i,
         };
-        let item_score = group.cached_scores.get(idx).copied().unwrap_or(0.0);
-        let mut scores: Vec<f64> = children
-            .iter()
-            .filter_map(|c| group.item_to_idx.get(c).and_then(|&i| group.cached_scores.get(i)).copied())
+        // Map scope children to compact local indices.
+        let sibling_idxs: Vec<usize> = children.iter()
+            .filter_map(|c| group.item_to_idx.get(c).copied())
             .collect();
-        scores.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
-        scores.iter().position(|&s| (s - item_score).abs() < f64::EPSILON * 1e6).map(|i| i + 1).unwrap_or(0)
+        let global_to_local: HashMap<usize, usize> = sibling_idxs.iter()
+            .enumerate().map(|(l, &g)| (g, l)).collect();
+        let item_local = match global_to_local.get(&item_global_idx) {
+            None => return 0,
+            Some(&l) => l,
+        };
+        // Connected components within scope.
+        let (comps, _) = crate::ranking::connected_components_from_voted_pairs(
+            sibling_idxs.len(),
+            group.voted_pairs.iter().filter_map(|(a, b)| {
+                Some((global_to_local.get(a).copied()?, global_to_local.get(b).copied()?))
+            }),
+        );
+        // Find the component containing this item.
+        let comp_local = match comps.iter().find(|c| c.contains(&item_local)) {
+            None => return 0,
+            Some(c) => c,
+        };
+        let comp_global: Vec<usize> = comp_local.iter()
+            .filter_map(|&l| sibling_idxs.get(l).copied())
+            .collect();
+        let ranked = crate::ranking::ranked_items_subset(group, &comp_global, 10000, 1e-8);
+        ranked.iter().position(|r| r.item == item).map(|i| i + 1).unwrap_or(0)
     }
 
-    /// 1-indexed global rank of `item` across all items. 0 if not in ranking group.
+    /// 1-indexed position of `item` in the component-aware global flat list.
+    /// Components sorted largest-first; items ranked within each component.
+    /// 0 if the item is not in the ranking group.
     fn global_rank_of(group: &GroupState, item: &str) -> usize {
-        let &idx = match group.item_to_idx.get(item) {
-            None => return 0,
-            Some(i) => i,
-        };
-        let score = group.cached_scores.get(idx).copied().unwrap_or(0.0);
-        group.cached_scores.iter().filter(|&&s| s > score).count() + 1
+        if !group.item_to_idx.contains_key(item) {
+            return 0;
+        }
+        let n = group.idx_to_item.len();
+        let (mut comps, _) = crate::ranking::connected_components_from_voted_pairs(
+            n, group.voted_pairs.iter().copied(),
+        );
+        comps.sort_by(|a, b| b.len().cmp(&a.len()));
+        let mut pos = 1usize;
+        for comp in &comps {
+            let ranked = crate::ranking::ranked_items_subset(group, comp, 10000, 1e-8);
+            for r in &ranked {
+                if r.item == item {
+                    return pos;
+                }
+                pos += 1;
+            }
+        }
+        0
     }
 
     pub fn apply_event(&mut self, event: Event) {

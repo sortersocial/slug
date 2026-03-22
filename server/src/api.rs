@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use crate::{
     dsl,
     events::{canonicalize_actor, canonicalize_item, canonicalize_tag, item_parent_path, Event},
-    ranking::ranked_items_subset,
+    ranking::{connected_components_from_voted_pairs, ranked_items_subset},
     reducer::ReducerState,
     state::AppState,
 };
@@ -469,25 +469,27 @@ pub async fn get_global_rank(
         .or(q.passkey);
     let authed_uuid = verified_actor_uuid(&reduced, q.actor.as_deref(), passkey.as_deref());
 
-    // Compute (or use cached) global ranking, then drop the mut borrow.
-    crate::ranking::compute_group_ranking(&mut reduced.ranking_group, 10000, 1e-8);
-    let mut ranked: Vec<crate::ranking::RankedItem> = reduced
-        .ranking_group
-        .idx_to_item
-        .iter()
-        .enumerate()
-        .map(|(i, item)| crate::ranking::RankedItem {
-            item: item.clone(),
-            score: *reduced.ranking_group.cached_scores.get(i).unwrap_or(&0.0),
-        })
-        .collect();
-    ranked.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    // Find connected components in global graph; rank within each; largest component first.
+    let n = reduced.ranking_group.idx_to_item.len();
+    let (mut comps, _) = connected_components_from_voted_pairs(
+        n, reduced.ranking_group.voted_pairs.iter().copied(),
+    );
+    comps.sort_by(|a, b| b.len().cmp(&a.len()));
 
-    // Filter private items.
-    ranked.retain(|r| match crate::events::path_owner_uuid(&r.item) {
-        None => true,
-        Some(owner) => authed_uuid.as_deref() == Some(owner),
-    });
+    let mut ranked: Vec<RankRow> = Vec::new();
+    for comp in &comps {
+        let items = ranked_items_subset(&reduced.ranking_group, comp, 10000, 1e-8);
+        let top = items.first().map(|r| r.score).unwrap_or(1.0);
+        let bot = items.last().map(|r| r.score).unwrap_or(0.0);
+        let range = (top - bot).max(1e-12);
+        for r in items {
+            if let Some(owner) = crate::events::path_owner_uuid(&r.item) {
+                if authed_uuid.as_deref() != Some(owner) { continue; }
+            }
+            let pct = want_percent.then(|| ((r.score - bot) / range * 100.0).clamp(0.0, 100.0));
+            ranked.push(RankRow { item: format!("/{}", r.item), score: r.score, percent: pct });
+        }
+    }
 
     let ranked_total = ranked.len();
 
@@ -505,18 +507,8 @@ pub async fn get_global_rank(
     unranked.sort();
     let unranked_total = unranked.len();
 
-    // Percent: top item = 100, bottom ranked item = 0 (linear by score).
-    let top_score = ranked.first().map(|r| r.score).unwrap_or(1.0);
-    let bottom_score = ranked.last().map(|r| r.score).unwrap_or(0.0);
-    let score_range = (top_score - bottom_score).max(1e-12);
-
     let page: Vec<RankRow> = ranked
         .into_iter()
-        .map(|r| {
-            let pct = want_percent
-                .then(|| ((r.score - bottom_score) / score_range * 100.0).clamp(0.0, 100.0));
-            RankRow { item: format!("/{}", r.item), score: r.score, percent: pct }
-        })
         .chain(unranked.into_iter().map(|it| RankRow {
             item: format!("/{}", it),
             score: 0.0,
