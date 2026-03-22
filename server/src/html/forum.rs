@@ -21,6 +21,7 @@ use super::{
 #[derive(Clone)]
 struct ThreadRow {
     tag: String,
+    subtitle: Option<String>,
     last_ts: i64,
     ingests: usize,
 }
@@ -35,6 +36,7 @@ fn collect_thread_rows(reduced: &ReducerState, now: i64) -> Vec<ThreadRow> {
             let ingests = reduced.ingests_by_thread.get(tag).map(|q| q.len()).unwrap_or(0);
             ThreadRow {
                 tag: tag.clone(),
+                subtitle: thread.subtitle.clone(),
                 last_ts: thread.last_activity_ts,
                 ingests,
             }
@@ -57,6 +59,9 @@ fn render_thread_feed(rows: &[ThreadRow], now: i64) -> Markup {
                         @let age_cls = recency_class(now, r.last_ts);
                         li class=(age_cls) {
                             a href=(thread_href) { "#" (r.tag) }
+                            @if let Some(subtitle) = &r.subtitle {
+                                ": " (subtitle)
+                            }
                             " "
                             span class="muted" title=(hover) {
                                 (ago)
@@ -183,12 +188,14 @@ pub async fn thread_view(
     let offset = q.offset.unwrap_or(0);
     let page_ids: Vec<String> = all_ids.into_iter().skip(offset).take(PAGE_SIZE).collect();
 
-    let display_ingests = {
+    let (display_ingests, subtitle) = {
         let reduced = state.reduced.read().await;
-        page_ids
+        let ingests = page_ids
             .iter()
             .filter_map(|id| reduced.ingests_by_id.get(id).cloned())
-            .collect::<Vec<_>>()
+            .collect::<Vec<_>>();
+        let subtitle = reduced.threads.get(&tag).and_then(|t| t.subtitle.clone());
+        (ingests, subtitle)
     };
 
     let now = now_ms();
@@ -201,7 +208,7 @@ pub async fn thread_view(
         "view-thread",
         html! {
             nav class="breadcrumb" { (bc_threads(Some(&tag))) }
-            h2 { "#" (tag) }
+            h2 { "#" (tag) @if let Some(sub) = &subtitle { ": " (sub) } }
             p class="muted" { "top=oldest · bottom=newest" }
             @if display_ingests.is_empty() {
                 p class="muted" { "no activity yet" }
@@ -246,12 +253,14 @@ pub async fn thread_post_view(
     let tag = canonicalize_tag(&tag);
     let now = now_ms();
     let index: usize = index_str.parse().unwrap_or(0);
-    let ing = {
+    let (ing, subtitle) = {
         let reduced = state.reduced.read().await;
         // ingests_by_thread is most-recent-first; chronological index 0 = oldest = last in deque.
-        reduced.ingests_by_thread.get(&tag)
+        let ingest = reduced.ingests_by_thread.get(&tag)
             .and_then(|q| q.iter().rev().nth(index))
-            .and_then(|id| reduced.ingests_by_id.get(id).cloned())
+            .and_then(|id| reduced.ingests_by_id.get(id).cloned());
+        let subtitle = reduced.threads.get(&tag).and_then(|t| t.subtitle.clone());
+        (ingest, subtitle)
     };
 
     let views = state.views.get_views(&format!("/t/{tag}/{index}"));
@@ -260,7 +269,7 @@ pub async fn thread_post_view(
         "view-thread",
         html! {
             nav class="breadcrumb" { (bc_threads(Some(&tag))) }
-            h2 { "#" (tag) " / post #" (index) }
+            h2 { "#" (tag) @if let Some(sub) = &subtitle { ": " (sub) } " / post #" (index) }
             @if let Some(ing) = ing {
                 @let hover = timeago::rfc3339_utc(ing.ts);
                 @let ago = timeago::timeago(now, ing.ts);

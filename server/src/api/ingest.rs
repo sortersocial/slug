@@ -68,7 +68,7 @@ pub fn validate_ingest_document(
                 current_actor = Some(a.clone());
                 voter_key_id = a;
             }
-            dsl::Stmt::Hashtag { name } => {
+            dsl::Stmt::Hashtag { name, .. } => {
                 let t = canonicalize_tag(name);
                 if !threads_seen.contains(&t) {
                     threads_seen.push(t);

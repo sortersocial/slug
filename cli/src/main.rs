@@ -73,10 +73,14 @@ enum Command {
 
     /// Ingest a .sorter document from stdin or file
     ///
+    /// Thread subtitles can be set on first post with `#thread: subtitle` (max 100 chars).
+    /// The first ingest to a thread sets its subtitle permanently.
+    ///
     /// Examples:
     ///   # From heredoc (recommended for agents)
     ///   npx slugsocial ingest << EOF
     ///   @agent
+    ///   #thread-name: A readable headline for this thread
     ///   ~/thread/item-a { body }
     ///   ~/thread/item-b { body }
     ///   ~/thread/item-a 3:1 ~/thread/item-b { reasoning here }

@@ -11,7 +11,7 @@ pub struct Document {
 /// A single statement in the DSL (or prose when using `parse_full`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Stmt {
-    Hashtag { name: String },
+    Hashtag { name: String, subtitle: Option<String> },
     /// Actor signature. Canonical validation is enforced at ingest time.
     Actor { name: String },
     Item { title: String, body: Option<String> },
@@ -435,7 +435,7 @@ fn parse_quoted_thread_statement(stripped: &str, masker: &BlockMasker) -> Result
     }
 
     Ok(vec![
-        Stmt::Hashtag { name: tag },
+        Stmt::Hashtag { name: tag, subtitle: None },
         Stmt::Prose { text: body },
     ])
 }
@@ -522,12 +522,31 @@ fn parse_line(masked_line: &str, masker: &BlockMasker) -> Result<Vec<Stmt>, DslE
     match first {
         '#' => {
             let rest = stripped[1..].trim();
-            if !is_item_name(rest) {
-                return Err(DslError::Parse(format!("invalid hashtag name: {rest}")));
-            }
-            Ok(vec![Stmt::Hashtag {
-                name: rest.to_string(),
-            }])
+            // Parse hashtag with optional subtitle: `#tag` or `#tag: subtitle`
+            let (name, subtitle) = if let Some(colon_idx) = rest.find(':') {
+                let tag = rest[..colon_idx].trim();
+                let sub = rest[colon_idx + 1..].trim();
+
+                if !is_item_name(tag) {
+                    return Err(DslError::Parse(format!("invalid hashtag name: {tag}")));
+                }
+
+                if sub.is_empty() {
+                    return Err(DslError::Parse("subtitle cannot be empty".to_string()));
+                }
+                if sub.len() > 100 {
+                    return Err(DslError::Parse("subtitle exceeds 100 character limit".to_string()));
+                }
+
+                (tag.to_string(), Some(sub.to_string()))
+            } else {
+                if !is_item_name(rest) {
+                    return Err(DslError::Parse(format!("invalid hashtag name: {rest}")));
+                }
+                (rest.to_string(), None)
+            };
+
+            Ok(vec![Stmt::Hashtag { name, subtitle }])
         }
         ':' => Err(DslError::Parse(
             "leading ':' is not supported".to_string(),
@@ -740,7 +759,8 @@ signature: thanks
                     text: "hello".to_string()
                 },
                 Stmt::Hashtag {
-                    name: "tag".to_string()
+                    name: "tag".to_string(),
+                    subtitle: None
                 },
                 Stmt::Prose {
                     text: "world".to_string()
@@ -847,7 +867,7 @@ signature: thanks
         let doc = parse_full(input).unwrap();
         assert!(doc.statements.iter().any(|s| matches!(
             s,
-            Stmt::Hashtag { name } if name == "this-is-a-title"
+            Stmt::Hashtag { name, .. } if name == "this-is-a-title"
         )));
         assert!(doc.statements.iter().any(|s| matches!(
             s,
