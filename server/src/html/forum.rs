@@ -14,8 +14,8 @@ use crate::{
 };
 
 use super::{
-    actor_label, bc_segment, bc_threads, cli_panel, layout, now_ms, recency_class,
-    render_linkified_with_embeds,
+    actor_label, bc_segment, bc_threads, cli_panel, format_followers, layout, now_ms,
+    recency_class, render_linkified_with_embeds,
 };
 
 #[derive(Clone)]
@@ -246,12 +246,15 @@ pub async fn thread_post_view(
     let tag = canonicalize_tag(&tag);
     let now = now_ms();
     let index: usize = index_str.parse().unwrap_or(0);
-    let ing = {
+    let (ing, follower_label) = {
         let reduced = state.reduced.read().await;
-        // ingests_by_thread is most-recent-first; chronological index 0 = oldest = last in deque.
-        reduced.ingests_by_thread.get(&tag)
+        let ing = reduced.ingests_by_thread.get(&tag)
             .and_then(|q| q.iter().rev().nth(index))
-            .and_then(|id| reduced.ingests_by_id.get(id).cloned())
+            .and_then(|id| reduced.ingests_by_id.get(id).cloned());
+        let fl = ing.as_ref().and_then(|i| {
+            reduced.x_profiles.get(&i.actor).map(|p| format_followers(p.followers))
+        });
+        (ing, fl)
     };
 
     let views = state.views.get_views(&format!("/t/{tag}/{index}"));
@@ -267,6 +270,9 @@ pub async fn thread_post_view(
                 div class="ingest-entry" data-ingest-id=(ing.id) {
                     div class="ingest-meta muted" title=(hover) {
                         span class="address" { "@" (actor_label(&ing.actor)) }
+                        @if let Some(ref fl) = follower_label {
+                            " (" (fl) ")"
+                        }
                         " · "
                         (ago)
                     }

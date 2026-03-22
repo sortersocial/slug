@@ -115,6 +115,13 @@ impl GroupState {
     }
 }
 
+/// X user profile provenance (displayed, not used for vote weighting).
+#[derive(Debug, Clone)]
+pub struct XProfile {
+    pub x_handle: String,
+    pub followers: u64,
+}
+
 /// Compact rank-history entry stored per item in the ledger.
 /// `caused_by` is resolved lazily at query time from `ingests_by_id`.
 #[derive(Debug, Clone)]
@@ -175,6 +182,12 @@ pub struct ReducerState {
 
     /// Per-item rank history, oldest first.
     pub rank_history: HashMap<String, Vec<RankHistoryEntry>>,
+
+    /// X user profiles keyed by canonical actor string. Provenance only.
+    pub x_profiles: HashMap<String, XProfile>,
+
+    /// Seen tweet IDs for bot dedup (avoids re-ingesting the same mention).
+    pub seen_tweet_ids: HashSet<String>,
 }
 
 impl ReducerState {
@@ -452,6 +465,14 @@ impl ReducerState {
             Event::ActorKeyRegistration { actor, key_hash, .. } => {
                 let actor = canonicalize_actor(&actor);
                 nav!(self.actor_keys, keypath(actor), or_insert(key_hash));
+            }
+            Event::XMention { actor, x_handle, followers, tweet_id, .. } => {
+                let actor = canonicalize_actor(&actor);
+                self.x_profiles.insert(actor, XProfile {
+                    x_handle,
+                    followers,
+                });
+                self.seen_tweet_ids.insert(tweet_id);
             }
         }
     }

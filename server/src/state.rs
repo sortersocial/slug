@@ -29,14 +29,28 @@ pub struct KeyRecord {
 }
 
 #[derive(Debug, Clone)]
+pub struct XBotConfig {
+    /// App-level bearer token for reading mentions.
+    pub bearer_token: String,
+    /// The bot account's X user ID.
+    pub bot_user_id: String,
+    /// The bot account's @handle (without @), used to strip from tweet text.
+    pub bot_handle: String,
+    /// Poll interval in seconds (default 30).
+    pub poll_interval_secs: u64,
+}
+
+#[derive(Debug, Clone)]
 pub struct AppConfig {
     pub data_dir: String,
     pub event_log_path: String,
     pub keys: Vec<KeyRecord>,
     pub rate_limit_per_minute: u32,
-    /// Override for views DB path. When None, uses `{data_dir}/views.redb`.
+    /// Override for views DB path. When None, uses `{data_dir}/views.json`.
     /// Useful when multiple servers share the same data_dir (e.g. integration tests).
     pub views_path: Option<String>,
+    /// X bot config. None = bot disabled.
+    pub x_bot: Option<XBotConfig>,
 }
 
 #[derive(Clone)]

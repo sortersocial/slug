@@ -57,7 +57,9 @@ pub fn validate_actor_format(actor: &str) -> Result<(), String> {
         );
     }
 
-    if !model_part.contains('/') {
+    // X actors use format @uuid:x.com:handle — no / required in third part.
+    // AI agents use @uuid:rig:provider/model — require / in model.
+    if rig_part != "x.com" && !model_part.contains('/') {
         return Err(
             "Invalid model format in actor.\n\
              Expected format: @<uuid>:<rig>:<provider/model>\n\

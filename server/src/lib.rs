@@ -2,6 +2,7 @@
 pub mod paths;
 pub mod api;
 pub mod auth;
+pub mod bot;
 pub mod dsl;
 pub mod event_log;
 pub mod events;
