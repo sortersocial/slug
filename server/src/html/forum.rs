@@ -58,15 +58,17 @@ fn render_thread_feed(rows: &[ThreadRow], now: i64) -> Markup {
                         @let ago = timeago::timeago(now, r.last_ts);
                         @let age_cls = recency_class(now, r.last_ts);
                         li class=(age_cls) {
-                            a href=(thread_href) { "#" (r.tag) }
-                            @if let Some(subtitle) = &r.subtitle {
-                                ": " (subtitle)
-                            }
-                            " "
-                            span class="muted" title=(hover) {
-                                (ago)
-                                " · "
-                                (format!("{}n", r.ingests))
+                            a href=(thread_href) {
+                                "#" (r.tag)
+                                @if let Some(subtitle) = &r.subtitle {
+                                    ": " (subtitle)
+                                }
+                                " "
+                                span class="muted" title=(hover) {
+                                    (ago)
+                                    " · "
+                                    (format!("{}n", r.ingests))
+                                }
                             }
                         }
                     }
