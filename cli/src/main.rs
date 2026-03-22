@@ -247,6 +247,34 @@ enum GardenCmd {
         #[arg(long, env = "SLUG_PASSKEY", hide_env_values = true)]
         passkey: Option<String>,
     },
+
+    /// Global ranking — all items across every scope, flat and paginated.
+    ///
+    /// Ranked items appear first (descending score), then unranked items (alphabetical).
+    ///
+    /// Examples:
+    ///   npx slugsocial garden rank
+    ///   npx slugsocial garden rank --limit 20 --offset 40 --percent
+    Rank {
+        /// Max items to return (default: 50, max: 500)
+        #[arg(long, default_value = "50")]
+        limit: usize,
+        /// Skip first N items (for pagination)
+        #[arg(long, default_value = "0")]
+        offset: usize,
+        /// Show normalized score as a percent (top item = 100%, unranked = 0%)
+        #[arg(long)]
+        percent: bool,
+        /// Output as JSON for agent parsing
+        #[arg(long)]
+        json: bool,
+        /// Actor identity for private namespace access (@uuid:rig:model)
+        #[arg(long, value_name = "ACTOR")]
+        actor: Option<String>,
+        /// Passkey for this actor (env: SLUG_PASSKEY)
+        #[arg(long, env = "SLUG_PASSKEY", hide_env_values = true)]
+        passkey: Option<String>,
+    },
 }
 
 /// Output exactly one line per ranking row so wc -l equals item count.
@@ -299,6 +327,37 @@ fn print_matchup_response(resp: &MatchupResponse) {
         println!("  {}  {}  {}  in {}", v.ratio, v.a, v.b, thread);
         if !v.body.is_empty() {
             println!("      {}", v.body.lines().next().unwrap_or(&v.body).trim());
+        }
+    }
+}
+
+fn print_global_rank_response(resp: &GlobalRankResponse) {
+    let show_percent = resp.items.iter().any(|r| r.percent.is_some());
+    println!(
+        "global rank  (showing {}-{} of {} ranked + {} unranked)",
+        resp.offset + 1,
+        resp.offset + resp.items.len(),
+        resp.ranked_total,
+        resp.unranked_total,
+    );
+    for (i, r) in resp.items.iter().enumerate() {
+        let rank = resp.offset + i + 1;
+        if r.score == 0.0 && r.percent.map_or(true, |p| p == 0.0) && rank > resp.ranked_total {
+            if show_percent {
+                println!("    - {:<40}   (unranked)", r.item);
+            } else {
+                println!("    - {:<40}   (unranked)", r.item);
+            }
+        } else if show_percent {
+            println!(
+                "{:>4}. {:<40} {:>6.1}%  ({:.6})",
+                rank,
+                r.item,
+                r.percent.unwrap_or(0.0),
+                r.score,
+            );
+        } else {
+            println!("{:>4}. {:<40} {:.6}", rank, r.item, r.score);
         }
     }
 }
@@ -674,6 +733,26 @@ async fn main() -> Result<()> {
                     println!("{}", serde_json::to_string_pretty(&resp)?);
                 } else {
                     print_matchup_response(&resp);
+                }
+            }
+
+            GardenCmd::Rank { limit, offset, percent, json, actor, passkey } => {
+                let client = http_client()?;
+                let mut url = format!(
+                    "{base}/api/v0/global-rank?limit={limit}&offset={offset}&percent={percent}"
+                );
+                if let Some(a) = &actor {
+                    url.push_str(&format!("&actor={}", urlencoding::encode(a)));
+                }
+                let mut builder = client.get(url);
+                if let Some(pk) = &passkey {
+                    builder = builder.header("x-slug-passkey", pk.as_str());
+                }
+                let resp: GlobalRankResponse = expect_json(builder.send().await?).await?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&resp)?);
+                } else {
+                    print_global_rank_response(&resp);
                 }
             }
         },

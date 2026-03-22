@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use crate::{
     dsl,
     events::{canonicalize_actor, canonicalize_item, canonicalize_tag, item_parent_path, Event},
-    ranking::{ranked_items, ranked_items_subset},
+    ranking::ranked_items_subset,
     reducer::ReducerState,
     state::AppState,
 };
@@ -410,6 +410,7 @@ pub async fn get_rank(State(state): State<AppState>, headers: HeaderMap, Query(q
                 .map(|r| RankRow {
                     item: format!("/{}", r.item),
                     score: r.score,
+                    percent: None,
                 })
                 .collect(),
         })
@@ -423,6 +424,114 @@ pub async fn get_rank(State(state): State<AppState>, headers: HeaderMap, Query(q
                 Some(owner) => authed_uuid.as_deref() == Some(owner),
             })
             .collect(),
+    })
+    .into_response()
+}
+
+// ============================================================================
+// Global rank — flat, paginated ranking across all items
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+pub struct GlobalRankQuery {
+    #[serde(default)]
+    pub limit: Option<usize>,
+    #[serde(default)]
+    pub offset: Option<usize>,
+    /// When true, add a `percent` field to each row (top item = 100, bottom = 0).
+    #[serde(default)]
+    pub percent: Option<bool>,
+    #[serde(default)]
+    pub actor: Option<String>,
+    #[serde(default)]
+    pub passkey: Option<String>,
+}
+
+pub async fn get_global_rank(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<GlobalRankQuery>,
+) -> impl IntoResponse {
+    const DEFAULT_LIMIT: usize = 50;
+    const MAX_LIMIT: usize = 500;
+
+    let limit = q.limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT);
+    let offset = q.offset.unwrap_or(0);
+    let want_percent = q.percent.unwrap_or(false);
+
+    let reduced_arc = state.reduced.clone();
+    // Write lock needed to update cached_scores when dirty.
+    let mut reduced = reduced_arc.write().await;
+    let passkey = headers
+        .get("x-slug-passkey")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string())
+        .or(q.passkey);
+    let authed_uuid = verified_actor_uuid(&reduced, q.actor.as_deref(), passkey.as_deref());
+
+    // Compute (or use cached) global ranking, then drop the mut borrow.
+    crate::ranking::compute_group_ranking(&mut reduced.ranking_group, 10000, 1e-8);
+    let mut ranked: Vec<crate::ranking::RankedItem> = reduced
+        .ranking_group
+        .idx_to_item
+        .iter()
+        .enumerate()
+        .map(|(i, item)| crate::ranking::RankedItem {
+            item: item.clone(),
+            score: *reduced.ranking_group.cached_scores.get(i).unwrap_or(&0.0),
+        })
+        .collect();
+    ranked.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+
+    // Filter private items.
+    ranked.retain(|r| match crate::events::path_owner_uuid(&r.item) {
+        None => true,
+        Some(owner) => authed_uuid.as_deref() == Some(owner),
+    });
+
+    let ranked_total = ranked.len();
+
+    // Items that exist but have never been voted on.
+    let mut unranked: Vec<String> = reduced
+        .items
+        .iter()
+        .filter(|it| !reduced.ranking_group.item_to_idx.contains_key(*it))
+        .filter(|it| match crate::events::path_owner_uuid(it) {
+            None => true,
+            Some(owner) => authed_uuid.as_deref() == Some(owner),
+        })
+        .cloned()
+        .collect();
+    unranked.sort();
+    let unranked_total = unranked.len();
+
+    // Percent: top item = 100, bottom ranked item = 0 (linear by score).
+    let top_score = ranked.first().map(|r| r.score).unwrap_or(1.0);
+    let bottom_score = ranked.last().map(|r| r.score).unwrap_or(0.0);
+    let score_range = (top_score - bottom_score).max(1e-12);
+
+    let page: Vec<RankRow> = ranked
+        .into_iter()
+        .map(|r| {
+            let pct = want_percent
+                .then(|| ((r.score - bottom_score) / score_range * 100.0).clamp(0.0, 100.0));
+            RankRow { item: format!("/{}", r.item), score: r.score, percent: pct }
+        })
+        .chain(unranked.into_iter().map(|it| RankRow {
+            item: format!("/{}", it),
+            score: 0.0,
+            percent: want_percent.then_some(0.0),
+        }))
+        .skip(offset)
+        .take(limit)
+        .collect();
+
+    Json(GlobalRankResponse {
+        ranked_total,
+        unranked_total,
+        offset,
+        limit,
+        items: page,
     })
     .into_response()
 }
@@ -1291,6 +1400,7 @@ pub async fn post_check(
                         .map(|r| RankRow {
                             item: format!("/{}", r.item),
                             score: r.score,
+                            percent: None,
                         })
                         .collect(),
                 })

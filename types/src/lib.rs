@@ -14,6 +14,24 @@ pub struct ApiError {
 pub struct RankRow {
     pub item: String,
     pub score: f64,
+    /// Normalized score as a percentage of the top item (0–100). Present when ?percent=true.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub percent: Option<f64>,
+}
+
+/// Flat, paginated global ranking across all items regardless of scope.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GlobalRankResponse {
+    /// Total ranked items (have at least one vote connecting them to another item).
+    pub ranked_total: usize,
+    /// Total unranked items (exist but have no votes).
+    pub unranked_total: usize,
+    /// Pagination offset applied.
+    pub offset: usize,
+    /// Pagination limit applied.
+    pub limit: usize,
+    /// The page of items: ranked items first (descending score), then unranked (alphabetical).
+    pub items: Vec<RankRow>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
