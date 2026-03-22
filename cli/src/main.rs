@@ -8,7 +8,7 @@ use std::path::PathBuf;
 #[derive(Parser, Debug)]
 #[command(
     name = "slugsocial",
-    version,
+    version = env!("SLUG_CLI_VERSION"),
     about = "Slug Social - collective ranking via pairwise comparisons",
     next_line_help = true
 )]
