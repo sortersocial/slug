@@ -46,10 +46,10 @@
                                            "PORT"          "8080"
                                            "RUST_LOG"      "info"})})))}
 
-  sanity
+  test
   {:doc "Full round-trip integration test: build → ingest → query → kill → replay → verify"
-   :requires ([scripts.sanity])
-   :task (scripts.sanity/sanity)}
+   :requires ([test.integration :as integration])
+   :task (integration/integration)}
 
   perf
   {:doc "Performance test: concurrent HTTP requests to detect blocking I/O"

@@ -8,7 +8,7 @@
             [babashka.fs :as fs]))
 
 ;; ---------------------------------------------------------------------------
-;; helpers (shared with sanity.bb pattern)
+;; helpers (shared with integration test pattern)
 ;; ---------------------------------------------------------------------------
 
 (def ^:private ansi-green "\033[32m")

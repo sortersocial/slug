@@ -16,7 +16,7 @@ pub struct VoteData {
     pub ratio_right: i32,
     pub body: String,
     pub actor: String,
-    /// Thread tag where this vote was cast. Validation requires every ingest to have a #tag; "untagged" only for replayed legacy events.
+    /// Thread tag where this vote was cast. Validation requires every ingest to declare a thread (#tag or quoted title); "untagged" only for replayed legacy events.
     pub thread: String,
 }
 
@@ -315,7 +315,7 @@ impl ReducerState {
                 let mut current_thread: Option<String> = None;
                 let mut current_actor: Option<String> = Some(ing.actor.clone());
 
-                // Threads explicitly declared with #tag in this ingest.
+                // Threads explicitly declared in this ingest (#tag or quoted title).
                 let mut touched_threads: HashSet<String> = HashSet::new();
                 // Items referenced in this ingest (for snippet indexing).
                 let mut ingest_items: HashSet<String> = HashSet::new();
@@ -367,7 +367,7 @@ impl ReducerState {
                                 ratio_right,
                                 body: explanation,
                                 actor,
-                                thread: current_thread.clone().unwrap_or_else(|| "untagged".to_string()), // legacy replay: pre-validation events may have no #tag
+                                thread: current_thread.clone().unwrap_or_else(|| "untagged".to_string()), // legacy replay: pre-validation events may have no thread declaration
                             };
 
                             ingest_items.insert(item_a.clone());

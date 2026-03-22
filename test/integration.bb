@@ -1,5 +1,5 @@
-(ns scripts.sanity
-  "End-to-end sanity check: DSL → CLI → HTTP → JSONL → materialized view → CLI query.
+(ns test.integration
+  "End-to-end integration check: DSL → CLI → HTTP → JSONL → materialized view → CLI query.
    Boots a server, ingests via CLI, queries back, kills server, restarts from
    the same JSONL, and queries again to prove replay determinism."
   (:require [babashka.process :as p]
@@ -122,13 +122,13 @@
 ;; the .sorter documents under test
 ;; ---------------------------------------------------------------------------
 
-(def actor-1 "@00000000-0000-0000-0000-000000000001:sanity:local/test")
-(def actor-2 "@00000000-0000-0000-0000-000000000002:sanity:local/test2")
+(def actor-1 "@00000000-0000-0000-0000-000000000001:integration:local/test")
+(def actor-2 "@00000000-0000-0000-0000-000000000002:integration:local/test2")
 
 (def sorter-doc
   (str/join "\n"
             [actor-1
-             "#sanity-test"
+             "#integration-test"
              ""
              "~/languages/python { General-purpose, dynamically typed }"
              "~/languages/rust   { Systems language with ownership model }"
@@ -142,7 +142,7 @@
 (def sorter-doc-2
   (str/join "\n"
             [actor-2
-             "#sanity-test"
+             "#integration-test"
              ""
              "~/languages/go 2:1 ~/languages/python { Go deploys as a single binary, simpler ops }"]))
 
@@ -150,7 +150,7 @@
 (def check-doc-disconnected
   (str/join "\n"
             [actor-1
-             "#sanity-test"
+             "#integration-test"
              ""
              "~/disc/a { a }"
              "~/disc/b { b }"
@@ -164,8 +164,8 @@
 ;; main
 ;; ---------------------------------------------------------------------------
 
-(defn sanity [& _args]
-  (println "\n━━━ slug sanity check ━━━\n")
+(defn integration [& _args]
+  (println "\n━━━ slug integration check ━━━\n")
   (reset! counts {:pass 0 :fail 0})
 
   (test-letlocals)
@@ -179,7 +179,7 @@
 
    (bind server-bin "target/release/slugsocial-server")
    (bind cli-bin    "target/release/slugsocial")
-   (bind tmp-dir    (str (fs/create-temp-dir {:prefix "slug-sanity-"})))
+   (bind tmp-dir    (str (fs/create-temp-dir {:prefix "slug-integration-"})))
    (bind port       (pick-port))
    (bind base-url   (str "http://127.0.0.1:" port))
    (bind event-log  (str tmp-dir "/events.jsonl"))
@@ -229,8 +229,8 @@
                  actor1-passkey (:passkey resp)]
              (assert! (:ok resp) "ingest response ok=true")
              (assert! (pos? (:events_appended resp)) "events_appended > 0")
-             (assert! (some #(= "#sanity-test" %) (:threads resp))
-                      "thread '#sanity-test' in response")
+             (assert! (some #(= "#integration-test" %) (:threads resp))
+                      "thread '#integration-test' in response")
              (assert! (some? actor1-passkey) "first ingest returns a passkey")
 
               ;; private namespace tests
@@ -292,8 +292,8 @@
          (let [result (run-cli cli-bin base-url ["forum" "--json"])]
            (assert! (zero? (:exit result)) "cli forum exits 0")
            (let [resp (json/parse-string (:out result) true)]
-             (assert! (some (fn [t] (= "#sanity-test" (:thread t))) (:threads resp))
-                      "thread '#sanity-test' visible in forum")))
+             (assert! (some (fn [t] (= "#integration-test" (:thread t))) (:threads resp))
+                      "thread '#integration-test' visible in forum")))
 
           ;; 7. query item body via CLI
          (let [result (run-cli cli-bin base-url ["garden" "body" "languages/rust" "--json"])]
@@ -339,8 +339,8 @@
           ;; First ingest already ran (sorter-doc). Now ingest a second doc that votes on
           ;; languages/rust twice in one document — the multi-vote-per-ingest case.
          (let [two-vote-doc (str/join "\n"
-                                      ["@00000000-0000-0000-0000-000000000003:sanity:local/test"
-                                       "#sanity-test"
+                                      ["@00000000-0000-0000-0000-000000000003:integration:local/test"
+                                       "#integration-test"
                                        "~/languages/rust 4:1 ~/languages/python { type safety }"
                                        "~/languages/rust 3:1 ~/languages/go { zero-cost abstractions }"])
                ingest-result (run-cli cli-bin base-url ["ingest" "--json"] :input two-vote-doc)]
@@ -399,3 +399,4 @@
 
   (let [{pass :pass} @counts]
     (println (str "\n" ansi-green "━━━ " pass " checks passed ━━━" ansi-reset "\n"))))
+

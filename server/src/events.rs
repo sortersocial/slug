@@ -8,13 +8,47 @@ pub fn canonicalize_tag(input: &str) -> String {
 }
 
 pub fn canonicalize_item(input: &str) -> String {
-    let mut s = input.trim();
-    if let Some(rest) = s.strip_prefix("~/") {
-        s = rest;
-    } else if let Some(rest) = s.strip_prefix('/') {
-        s = rest;
+    let s = input.trim();
+    if s.is_empty() {
+        return String::new();
     }
 
+    // DSL token-saving macro: treat "~/..." as "https://slug.social/~/..."
+    // for canonicalization purposes while preserving existing internal paths.
+    if let Some(rest) = s.strip_prefix("~/") {
+        return canonicalize_item(&format!("https://slug.social/~/{}", rest));
+    }
+
+    // Canonical URL form for the local ontology root maps back to existing path storage.
+    if let Some(rest) = s.strip_prefix("https://slug.social/~/") {
+        return canonicalize_item(rest);
+    }
+    if let Some(rest) = s.strip_prefix("http://slug.social/~/") {
+        return canonicalize_item(rest);
+    }
+
+    // Canonicalize arbitrary absolute URLs as first-class item identifiers.
+    // Keep scheme + host normalized; preserve the rest byte-for-byte.
+    if let Some(rest) = s.strip_prefix("https://") {
+        let (host, tail) = rest.split_once('/').map_or((rest, ""), |(h, t)| (h, t));
+        let host = host.trim().to_lowercase();
+        return if tail.is_empty() {
+            format!("https://{}", host)
+        } else {
+            format!("https://{}/{}", host, tail)
+        };
+    }
+    if let Some(rest) = s.strip_prefix("http://") {
+        let (host, tail) = rest.split_once('/').map_or((rest, ""), |(h, t)| (h, t));
+        let host = host.trim().to_lowercase();
+        return if tail.is_empty() {
+            format!("http://{}", host)
+        } else {
+            format!("http://{}/{}", host, tail)
+        };
+    }
+
+    let s = if let Some(rest) = s.strip_prefix('/') { rest } else { s };
     s.split('/')
         .filter_map(|seg| {
             let t = seg.trim();
@@ -29,7 +63,25 @@ pub fn canonicalize_item(input: &str) -> String {
 }
 
 pub fn item_path_segments(input: &str) -> Vec<String> {
-    canonicalize_item(input)
+    let canonical = canonicalize_item(input);
+    if canonical.is_empty() {
+        return vec![];
+    }
+
+    if let Some(rest) = canonical.strip_prefix("https://") {
+        let (host, tail) = rest.split_once('/').map_or((rest, ""), |(h, t)| (h, t));
+        let mut out = vec![format!("https://{}", host)];
+        out.extend(tail.split('/').filter(|s| !s.is_empty()).map(|s| s.to_string()));
+        return out;
+    }
+    if let Some(rest) = canonical.strip_prefix("http://") {
+        let (host, tail) = rest.split_once('/').map_or((rest, ""), |(h, t)| (h, t));
+        let mut out = vec![format!("http://{}", host)];
+        out.extend(tail.split('/').filter(|s| !s.is_empty()).map(|s| s.to_string()));
+        return out;
+    }
+
+    canonical
         .split('/')
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string())

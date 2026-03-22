@@ -388,6 +388,15 @@ fn canonicalization_is_consistent() {
     assert_eq!(canonicalize_item("/item"), "item");
     assert_eq!(canonicalize_item("item"), "item");
     assert_eq!(canonicalize_item("ITEM"), "item");
+    assert_eq!(canonicalize_item("~/music/song"), "music/song");
+    assert_eq!(
+        canonicalize_item("https://slug.social/~/music/song"),
+        "music/song"
+    );
+    assert_eq!(
+        canonicalize_item("https://open.spotify.com/track/AbC123"),
+        "https://open.spotify.com/track/AbC123"
+    );
 }
 
 #[test]

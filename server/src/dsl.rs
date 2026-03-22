@@ -257,6 +257,21 @@ fn parse_item_name_at(s: &str, i: usize) -> Option<(String, usize)> {
         return None;
     }
 
+    // URL_REF: https://... or http://...
+    if s[i..].starts_with("https://") || s[i..].starts_with("http://") {
+        let mut j = i;
+        while j < bytes.len() {
+            if bytes[j..].starts_with(b"__BLOCK_") || is_ws_byte(bytes[j]) {
+                break;
+            }
+            j += 1;
+        }
+        if j <= i {
+            return None;
+        }
+        return Some((s[i..j].to_string(), j));
+    }
+
     // ITEM_REF: ("/" | "~/") ITEM_NAME
     let mut j = i;
     if bytes[j] == b'~' {
@@ -350,6 +365,79 @@ fn parse_comparison_at(s: &str, i: usize) -> Option<((i32, i32), usize)> {
     }
     let right: i32 = s[k..j].parse().ok()?;
     Some(((left, right), j))
+}
+
+fn slugify_title_to_tag(title: &str) -> String {
+    let mut out = String::new();
+    let mut last_dash = false;
+    for c in title.chars() {
+        let lc = c.to_ascii_lowercase();
+        if lc.is_ascii_alphanumeric() || lc == '_' {
+            out.push(lc);
+            last_dash = false;
+        } else if !last_dash {
+            out.push('-');
+            last_dash = true;
+        }
+    }
+    out.trim_matches('-').to_string()
+}
+
+fn parse_quoted_thread_statement(stripped: &str, masker: &BlockMasker) -> Result<Vec<Stmt>, DslError> {
+    // `"Thread Title" { body }` -> `Hashtag{slug}` + `Prose{body}`
+    let bytes = stripped.as_bytes();
+    if bytes.is_empty() || bytes[0] != b'"' {
+        return Err(DslError::Parse("not a DSL line".to_string()));
+    }
+
+    let mut j = 1usize;
+    let mut close_quote: Option<usize> = None;
+    while j < bytes.len() {
+        if bytes[j] == b'\\' {
+            j = (j + 2).min(bytes.len());
+            continue;
+        }
+        if bytes[j] == b'"' {
+            close_quote = Some(j);
+            break;
+        }
+        j += 1;
+    }
+    let Some(q_end) = close_quote else {
+        return Err(DslError::Parse("unterminated quoted thread title".to_string()));
+    };
+
+    let title_raw = &stripped[1..q_end];
+    let title = title_raw.replace("\\\"", "\"").replace("\\\\", "\\");
+    if title.trim().is_empty() {
+        return Err(DslError::Parse("empty quoted thread title".to_string()));
+    }
+
+    let mut k = skip_ws(stripped, q_end + 1);
+    let Some((tok, end)) = parse_block_token_at(stripped, k) else {
+        return Err(DslError::Parse(
+            "quoted thread title requires a trailing `{ ... }` body".to_string(),
+        ));
+    };
+    let body = masker.extract_body(&tok);
+    if body.trim().is_empty() {
+        return Err(DslError::Parse("empty thread body".to_string()));
+    }
+    k = end;
+    let tail = stripped[k..].trim();
+    if !tail.is_empty() {
+        return Err(DslError::Parse("extra tokens after quoted thread title".to_string()));
+    }
+
+    let tag = slugify_title_to_tag(&title);
+    if tag.is_empty() {
+        return Err(DslError::Parse("thread title slug is empty".to_string()));
+    }
+
+    Ok(vec![
+        Stmt::Hashtag { name: tag },
+        Stmt::Prose { text: body },
+    ])
 }
 
 fn parse_item_statement(stripped: &str, masker: &BlockMasker) -> Result<Stmt, DslError> {
@@ -461,10 +549,18 @@ fn parse_line(masked_line: &str, masker: &BlockMasker) -> Result<Vec<Stmt>, DslE
         '~' => {
             Ok(vec![parse_item_statement(stripped, masker)?])
         }
+        'h' => {
+            if stripped.starts_with("https://") || stripped.starts_with("http://") {
+                Ok(vec![parse_item_statement(stripped, masker)?])
+            } else {
+                Err(DslError::Parse("not a DSL line".to_string()))
+            }
+        }
         '!' => {
             // Reserved / future use in Python filter; treat as parse error for now.
             Err(DslError::Parse("unsupported DSL command: !".to_string()))
         }
+        '"' => parse_quoted_thread_statement(stripped, masker),
         _ => Err(DslError::Parse("not a DSL line".to_string())),
     }
 }
@@ -494,7 +590,10 @@ pub fn parse_lines(text: &str) -> Result<Document, DslError> {
             continue;
         }
         let first = stripped.chars().next().unwrap();
-        if "#:/@!~".contains(first) {
+        if "#:/@!~".contains(first)
+            || (first == 'h' && (stripped.starts_with("https://") || stripped.starts_with("http://")))
+            || (first == '"' && stripped.contains("__BLOCK_"))
+        {
             let line_stmts = parse_line(line, &masker)?;
             statements.extend(line_stmts);
         }
@@ -520,7 +619,11 @@ pub fn parse_full(text: &str) -> Result<Document, DslError> {
 
     for line in masked.split('\n') {
         let stripped = line.trim_start();
-        if !stripped.is_empty() && "#:/@!~".contains(stripped.chars().next().unwrap()) {
+        if !stripped.is_empty()
+            && ("#:/@!~".contains(stripped.chars().next().unwrap())
+                || (stripped.starts_with("https://") || stripped.starts_with("http://"))
+                || (stripped.starts_with('"') && stripped.contains("__BLOCK_")))
+        {
             // Flush prose buffer first
             flush_prose(&mut prose_buffer, &mut statements, &masker);
 
@@ -736,6 +839,61 @@ signature: thanks
         assert!(result.is_err(), "vote without explanation should fail");
         let err_msg = result.unwrap_err().to_string();
         assert!(err_msg.contains("missing vote explanation"), "error: {}", err_msg);
+    }
+
+    #[test]
+    fn parse_full_supports_quoted_thread_title_statement() {
+        let input = "@a\n\"This is a title\" { This is the body of the post }\n";
+        let doc = parse_full(input).unwrap();
+        assert!(doc.statements.iter().any(|s| matches!(
+            s,
+            Stmt::Hashtag { name } if name == "this-is-a-title"
+        )));
+        assert!(doc.statements.iter().any(|s| matches!(
+            s,
+            Stmt::Prose { text } if text == "This is the body of the post"
+        )));
+    }
+
+    #[test]
+    fn parse_full_keeps_regular_quoted_prose() {
+        let input = "She said \"hello\" and left.";
+        let doc = parse_full(input).unwrap();
+        assert_eq!(
+            doc.statements,
+            vec![Stmt::Prose {
+                text: "She said \"hello\" and left.".to_string()
+            }]
+        );
+    }
+
+    #[test]
+    fn parse_url_item_statement() {
+        let input = "https://slug.social/~/music/song-a { body }";
+        let doc = parse(input).unwrap();
+        assert_eq!(
+            doc.statements,
+            vec![Stmt::Item {
+                title: "https://slug.social/~/music/song-a".to_string(),
+                body: Some("body".to_string()),
+            }]
+        );
+    }
+
+    #[test]
+    fn parse_url_vote_statement() {
+        let input = "https://slug.social/~/music/a 3:1 https://slug.social/~/music/b { because }";
+        let doc = parse(input).unwrap();
+        assert_eq!(
+            doc.statements,
+            vec![Stmt::Vote {
+                item1: "https://slug.social/~/music/a".to_string(),
+                item2: "https://slug.social/~/music/b".to_string(),
+                ratio_left: 3,
+                ratio_right: 1,
+                explanation: "because".to_string(),
+            }]
+        );
     }
 }
 

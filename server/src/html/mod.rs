@@ -4,6 +4,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use maud::{html, Markup, DOCTYPE};
+use std::collections::HashSet;
 
 mod breadcrumb_path;
 mod forum;
@@ -288,6 +289,139 @@ pub(super) fn linkify_slugs(raw: &str) -> String {
         }
     }
     out
+}
+
+#[derive(Clone)]
+struct EmbedFrame {
+    src: String,
+    title: String,
+    provider_class: &'static str,
+}
+
+fn clean_media_id(s: &str) -> String {
+    s.chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .collect()
+}
+
+fn query_param(url: &str, name: &str) -> Option<String> {
+    let q = url.split_once('?')?.1;
+    for pair in q.split('&') {
+        let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
+        if k == name {
+            return Some(v.to_string());
+        }
+    }
+    None
+}
+
+fn spotify_embed_src(url: &str) -> Option<EmbedFrame> {
+    let rest = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))?;
+    let (host, tail) = rest.split_once('/').unwrap_or((rest, ""));
+    let host = host.to_lowercase();
+    if !(host == "open.spotify.com" || host == "www.open.spotify.com") {
+        return None;
+    }
+    let path = tail.split('#').next().unwrap_or(tail).split('?').next().unwrap_or(tail);
+    let mut segs: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    if segs.first().is_some_and(|s| s.starts_with("intl-")) {
+        segs.remove(0);
+    }
+    if segs.len() < 2 {
+        return None;
+    }
+    let kind = segs[0];
+    let id = clean_media_id(segs[1]);
+    if id.is_empty() {
+        return None;
+    }
+    let allowed = matches!(kind, "track" | "album" | "playlist" | "episode" | "show");
+    if !allowed {
+        return None;
+    }
+    Some(EmbedFrame {
+        src: format!("https://open.spotify.com/embed/{kind}/{id}"),
+        title: format!("Spotify {kind}"),
+        provider_class: "embed-spotify",
+    })
+}
+
+fn youtube_embed_src(url: &str) -> Option<EmbedFrame> {
+    let rest = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))?;
+    let (host, tail) = rest.split_once('/').unwrap_or((rest, ""));
+    let host = host.to_lowercase();
+
+    let video_id = if host == "youtu.be" || host == "www.youtu.be" {
+        clean_media_id(tail.split(['?', '#']).next().unwrap_or(tail).trim_matches('/'))
+    } else if matches!(host.as_str(), "youtube.com" | "www.youtube.com" | "m.youtube.com" | "music.youtube.com") {
+        let path = format!("/{}", tail.split('#').next().unwrap_or(tail));
+        if path.starts_with("/watch") {
+            clean_media_id(&query_param(url, "v")?)
+        } else if let Some(id) = path.strip_prefix("/shorts/") {
+            clean_media_id(id.split(['?', '/']).next().unwrap_or(id))
+        } else if let Some(id) = path.strip_prefix("/embed/") {
+            clean_media_id(id.split(['?', '/']).next().unwrap_or(id))
+        } else {
+            String::new()
+        }
+    } else {
+        String::new()
+    };
+
+    if video_id.is_empty() {
+        return None;
+    }
+    Some(EmbedFrame {
+        src: format!("https://www.youtube.com/embed/{video_id}"),
+        title: "YouTube video".to_string(),
+        provider_class: "embed-youtube",
+    })
+}
+
+fn extract_embed_frames(raw: &str) -> Vec<EmbedFrame> {
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    for token in raw.split_whitespace() {
+        let token = token
+            .trim_matches(|c: char| c == '(' || c == '[' || c == '{' || c == '"' || c == '\'')
+            .trim_end_matches(|c: char| ".,;:!?)]}\"'".contains(c));
+        if !(token.starts_with("https://") || token.starts_with("http://")) {
+            continue;
+        }
+        let embed = spotify_embed_src(token).or_else(|| youtube_embed_src(token));
+        if let Some(frame) = embed {
+            if seen.insert(frame.src.clone()) {
+                out.push(frame);
+            }
+        }
+    }
+    out
+}
+
+pub(super) fn render_linkified_with_embeds(raw: &str) -> Markup {
+    let embeds = extract_embed_frames(raw);
+    html! {
+        pre { (maud::PreEscaped(linkify_slugs(raw))) }
+        @if !embeds.is_empty() {
+            div class="rich-embeds" {
+                @for e in embeds {
+                    div class=(format!("rich-embed {}", e.provider_class)) {
+                        iframe
+                            src=(e.src)
+                            title=(e.title)
+                            loading="lazy"
+                            allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture; web-share"
+                            referrerpolicy="strict-origin-when-cross-origin"
+                            allowfullscreen {}
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Small CLI hint panel showing how to look up this page from the terminal.

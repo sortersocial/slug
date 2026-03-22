@@ -54,3 +54,18 @@ body.view-ontology a:visited { color: #6a3a8c; }
 body.view-ontology pre, body.view-ontology code { background: #ede8df; color: #1a1a1a; }
 body.view-ontology .muted { color: #888; }
 body.view-ontology #controls { background: #ede8df; border-top: 1px solid #ccc; }
+
+.rich-embeds {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 0 8px;
+}
+.rich-embed iframe {
+  border: 1px solid #333;
+  display: block;
+  max-width: 100%;
+  width: min(520px, 100%);
+}
+.rich-embed.embed-spotify iframe { height: 152px; }
+.rich-embed.embed-youtube iframe { height: 292px; }

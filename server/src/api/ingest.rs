@@ -244,7 +244,7 @@ pub fn validate_ingest_document(
             return Err((
                 StatusCode::BAD_REQUEST,
                 "ingest requires at least one #tag".to_string(),
-                Some("declare a thread with #tag, e.g. #sorting-hat\n(#tag is optional only when all items are in your private ~/uuid/ namespace)".to_string()),
+                Some("declare a thread with #tag (e.g. #sorting-hat) or a quoted title line (e.g. \"Sorting Hat\" { ... })\n(thread declaration is optional only when all items are in your private ~/uuid/ namespace)".to_string()),
             ));
         }
     }

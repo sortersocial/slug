@@ -428,6 +428,21 @@ pre {
   width: fit-content;
   max-width: 100%;
 }
+.rich-embeds {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 0 8px;
+}
+.rich-embed iframe {
+  border: var(--bv) solid;
+  border-color: var(--hi) var(--lo) var(--lo) var(--hi);
+  display: block;
+  max-width: 100%;
+  width: min(520px, 100%);
+}
+.rich-embed.embed-spotify iframe { height: 152px; }
+.rich-embed.embed-youtube iframe { height: 292px; }
 code {
   background: var(--g1);
   border: 2px solid;

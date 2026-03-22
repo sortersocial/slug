@@ -14,7 +14,8 @@ use crate::{
 };
 
 use super::{
-    actor_label, bc_segment, bc_threads, cli_panel, layout, linkify_slugs, now_ms, recency_class,
+    actor_label, bc_segment, bc_threads, cli_panel, layout, now_ms, recency_class,
+    render_linkified_with_embeds,
 };
 
 #[derive(Clone)]
@@ -219,7 +220,7 @@ pub async fn thread_view(
                             " · "
                             (ago)
                         }
-                        pre { (maud::PreEscaped(linkify_slugs(display_body))) }
+                        (render_linkified_with_embeds(display_body))
                         @if truncated {
                             a href="#" class="show-full-link"
                               onclick=(format!("fetch('/t/{tag}/{post_idx}/expand').then(r=>r.text()).then(eval);return false")) {
@@ -269,7 +270,7 @@ pub async fn thread_post_view(
                         " · "
                         (ago)
                     }
-                    pre { (maud::PreEscaped(linkify_slugs(&ing.raw))) }
+                    (render_linkified_with_embeds(&ing.raw))
                 }
             } @else {
                 p class="muted" { "post not found" }
@@ -314,7 +315,7 @@ pub async fn thread_post_expand(
                 " · "
                 (ago)
             }
-            pre { (maud::PreEscaped(linkify_slugs(&ing.raw))) }
+            (render_linkified_with_embeds(&ing.raw))
         }
     };
 

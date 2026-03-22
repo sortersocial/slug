@@ -13,7 +13,7 @@ use crate::{
 };
 
 use super::{
-    actor_label, bc_path, cli_panel, layout, linkify_slugs, now_ms, ratio_pct,
+    actor_label, bc_path, cli_panel, layout, now_ms, ratio_pct, render_linkified_with_embeds,
     breadcrumb_path::OntologyPath,
 };
 
@@ -322,7 +322,7 @@ async fn render_scope_view(state: AppState, path: OntologyPath) -> axum::respons
                 }
                 @if let Some(body) = &model.body {
                     div class="ont-item-content" {
-                        pre { (maud::PreEscaped(linkify_slugs(body))) }
+                        (render_linkified_with_embeds(body))
                     }
                 } @else {
                     div class="ont-item-content" { p class="muted" { "no body yet" } }

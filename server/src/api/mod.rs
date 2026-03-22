@@ -105,6 +105,14 @@ mod tests {
     }
 
     #[test]
+    fn validate_ingest_document_accepts_quoted_thread_title() {
+        let reduced = ReducerState::default();
+        let text = "@00000000-0000-0000-0000-000000000000:test:local/test\n\"This is a title\" { This is the body of the post }\n~/t/a {a}\n";
+        let v = validate_ingest_document(&reduced, text, "need actor").unwrap();
+        assert_eq!(v.threads, vec!["this-is-a-title"]);
+    }
+
+    #[test]
     fn validate_ingest_document_rejects_item_without_body() {
         let reduced = ReducerState::default();
         let text = "@00000000-0000-0000-0000-000000000000:test:local/test\n#t\n~/t/a\n";
