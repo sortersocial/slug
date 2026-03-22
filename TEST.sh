@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
-# TEST.sh — onboarding entry point for slug.social
+# TEST.sh — entry point for verifying a fresh clone of slug.social
 #
-# Clones the repo, runs this, everything is verified.
 # Runs the full round-trip sanity check: build → ingest → query → kill → replay → verify.
+# Exit code reflects the result of the sanity check.
 
 set -euo pipefail
 
-echo "=== slug.social test suite ==="
-echo "Running: bb sanity"
-echo ""
+echo "slug.social — running sanity check"
+echo "===================================="
 
 bb sanity
