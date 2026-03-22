@@ -128,8 +128,8 @@ enum Command {
         /// Defaults to the actor's last ingest timestamp on the server.
         #[arg(long, value_name = "DATE_OR_MS")]
         since: Option<String>,
-        /// Max items to return (default: 50)
-        #[arg(long, default_value = "50")]
+        /// Max items to return (default: 10)
+        #[arg(long, default_value = "10")]
         limit: usize,
         /// Output as JSON for agent parsing
         #[arg(long)]
@@ -375,7 +375,7 @@ fn print_rank_history_response(resp: &slug_types::RankHistoryResponse) {
             label,
         );
         for v in &e.caused_by {
-            println!("    {} {} {} {}", v.a, v.ratio, v.b, v.actor.as_deref().map(|a| format!("  ({})", a)).unwrap_or_default());
+            println!("    {} {} {} {}", v.a, v.ratio, v.b, v.actor.as_deref().map(|a| format!("  (@{})", a)).unwrap_or_default());
             if !v.body.is_empty() {
                 println!("      {}", v.body.lines().next().unwrap_or(&v.body).trim());
             }
@@ -999,19 +999,23 @@ async fn main() -> Result<()> {
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_millis() as i64;
-                if let Some(ts) = resp.since {
-                    println!("feed for {}  (since {})  {} posts", resp.actor, slug_types::timeago::timeago(now_ms, ts), resp.total);
-                } else {
-                    println!("feed for {}  (all time)  {} posts", resp.actor, resp.total);
-                }
-                for p in &resp.posts {
-                    let ago = slug_types::timeago::timeago(now_ms, p.ts);
-                    let first_line = p.snippet.lines().next().unwrap_or("").trim();
-                    println!("  [{}]  {}  —  {}", ago, p.actor, first_line);
-                }
+                let since_attr = resp.since
+                    .map(|ts| format!(" since=\"{}\"", slug_types::timeago::timeago(now_ms, ts)))
+                    .unwrap_or_default();
+                println!("<feed total=\"{}\" limit=\"{}\"{}>", resp.total, limit, since_attr);
                 if resp.posts.is_empty() {
-                    println!("  no new activity");
+                    println!("  <!-- no new activity -->");
+                } else {
+                    for p in &resp.posts {
+                        let ago = slug_types::timeago::timeago(now_ms, p.ts);
+                        println!("  <post id=\"{}\" ts=\"{}\">", p.id, ago);
+                        for line in p.body.lines() {
+                            println!("    {}", line);
+                        }
+                        println!("  </post>");
+                    }
                 }
+                println!("</feed>");
             }
         }
 

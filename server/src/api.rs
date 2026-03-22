@@ -1576,11 +1576,27 @@ pub async fn get_feed(
         .skip(offset)
         .take(limit)
         .filter_map(|id| reduced.ingests_by_id.get(id))
-        .map(|ing| slug_types::FeedPost {
-            ts: ing.ts,
-            id: ing.id.clone(),
-            actor: ing.actor.clone(),
-            snippet: ing.raw.chars().take(200).collect(),
+        .map(|ing| {
+            // Extract primary thread tag from raw doc.
+            let thread = crate::dsl::parse_full(&ing.raw).ok().and_then(|doc| {
+                doc.statements.into_iter().find_map(|s| {
+                    if let crate::dsl::Stmt::Hashtag { name } = s {
+                        Some(crate::events::canonicalize_tag(&name))
+                    } else { None }
+                })
+            });
+            let thread_post_index = thread.as_deref().and_then(|t| {
+                reduced.ingests_by_thread.get(t).and_then(|q| {
+                    q.iter().rev().position(|id| id == &ing.id).map(|i| i + 1)
+                })
+            });
+            slug_types::FeedPost {
+                ts: ing.ts,
+                id: ing.id.clone(),
+                thread,
+                thread_post_index,
+                body: ing.raw.clone(),
+            }
         })
         .collect();
 

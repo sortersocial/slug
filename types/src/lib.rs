@@ -183,8 +183,14 @@ pub struct FeedResponse {
 pub struct FeedPost {
     pub ts: i64,
     pub id: String,
-    pub actor: String,
-    pub snippet: String,
+    /// Primary thread tag (without #), if the ingest declared one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thread: Option<String>,
+    /// 1-indexed chronological position of this post within the thread.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thread_post_index: Option<usize>,
+    /// Full raw body of the ingest document.
+    pub body: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
