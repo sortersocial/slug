@@ -146,6 +146,7 @@ enum Command {
     ///
     ///   # From pipe
     ///   cat document.txt | npx slugsocial ingest
+    #[command(long_about = include_str!("../DSL.txt"))]
     Ingest {
         /// Optional path to a .sorter file. If omitted, reads from stdin.
         #[arg(value_name = "FILE")]

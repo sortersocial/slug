@@ -584,42 +584,6 @@ fn parse_line(masked_line: &str, masker: &BlockMasker) -> Result<Vec<Stmt>, DslE
     }
 }
 
-/// Parse EmailDSL text into AST (expects DSL-only content; prose will error).
-pub fn parse(text: &str) -> Result<Document, DslError> {
-    let (masker, masked) = mask_all(BlockMasker::new(), text);
-    let mut statements: Vec<Stmt> = Vec::new();
-    for line in masked.split('\n') {
-        let line_trim = line.trim();
-        if line_trim.is_empty() {
-            continue;
-        }
-        let line_stmts = parse_line(line, &masker)?;
-        statements.extend(line_stmts);
-    }
-    Ok(Document { statements })
-}
-
-/// Parse EmailDSL with stateless line-based filtering (drops non-DSL lines).
-pub fn parse_lines(text: &str) -> Result<Document, DslError> {
-    let (masker, masked) = mask_all(BlockMasker::new(), text);
-    let mut statements: Vec<Stmt> = Vec::new();
-    for line in masked.split('\n') {
-        let stripped = line.trim_start();
-        if stripped.is_empty() {
-            continue;
-        }
-        let first = stripped.chars().next().unwrap();
-        if "#:/@!~".contains(first)
-            || (first == 'h' && (stripped.starts_with("https://") || stripped.starts_with("http://")))
-            || (first == '"' && stripped.contains("__BLOCK_"))
-        {
-            let line_stmts = parse_line(line, &masker)?;
-            statements.extend(line_stmts);
-        }
-    }
-    Ok(Document { statements })
-}
-
 /// Parse EmailDSL preserving prose for rendering; interleaves `Prose` with DSL nodes.
 pub fn parse_full(text: &str) -> Result<Document, DslError> {
     let (masker, masked) = mask_all(BlockMasker::new(), text);
@@ -685,7 +649,7 @@ mod tests {
     #[test]
     fn parse_item_with_body_strips_outer_braces() {
         let input = "/rust { Systems language }";
-        let doc = parse(input).unwrap();
+        let doc = parse_full(input).unwrap();
         assert_eq!(
             doc.statements,
             vec![Stmt::Item {
@@ -697,7 +661,7 @@ mod tests {
 
     #[test]
     fn parse_vote_ratio_and_symbols() {
-        let d1 = parse("/a 3:1 /b {because}").unwrap();
+        let d1 = parse_full("/a 3:1 /b {because}").unwrap();
         assert_eq!(
             d1.statements,
             vec![Stmt::Vote {
@@ -709,7 +673,7 @@ mod tests {
             }]
         );
 
-        let d2 = parse("/a > /b {because}").unwrap();
+        let d2 = parse_full("/a > /b {because}").unwrap();
         assert_eq!(
             d2.statements,
             vec![Stmt::Vote {
@@ -721,7 +685,7 @@ mod tests {
             }]
         );
 
-        let d3 = parse("/a = /b {because}").unwrap();
+        let d3 = parse_full("/a = /b {because}").unwrap();
         assert_eq!(
             d3.statements,
             vec![Stmt::Vote {
@@ -732,20 +696,6 @@ mod tests {
                 explanation: "because".to_string()
             }]
         );
-    }
-
-    #[test]
-    fn parse_lines_filters_noise_but_keeps_bodies() {
-        let input = r#"
-hello there
-#tag
-/rust {Body line 1
-Body line 2}
-signature: thanks
-"#;
-        let doc = parse_lines(input).unwrap();
-        assert!(doc.statements.iter().any(|s| matches!(s, Stmt::Hashtag { .. })));
-        assert!(doc.statements.iter().any(|s| matches!(s, Stmt::Item { .. })));
     }
 
     #[test]
@@ -772,7 +722,7 @@ signature: thanks
     #[test]
     fn parse_item_body_without_space_like_big_book() {
         let input = "/arrived{I had arrived.}";
-        let doc = parse(input).unwrap();
+        let doc = parse_full(input).unwrap();
         assert_eq!(
             doc.statements,
             vec![Stmt::Item {
@@ -785,7 +735,7 @@ signature: thanks
     #[test]
     fn parse_vote_with_attached_body_without_space() {
         let input = "/a 2:1 /b{because}";
-        let doc = parse(input).unwrap();
+        let doc = parse_full(input).unwrap();
         assert_eq!(
             doc.statements,
             vec![Stmt::Vote {
@@ -801,7 +751,7 @@ signature: thanks
     #[test]
     fn parse_nested_path_item() {
         let input = "~/whitepaper/architectural-choices { Body }";
-        let doc = parse(input).unwrap();
+        let doc = parse_full(input).unwrap();
         assert_eq!(
             doc.statements,
             vec![Stmt::Item {
@@ -814,7 +764,7 @@ signature: thanks
     #[test]
     fn parse_nested_path_vote() {
         let input = "~/whitepaper/a 3:1 ~/whitepaper/b { because }";
-        let doc = parse(input).unwrap();
+        let doc = parse_full(input).unwrap();
         assert_eq!(
             doc.statements,
             vec![Stmt::Vote {
@@ -829,7 +779,7 @@ signature: thanks
 
     #[test]
     fn parse_actor_allows_colons_for_full_identity_formats() {
-        let doc = parse_lines(
+        let doc = parse_full(
             "@00000000-0000-0000-0000-000000000000:test:local/test\n#t\n/a {x}\n",
         )
         .unwrap();
@@ -843,7 +793,7 @@ signature: thanks
     fn parse_rejects_leading_colon() {
         let inputs = [":beauty", ":x", ":"];
         for input in &inputs {
-            let result = parse(input);
+            let result = parse_full(input);
             assert!(result.is_err(), "expected parse error for {input:?}");
             assert!(
                 result.unwrap_err().to_string().contains("leading ':' is not supported"),
@@ -890,7 +840,7 @@ signature: thanks
     #[test]
     fn parse_url_item_statement() {
         let input = "https://slug.social/~/music/song-a { body }";
-        let doc = parse(input).unwrap();
+        let doc = parse_full(input).unwrap();
         assert_eq!(
             doc.statements,
             vec![Stmt::Item {
@@ -903,7 +853,7 @@ signature: thanks
     #[test]
     fn parse_url_vote_statement() {
         let input = "https://slug.social/~/music/a 3:1 https://slug.social/~/music/b { because }";
-        let doc = parse(input).unwrap();
+        let doc = parse_full(input).unwrap();
         assert_eq!(
             doc.statements,
             vec![Stmt::Vote {
