@@ -65,16 +65,7 @@ pub(super) fn layout(title: &str, view: &str, body: Markup, views: Option<u64>) 
                     a id="search-btn" href="/search" { "search" }
                     div id="theme-switcher" { "theme" }
                 }
-                details id="slug-masthead" {
-                    summary { "slug?" }
-                    p {
-                        "slugs leave trails — full history preserved. "
-                        "slugs are slow and deliberate — thinking encouraged. "
-                        "programming slugs — url-safe readable text. "
-                        "linotype slugs — the word made metal, made flesh."
-                    }
-                }
-                script { (maud::PreEscaped(r#"
+script { (maud::PreEscaped(r#"
                     (function() {
                         // Theme switching
                         const themes = ['default', 'retro'];
