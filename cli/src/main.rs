@@ -142,7 +142,7 @@ enum Command {
     ///   npx slugsocial search counting
     ///   npx slugsocial search "structural editing"
     Search {
-        /// Search query (at least 2 characters)
+        /// Search query
         #[arg(value_name = "QUERY")]
         query: String,
         /// Output as JSON for agent parsing

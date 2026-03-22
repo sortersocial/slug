@@ -512,7 +512,6 @@ pub async fn post_ingest(
 
 pub async fn post_check(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Json(req): Json<IngestRequest>,
 ) -> impl IntoResponse {
     let reduced_arc = state.reduced.clone();
@@ -526,30 +525,7 @@ pub async fn post_check(
         Err((status, msg, hint)) => return api_error(status, msg, hint).into_response(),
     };
 
-    // Passkey verification for registered actors (read-only -- no registration on check).
-    let passkey: Option<String> = headers
-        .get("x-slug-passkey")
-        .and_then(|hv| hv.to_str().ok())
-        .map(|s| s.to_string())
-        .or_else(|| req.passkey.clone());
-
-    if let Some(stored_hash) = reduced.actor_keys.get(&v.actor) {
-        match &passkey {
-            None => {
-                return api_error(
-                    StatusCode::UNAUTHORIZED,
-                    "this actor requires a passkey",
-                    Some("pass --passkey <slug_sk_...> or set SLUG_PASSKEY".to_string()),
-                );
-            }
-            Some(pk) => {
-                if sha256_hex(pk) != *stored_hash {
-                    return api_error(StatusCode::UNAUTHORIZED, "invalid passkey", None);
-                }
-            }
-        }
-    }
-
+    // check is a true dry-run: no auth required, no registration, nothing persisted.
     drop(reduced);
 
     let event = Event::Ingest(Ingest {

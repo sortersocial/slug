@@ -57,12 +57,6 @@ pub async fn get_search(
     let q = params.q.unwrap_or_default();
     let limit = params.limit.unwrap_or(50).min(200);
 
-    if q.len() < 2 {
-        return Json(slug_types::SearchResponse {
-            items: vec![], threads: vec![], posts: vec![],
-        }).into_response();
-    }
-
     let words = tokenize_query(&q);
     if words.is_empty() {
         return Json(slug_types::SearchResponse {

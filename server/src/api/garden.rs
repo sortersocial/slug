@@ -115,6 +115,10 @@ pub async fn get_item(State(state): State<AppState>, headers: HeaderMap, Query(q
         }
     }
 
+    if !reduced.items.contains(&item) {
+        return api_error(StatusCode::NOT_FOUND, "item not found", Some(format!("/{} does not exist", item)));
+    }
+
     let body = reduced.item_bodies.get(&item).cloned();
     let threads: Vec<String> = reduced
         .item_threads
@@ -219,6 +223,10 @@ pub async fn get_matchup(
         if authed_uuid.as_deref() != Some(owner) {
             return api_error(StatusCode::FORBIDDEN, "private item: authentication required", Some("provide ?actor=@... and x-slug-passkey header".to_string()));
         }
+    }
+
+    if !reduced.items.contains(&item) {
+        return api_error(StatusCode::NOT_FOUND, "item not found", Some(format!("/{} does not exist", item)));
     }
 
     let votes: Vec<VoteRow> = reduced

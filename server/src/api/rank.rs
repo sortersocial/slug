@@ -1,6 +1,6 @@
 use axum::{
     extract::{Query, State},
-    http::HeaderMap,
+    http::{HeaderMap, StatusCode},
     response::IntoResponse,
     Json,
 };
@@ -53,6 +53,21 @@ pub async fn get_rank(State(state): State<AppState>, headers: HeaderMap, Query(q
     let specs = parse_parent_specs(q.parent.as_ref());
     let is_global = q.parent.as_deref().map(|p| p.trim() == "~").unwrap_or(false);
     let depth = q.depth.unwrap_or(1).max(1);
+
+    // 404 when a specific named path is requested but doesn't exist as a known item or parent.
+    if !is_global && !specs.is_empty() {
+        let none_exist = specs.iter().all(|spec| {
+            let canon = crate::events::canonicalize_item(spec);
+            !reduced.items.contains(&canon) && !reduced.item_children.contains_key(&canon)
+        });
+        if none_exist {
+            return api_error(
+                StatusCode::NOT_FOUND,
+                "path not found",
+                Some(format!("{} does not exist", specs.join(", "))),
+            );
+        }
+    }
 
     let rankings = if is_global {
         let all_items: Vec<String> = reduced.items.iter().cloned().collect();
@@ -154,7 +169,7 @@ pub async fn get_global_rank(
 
     let reduced_arc = state.reduced.clone();
     // Write lock needed to update cached_scores when dirty.
-    let mut reduced = reduced_arc.write().await;
+    let reduced = reduced_arc.write().await;
     let passkey = headers
         .get("x-slug-passkey")
         .and_then(|v| v.to_str().ok())
