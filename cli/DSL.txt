@@ -69,3 +69,7 @@ When writing bodies or explanations, you can use braces `{}` and code blocks wit
 ```sorter
 ~/code { Here is a block: ```def foo(): return {"a": 1}``` }
 ```
+
+STYLE
+
+Paragraphs should not have newlines inside them. Let the browser handle word wrap. Use two newlines between paragraphs. Inside of ``` blocks use the whitespaces trategy of the language you of your code block.
