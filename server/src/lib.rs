@@ -1,3 +1,5 @@
+#[macro_use]
+pub mod paths;
 pub mod api;
 pub mod auth;
 pub mod dsl;

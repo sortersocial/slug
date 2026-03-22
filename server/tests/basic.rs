@@ -429,6 +429,8 @@ fn ranking_repeated_votes_normalized() {
     let eps = 1e-6;
     assert!((ranked_once[0].score - ranked_many[0].score).abs() < eps,
         "scores differ: once={:.6} many={:.6}", ranked_once[0].score, ranked_many[0].score);
+}
+
 // ============================================================================
 // Phase 1: Reducer Edge Cases
 // ============================================================================

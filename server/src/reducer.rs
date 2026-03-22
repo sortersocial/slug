@@ -334,13 +334,13 @@ impl ReducerState {
                             let Some(item) = Self::normalize_item(&title) else {
                                 continue;
                             };
-                            self.items.insert(item.clone());
+                            nav!(self.items, set_elem(item.clone()));
                             ingest_items.insert(item.clone());
                             self.add_child_edge(&item);
 
                             if let Some(body_text) = body {
                                 if !body_text.trim().is_empty() {
-                                    self.item_bodies.insert(item.clone(), body_text);
+                                    nav!(self.item_bodies, keypath(item.clone()), setval(body_text));
                                 }
                             }
                         }
@@ -373,8 +373,8 @@ impl ReducerState {
                             ingest_items.insert(item_a.clone());
                             ingest_items.insert(item_b.clone());
 
-                            self.items.insert(item_a.clone());
-                            self.items.insert(item_b.clone());
+                            nav!(self.items, set_elem(item_a.clone()));
+                            nav!(self.items, set_elem(item_b.clone()));
                             self.add_child_edge(&item_a);
                             self.add_child_edge(&item_b);
 
@@ -382,8 +382,7 @@ impl ReducerState {
 
                             // Index vote by item.
                             for it in [&item_a, &item_b] {
-                                let q = self.item_votes.entry(it.clone()).or_default();
-                                q.push_front(vote.clone());
+                                nav!(self.item_votes, keypath(it.clone()), push_front(vote.clone()));
                             }
                         }
                         crate::dsl::Stmt::Prose { .. } => {}
@@ -392,35 +391,26 @@ impl ReducerState {
 
                 // Index snippets by item for this ingest.
                 for item in ingest_items.iter() {
-                    let q = self.item_snippets.entry(item.clone()).or_default();
-                    q.push_front(ing.id.clone());
+                    nav!(self.item_snippets, keypath(item.clone()), push_front(ing.id.clone()));
                 }
 
                 // Index item -> threads (connective tissue for garden body/pair/matchup).
                 for item in ingest_items.iter() {
-                    for thread in &touched_threads {
-                        self.item_threads
-                            .entry(item.clone())
-                            .or_default()
-                            .insert(thread.clone());
-                    }
+                    nav_each!(self.item_threads, keypath(item.clone()), set_elem, touched_threads.iter().cloned());
                 }
 
                 // Bump thread state for explicitly declared threads.
                 for thread in &touched_threads {
-                    let state = self.threads.entry(thread.clone()).or_default();
-                    if ing.ts > state.last_activity_ts {
-                        state.last_activity_ts = ing.ts;
-                    }
+                    let ts = self.threads.entry(thread.clone()).or_default();
+                    nav!(ts.last_activity_ts, selected(ing.ts > ts.last_activity_ts, setval(ing.ts)));
                 }
 
                 // Index ingest by touched threads.
                 for thread in touched_threads {
-                    let q = self.ingests_by_thread.entry(thread).or_default();
-                    q.push_front(ing.id.clone());
+                    nav!(self.ingests_by_thread, keypath(thread), push_front(ing.id.clone()));
                 }
 
-                self.ingests_ordered.push(ing.id.clone());
+                nav!(self.ingests_ordered, push_back(ing.id.clone()));
 
                 // Snapshot ranks after votes and push history entries.
                 if !voted_items.is_empty() {
@@ -454,11 +444,11 @@ impl ReducerState {
                     }
                 }
 
-                self.actor_last_post_ts.insert(ing.actor.clone(), ing.ts);
+                nav!(self.actor_last_post_ts, keypath(ing.actor.clone()), setval(ing.ts));
             }
             Event::ActorKeyRegistration { actor, key_hash, .. } => {
                 let actor = canonicalize_actor(&actor);
-                self.actor_keys.entry(actor).or_insert(key_hash);
+                nav!(self.actor_keys, keypath(actor), or_insert(key_hash));
             }
         }
     }
