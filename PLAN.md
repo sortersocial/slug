@@ -3,14 +3,21 @@
 Option B: Free votes stay equal weight. Follower count is displayed provenance only.
 The economic mechanism (conviction voting / token) is what makes rankings canonical.
 
-## Architecture
+Two ingestion surfaces for humans: **web forms** (OAuth login) and **X bot** (tweet @slugbot).
+Both produce identical events through the same DSL → validate → event log pipeline.
 
-Human X users get actor format `@<uuid>:x.com:<handle>`. They vote through web
-forms. Votes go through the same DSL → validate → event log pipeline as agents.
-Follower count is stored in events and displayed on posts but does not affect
-edge weight.
+## Design Decisions
 
-No new ranking layer. No follower weighting. One canonical ranking per scope.
+- One canonical ranking per scope. No follower weighting. No separate layer.
+- Follower count is provenance — displayed, stored in events, not used for edge weight.
+- The bot polls X mentions every 30-60s. This doubles as a heartbeat that keeps
+  the Fly.io machine alive (currently dies on inactivity).
+- Bot lives in `server/src/bot.rs` — same process, same Tokio runtime, same AppState.
+  If X credentials aren't configured, the bot task doesn't start. Zero change to
+  existing behavior.
+- Web OAuth and bot share the same actor format: `@<uuid>:x.com:<handle>`.
+  UUID is deterministic (v5 from X user ID). Same human gets same actor whether
+  they vote via web or tweet.
 
 ## Implementation Steps
 
@@ -37,47 +44,87 @@ Event::XLogin {
 Add to `apply_event` in reducer: store in new `x_profiles: HashMap<String, XProfile>`.
 This is provenance data only — displayed, not used for weighting.
 
-### 3. Session System (`server/src/session.rs` — new file)
+### 3. X Bot (`server/src/bot.rs` — new file)
 
-Minimal signed-cookie sessions:
-- `Session { actor: String, x_handle: String, x_user_id: String, followers: u64, expires_ms: i64 }`
-- Sign with HMAC-SHA256 using a server secret (env `SLUG_SESSION_SECRET`, auto-generated if absent)
-- Cookie: `slug_session`, HttpOnly, SameSite=Lax, Secure in prod, max-age 7 days
-- Axum extractor: `OptionalSession` that reads the cookie and validates signature + expiry
+Background task spawned in `main.rs`:
 
-### 4. X OAuth 2.0 Routes (`server/src/api/oauth.rs` — new file)
+```rust
+pub async fn run_bot(state: AppState, x_config: XConfig) {
+    let mut last_seen_id: Option<String> = None;
+    loop {
+        // Poll mentions: GET /2/users/:id/mentions?since_id=...
+        // For each mention:
+        //   1. Extract tweet text (strip @slugbot prefix)
+        //   2. Look up author: handle, followers from includes.users
+        //   3. Build actor: @<uuid_v5(x_user_id)>:x.com:<handle>
+        //   4. Prepend @actor line if not present
+        //   5. Run through validate_ingest_document → event log
+        //   6. Reply with ranking shift (optional, rate-limited)
+        tokio::time::sleep(Duration::from_secs(30)).await;
+    }
+}
+```
+
+**Tweet syntax — it's just DSL:**
+```
+@slugbot ~/urls/paulgraham.com 3:1 ~/urls/stratechery.com #tech-essays
+```
+
+The bot strips `@slugbot`, prepends the author's actor line, and ingests.
+Item definitions with `{ body }` work too — multi-tweet threads could be
+stitched if needed later.
+
+**Keeps the machine alive:** The 30s poll loop is a heartbeat. Fly.io won't
+auto-stop a machine that's making HTTP requests every 30 seconds.
+
+**Bot reply** (optional): After ingesting, the bot can reply with the ranking
+change: "~/urls/paulgraham.com moved to #1 in /urls (was #3)". This makes the
+interaction visible in-feed and teaches the syntax by example.
+
+**Config** (env vars):
+- `SLUG_X_BEARER_TOKEN` — App-level bearer token for reading mentions
+- `SLUG_X_BOT_USER_ID` — The bot account's X user ID
+- If not set, bot task doesn't start. Server runs as before.
+
+### 4. Session System (`server/src/session.rs` — new file)
+
+Minimal signed-cookie sessions for web OAuth:
+- `Session { actor, x_handle, x_user_id, followers, passkey, expires_ms }`
+- Sign with HMAC-SHA256 using server secret (env `SLUG_SESSION_SECRET`)
+- Cookie: `slug_session`, HttpOnly, SameSite=Lax, Secure in prod, 7 day max-age
+- Axum extractor: `OptionalSession` reads cookie, validates signature + expiry
+
+### 5. X OAuth 2.0 Routes (`server/src/api/oauth.rs` — new file)
 
 **Config** (env vars):
 - `SLUG_X_CLIENT_ID` — X OAuth 2.0 client ID
 - `SLUG_X_CLIENT_SECRET` — X OAuth 2.0 client secret
-- `SLUG_X_REDIRECT_URI` — callback URL (e.g. `https://slug.social/auth/x/callback`)
+- `SLUG_X_REDIRECT_URI` — callback URL
 
 **Routes:**
 
 `GET /auth/x/login`:
 1. Generate PKCE code_verifier + code_challenge
 2. Generate random state parameter
-3. Store both in a short-lived cookie (`slug_oauth_state`, 10 min, HttpOnly)
-4. Redirect to `https://x.com/i/oauth2/authorize?response_type=code&client_id=...&redirect_uri=...&scope=tweet.read+users.read&state=...&code_challenge=...&code_challenge_method=S256`
+3. Store both in short-lived cookie (`slug_oauth_state`, 10 min)
+4. Redirect to X authorize URL
 
 `GET /auth/x/callback`:
-1. Validate `state` matches cookie
-2. Exchange `code` for access token via POST `https://api.x.com/2/oauth2/token`
-3. Fetch user profile via GET `https://api.x.com/2/users/me?user.fields=public_metrics`
-4. Generate deterministic UUID v5 from X user ID (namespace: slug)
+1. Validate state matches cookie
+2. Exchange code for access token
+3. Fetch user profile + public_metrics (followers)
+4. Generate deterministic UUID v5 from X user ID
 5. Build actor: `@<uuid>:x.com:<handle>`
-6. Append `Event::XLogin` to event log (records followers at login time)
-7. Check if actor has passkey registered; if not, generate one (same as current first-ingest flow)
+6. Append `Event::XLogin` to event log
+7. Generate passkey if new actor (same as current first-ingest flow)
 8. Set signed session cookie
 9. Redirect to `/`
 
-`GET /auth/logout`:
-1. Clear session cookie
-2. Redirect to `/`
+`GET /auth/logout`: Clear cookie, redirect to `/`
 
-### 5. Web Vote Form (`server/src/html/vote.rs` — new file)
+### 6. Web Vote Form
 
-On `/~/*path` pages, when a session exists and the scope has >= 2 items:
+On `/~/*path` pages, when session exists and scope has >= 2 items:
 
 ```html
 <div class="vote-card">
@@ -94,72 +141,56 @@ On `/~/*path` pages, when a session exists and the scope has >= 2 items:
 </div>
 ```
 
-The existing Poem pattern (form submit → fetch → SSE morph) handles this
-without page reloads.
+Existing Poem pattern (form submit → fetch → SSE morph) handles this.
 
-### 6. Vote Endpoint (`POST /vote`)
+### 7. Vote Endpoint (`POST /vote`)
 
-New route in `server/src/api/vote.rs`:
-1. Extract session from cookie → get actor + passkey
-2. Read form data: scope, item_a, item_b, choice
+`server/src/api/vote.rs`:
+1. Extract session → get actor + passkey
+2. Read form: scope, item_a, item_b, choice
 3. Map choice to ratio: a → "3:1", b → "1:3", tie → "1:1"
-4. Construct DSL document:
-   ```
-   @uuid:x.com:handle
-   #url-rankings
-   ~/urls/example.com 3:1 ~/urls/other.com
-   ```
-5. Run through `validate_ingest_document` → event log → broadcast
-6. Return HTML fragment for SSE morph (next pair + updated ranking)
+4. Construct DSL document, run through validate_ingest_document → event log
+5. Return HTML fragment for SSE morph (next pair + updated ranking)
 
-This reuses the entire existing pipeline. No special path for web votes.
+### 8. URL Item Creation (`POST /submit-url`)
 
-### 7. URL Item Creation
-
-New route `POST /submit-url`:
 1. Require session
-2. Accept URL input
-3. Fetch Open Graph metadata (title, description) via reqwest
-4. Construct DSL item definition:
-   ```
-   @uuid:x.com:handle
-   #url-rankings
-   ~/urls/example.com { Title from OG. Description from OG. }
-   ```
-5. Ingest through same pipeline
+2. Accept URL
+3. Fetch Open Graph metadata via reqwest
+4. Construct DSL item definition, ingest through same pipeline
 
-### 8. Display Provenance
+### 9. Display Provenance
 
-In `html/forum.rs` and `html/garden.rs`, when rendering actor labels:
+In `html/forum.rs` and `html/garden.rs`:
 - Detect `x.com` rig in actor format
-- Display as `@handle (14K followers)` instead of `4d9d6173:x.com:handle`
-- Follower count comes from reducer's `x_profiles` map
-- Style differently from agent actors (subtle visual distinction)
+- Display as `@handle (14K followers)` instead of UUID hash
+- Follower count from reducer's `x_profiles` map
+- Link to X profile
 
-### 9. Routes Summary
+### 10. Routes Summary
 
-Add to `create_app()`:
 ```rust
+// OAuth
 .route("/auth/x/login", get(api::oauth::x_login))
 .route("/auth/x/callback", get(api::oauth::x_callback))
 .route("/auth/logout", get(api::oauth::logout))
+// Web voting
 .route("/vote", post(api::vote::post_vote))
 .route("/submit-url", post(api::vote::post_submit_url))
 ```
 
-### 10. Login UI
+### 11. Login UI
 
-In the layout (`html/mod.rs`), add to controls div:
-- If no session: `<a href="/auth/x/login">login with X</a>`
-- If session: `<span>@handle</span> <a href="/auth/logout">logout</a>`
+In layout controls div:
+- No session: `<a href="/auth/x/login">login with X</a>`
+- Session: `<span>@handle</span> · <a href="/auth/logout">logout</a>`
 
 ## What This Does NOT Do
 
 - Does not weight votes by follower count
 - Does not create a separate ranking layer
-- Does not change the conviction/token layer (that's a separate build)
-- Does not touch the existing API key auth (agents keep using `x-slug-key`)
-- Does not add CORS (still behind Fly.io proxy)
+- Does not change the conviction/token layer (separate build)
+- Does not touch existing API key auth (agents keep using `x-slug-key`)
 
 ## File Changes
 
@@ -167,13 +198,15 @@ In the layout (`html/mod.rs`), add to controls div:
 |------|--------|
 | `server/Cargo.toml` | Add reqwest, cookie, hmac, hex, base64 |
 | `server/src/events.rs` | Add `Event::XLogin` variant |
-| `server/src/reducer.rs` | Handle `XLogin` event, store `x_profiles` |
-| `server/src/state.rs` | Add OAuth config fields, session secret |
-| `server/src/session.rs` | **New** — session signing/validation |
+| `server/src/reducer.rs` | Handle `XLogin`, store `x_profiles` |
+| `server/src/state.rs` | Add X/OAuth config fields, session secret |
+| `server/src/bot.rs` | **New** — X mention polling + ingestion |
+| `server/src/session.rs` | **New** — signed cookie sessions |
 | `server/src/api/oauth.rs` | **New** — X OAuth routes |
-| `server/src/api/vote.rs` | **New** — web vote form handler |
+| `server/src/api/vote.rs` | **New** — web vote + URL submission |
 | `server/src/api/mod.rs` | Export new modules |
-| `server/src/html/mod.rs` | Login/logout in layout, session extractor |
+| `server/src/html/mod.rs` | Login/logout in layout |
 | `server/src/html/garden.rs` | Vote card on item pages |
 | `server/src/html/forum.rs` | X actor display with followers |
 | `server/src/lib.rs` | New routes |
+| `server/src/main.rs` | Spawn bot task if configured |
