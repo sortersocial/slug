@@ -13,43 +13,30 @@ pub fn canonicalize_item(input: &str) -> String {
         return String::new();
     }
 
-    // DSL token-saving macro: treat "~/..." as "https://slug.social/~/..."
-    // for canonicalization purposes while preserving existing internal paths.
-    if let Some(rest) = s.strip_prefix("~/") {
-        return canonicalize_item(&format!("https://slug.social/~/{}", rest));
-    }
-
-    // Canonical URL form for the local ontology root maps back to existing path storage.
-    if let Some(rest) = s.strip_prefix("https://slug.social/~/") {
-        return canonicalize_item(rest);
-    }
-    if let Some(rest) = s.strip_prefix("http://slug.social/~/") {
-        return canonicalize_item(rest);
-    }
-
-    // Canonicalize arbitrary absolute URLs as first-class item identifiers.
-    // Keep scheme + host normalized; preserve the rest byte-for-byte.
     if let Some(rest) = s.strip_prefix("https://") {
         let (host, tail) = rest.split_once('/').map_or((rest, ""), |(h, t)| (h, t));
         let host = host.trim().to_lowercase();
-        return if tail.is_empty() {
-            format!("https://{}", host)
+        if tail.is_empty() {
+            return format!("https://{}", host);
         } else {
-            format!("https://{}/{}", host, tail)
-        };
+            return format!("https://{}/{}", host, tail);
+        }
     }
     if let Some(rest) = s.strip_prefix("http://") {
         let (host, tail) = rest.split_once('/').map_or((rest, ""), |(h, t)| (h, t));
         let host = host.trim().to_lowercase();
-        return if tail.is_empty() {
-            format!("http://{}", host)
+        if tail.is_empty() {
+            return format!("http://{}", host);
         } else {
-            format!("http://{}/{}", host, tail)
-        };
+            return format!("http://{}/{}", host, tail);
+        }
     }
 
-    let s = if let Some(rest) = s.strip_prefix('/') { rest } else { s };
-    s.split('/')
+    let is_tilde = s.starts_with("~/");
+    let rest = s.strip_prefix("~/").or_else(|| s.strip_prefix("/")).unwrap_or(s);
+
+    let tail = rest
+        .split('/')
         .filter_map(|seg| {
             let t = seg.trim();
             if t.is_empty() {
@@ -59,7 +46,15 @@ pub fn canonicalize_item(input: &str) -> String {
             }
         })
         .collect::<Vec<_>>()
-        .join("/")
+        .join("/");
+
+    if is_tilde {
+        format!("https://slug.social/~/{}", tail)
+    } else if tail.is_empty() {
+        "https://slug.social".to_string()
+    } else {
+        format!("https://slug.social/{}", tail)
+    }
 }
 
 pub fn item_path_segments(input: &str) -> Vec<String> {
@@ -81,6 +76,7 @@ pub fn item_path_segments(input: &str) -> Vec<String> {
         return out;
     }
 
+    // Should be unreachable since all canonical items are now URLs
     canonical
         .split('/')
         .filter(|s| !s.is_empty())
@@ -105,9 +101,10 @@ pub fn is_private_path(path: &str) -> bool {
     path_owner_uuid(path).is_some()
 }
 
-/// If the path's first segment is a full UUID v4, return it. Otherwise None.
+/// If the path's first segment after the ~ is a full UUID v4, return it. Otherwise None.
 pub fn path_owner_uuid(path: &str) -> Option<&str> {
-    let seg = path.split('/').next()?;
+    let rest = path.strip_prefix("https://slug.social/~/")?;
+    let seg = rest.split('/').next()?;
     if uuid::Uuid::parse_str(seg).is_ok() { Some(seg) } else { None }
 }
 

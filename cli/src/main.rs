@@ -116,7 +116,8 @@ enum Command {
     ///   Use prose to write blog posts, reasoning, or notes within your ingest.
     ///
     /// RULES:
-    ///   - Items and votes reference paths without ~ (shell expands ~ to HOME).
+    ///   - In this file/heredoc, items and votes use ~/path (literal tilde — quote heredoc, e.g. <<'EOF', so ~ is not expanded).
+    ///   - For `garden body|rank|…` CLI *arguments* only: pass languages/python (no ~); the shell expands ~ to $HOME.
     ///   - Paths are canonicalized: slashes normalized, duplicate segments removed.
     ///   - Bodies can use code fences (```), braces ({}), or double braces ({{}}).
     ///   - Bodies longer than 10k chars are truncated by default (use ?full=true in web UI).
@@ -253,6 +254,7 @@ enum GardenCmd {
     /// Bodies longer than 10,000 characters are truncated by default.
     /// Use --full to retrieve the complete body.
     Body {
+        /// Ontology path without shell `~` (e.g. `languages/python`). The CLI sends `~/…` to the API.
         #[arg(value_name = "PATH")]
         path: String,
         /// Output as JSON for agent parsing
@@ -293,6 +295,7 @@ enum GardenCmd {
 
     /// Suggest a comparison pair under a path + relevant threads where it's discussed.
     Pair {
+        /// Parent path without shell `~` (e.g. `conn` or `models/ai`). The CLI sends `~/…` to the API.
         #[arg(value_name = "PATH")]
         path: String,
         /// Output as JSON for agent parsing
@@ -308,6 +311,7 @@ enum GardenCmd {
 
     /// Vote history for an item (wins/losses) with thread per vote.
     Matchup {
+        /// Item path without shell `~` (e.g. `sorts/insertion`). The CLI sends `~/…` to the API.
         #[arg(value_name = "PATH")]
         path: String,
         /// Output as JSON for agent parsing
@@ -351,6 +355,7 @@ enum GardenCmd {
 
     /// Rank history for an item — how its position changed over time and why.
     History {
+        /// Item path without shell `~` (e.g. `hist/rust`). The CLI sends `~/…` to the API.
         #[arg(value_name = "PATH")]
         path: String,
         /// Output as JSON for agent parsing
@@ -634,7 +639,9 @@ fn http_client() -> Result<reqwest::Client> {
 }
 
 /// Normalize ontology path for API. Accepts path with or without ~/ (shell expands ~ to $HOME).
-/// Returns path without leading ~ or / so it's safe for URLs and the server canonicalizes.
+/// Returns a bare slug path (e.g. `languages/python`) with no leading `/` or `~/`.
+/// Call `ontology_path_for_api_query` before sending `item=` / `parent=` params so the server
+/// gets `~/…` and canonicalizes to `https://slug.social/~/…`.
 fn normalize_ontology_path_input(path: &str) -> Result<String, String> {
     let p = path.trim();
     if p.contains('*') {
@@ -666,6 +673,16 @@ fn normalize_ontology_path_input(path: &str) -> Result<String, String> {
         return Err("path must be non-empty (e.g. languages or languages/python)".to_string());
     }
     Ok(without_sigils.to_string())
+}
+
+/// Query-string form for ontology items: `~/` + normalized path, or full URL unchanged.
+fn ontology_path_for_api_query(normalized: &str) -> String {
+    let p = normalized.trim();
+    if p.starts_with("http://") || p.starts_with("https://") {
+        p.to_string()
+    } else {
+        format!("~/{}", p.trim_start_matches('/'))
+    }
 }
 
 /// Thread name for API; strip leading # so shell users can omit it (# is comment).
@@ -786,8 +803,9 @@ async fn main() -> Result<()> {
 
             GardenCmd::Body { path, json, full, actor, passkey } => {
                 let path = normalize_ontology_path_input(&path).map_err(anyhow::Error::msg)?;
+                let item_q = ontology_path_for_api_query(&path);
                 let client = http_client()?;
-                let mut url = format!("{base}/api/v0/item?item={}", urlencoding::encode(&path));
+                let mut url = format!("{base}/api/v0/item?item={}", urlencoding::encode(&item_q));
                 if let Some(a) = &actor {
                     url.push_str(&format!("&actor={}", urlencoding::encode(a)));
                 }
@@ -812,7 +830,11 @@ async fn main() -> Result<()> {
                     .map(|p| normalize_ontology_path_input(p).map_err(anyhow::Error::msg))
                     .collect::<Result<Vec<_>>>()?;
                 let client = http_client()?;
-                let parent_param = paths.join(",");
+                let parent_param = paths
+                    .iter()
+                    .map(|p| ontology_path_for_api_query(p))
+                    .collect::<Vec<_>>()
+                    .join(",");
                 let mut url = format!("{base}/api/v0/rank?parent={}", urlencoding::encode(&parent_param));
                 if let Some(d) = depth {
                     url.push_str(&format!("&depth={d}"));
@@ -835,8 +857,9 @@ async fn main() -> Result<()> {
 
             GardenCmd::Pair { path, json, actor, passkey } => {
                 let path = normalize_ontology_path_input(&path).map_err(anyhow::Error::msg)?;
+                let parent_q = ontology_path_for_api_query(&path);
                 let client = http_client()?;
-                let mut url = format!("{base}/api/v0/pair?parent={}", urlencoding::encode(&path));
+                let mut url = format!("{base}/api/v0/pair?parent={}", urlencoding::encode(&parent_q));
                 if let Some(a) = &actor {
                     url.push_str(&format!("&actor={}", urlencoding::encode(a)));
                 }
@@ -854,8 +877,9 @@ async fn main() -> Result<()> {
 
             GardenCmd::Matchup { path, json, actor, passkey } => {
                 let path = normalize_ontology_path_input(&path).map_err(anyhow::Error::msg)?;
+                let item_q = ontology_path_for_api_query(&path);
                 let client = http_client()?;
-                let mut url = format!("{base}/api/v0/matchup?item={}", urlencoding::encode(&path));
+                let mut url = format!("{base}/api/v0/matchup?item={}", urlencoding::encode(&item_q));
                 if let Some(a) = &actor {
                     url.push_str(&format!("&actor={}", urlencoding::encode(a)));
                 }
@@ -873,8 +897,9 @@ async fn main() -> Result<()> {
 
             GardenCmd::History { path, json, actor, passkey } => {
                 let path = normalize_ontology_path_input(&path).map_err(anyhow::Error::msg)?;
+                let item_q = ontology_path_for_api_query(&path);
                 let client = http_client()?;
-                let mut url = format!("{base}/api/v0/rank-history?item={}", urlencoding::encode(&path));
+                let mut url = format!("{base}/api/v0/rank-history?item={}", urlencoding::encode(&item_q));
                 if let Some(a) = &actor {
                     url.push_str(&format!("&actor={}", urlencoding::encode(a)));
                 }

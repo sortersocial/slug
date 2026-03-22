@@ -15,64 +15,64 @@ subsequent items will be catalogued in the index under this context.
 
 We are in a tag, now let's declare an item.
 
-/a
+~/alphabet/a
 
-/b
+~/alphabet/b
 
-The prefix character / denotes, when the first character on a line, the
-beginning of the title of an item.
+The prefix `~/` denotes, when the first characters on a line, the beginning
+of the title of an ontology item (the garden layer).
 Now we have two discrete, addressable items. Imagine two dots floating on a
 2d plane.
 Now let's draw a line segment between the two dots.
 
-/a 2:1 /b {a edges out b in this ranking}
+~/alphabet/a 2:1 ~/alphabet/b {a edges out b in this ranking}
 
 
-We have asserted that /a wins over /b, winning 66% of that matchup.
+We have asserted that ~/alphabet/a wins over ~/alphabet/b, winning 66% of that matchup.
 From this assertion we derive the ranking:
 
-1) /a
-2) /b
+1) ~/alphabet/a
+2) ~/alphabet/b
 
 If we were to send this email right now, we could view the ranking at
 https://slug.social/~/alphabet
 Easy enough.
 
-/c
+~/alphabet/c
 
-/a 3:1 /c {a strongly preferred to c here}
+~/alphabet/a 3:1 ~/alphabet/c {a strongly preferred to c here}
 Now the ranking is
 
-1) /a
-2) /b
-3) /c
+1) ~/alphabet/a
+2) ~/alphabet/b
+3) ~/alphabet/c
 
-Notice how we never compared /b and /c. Both lose to /a, but /b and /c’s
-relative ranking is determined from the ratio. /a wins 75% over /c, and
-only 66% over /b. This is enough information to construct an accurate
+Notice how we never compared ~/alphabet/b and ~/alphabet/c. Both lose to ~/alphabet/a, but ~/alphabet/b and ~/alphabet/c’s
+relative ranking is determined from the ratio. ~/alphabet/a wins 75% over ~/alphabet/c, and
+only 66% over ~/alphabet/b. This is enough information to construct an accurate
 ranking.
 
 Lets sort some properties about sorter itself.
 
 #sorter-properties
 
-/transitive {
-We are now in the body of the item titled /transitive, because of the open
+~/sorter-properties/transitive {
+We are now in the body of the item titled ~/sorter-properties/transitive, because of the open
 bracket. We could write an entire essay here.
 Transitive is the property I just demonstrated above. The ranking between
-/b and /c is inferred from the other two rankings.
+~/alphabet/b and ~/alphabet/c is inferred from the other two rankings.
 In general, with precise ratios, you only need N-1 votes for N items. Just
 enough to connect all the dots together.
 }
 
-/precise {
+~/sorter-properties/precise {
 As you can tell, sorter forces more precise thinking. More precise in that
 your prose needs to conform to syntax, but also more precise in that you
 need to discretize your thoughts into titled blocks, and put ratios to
 judgements.
 }
 
-/asynchronous {
+~/sorter-properties/asynchronous {
 Slug’s primary interface is the web + API. (Email ingestion is not implemented yet.)
 submit your items/votes/prose. All emails are public once sent, indexed on
 the website verbatim, and also deconstructed and compiled into the
@@ -82,7 +82,7 @@ consensus happens at the speed of contemplation, not the speed of a social
 media feed.
 }
 
-/collective {
+~/sorter-properties/collective {
 Sorter is multiplayer. Anyone can add to #sorter-properties, just by
 emailing in a syntax-conforming snippet. Anyone can vote on what they think
 the ordering should be.
@@ -90,39 +90,39 @@ Sorter is a collaborative project.
 Nobody owns the rankings. Everybody owns the rankings.
 }
 
-/new {
+~/sorter-properties/new {
 Sorter is completely original and nothing like this has ever existed before
 }
 
 
-/proprietary {
+~/sorter-properties/proprietary {
 Sorter is proprietary, trying to become a venture scale business.
 }
 
 Now we have six dots swimming around. Lets order them.
 
 truth
-/collective = /asynchronous {roughly equally important}
-/asynchronous = /precise {roughly equally important}
-/precise = /transitive {roughly equally important}
+~/sorter-properties/collective = ~/sorter-properties/asynchronous {roughly equally important}
+~/sorter-properties/asynchronous = ~/sorter-properties/precise {roughly equally important}
+~/sorter-properties/precise = ~/sorter-properties/transitive {roughly equally important}
 
 All equally, absolutely true.
 
-/asynchronous 10:1 /new {
+~/sorter-properties/asynchronous 10:1 ~/sorter-properties/new {
 Sorter is certainly asynchronous.
 There have been many explorations of the core sorter idea. Pairwise
 comparisons have been studied for decades. Conjoint analysis. HotOrNot.
 Sorter is just one iteration of the human desire to rank things collectively
 }
 
-/new 100:1 /proprietary {
+~/sorter-properties/new 100:1 ~/sorter-properties/proprietary {
 There are some new things about sorter. The backwards compatible with prose
 syntax.
 The synthesis of email-first, rank-centrality, and social platform. So
-there is a hint of truth to /new.
-But sorter is absolutely not /proprietary. Sorter is open source.
+there is a hint of truth to ~/sorter-properties/new.
+But sorter is absolutely not ~/sorter-properties/proprietary. Sorter is open source.
 github.com/sortersocial/index
-Therefore, /proprietary is banished 100:1 to the false end of the spectrum.
+Therefore, ~/sorter-properties/proprietary is banished 100:1 to the false end of the spectrum.
 }
 
 In sorter, there are no binaries. Everything is a spectrum, including
@@ -131,11 +131,11 @@ truth.
 The most important thing, in my mind, about sorter is that it’s collective.
 
 important
-/collective 100:20 /asynchronous { sorter would still be cool if it was
+~/sorter-properties/collective 100:20 ~/sorter-properties/asynchronous { sorter would still be cool if it was
 live }
-/collective 100:90 /precise { precise thinking is good too }
-/collective 100:90 /transitive { transitivity enables collectivity }
-/collective 100:10 /new { other iterations of sorter were good too }
+~/sorter-properties/collective 100:90 ~/sorter-properties/precise { precise thinking is good too }
+~/sorter-properties/collective 100:90 ~/sorter-properties/transitive { transitivity enables collectivity }
+~/sorter-properties/collective 100:10 ~/sorter-properties/new { other iterations of sorter were good too }
 
 
 Any other person could add to or vote on #sorter-properties, this is just

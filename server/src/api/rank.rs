@@ -15,7 +15,10 @@ use crate::{
 };
 
 use super::auth::verified_actor_uuid;
-use super::helpers::{api_error, compute_connectivity_stats, is_pair_voted, paginate_rankings, parse_parent_specs, pick_random_distinct};
+use super::helpers::{
+    api_error, compute_connectivity_stats, is_pair_voted, item_path_for_api, paginate_rankings,
+    parse_parent_specs, pick_random_distinct,
+};
 
 // ============================================================================
 // Rank / Pair -- one-ranking (parent-path-filtered)
@@ -73,7 +76,7 @@ pub async fn get_rank(State(state): State<AppState>, headers: HeaderMap, Query(q
         let all_items: Vec<String> = reduced.items.iter().cloned().collect();
         crate::scope_rank::build_rankings_for_item_set(&reduced, &all_items)
     } else if specs.is_empty() {
-        crate::scope_rank::build_children_rankings(&reduced, "")
+        crate::scope_rank::build_children_rankings(&reduced, "https://slug.social/~")
     } else if depth > 1 {
         let items = crate::scope_rank::resolve_scope_recursive(&reduced, &specs, depth);
         crate::scope_rank::build_rankings_for_item_set(&reduced, &items)
@@ -99,7 +102,7 @@ pub async fn get_rank(State(state): State<AppState>, headers: HeaderMap, Query(q
                         Some(owner) => authed_uuid.as_deref() == Some(owner),
                     })
                     .map(|r| RankRow {
-                        item: format!("/{}", r.item),
+                        item: item_path_for_api(&r.item),
                         percent: if want_percent {
                             Some((r.score / max_score) * 100.0)
                         } else {
@@ -119,7 +122,7 @@ pub async fn get_rank(State(state): State<AppState>, headers: HeaderMap, Query(q
             None => true,
             Some(owner) => authed_uuid.as_deref() == Some(owner),
         })
-        .map(|s| format!("/{s}"))
+        .map(|s| item_path_for_api(&s))
         .collect();
 
     let offset = q.offset.unwrap_or(0);
@@ -195,7 +198,7 @@ pub async fn get_global_rank(
                 if authed_uuid.as_deref() != Some(owner) { continue; }
             }
             let pct = want_percent.then(|| ((r.score - bot) / range * 100.0).clamp(0.0, 100.0));
-            ranked.push(RankRow { item: format!("/{}", r.item), score: r.score, percent: pct });
+            ranked.push(RankRow { item: item_path_for_api(&r.item), score: r.score, percent: pct });
         }
     }
 
@@ -218,7 +221,7 @@ pub async fn get_global_rank(
     let page: Vec<RankRow> = ranked
         .into_iter()
         .chain(unranked.into_iter().map(|it| RankRow {
-            item: format!("/{}", it),
+            item: item_path_for_api(&it),
             score: 0.0,
             percent: want_percent.then_some(0.0),
         }))
@@ -290,8 +293,8 @@ pub async fn get_rank_history(
                         if a == item || b == item {
                             Some(VoteRow {
                                 ts: e.ts,
-                                a: format!("/{}", a),
-                                b: format!("/{}", b),
+                                a: item_path_for_api(&a),
+                                b: item_path_for_api(&b),
                                 ratio: format!("{}:{}", ratio_left, ratio_right),
                                 actor: reduced.ingests_by_id.get(&e.post_id).map(|ing| ing.actor.clone()),
                                 body: explanation,
@@ -331,7 +334,7 @@ pub async fn get_rank_history(
     }).collect();
 
     Json(slug_types::RankHistoryResponse {
-        item: format!("/{}", item),
+        item: item_path_for_api(&item),
         history,
     }).into_response()
 }
@@ -399,8 +402,8 @@ pub async fn get_pair(State(state): State<AppState>, headers: HeaderMap, Query(q
             (lb, rb, th, cs)
         };
         return Json(PairResponse {
-            left: format!("/{}", left),
-            right: format!("/{}", right),
+            left: item_path_for_api(&left),
+            right: item_path_for_api(&right),
             left_body,
             right_body,
             threads,
@@ -484,8 +487,8 @@ pub async fn get_pair(State(state): State<AppState>, headers: HeaderMap, Query(q
         (lb, rb, th, cs)
     };
     Json(PairResponse {
-        left: format!("/{}", left),
-        right: format!("/{}", right),
+        left: item_path_for_api(&left),
+        right: item_path_for_api(&right),
         left_body,
         right_body,
         threads,

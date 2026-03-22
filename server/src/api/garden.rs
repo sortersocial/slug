@@ -14,7 +14,7 @@ use crate::{
 };
 
 use super::auth::verified_actor_uuid;
-use super::helpers::{api_error, vote_touches_path};
+use super::helpers::{api_error, item_path_for_api, vote_touches_path};
 
 // ============================================================================
 // Exploration APIs (read-only)
@@ -119,7 +119,11 @@ pub async fn get_item(State(state): State<AppState>, headers: HeaderMap, Query(q
     }
 
     if !reduced.items.contains(&item) {
-        return api_error(StatusCode::NOT_FOUND, "item not found", Some(format!("/{} does not exist", item)));
+        return api_error(
+            StatusCode::NOT_FOUND,
+            "item not found",
+            Some(format!("{} does not exist", item_path_for_api(&item))),
+        );
     }
 
     const MAX_ITEM_BODY: usize = 10_000;
@@ -145,7 +149,7 @@ pub async fn get_item(State(state): State<AppState>, headers: HeaderMap, Query(q
         .unwrap_or_default();
 
     Json(ItemResponse {
-        item: format!("/{}", item),
+        item: item.clone(),
         body,
         truncated,
         body_len,
@@ -203,8 +207,8 @@ pub async fn get_recent_votes(
         .take(limit)
         .map(|v| VoteRow {
             ts: v.ts,
-            a: format!("/{}", v.a),
-            b: format!("/{}", v.b),
+            a: v.a.clone(),
+            b: v.b.clone(),
             ratio: format!("{}:{}", v.ratio_left, v.ratio_right),
             actor: Some(format!("@{}", v.actor)),
             body: v.body.clone(),
@@ -246,7 +250,11 @@ pub async fn get_matchup(
     }
 
     if !reduced.items.contains(&item) {
-        return api_error(StatusCode::NOT_FOUND, "item not found", Some(format!("/{} does not exist", item)));
+        return api_error(
+            StatusCode::NOT_FOUND,
+            "item not found",
+            Some(format!("{} does not exist", item_path_for_api(&item))),
+        );
     }
 
     let votes: Vec<VoteRow> = reduced
@@ -268,8 +276,8 @@ pub async fn get_matchup(
                 })
                 .map(|v| VoteRow {
                     ts: v.ts,
-                    a: format!("/{}", v.a),
-                    b: format!("/{}", v.b),
+                    a: v.a.clone(),
+                    b: v.b.clone(),
                     ratio: format!("{}:{}", v.ratio_left, v.ratio_right),
                     actor: Some(format!("@{}", v.actor)),
                     body: v.body.clone(),
@@ -280,7 +288,7 @@ pub async fn get_matchup(
         .unwrap_or_default();
 
     Json(MatchupResponse {
-        item: format!("/{}", item),
+        item: item_path_for_api(&item),
         votes,
     })
     .into_response()

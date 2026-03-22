@@ -31,7 +31,7 @@ fn item_href(item: &str) -> String {
 pub async fn garden_index(State(state): State<AppState>) -> impl IntoResponse {
     let child_rankings = {
         let reduced = state.reduced.read().await;
-        build_children_rankings(&reduced, "")
+        build_children_rankings(&reduced, "https://slug.social/~")
     };
 
     let views = state.views.get_views("/~");
@@ -509,12 +509,12 @@ mod tests {
             &mut reduced,
             1,
             "@00000000-0000-0000-0000-000000000000:test:local/test\n\
-             /topic {topic body}\n\
-             /topic/a {alpha}\n\
-             /topic/b {beta}\n",
+             ~/topic {topic body}\n\
+             ~/topic/a {alpha}\n\
+             ~/topic/b {beta}\n",
         );
 
-        let model = build_item_page_view_model(&reduced, "topic/a", 50);
+        let model = build_item_page_view_model(&reduced, "~/topic/a", 50);
         assert_eq!(model.body.as_deref(), Some("alpha"));
         assert!(model.sibling_rank.is_none());
         assert!(model.child_rankings.component_rankings.is_empty());
@@ -527,18 +527,18 @@ mod tests {
             &mut reduced,
             1,
             "@00000000-0000-0000-0000-000000000000:test:local/test\n\
-             /topic/a {alpha}\n\
-             /topic/b {beta}\n\
-             /other/x {x}\n\
-             /other/y {y}\n\
-             /topic/a 3:1 /topic/b {topic vote}\n\
-             /other/x 4:1 /other/y {other vote}\n",
+             ~/topic/a {alpha}\n\
+             ~/topic/b {beta}\n\
+             ~/other/x {x}\n\
+             ~/other/y {y}\n\
+             ~/topic/a 3:1 ~/topic/b {topic vote}\n\
+             ~/other/x 4:1 ~/other/y {other vote}\n",
         );
 
-        let model = build_item_page_view_model(&reduced, "topic/a", 50);
+        let model = build_item_page_view_model(&reduced, "~/topic/a", 50);
         assert_eq!(model.touching_votes.len(), 1);
-        assert_eq!(model.touching_votes[0].a, "topic/a");
-        assert_eq!(model.touching_votes[0].b, "topic/b");
+        assert_eq!(model.touching_votes[0].a, "https://slug.social/~/topic/a");
+        assert_eq!(model.touching_votes[0].b, "https://slug.social/~/topic/b");
     }
 
     #[test]
@@ -548,14 +548,14 @@ mod tests {
             &mut reduced,
             1,
             "@00000000-0000-0000-0000-000000000000:test:local/test\n\
-             /topic {topic body}\n\
-             /topic/a {alpha}\n\
-             /topic/b {beta}\n\
-             /topic/c {gamma}\n\
-             /topic/a 2:1 /topic/b {a beats b}\n",
+             ~/topic {topic body}\n\
+             ~/topic/a {alpha}\n\
+             ~/topic/b {beta}\n\
+             ~/topic/c {gamma}\n\
+             ~/topic/a 2:1 ~/topic/b {a beats b}\n",
         );
 
-        let model = build_item_page_view_model(&reduced, "topic/a", 50);
+        let model = build_item_page_view_model(&reduced, "~/topic/a", 50);
         let rank = model.sibling_rank.expect("expected sibling rank");
         assert_eq!(rank.position, 1);
         assert_eq!(rank.component_size, 2);
@@ -569,16 +569,16 @@ mod tests {
             &mut reduced,
             1,
             "@00000000-0000-0000-0000-000000000000:test:local/test\n\
-             /topic {root}\n\
-             /topic/a {alpha}\n\
-             /topic/b {beta}\n\
-             /topic/a 3:1 /topic/b {a beats b}\n\
-             /topic/kid1 {k1}\n\
-             /topic/kid2 {k2}\n\
-             /topic/kid1/leaf {leaf}\n",
+             ~/topic {root}\n\
+             ~/topic/a {alpha}\n\
+             ~/topic/b {beta}\n\
+             ~/topic/a 3:1 ~/topic/b {a beats b}\n\
+             ~/topic/kid1 {k1}\n\
+             ~/topic/kid2 {k2}\n\
+             ~/topic/kid1/leaf {leaf}\n",
         );
 
-        let model = build_item_page_view_model(&reduced, "topic", 50);
+        let model = build_item_page_view_model(&reduced, "~/topic", 50);
         assert_eq!(model.child_rankings.component_rankings.len(), 1);
         assert_eq!(model.child_rankings.component_rankings[0].pairs, 1);
         let names: Vec<&str> = model.child_rankings.component_rankings[0]
@@ -586,10 +586,10 @@ mod tests {
             .iter()
             .map(|r| r.item.as_str())
             .collect();
-        assert_eq!(names, vec!["topic/a", "topic/b"]);
+        assert_eq!(names, vec!["https://slug.social/~/topic/a", "https://slug.social/~/topic/b"]);
         assert!(
-            model.child_rankings.unranked_items.contains(&"topic/kid1".to_string())
-                || model.child_rankings.unranked_items.contains(&"topic/kid2".to_string())
+            model.child_rankings.unranked_items.contains(&"https://slug.social/~/topic/kid1".to_string())
+                || model.child_rankings.unranked_items.contains(&"https://slug.social/~/topic/kid2".to_string())
         );
     }
 }

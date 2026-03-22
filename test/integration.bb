@@ -214,7 +214,8 @@
              (assert! (:ok resp) "check response ok=true")
              (assert! (= 1 (count (:rankings resp))) "check returns one touched parent scope")
              (let [scope (first (:rankings resp))]
-               (assert! (= "/disc" (:parent scope)) "check scope parent is /disc")
+               (assert! (= "https://slug.social/~/disc" (:parent scope))
+                        "check scope parent is canonical ~/disc URL")
                (assert! (= 2 (count (:components scope))) "check preserves two disconnected components")
                (assert! (every? #(= 2 (count (:ranking %))) (:components scope))
                         "each component ranks 2 items")
@@ -351,7 +352,8 @@
            (assert! (zero? (:exit result))
                     (str "cli garden history exits 0 (err: " (:err result) ")"))
            (let [resp (json/parse-string (:out result) true)]
-             (assert! (= "/languages/rust" (:item resp)) "history item path is /languages/rust")
+             (assert! (= "https://slug.social/~/languages/rust" (:item resp))
+                      "history item path is canonical ~/languages/rust URL")
              (assert! (>= (count (:history resp)) 2)
                       (str "rust has at least 2 history entries (got " (count (:history resp)) ")"))
 

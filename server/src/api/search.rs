@@ -7,6 +7,8 @@ use serde::Deserialize;
 
 use crate::state::AppState;
 
+use super::helpers::item_path_for_api;
+
 // ============================================================================
 // Search
 // ============================================================================
@@ -80,7 +82,7 @@ pub async fn get_search(
         }
         if score > 0 {
             scored_items.push((score, slug_types::SearchItemHit {
-                path: format!("/{item}"),
+                path: item_path_for_api(item),
                 body: reduced.item_bodies.get(item).map(|b| snippet_around(b, &words, 120)),
             }));
         }

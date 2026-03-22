@@ -30,6 +30,15 @@ pub fn now_ms() -> i64 {
     t.as_millis() as i64
 }
 
+/// Serialize a canonical item for JSON: absolute URLs stay as-is; bare paths get a `/` prefix.
+pub fn item_path_for_api(item: &str) -> String {
+    if item.starts_with("http://") || item.starts_with("https://") {
+        item.to_string()
+    } else {
+        format!("/{}", item)
+    }
+}
+
 /// Resolve an item path as a first-class canonical path.
 pub fn resolve_item(item: &str) -> Result<String, String> {
     let canonical = canonicalize_item(item);

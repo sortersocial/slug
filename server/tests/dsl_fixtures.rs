@@ -32,7 +32,7 @@ fn parses_tutorial_fixture_with_prose() {
 
 #[test]
 fn parses_big_book_fixture_with_attached_bodies() {
-    // This doc heavily uses the "/name{...}" style with no whitespace.
+    // This doc heavily uses the "~/name{...}" style with no whitespace.
     let doc = dsl::parse_full(BIG_BOOK).expect("parse_full should succeed");
 
     let mut hashtags = 0usize;
