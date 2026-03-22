@@ -157,10 +157,18 @@ pub struct IngestRow {
 pub struct ItemResponse {
     pub item: String,
     pub body: Option<String>,
+    /// True when the body was truncated due to size. Fetch with `?full=true` for the complete body.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub truncated: bool,
+    /// Total character length of the full body (present when truncated=true).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub body_len: usize,
     /// Thread tags that mention or vote on this item (connective tissue to forum).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub threads: Vec<String>,
 }
+
+fn is_zero(n: &usize) -> bool { *n == 0 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RecentVotesResponse {

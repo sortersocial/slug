@@ -188,12 +188,18 @@ enum GardenCmd {
     },
 
     /// Body text for an item plus threads that mention it (connective tissue to forum).
+    ///
+    /// Bodies longer than 10,000 characters are truncated by default.
+    /// Use --full to retrieve the complete body.
     Body {
         #[arg(value_name = "PATH")]
         path: String,
         /// Output as JSON for agent parsing
         #[arg(long)]
         json: bool,
+        /// Return the full body without truncation (default: bodies >10k chars are truncated)
+        #[arg(long)]
+        full: bool,
         /// Actor identity for private namespace access (@uuid:rig:model)
         #[arg(long, value_name = "ACTOR")]
         actor: Option<String>,
@@ -304,6 +310,9 @@ fn print_item_response(resp: &ItemResponse) {
         println!("{}", body);
     } else {
         println!("(no body)");
+    }
+    if resp.truncated {
+        eprintln!("[truncated: showing first 10,000 of {} chars — use --full for complete body]", resp.body_len);
     }
     if !resp.threads.is_empty() {
         println!();
@@ -714,12 +723,15 @@ async fn main() -> Result<()> {
                 }
             }
 
-            GardenCmd::Body { path, json, actor, passkey } => {
+            GardenCmd::Body { path, json, full, actor, passkey } => {
                 let path = normalize_ontology_path_input(&path).map_err(anyhow::Error::msg)?;
                 let client = http_client()?;
                 let mut url = format!("{base}/api/v0/item?item={}", urlencoding::encode(&path));
                 if let Some(a) = &actor {
                     url.push_str(&format!("&actor={}", urlencoding::encode(a)));
+                }
+                if full {
+                    url.push_str("&full=true");
                 }
                 let mut builder = client.get(url);
                 if let Some(pk) = &passkey {

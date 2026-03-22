@@ -100,6 +100,9 @@ pub struct ItemQuery {
     pub actor: Option<String>,
     #[serde(default)]
     pub passkey: Option<String>,
+    /// Return the full body without truncation (default: false, bodies >10k chars are truncated).
+    #[serde(default)]
+    pub full: Option<bool>,
 }
 
 pub async fn get_item(State(state): State<AppState>, headers: HeaderMap, Query(q): Query<ItemQuery>) -> impl IntoResponse {
@@ -119,7 +122,22 @@ pub async fn get_item(State(state): State<AppState>, headers: HeaderMap, Query(q
         return api_error(StatusCode::NOT_FOUND, "item not found", Some(format!("/{} does not exist", item)));
     }
 
-    let body = reduced.item_bodies.get(&item).cloned();
+    const MAX_ITEM_BODY: usize = 10_000;
+    let want_full = q.full.unwrap_or(false);
+
+    let (body, truncated, body_len) = match reduced.item_bodies.get(&item) {
+        None => (None, false, 0),
+        Some(raw) => {
+            let char_len = raw.chars().count();
+            if !want_full && char_len > MAX_ITEM_BODY {
+                let byte_end = raw.char_indices().nth(MAX_ITEM_BODY).map(|(i, _)| i).unwrap_or(raw.len());
+                (Some(raw[..byte_end].to_string()), true, char_len)
+            } else {
+                (Some(raw.clone()), false, 0)
+            }
+        }
+    };
+
     let threads: Vec<String> = reduced
         .item_threads
         .get(&item)
@@ -129,6 +147,8 @@ pub async fn get_item(State(state): State<AppState>, headers: HeaderMap, Query(q
     Json(ItemResponse {
         item: format!("/{}", item),
         body,
+        truncated,
+        body_len,
         threads,
     })
     .into_response()
