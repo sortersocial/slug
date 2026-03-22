@@ -5,7 +5,7 @@ use axum::{
     Json,
 };
 use rand::seq::SliceRandom;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use slug_types::*;
 use std::collections::{BTreeSet, HashSet};

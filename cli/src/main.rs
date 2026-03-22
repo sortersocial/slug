@@ -277,12 +277,6 @@ enum GardenCmd {
     },
 }
 
-/// Output exactly one line per ranking row so wc -l equals item count.
-fn print_ranking(rows: &[RankRow]) {
-    for (i, r) in rows.iter().enumerate() {
-        println!("{:>3}. {:<24} {:.6}", i + 1, r.item, r.score);
-    }
-}
 
 fn print_item_response(resp: &ItemResponse) {
     if let Some(body) = &resp.body {
