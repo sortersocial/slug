@@ -312,11 +312,11 @@ impl ReducerState {
                     HashMap::new()
                 };
 
-                let mut current_thread: Option<String> = None;
                 let mut current_actor: Option<String> = Some(ing.actor.clone());
+                let mut canonical_thread: Option<String> = None;
 
-                // Threads explicitly declared in this ingest (#tag or quoted title).
-                let mut touched_threads: HashSet<String> = HashSet::new();
+                // Single-thread semantics: the first thread declaration wins for the whole ingest.
+                // Historical events that declared multiple threads are replayed into one canonical thread.
                 // Items referenced in this ingest (for snippet indexing).
                 let mut ingest_items: HashSet<String> = HashSet::new();
 
@@ -324,8 +324,9 @@ impl ReducerState {
                     match stmt {
                         crate::dsl::Stmt::Hashtag { name } => {
                             let t = canonicalize_tag(&name);
-                            touched_threads.insert(t.clone());
-                            current_thread = Some(t);
+                            if canonical_thread.is_none() {
+                                canonical_thread = Some(t);
+                            }
                         }
                         crate::dsl::Stmt::Actor { name } => {
                             current_actor = Some(canonicalize_actor(&name));
@@ -367,7 +368,7 @@ impl ReducerState {
                                 ratio_right,
                                 body: explanation,
                                 actor,
-                                thread: current_thread.clone().unwrap_or_else(|| "untagged".to_string()), // legacy replay: pre-validation events may have no thread declaration
+                                thread: canonical_thread.clone().unwrap_or_else(|| "untagged".to_string()), // legacy replay: pre-validation events may have no thread declaration
                             };
 
                             ingest_items.insert(item_a.clone());
@@ -395,18 +396,20 @@ impl ReducerState {
                 }
 
                 // Index item -> threads (connective tissue for garden body/pair/matchup).
-                for item in ingest_items.iter() {
-                    nav_each!(self.item_threads, keypath(item.clone()), set_elem, touched_threads.iter().cloned());
+                if let Some(thread) = &canonical_thread {
+                    for item in ingest_items.iter() {
+                        nav!(self.item_threads, keypath(item.clone()), set_elem(thread.clone()));
+                    }
                 }
 
-                // Bump thread state for explicitly declared threads.
-                for thread in &touched_threads {
+                // Bump thread state for the canonical thread.
+                if let Some(thread) = &canonical_thread {
                     let ts = self.threads.entry(thread.clone()).or_default();
                     nav!(ts.last_activity_ts, selected(ing.ts > ts.last_activity_ts, setval(ing.ts)));
                 }
 
-                // Index ingest by touched threads.
-                for thread in touched_threads {
+                // Index ingest by canonical thread.
+                if let Some(thread) = canonical_thread.clone() {
                     nav!(self.ingests_by_thread, keypath(thread), push_front(ing.id.clone()));
                 }
 
@@ -415,7 +418,7 @@ impl ReducerState {
                 // Snapshot ranks after votes and push history entries.
                 if !voted_items.is_empty() {
                     crate::ranking::compute_group_ranking(&mut self.ranking_group, 10000, 1e-8);
-                    let thread = current_thread.clone().unwrap_or_else(|| "untagged".to_string());
+                    let thread = canonical_thread.clone().unwrap_or_else(|| "untagged".to_string());
                     for item in &voted_items {
                         let after_scope  = Self::scope_rank_of(&self.ranking_group, item, &self.item_children);
                         let after_global = Self::global_rank_of(&self.ranking_group, item);

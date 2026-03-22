@@ -778,6 +778,29 @@ fn test_untagged_thread_fallback() {
 }
 
 #[test]
+fn test_multi_thread_historical_ingest_replays_to_first_thread_only() {
+    let mut state = ReducerState::default();
+    state.apply_event(ingest_event(
+        1,
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n#first\n#second\n~/t/a {a}\n~/t/b {b}\n~/t/a 2:1 ~/t/b {reason}\n",
+    ));
+
+    // New replay semantics: single post belongs to one canonical thread (first declaration).
+    let vote = state.item_votes.get("t/a").unwrap().front().unwrap();
+    assert_eq!(vote.thread, "first");
+    assert!(state.ingests_by_thread.contains_key("first"));
+    assert!(!state.ingests_by_thread.contains_key("second"));
+    assert!(state
+        .item_threads
+        .get("t/a")
+        .is_some_and(|threads| threads.contains("first")));
+    assert!(!state
+        .item_threads
+        .get("t/a")
+        .is_some_and(|threads| threads.contains("second")));
+}
+
+#[test]
 fn test_rank_history_created_for_voted_items() {
     let mut state = ReducerState::default();
     state.apply_event(ingest_event(

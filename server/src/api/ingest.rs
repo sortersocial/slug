@@ -6,7 +6,7 @@ use axum::{
 };
 use serde::Deserialize;
 use slug_types::*;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 
 use crate::{
     dsl,
@@ -51,7 +51,7 @@ pub fn validate_ingest_document(
     let ts = now_ms();
     let mut current_actor: Option<String> = None;
     let mut voter_key_id = "anon".to_string();
-    let mut threads_seen: BTreeSet<String> = BTreeSet::new();
+    let mut threads_seen: Vec<String> = Vec::new();
     let mut defined_in_doc: HashSet<String> = HashSet::new();
 
     for s in &doc.statements {
@@ -70,7 +70,9 @@ pub fn validate_ingest_document(
             }
             dsl::Stmt::Hashtag { name } => {
                 let t = canonicalize_tag(name);
-                threads_seen.insert(t);
+                if !threads_seen.contains(&t) {
+                    threads_seen.push(t);
+                }
             }
             dsl::Stmt::Item { title, body } => {
                 let item = match resolve_item(title) {
@@ -209,7 +211,21 @@ pub fn validate_ingest_document(
         }
     }
 
-    let threads: Vec<String> = threads_seen.into_iter().collect();
+    let threads: Vec<String> = threads_seen;
+    if threads.len() > 1 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "ingest may declare only one thread".to_string(),
+            Some(format!(
+                "found multiple thread declarations: {}",
+                threads
+                    .iter()
+                    .map(|t| format!("#{t}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )),
+        ));
+    }
     if threads.is_empty() {
         // Thread is optional only when every item and vote is under the actor's private namespace.
         // Pure prose posts and public items still require a #tag.

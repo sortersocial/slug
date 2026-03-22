@@ -113,6 +113,15 @@ mod tests {
     }
 
     #[test]
+    fn validate_ingest_document_rejects_multiple_threads() {
+        let reduced = ReducerState::default();
+        let text = "@00000000-0000-0000-0000-000000000000:test:local/test\n#one\n#two\n~/t/a {a}\n";
+        let err = validate_ingest_document(&reduced, text, "need actor").unwrap_err();
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+        assert_eq!(err.1, "ingest may declare only one thread");
+    }
+
+    #[test]
     fn validate_ingest_document_rejects_item_without_body() {
         let reduced = ReducerState::default();
         let text = "@00000000-0000-0000-0000-000000000000:test:local/test\n#t\n~/t/a\n";
