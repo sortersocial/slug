@@ -275,6 +275,21 @@ enum GardenCmd {
         #[arg(long, env = "SLUG_PASSKEY", hide_env_values = true)]
         passkey: Option<String>,
     },
+
+    /// Rank history for an item — how its position changed over time and why.
+    History {
+        #[arg(value_name = "PATH")]
+        path: String,
+        /// Output as JSON for agent parsing
+        #[arg(long)]
+        json: bool,
+        /// Actor identity for private namespace access (@uuid:rig:model)
+        #[arg(long, value_name = "ACTOR")]
+        actor: Option<String>,
+        /// Passkey for this actor (env: SLUG_PASSKEY)
+        #[arg(long, env = "SLUG_PASSKEY", hide_env_values = true)]
+        passkey: Option<String>,
+    },
 }
 
 
@@ -321,6 +336,39 @@ fn print_matchup_response(resp: &MatchupResponse) {
         println!("  {}  {}  {}  in {}", v.ratio, v.a, v.b, thread);
         if !v.body.is_empty() {
             println!("      {}", v.body.lines().next().unwrap_or(&v.body).trim());
+        }
+    }
+}
+
+fn print_rank_history_response(resp: &slug_types::RankHistoryResponse) {
+    println!("{}", resp.item);
+    if resp.history.is_empty() {
+        println!("  (no rank history)");
+        return;
+    }
+    for e in &resp.history {
+        let scope_arrow = match e.scope_rank_delta.cmp(&0) {
+            std::cmp::Ordering::Less    => format!("↑{}", e.scope_rank_delta.unsigned_abs()),
+            std::cmp::Ordering::Greater => format!("↓{}", e.scope_rank_delta),
+            std::cmp::Ordering::Equal   => "  ".to_string(),
+        };
+        let global_arrow = match e.global_rank_delta.cmp(&0) {
+            std::cmp::Ordering::Less    => format!("↑{}", e.global_rank_delta.unsigned_abs()),
+            std::cmp::Ordering::Greater => format!("↓{}", e.global_rank_delta),
+            std::cmp::Ordering::Equal   => "  ".to_string(),
+        };
+        println!(
+            "  scope #{:<3} {:>4}  global #{:<5} {:>4}  {}  {}",
+            e.scope_rank, scope_arrow, e.global_rank, global_arrow, e.thread, e.post_id
+        );
+        for v in &e.caused_by {
+            println!("    {}  {}  {}", v.ratio, v.a, v.b);
+            if !v.body.is_empty() {
+                println!("      {}", v.body.lines().next().unwrap_or(&v.body).trim());
+            }
+        }
+        if e.caused_by.is_empty() {
+            println!("    (transitive — rank shifted by votes elsewhere in the graph)");
         }
     }
 }
@@ -727,6 +775,25 @@ async fn main() -> Result<()> {
                     println!("{}", serde_json::to_string_pretty(&resp)?);
                 } else {
                     print_matchup_response(&resp);
+                }
+            }
+
+            GardenCmd::History { path, json, actor, passkey } => {
+                let path = normalize_ontology_path_input(&path).map_err(anyhow::Error::msg)?;
+                let client = http_client()?;
+                let mut url = format!("{base}/api/v0/rank-history?item={}", urlencoding::encode(&path));
+                if let Some(a) = &actor {
+                    url.push_str(&format!("&actor={}", urlencoding::encode(a)));
+                }
+                let mut builder = client.get(url);
+                if let Some(pk) = &passkey {
+                    builder = builder.header("x-slug-passkey", pk.as_str());
+                }
+                let resp: slug_types::RankHistoryResponse = expect_json(builder.send().await?).await?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&resp)?);
+                } else {
+                    print_rank_history_response(&resp);
                 }
             }
 

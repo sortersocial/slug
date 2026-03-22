@@ -116,6 +116,20 @@ impl GroupState {
     }
 }
 
+/// Compact rank-history entry stored per item in the ledger.
+/// `caused_by` is resolved lazily at query time from `ingests_by_id`.
+#[derive(Debug, Clone)]
+pub struct RankHistoryEntry {
+    pub ts: i64,
+    pub scope_rank: usize,
+    pub scope_rank_delta: i32,
+    pub global_rank: usize,
+    pub global_rank_delta: i32,
+    pub score: f64,
+    pub thread: String,
+    pub post_id: String,
+}
+
 /// First-class thread state. Tracks bump order and subscriber count.
 #[derive(Debug, Clone, Default)]
 pub struct ThreadState {
@@ -161,6 +175,9 @@ pub struct ReducerState {
 
     /// Last ingest timestamp (ms) per actor. Used by the digest endpoint to default `since`.
     pub actor_last_post_ts: HashMap<String, i64>,
+
+    /// Per-item rank history, oldest first.
+    pub rank_history: HashMap<String, Vec<RankHistoryEntry>>,
 }
 
 impl ReducerState {
@@ -192,6 +209,36 @@ impl ReducerState {
         Some(c)
     }
 
+    /// 1-indexed rank of `item` within its parent scope. 0 if unranked or scope unknown.
+    fn scope_rank_of(group: &GroupState, item: &str, item_children: &HashMap<String, HashSet<String>>) -> usize {
+        let scope = item_parent_path(item).unwrap_or_default();
+        let children = match item_children.get(&scope) {
+            None => return 0,
+            Some(c) => c,
+        };
+        let &idx = match group.item_to_idx.get(item) {
+            None => return 0,
+            Some(i) => i,
+        };
+        let item_score = group.cached_scores.get(idx).copied().unwrap_or(0.0);
+        let mut scores: Vec<f64> = children
+            .iter()
+            .filter_map(|c| group.item_to_idx.get(c).and_then(|&i| group.cached_scores.get(i)).copied())
+            .collect();
+        scores.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+        scores.iter().position(|&s| (s - item_score).abs() < f64::EPSILON * 1e6).map(|i| i + 1).unwrap_or(0)
+    }
+
+    /// 1-indexed global rank of `item` across all items. 0 if not in ranking group.
+    fn global_rank_of(group: &GroupState, item: &str) -> usize {
+        let &idx = match group.item_to_idx.get(item) {
+            None => return 0,
+            Some(i) => i,
+        };
+        let score = group.cached_scores.get(idx).copied().unwrap_or(0.0);
+        group.cached_scores.iter().filter(|&&s| s > score).count() + 1
+    }
+
     pub fn apply_event(&mut self, event: Event) {
         match event {
             Event::Ingest(mut ing) => {
@@ -205,6 +252,31 @@ impl ReducerState {
                         eprintln!("WARNING: Skipping malformed ingest event {}: {}", ing.id, e);
                         return;
                     }
+                };
+
+                // Pre-scan: collect items directly voted on in this ingest.
+                let voted_items: Vec<String> = doc.statements.iter().filter_map(|s| {
+                    if let crate::dsl::Stmt::Vote { item1, item2, .. } = s {
+                        Some([item1, item2])
+                    } else {
+                        None
+                    }
+                }).flat_map(|pair| pair.into_iter())
+                    .filter_map(|raw| Self::normalize_item(raw))
+                    .collect::<std::collections::HashSet<_>>()
+                    .into_iter().collect();
+
+                // Snapshot ranks before votes are applied (force-compute if stale).
+                let before: HashMap<String, (usize, usize)> = if !voted_items.is_empty() {
+                    crate::ranking::compute_group_ranking(&mut self.ranking_group, 10000, 1e-8);
+                    voted_items.iter()
+                        .map(|it| (it.clone(), (
+                            Self::scope_rank_of(&self.ranking_group, it, &self.item_children),
+                            Self::global_rank_of(&self.ranking_group, it),
+                        )))
+                        .collect()
+                } else {
+                    HashMap::new()
                 };
 
                 let mut current_thread: Option<String> = None;
@@ -392,6 +464,33 @@ impl ReducerState {
                 for thread in touched_threads {
                     let q = self.ingests_by_thread.entry(thread).or_default();
                     q.push_front(ing.id.clone());
+                }
+
+                // Snapshot ranks after votes and push history entries.
+                if !voted_items.is_empty() {
+                    crate::ranking::compute_group_ranking(&mut self.ranking_group, 10000, 1e-8);
+                    let thread = current_thread.clone().unwrap_or_else(|| "untagged".to_string());
+                    for item in &voted_items {
+                        let after_scope  = Self::scope_rank_of(&self.ranking_group, item, &self.item_children);
+                        let after_global = Self::global_rank_of(&self.ranking_group, item);
+                        let score = self.ranking_group.item_to_idx.get(item)
+                            .and_then(|&i| self.ranking_group.cached_scores.get(i))
+                            .copied().unwrap_or(0.0);
+                        let (before_scope, before_global) = before.get(item).copied().unwrap_or((0, 0));
+                        let prev = self.rank_history.get(item).and_then(|v| v.last());
+                        let scope_delta  = if prev.is_none() { 0 } else { after_scope as i32 - before_scope as i32 };
+                        let global_delta = if prev.is_none() { 0 } else { after_global as i32 - before_global as i32 };
+                        self.rank_history.entry(item.clone()).or_default().push(RankHistoryEntry {
+                            ts: ing.ts,
+                            scope_rank: after_scope,
+                            scope_rank_delta: scope_delta,
+                            global_rank: after_global,
+                            global_rank_delta: global_delta,
+                            score,
+                            thread: thread.clone(),
+                            post_id: ing.id.clone(),
+                        });
+                    }
                 }
 
                 self.actor_last_post_ts.insert(ing.actor.clone(), ing.ts);

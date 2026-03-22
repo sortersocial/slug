@@ -156,7 +156,7 @@ pub struct MatchupResponse {
     pub votes: Vec<VoteRow>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VoteRow {
     pub ts: i64,
     pub a: String,
@@ -306,6 +306,33 @@ pub struct SearchPostHit {
     pub actor: String,
     pub snippet: String,
     pub ts: i64,
+}
+
+/// One snapshot in an item's rank history.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RankHistoryRow {
+    pub ts: i64,
+    /// 1-indexed rank within the item's parent scope after this ingest. 0 = unranked.
+    pub scope_rank: usize,
+    /// scope_rank delta vs prior entry (after - before; 0 on first appearance).
+    pub scope_rank_delta: i32,
+    /// 1-indexed rank globally across all items after this ingest. 0 = not in ranking group.
+    pub global_rank: usize,
+    /// global_rank delta vs prior entry (after - before; 0 on first appearance).
+    pub global_rank_delta: i32,
+    pub score: f64,
+    /// Thread tag of the ingest that triggered this rank change.
+    pub thread: String,
+    /// Ingest ID — use with /api/v0/thread to link to the source post.
+    pub post_id: String,
+    /// Votes from this ingest that directly touched this item. Empty when change was transitive.
+    pub caused_by: Vec<VoteRow>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RankHistoryResponse {
+    pub item: String,
+    pub history: Vec<RankHistoryRow>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

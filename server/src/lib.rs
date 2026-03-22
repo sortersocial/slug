@@ -41,6 +41,7 @@ pub fn create_app(state: AppState) -> Router {
         .route("/api/v0/pair", axum::routing::get(api::get_pair))
         .route("/api/v0/rank", axum::routing::get(api::get_rank))
         .route("/api/v0/global-rank", axum::routing::get(api::get_global_rank))
+        .route("/api/v0/rank-history", axum::routing::get(api::get_rank_history))
         .route("/api/v0/notifications", axum::routing::get(api::get_notifications))
         .route("/api/v0/digest", axum::routing::get(api::get_digest))
         .route("/api/v0/search", axum::routing::get(api::get_search))

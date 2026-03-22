@@ -536,6 +536,96 @@ pub async fn get_global_rank(
     .into_response()
 }
 
+// ============================================================================
+// Rank history — per-item rank ledger
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+pub struct RankHistoryQuery {
+    pub item: String,
+    #[serde(default)]
+    pub actor: Option<String>,
+    #[serde(default)]
+    pub passkey: Option<String>,
+}
+
+pub async fn get_rank_history(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<RankHistoryQuery>,
+) -> impl IntoResponse {
+    let reduced_arc = state.reduced.clone();
+    let reduced = reduced_arc.read().await;
+    let passkey = headers
+        .get("x-slug-passkey")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string())
+        .or(q.passkey);
+    let authed_uuid = verified_actor_uuid(&reduced, q.actor.as_deref(), passkey.as_deref());
+
+    let item = crate::events::canonicalize_item(&q.item);
+
+    // Private item access check.
+    if let Some(owner) = crate::events::path_owner_uuid(&item) {
+        if authed_uuid.as_deref() != Some(owner) {
+            return (axum::http::StatusCode::FORBIDDEN, Json(slug_types::ApiError {
+                ok: false,
+                error: "forbidden".to_string(),
+                hint: None,
+            })).into_response();
+        }
+    }
+
+    let entries = reduced.rank_history.get(&item).cloned().unwrap_or_default();
+
+    // Resolve caused_by at query time: look up the ingest and filter relevant votes.
+    let history: Vec<slug_types::RankHistoryRow> = entries.iter().map(|e| {
+        let caused_by: Vec<VoteRow> = reduced.ingests_by_id.get(&e.post_id)
+            .and_then(|ing| crate::dsl::parse_full(&ing.raw).ok())
+            .map(|doc| {
+                doc.statements.into_iter().filter_map(|s| {
+                    if let crate::dsl::Stmt::Vote { item1, item2, ratio_left, ratio_right, explanation } = s {
+                        let a = crate::events::canonicalize_item(&item1);
+                        let b = crate::events::canonicalize_item(&item2);
+                        if a == item || b == item {
+                            Some(VoteRow {
+                                ts: e.ts,
+                                a: format!("/{}", a),
+                                b: format!("/{}", b),
+                                ratio: format!("{}:{}", ratio_left, ratio_right),
+                                actor: reduced.ingests_by_id.get(&e.post_id).map(|ing| ing.actor.clone()),
+                                body: explanation,
+                                thread: Some(format!("#{}", e.thread)),
+                            })
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                }).collect()
+            })
+            .unwrap_or_default();
+
+        slug_types::RankHistoryRow {
+            ts: e.ts,
+            scope_rank: e.scope_rank,
+            scope_rank_delta: e.scope_rank_delta,
+            global_rank: e.global_rank,
+            global_rank_delta: e.global_rank_delta,
+            score: e.score,
+            thread: format!("#{}", e.thread),
+            post_id: e.post_id.clone(),
+            caused_by,
+        }
+    }).collect();
+
+    Json(slug_types::RankHistoryResponse {
+        item: format!("/{}", item),
+        history,
+    }).into_response()
+}
+
 #[derive(Debug, Deserialize)]
 pub struct PairQuery {
     /// Parent path(s). Comma-separated to merge scopes: ~/a,~/b (e.g. rank ~/models ~/ai-models).

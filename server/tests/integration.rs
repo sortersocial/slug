@@ -718,3 +718,95 @@ async fn test_search_handles_multibyte_unicode() {
     assert!(frag2.status().is_success());
 }
 
+#[tokio::test]
+async fn test_rank_history() {
+    let (addr, _tmp, _log, _handle) = create_test_server().await;
+    let client = reqwest::Client::new();
+
+    let ingest = |text: &'static str| {
+        let client = client.clone();
+        let addr = addr;
+        async move {
+            client
+                .post(&format!("http://{}/api/v0/ingest", addr))
+                .header("x-slug-key", "test-key:test-secret")
+                .json(&serde_json::json!({ "text": text }))
+                .send()
+                .await
+                .unwrap()
+        }
+    };
+
+    // First ingest: rust vs python — two votes on rust in one doc (the multi-vote case).
+    ingest(
+        "@00000000-0000-0000-0000-000000000001:rig:test/model\n\
+         #hist-test\n\
+         /hist/rust { systems }\n\
+         /hist/python { scripting }\n\
+         /hist/go { concurrency }\n\
+         /hist/rust 3:1 /hist/python { ownership over gc }\n\
+         /hist/rust 2:1 /hist/go { performance over simplicity }\n",
+    )
+    .await;
+
+    // History for rust should have one entry with two caused_by votes.
+    let resp: serde_json::Value = client
+        .get(&format!("http://{}/api/v0/rank-history?item=hist/rust", addr))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    assert_eq!(resp["item"], "/hist/rust");
+    let history = resp["history"].as_array().unwrap();
+    assert_eq!(history.len(), 1, "one ingest → one history entry");
+    let entry = &history[0];
+    assert_eq!(entry["scope_rank"], 1, "rust should be #1 in scope after first ingest");
+    assert_eq!(entry["scope_rank_delta"], 0, "delta is 0 on first appearance");
+    let caused_by = entry["caused_by"].as_array().unwrap();
+    assert_eq!(caused_by.len(), 2, "both votes in the ingest touched rust");
+
+    // Second ingest: python beats go — rust not directly touched, so python gets a new entry.
+    ingest(
+        "@00000000-0000-0000-0000-000000000002:rig:test/model\n\
+         #hist-test\n\
+         /hist/python 3:1 /hist/go { dynamic typing is worth it }\n",
+    )
+    .await;
+
+    // Python history: two entries (appeared in first ingest, then voted again here).
+    let resp2: serde_json::Value = client
+        .get(&format!("http://{}/api/v0/rank-history?item=hist/python", addr))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let hist2 = resp2["history"].as_array().unwrap();
+    assert_eq!(hist2.len(), 2, "python touched in both ingests");
+
+    // Second entry for python: caused_by has one vote (python 3:1 go).
+    let caused_by2 = hist2[1]["caused_by"].as_array().unwrap();
+    assert_eq!(caused_by2.len(), 1);
+    assert!(caused_by2[0]["a"].as_str().unwrap().ends_with("python") ||
+            caused_by2[0]["b"].as_str().unwrap().ends_with("python"));
+
+    // Rust was NOT directly voted on in the second ingest — no new history entry.
+    let resp3: serde_json::Value = client
+        .get(&format!("http://{}/api/v0/rank-history?item=hist/rust", addr))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp3["history"].as_array().unwrap().len(),
+        1,
+        "rust still has only one history entry — not directly voted on in second ingest"
+    );
+}
+
