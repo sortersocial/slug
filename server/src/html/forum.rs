@@ -22,7 +22,6 @@ struct ThreadRow {
     tag: String,
     last_ts: i64,
     ingests: usize,
-    subscriber_count: usize,
 }
 
 /// Collect thread rows from reducer state (unsorted).
@@ -37,7 +36,6 @@ fn collect_thread_rows(reduced: &ReducerState, now: i64) -> Vec<ThreadRow> {
                 tag: tag.clone(),
                 last_ts: thread.last_activity_ts,
                 ingests,
-                subscriber_count: thread.subscriber_count,
             }
         })
         .collect()
@@ -62,7 +60,7 @@ fn render_thread_feed(rows: &[ThreadRow], now: i64) -> Markup {
                             span class="muted" title=(hover) {
                                 (ago)
                                 " · "
-                                (format!("{}n {}s", r.ingests, r.subscriber_count))
+                                (format!("{}n", r.ingests))
                             }
                         }
                     }

@@ -905,7 +905,6 @@ pub async fn get_threads(State(state): State<AppState>) -> impl IntoResponse {
             ThreadSummary {
                 thread: format!("#{thread}"),
                 last_activity_ts: ts.last_activity_ts,
-                subscriber_count: ts.subscriber_count,
                 web: format!("https://slug.social/t/{}", thread),
             }
         })
@@ -1536,86 +1535,60 @@ pub async fn post_check(
 }
 
 // ============================================================================
-// Notifications
+// Feed — global reverse-chronological ingest stream since a cutoff
 // ============================================================================
 
 #[derive(Debug, Deserialize)]
-pub struct NotificationsQuery {
-    pub actor: String,
-    #[serde(default)]
-    pub since: Option<i64>,
-}
-
-pub async fn get_notifications(
-    State(state): State<AppState>,
-    Query(q): Query<NotificationsQuery>,
-) -> impl IntoResponse {
-    let reduced_arc = state.reduced.clone();
-    let actor = canonicalize_actor(&q.actor);
-    let since = q.since.unwrap_or(0);
-
-    let notifications = {
-        let reduced = reduced_arc.read().await;
-        reduced
-            .notifications
-            .get(&actor)
-            .map(|queue| {
-                queue.iter()
-                    .filter(|n| n.ts > since)
-                    .cloned()
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default()
-    };
-
-    Json(NotificationsResponse {
-        ok: true,
-        actor: format!("@{}", actor),
-        notifications,
-    }).into_response()
-}
-
-// ============================================================================
-// Digest
-// ============================================================================
-
-#[derive(Debug, Deserialize)]
-pub struct DigestQuery {
+pub struct FeedQuery {
     pub actor: String,
     /// Override the lower bound (ms). Defaults to actor's last ingest timestamp.
     #[serde(default)]
     pub since: Option<i64>,
+    #[serde(default)]
+    pub limit: Option<usize>,
+    #[serde(default)]
+    pub offset: Option<usize>,
 }
 
-pub async fn get_digest(
+pub async fn get_feed(
     State(state): State<AppState>,
-    Query(q): Query<DigestQuery>,
+    Query(q): Query<FeedQuery>,
 ) -> impl IntoResponse {
+    const DEFAULT_LIMIT: usize = 50;
+    const MAX_LIMIT: usize = 200;
+
     let reduced_arc = state.reduced.clone();
+    let reduced = reduced_arc.read().await;
     let actor = canonicalize_actor(&q.actor);
+    let since = q.since.or_else(|| reduced.actor_last_post_ts.get(&actor).copied());
+    let cutoff = since.unwrap_or(0);
+    let limit = q.limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT);
+    let offset = q.offset.unwrap_or(0);
 
-    let (since, notifications) = {
-        let reduced = reduced_arc.read().await;
-        let since = q.since.or_else(|| reduced.actor_last_post_ts.get(&actor).copied());
-        let cutoff = since.unwrap_or(0);
-        let notifications = reduced
-            .notifications
-            .get(&actor)
-            .map(|queue| {
-                queue.iter()
-                    .filter(|n| n.ts > cutoff)
-                    .cloned()
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-        (since, notifications)
-    };
+    // Scan ingests_ordered backwards (newest first), stop once ts <= cutoff.
+    let matching: Vec<&str> = reduced.ingests_ordered.iter().rev()
+        .map(|id| id.as_str())
+        .take_while(|id| reduced.ingests_by_id.get(*id).map_or(false, |ing| ing.ts > cutoff))
+        .collect();
 
-    Json(DigestResponse {
-        ok: true,
+    let total = matching.len();
+    let posts: Vec<slug_types::FeedPost> = matching.into_iter()
+        .skip(offset)
+        .take(limit)
+        .filter_map(|id| reduced.ingests_by_id.get(id))
+        .map(|ing| slug_types::FeedPost {
+            ts: ing.ts,
+            id: ing.id.clone(),
+            actor: ing.actor.clone(),
+            snippet: ing.raw.chars().take(200).collect(),
+        })
+        .collect();
+
+    Json(slug_types::FeedResponse {
         actor: format!("@{}", actor),
         since,
-        notifications,
+        posts,
+        total,
     }).into_response()
 }
 

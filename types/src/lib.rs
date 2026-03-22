@@ -91,7 +91,6 @@ pub struct ThreadsResponse {
 pub struct ThreadSummary {
     pub thread: String,
     pub last_activity_ts: i64,
-    pub subscriber_count: usize,
     pub web: String,
 }
 
@@ -169,40 +168,23 @@ pub struct VoteRow {
     pub thread: Option<String>,
 }
 
+/// Response for the feed endpoint — all ingests since a cutoff, newest first.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct NotificationsResponse {
-    pub ok: bool,
+pub struct FeedResponse {
     pub actor: String,
-    pub notifications: Vec<Notification>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct DigestResponse {
-    pub ok: bool,
-    pub actor: String,
-    /// The timestamp used as the lower bound (actor's last ingest, ms). None if actor has never posted.
+    /// The lower-bound timestamp used (actor's last ingest, ms). None if actor has never posted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub since: Option<i64>,
-    pub notifications: Vec<Notification>,
+    pub posts: Vec<FeedPost>,
+    pub total: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Notification {
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FeedPost {
     pub ts: i64,
-    pub ingest_id: String,
+    pub id: String,
     pub actor: String,
-    #[serde(flatten)]
-    pub notification_type: NotificationType,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum NotificationType {
-    ThreadActivity {
-        thread: String,
-        activity: String,
-        details: String,
-    },
+    pub snippet: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

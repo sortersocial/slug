@@ -304,19 +304,19 @@
             (assert! (str/includes? (or (:body resp) "") "ownership")
                      "rust body contains 'ownership'"))
 
-          ;; 8. digest: second actor votes, triggering a notification for actor-1
-          (println "\ntesting digest (second actor ingest + notification check)…")
+          ;; 8. feed: second actor ingests, actor-1 uses feed to see what happened
+          (println "\ntesting feed endpoint…")
           (letlocals
             (bind result (run-cli cli-bin base-url ["ingest" "--json"] :input sorter-doc-2))
             (assert! (zero? (:exit result)) "second actor ingest exits 0"))
           (letlocals
-            (bind result (run-cli cli-bin base-url ["digest" actor-1 "--json"]))
-            (assert! (zero? (:exit result)) "cli digest exits 0")
+            (bind result (run-cli cli-bin base-url ["feed" actor-1 "--json"]))
+            (assert! (zero? (:exit result)) "cli feed exits 0")
             (bind resp   (json/parse-string (:out result) true))
-            (assert! (:ok resp) "digest response ok=true")
-            (assert! (some? (:since resp)) "digest since is set (actor has posted)")
-            (assert! (pos? (count (:notifications resp)))
-                     (str "digest has >= 1 notification (got " (count (:notifications resp)) ")")))
+            (assert! (some? (:since resp)) "feed since is set (actor has posted)")
+            (assert! (pos? (:total resp))
+                     (str "feed has >= 1 post (got " (:total resp) ")"))
+            (assert! (not-empty (:posts resp)) "feed posts non-empty"))
 
           ;; 9. global rank endpoint
           (println "\ntesting global rank endpoint…")

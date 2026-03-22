@@ -1,7 +1,6 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use serde::{Deserialize, Serialize};
-pub use slug_types::{Notification, NotificationType};
 
 use crate::events::{
     canonicalize_actor, canonicalize_item, canonicalize_tag, item_parent_path, Event, Ingest,
@@ -132,11 +131,10 @@ pub struct RankHistoryEntry {
     pub post_id: String,
 }
 
-/// First-class thread state. Tracks bump order and subscriber count.
+/// First-class thread state.
 #[derive(Debug, Clone, Default)]
 pub struct ThreadState {
     pub last_activity_ts: i64,
-    pub subscriber_count: usize,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -165,18 +163,15 @@ pub struct ReducerState {
     /// First-class thread state: bump time, subscriber count.
     pub threads: HashMap<String, ThreadState>,
 
-    /// Track thread subscriptions: thread -> set(actor)
-    pub thread_subscriptions: HashMap<String, HashSet<String>>,
-
-    /// Pending notifications per actor (last 100 per actor).
-    pub notifications: HashMap<String, VecDeque<Notification>>,
-
     /// Actor passkey hashes: actor -> hex-encoded SHA-256 of the registered passkey.
     /// First registration wins; subsequent ActorKeyRegistration events for the same actor are ignored.
     pub actor_keys: HashMap<String, String>,
 
-    /// Last ingest timestamp (ms) per actor. Used by the digest endpoint to default `since`.
+    /// Last ingest timestamp (ms) per actor. Used by feed to default `since`.
     pub actor_last_post_ts: HashMap<String, i64>,
+
+    /// All ingest IDs in chronological order (oldest first). Used by the feed endpoint.
+    pub ingests_ordered: Vec<String>,
 
     /// Per-item rank history, oldest first.
     pub rank_history: HashMap<String, Vec<RankHistoryEntry>>,
@@ -349,52 +344,10 @@ impl ReducerState {
 
                             self.ranking_group.apply_vote(vote.clone());
 
-                            // Index vote by item and notify prior voters.
+                            // Index vote by item.
                             for it in [&item_a, &item_b] {
-                                let prior_voters: Vec<String> = self
-                                    .item_votes
-                                    .get(it)
-                                    .map(|q| {
-                                        q.iter()
-                                            .map(|v| v.actor.clone())
-                                            .filter(|a| a != &vote.actor)
-                                            .collect::<HashSet<_>>()
-                                            .into_iter()
-                                            .collect()
-                                    })
-                                    .unwrap_or_default();
-
                                 let q = self.item_votes.entry(it.clone()).or_default();
                                 q.push_front(vote.clone());
-
-                                let detail = format!(
-                                    "{} {} {}:{} {} {}",
-                                    vote.actor, it,
-                                    vote.ratio_left, vote.ratio_right,
-                                    vote.a, vote.b
-                                );
-                                for prior_actor in prior_voters {
-                                    // Notify about vote on items they've previously voted on.
-                                    // Thread attribution uses explicit ingest thread context when present.
-                                    let thread_label = current_thread
-                                        .as_deref()
-                                        .unwrap_or("unknown");
-                                    let notification = Notification {
-                                        ts: ing.ts,
-                                        ingest_id: ing.id.clone(),
-                                        actor: vote.actor.clone(),
-                                        notification_type: NotificationType::ThreadActivity {
-                                            thread: format!("#{}", thread_label),
-                                            activity: "vote".to_string(),
-                                            details: detail.clone(),
-                                        },
-                                    };
-                                    let queue = self.notifications.entry(prior_actor).or_default();
-                                    queue.push_front(notification);
-                                    while queue.len() > 100 {
-                                        queue.pop_back();
-                                    }
-                                }
                             }
                         }
                         crate::dsl::Stmt::Prose { .. } => {}
@@ -417,48 +370,11 @@ impl ReducerState {
                     }
                 }
 
-                // Bump thread state and subscriptions for explicitly declared threads.
-                let snippet = ing.raw.chars().take(200).collect::<String>();
+                // Bump thread state for explicitly declared threads.
                 for thread in &touched_threads {
                     let state = self.threads.entry(thread.clone()).or_default();
                     if ing.ts > state.last_activity_ts {
                         state.last_activity_ts = ing.ts;
-                    }
-                }
-
-                for thread in &touched_threads {
-                    let subscribers = self
-                        .thread_subscriptions
-                        .get(thread)
-                        .cloned()
-                        .unwrap_or_default();
-
-                    for subscriber in subscribers.iter() {
-                        if subscriber != &ing.actor {
-                            let notification = Notification {
-                                ts: ing.ts,
-                                ingest_id: ing.id.clone(),
-                                actor: ing.actor.clone(),
-                                notification_type: NotificationType::ThreadActivity {
-                                    thread: format!("#{}", thread),
-                                    activity: "ingest".to_string(),
-                                    details: snippet.clone(),
-                                },
-                            };
-                            let queue = self.notifications.entry(subscriber.clone()).or_default();
-                            queue.push_front(notification);
-                            while queue.len() > 100 {
-                                queue.pop_back();
-                            }
-                        }
-                    }
-
-                    let subs = self.thread_subscriptions
-                        .entry(thread.clone())
-                        .or_default();
-                    subs.insert(current_actor.clone().unwrap_or_else(|| ing.actor.clone()));
-                    if let Some(ts) = self.threads.get_mut(thread) {
-                        ts.subscriber_count = subs.len();
                     }
                 }
 
@@ -467,6 +383,8 @@ impl ReducerState {
                     let q = self.ingests_by_thread.entry(thread).or_default();
                     q.push_front(ing.id.clone());
                 }
+
+                self.ingests_ordered.push(ing.id.clone());
 
                 // Snapshot ranks after votes and push history entries.
                 if !voted_items.is_empty() {
