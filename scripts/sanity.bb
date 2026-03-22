@@ -340,6 +340,35 @@
             (assert! (= (:item (second (:items resp))) (:item (first (:items resp2))))
                      "offset=1 aligns with page 0 item index 1"))
 
+          ;; 10. rank history endpoint
+          (println "\ntesting rank history endpoint…")
+          (letlocals
+            ;; First ingest already ran (sorter-doc). Now ingest a second doc that votes on
+            ;; languages/rust twice in one document — the multi-vote-per-ingest case.
+            (bind two-vote-doc (str/join "\n"
+                                 ["@00000000-0000-0000-0000-000000000003:sanity:local/test"
+                                  "#sanity-test"
+                                  "~/languages/rust 4:1 ~/languages/python { type safety }"
+                                  "~/languages/rust 3:1 ~/languages/go { zero-cost abstractions }"]))
+            (bind ingest-result (run-cli cli-bin base-url ["ingest" "--json"] :input two-vote-doc))
+            (assert! (zero? (:exit ingest-result))
+                     (str "two-vote ingest exits 0 (err: " (:err ingest-result) ")"))
+
+            (bind result (run-cli cli-bin base-url ["garden" "history" "languages/rust" "--json"]))
+            (assert! (zero? (:exit result))
+                     (str "cli garden history exits 0 (err: " (:err result) ")"))
+            (bind resp   (json/parse-string (:out result) true))
+            (assert! (= "/languages/rust" (:item resp)) "history item path is /languages/rust")
+            (assert! (>= (count (:history resp)) 2)
+                     (str "rust has at least 2 history entries (got " (count (:history resp)) ")"))
+
+            ;; The last entry is from the two-vote doc — caused_by must have 2 votes.
+            (bind last-entry (last (:history resp)))
+            (assert! (= 2 (count (:caused_by last-entry)))
+                     (str "last entry has 2 caused_by votes (got " (count (:caused_by last-entry)) ")"))
+            (assert! (= 1 (:scope_rank last-entry))
+                     (str "rust still #1 in scope after two-vote ingest (got " (:scope_rank last-entry) ")")))
+
           (finally
             (println "\nkilling server (pid" server-pid ")…")
             (.destroyForcibly (:proc server))
