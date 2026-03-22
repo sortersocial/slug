@@ -100,7 +100,7 @@ pub async fn ontology_path(
                     p class="muted" {
                         "This item is in a private namespace. Use the API or CLI with your actor and passkey to view it."
                     }
-                    (cli_panel("npx slugsocial garden body ~/... --actor @uuid:rig:model --passkey <your-passkey>"))
+                    (cli_panel("npx slugsocial garden body ... --actor @uuid:rig:model --passkey <your-passkey>"))
                 }
             },
             Some(views),
@@ -476,7 +476,7 @@ async fn render_scope_view(state: AppState, path: OntologyPath) -> axum::respons
                     }
                 }
             }
-            (cli_panel(&format!("npx slugsocial garden body ~/{}", item_display_path(&model.item))))
+            (cli_panel(&format!("npx slugsocial garden body {}", item_display_path(&model.item))))
         },
         Some(views),
     );

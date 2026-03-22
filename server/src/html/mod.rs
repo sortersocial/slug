@@ -430,6 +430,13 @@ pub(super) fn cli_panel(cmd: &str) -> Markup {
         div class="cli-panel" {
             span class="cli-panel-label muted" { "cli" }
             code class="cli-panel-cmd" { (cmd) }
+            button
+                class="cli-panel-copy"
+                title="Copy to clipboard"
+                onclick=(format!(r#"navigator.clipboard.writeText('{}'); this.textContent='✓'; setTimeout(() => this.textContent='copy', 2000);"#, cmd.replace("'", "\\'")))
+            {
+                "copy"
+            }
         }
     }
 }
