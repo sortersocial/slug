@@ -320,6 +320,17 @@ fn print_pair_response(resp: &PairResponse) {
     } else {
         println!("  right: (no description)");
     }
+    if let Some(c) = &resp.connectivity {
+        println!();
+        if c.comparisons_until_connected == 0 {
+            println!("graph: connected · {}/{} pairs voted · {} items",
+                c.pairs_voted, c.pairs_possible, c.items);
+        } else {
+            println!("graph: {} components · {} comparisons to connect · {}/{} pairs voted · {} items",
+                c.components, c.comparisons_until_connected,
+                c.pairs_voted, c.pairs_possible, c.items);
+        }
+    }
     if !resp.threads.is_empty() {
         println!();
         println!("threads: {}", resp.threads.iter().map(|t| format!("#{t}")).collect::<Vec<_>>().join(" "));
