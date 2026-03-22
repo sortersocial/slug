@@ -118,12 +118,25 @@ struct SiblingRank {
 }
 
 #[derive(Debug, Clone)]
+struct RankHistoryEntryView {
+    ts: i64,
+    scope_rank: usize,
+    scope_total: usize,
+    scope_rank_delta: i32,
+    thread: String,
+    thread_post_index: usize,
+    post_id: String,
+    caused_by: Vec<crate::reducer::VoteData>,
+}
+
+#[derive(Debug, Clone)]
 struct ItemPageViewModel {
     item: String,
     body: Option<String>,
     sibling_rank: Option<SiblingRank>,
     child_rankings: ChildrenRankings,
     touching_votes: Vec<crate::reducer::VoteData>,
+    rank_history: Vec<RankHistoryEntryView>,
     /// Forum threads that mention or vote on this item.
     threads: Vec<String>,
 }
@@ -187,6 +200,60 @@ fn build_sibling_rank(
     })
 }
 
+fn build_rank_history(
+    reduced: &crate::reducer::ReducerState,
+    item: &str,
+) -> Vec<RankHistoryEntryView> {
+    let entries = match reduced.rank_history.get(item) {
+        None => return vec![],
+        Some(e) => e,
+    };
+    entries.iter().map(|e| {
+        // Resolve caused_by: votes from this ingest that directly touched this item.
+        let caused_by: Vec<crate::reducer::VoteData> = reduced.ingests_by_id
+            .get(&e.post_id)
+            .and_then(|ing| crate::dsl::parse_full(&ing.raw).ok())
+            .map(|doc| {
+                doc.statements.into_iter().filter_map(|s| {
+                    if let crate::dsl::Stmt::Vote { item1, item2, ratio_left, ratio_right, explanation } = s {
+                        let a = crate::events::canonicalize_item(&item1);
+                        let b = crate::events::canonicalize_item(&item2);
+                        if a == item || b == item {
+                            Some(crate::reducer::VoteData {
+                                ts: e.ts,
+                                a, b,
+                                ratio_left, ratio_right,
+                                body: explanation,
+                                actor: reduced.ingests_by_id.get(&e.post_id)
+                                    .map(|ing| ing.actor.clone())
+                                    .unwrap_or_default(),
+                                thread: e.thread.clone(),
+                            })
+                        } else { None }
+                    } else { None }
+                }).collect()
+            })
+            .unwrap_or_default();
+
+        let thread_post_index = reduced.ingests_by_thread
+            .get(&e.thread)
+            .and_then(|q| q.iter().rev().position(|id| id == &e.post_id))
+            .map(|i| i + 1)
+            .unwrap_or(0);
+
+        RankHistoryEntryView {
+            ts: e.ts,
+            scope_rank: e.scope_rank,
+            scope_total: e.scope_total,
+            scope_rank_delta: e.scope_rank_delta,
+            thread: e.thread.clone(),
+            thread_post_index,
+            post_id: e.post_id.clone(),
+            caused_by,
+        }
+    }).collect()
+}
+
 fn build_item_page_view_model(
     reduced: &crate::reducer::ReducerState,
     item: &str,
@@ -199,6 +266,8 @@ fn build_item_page_view_model(
         .get(&item)
         .map(|q| q.iter().take(vote_limit).cloned().collect())
         .unwrap_or_default();
+
+    let rank_history = build_rank_history(reduced, &item);
 
     let mut threads: Vec<String> = reduced
         .item_threads
@@ -213,6 +282,7 @@ fn build_item_page_view_model(
         sibling_rank: build_sibling_rank(reduced, &item),
         child_rankings,
         touching_votes,
+        rank_history,
         threads,
     }
 }
@@ -291,6 +361,67 @@ async fn render_scope_view(state: AppState, path: OntologyPath) -> axum::respons
                                     div class=(right_class) style={(format!("width: {:.3}%;", 100.0 - pct))} {}
                                 }
                                 div class="ont-vote-body" { (v.body) }
+                            }
+                        }
+                    }
+                }
+            }
+
+            @if !model.rank_history.is_empty() {
+                details class="ont-rank-history" {
+                    summary {
+                        "rank history "
+                        span class="muted" { (format!("({} events)", model.rank_history.len())) }
+                    }
+                    @let now = now_ms();
+                    @let n = model.rank_history.len();
+                    @for (i, e) in model.rank_history.iter().enumerate() {
+                        @let label = if i == 0 { " — entered" } else if i == n - 1 { " — current" } else { "" };
+                        @let delta_str = match e.scope_rank_delta.cmp(&0) {
+                            std::cmp::Ordering::Less    => format!(" ↑{}", e.scope_rank_delta.unsigned_abs()),
+                            std::cmp::Ordering::Greater => format!(" ↓{}", e.scope_rank_delta),
+                            std::cmp::Ordering::Equal   => String::new(),
+                        };
+                        @let hover = timeago::rfc3339_utc(e.ts);
+                        @let ago = timeago::timeago(now, e.ts);
+                        div class="rank-history-entry" {
+                            div class="rank-history-meta" title=(hover) {
+                                span class="rank-history-pos" {
+                                    (format!("#{} of {}{}", e.scope_rank, e.scope_total, delta_str))
+                                }
+                                " · "
+                                span class="muted" { (ago) (label) }
+                                " · "
+                                a href=(format!("/t/{}", e.thread)) { "#" (e.thread) }
+                                @if e.thread_post_index > 0 {
+                                    " "
+                                    a href=(format!("/t/{}/{}", e.thread, e.post_id)) {
+                                        span class="muted" { "post #" (e.thread_post_index) }
+                                    }
+                                }
+                            }
+                            @if e.caused_by.is_empty() {
+                                div class="rank-history-cause muted" { "transitive — shifted by votes elsewhere in the graph" }
+                            } @else {
+                                @for v in &e.caused_by {
+                                    @let pct = ratio_pct(v.ratio_left, v.ratio_right);
+                                    @let left_class = if v.a == model.item { "ratio-left current" } else { "ratio-left" };
+                                    @let right_class = if v.b == model.item { "ratio-right current" } else { "ratio-right" };
+                                    div class="rank-history-vote" {
+                                        div class="ont-vote-header" {
+                                            a class="item-link" href=(format!("/~/{}", v.a)) { code { "/" (v.a) } }
+                                            span class="vote-ratio" { (format!("{}:{}", v.ratio_left, v.ratio_right)) }
+                                            a class="item-link" href=(format!("/~/{}", v.b)) { code { "/" (v.b) } }
+                                        }
+                                        div class="ratio-bar" {
+                                            div class=(left_class) style={(format!("width: {:.3}%;", pct))} {}
+                                            div class=(right_class) style={(format!("width: {:.3}%;", 100.0 - pct))} {}
+                                        }
+                                        @if !v.body.is_empty() {
+                                            div class="ont-vote-body" { (v.body) }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }

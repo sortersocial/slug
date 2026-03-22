@@ -879,3 +879,45 @@ body.view-ontology .age-fresh  a { color: #005500; }
 body.view-ontology .age-recent a { color: #003080; }
 body.view-ontology .age-week   a { color: var(--link); }
 body.view-ontology .age-old    a { color: var(--meta); }
+
+/* Rank history */
+body.view-ontology-dark details.ont-rank-history {
+  background: var(--g2);
+  border: var(--bv-lg) solid;
+  border-color: var(--hi) var(--lo) var(--lo) var(--hi);
+  margin: 6px 0;
+  width: fit-content;
+  max-width: 100%;
+}
+body.view-ontology-dark details.ont-rank-history > summary {
+  background: var(--g3);
+  border-bottom: 2px solid var(--lo);
+  color: var(--ui);
+  padding: 4px 10px;
+}
+body.view-ontology-dark details.ont-rank-history[open] > summary {
+  color: var(--signal);
+}
+body.view-ontology-dark .rank-history-entry {
+  border-bottom: 1px solid var(--lo);
+  padding: 6px 10px;
+}
+body.view-ontology-dark .rank-history-entry:last-child {
+  border-bottom: none;
+}
+body.view-ontology-dark .rank-history-meta {
+  font-size: 0.85em;
+  margin-bottom: 4px;
+}
+body.view-ontology-dark .rank-history-pos {
+  font-weight: bold;
+  color: var(--signal);
+}
+body.view-ontology-dark .rank-history-cause {
+  font-size: 0.8em;
+  font-style: italic;
+  padding: 2px 0;
+}
+body.view-ontology-dark .rank-history-vote {
+  margin-top: 4px;
+}
