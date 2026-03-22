@@ -1,5 +1,5 @@
 {:paths ["."]
- :deps {com.rpl/specter {:mvn/version "1.1.4"}}
+ :deps {}
  :tasks
  {:requires ([babashka.process :as p]
              [clojure.string :as str])
