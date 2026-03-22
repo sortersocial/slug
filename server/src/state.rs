@@ -38,6 +38,13 @@ pub struct XBotConfig {
     pub bot_handle: String,
     /// Poll interval in seconds (default 30).
     pub poll_interval_secs: u64,
+    /// Base URL for X API (default https://api.x.com). Override for testing.
+    pub api_base_url: String,
+    /// OAuth 2.0 user token with tweet.write scope for posting replies.
+    /// If None, the bot will log errors but not reply to tweets.
+    pub write_token: Option<String>,
+    /// Public base URL for links in replies (default https://slug.social).
+    pub public_url: String,
 }
 
 #[derive(Debug, Clone)]

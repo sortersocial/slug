@@ -65,11 +65,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let poll_interval_secs = env_var("SLUG_X_POLL_SECS")
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(30);
+            let api_base_url = env_var("SLUG_X_API_BASE_URL")
+                .unwrap_or_else(|| "https://api.x.com".to_string());
+            let write_token = env_var("SLUG_X_WRITE_TOKEN");
+            let public_url = env_var("SLUG_PUBLIC_URL")
+                .unwrap_or_else(|| "https://slug.social".to_string());
             Some(XBotConfig {
                 bearer_token,
                 bot_user_id,
                 bot_handle,
                 poll_interval_secs,
+                api_base_url,
+                write_token,
+                public_url,
             })
         }
         _ => None,

@@ -16,10 +16,15 @@ use crate::{
     state::{AppState, XBotConfig},
 };
 
-/// UUID v5 namespace for X user IDs → deterministic actor UUIDs.
+/// Slug-specific UUID v5 namespace for X user IDs → deterministic actor UUIDs.
+/// Generated once, never change this or all existing X actor UUIDs will shift.
+/// UUID v5 works by hashing (SHA-1) this namespace UUID concatenated with the
+/// input string (X user ID). Same namespace + same input = same output, always.
+/// Using a slug-specific namespace (instead of the RFC 4122 URL namespace)
+/// ensures no collisions with other systems that might also hash X user IDs.
 const X_NAMESPACE: uuid::Uuid = uuid::Uuid::from_bytes([
-    0x6b, 0xa7, 0xb8, 0x14, 0x9d, 0xad, 0x11, 0xd1,
-    0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30, 0xc8,
+    0x10, 0xae, 0x7e, 0xf5, 0xf5, 0x8b, 0x45, 0x97,
+    0xa6, 0xb0, 0x71, 0xf4, 0x08, 0x59, 0x4d, 0xfe,
 ]);
 
 /// Build a deterministic actor string for an X user.
@@ -83,6 +88,39 @@ struct Meta {
     newest_id: Option<String>,
 }
 
+/// Reply to a tweet. Requires write_token to be configured.
+async fn reply_to_tweet(
+    client: &reqwest::Client,
+    x_cfg: &XBotConfig,
+    tweet_id: &str,
+    text: &str,
+) {
+    let Some(ref token) = x_cfg.write_token else {
+        tracing::debug!(tweet_id, "would reply (no write_token): {text}");
+        return;
+    };
+
+    let body = serde_json::json!({
+        "text": text,
+        "reply": { "in_reply_to_tweet_id": tweet_id }
+    });
+
+    let url = format!("{}/2/tweets", x_cfg.api_base_url);
+    match client.post(&url).bearer_auth(token).json(&body).send().await {
+        Ok(resp) if resp.status().is_success() => {
+            tracing::info!(tweet_id, "replied to tweet");
+        }
+        Ok(resp) => {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            tracing::warn!(tweet_id, "reply failed {status}: {body}");
+        }
+        Err(e) => {
+            tracing::warn!(tweet_id, "reply http error: {e}");
+        }
+    }
+}
+
 /// Main bot loop. Runs until the process shuts down.
 pub async fn run_bot(state: AppState, x_cfg: XBotConfig) {
     let client = reqwest::Client::new();
@@ -122,12 +160,12 @@ async fn poll_and_ingest(
     cursor: &mut Option<String>,
 ) -> Result<usize, String> {
     let mut url = format!(
-        "https://api.x.com/2/users/{}/mentions\
+        "{}/2/users/{}/mentions\
          ?tweet.fields=author_id,created_at\
          &expansions=author_id\
          &user.fields=public_metrics,username\
          &max_results=100",
-        x_cfg.bot_user_id
+        x_cfg.api_base_url, x_cfg.bot_user_id
     );
     if let Some(ref since) = cursor {
         url.push_str(&format!("&since_id={}", since));
@@ -245,6 +283,21 @@ async fn poll_and_ingest(
                     "skipping invalid mention: {msg} (hint: {})",
                     hint.as_deref().unwrap_or("none")
                 );
+                // Reply with syntax help + link to interactive editor.
+                let reply_text = format!(
+                    "@{} {}{}\n\ntry the interactive editor: {}/try",
+                    handle,
+                    msg,
+                    hint.as_ref().map(|h| format!(" — {h}")).unwrap_or_default(),
+                    x_cfg.public_url,
+                );
+                // Truncate to 280 chars for tweet limit.
+                let reply_text = if reply_text.len() > 280 {
+                    format!("{}…", &reply_text[..279])
+                } else {
+                    reply_text
+                };
+                reply_to_tweet(client, x_cfg, &tweet.id, &reply_text).await;
                 continue;
             }
         };

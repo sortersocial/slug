@@ -7,11 +7,13 @@ use maud::{html, Markup, DOCTYPE};
 use std::collections::HashSet;
 
 mod breadcrumb_path;
+mod editor;
 mod forum;
 mod garden;
 mod search;
 use breadcrumb_path::OntologyPath;
 
+pub use editor::{editor_check, editor_page};
 pub use forum::{index, thread_feed_html, thread_post_expand, thread_post_view, thread_view};
 pub use garden::{garden_index, ontology_path};
 pub use search::{search_page, search_results_fragment};

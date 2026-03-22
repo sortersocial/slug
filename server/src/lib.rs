@@ -52,6 +52,8 @@ pub fn create_app(state: AppState) -> Router {
         .route("/sse", axum::routing::get(api::get_html_stream))
         .route("/search", axum::routing::get(html::search_page))
         .route("/search/results", axum::routing::get(html::search_results_fragment))
+        .route("/try", axum::routing::get(html::editor_page))
+        .route("/try/check", axum::routing::post(html::editor_check))
         .route("/static/:filename", axum::routing::get(html::serve_theme_css))
         .with_state(state)
         .layer(axum_middleware::from_fn_with_state(
