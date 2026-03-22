@@ -1004,15 +1004,14 @@ async fn main() -> Result<()> {
                     .unwrap_or_default();
                 println!("<feed total=\"{}\" limit=\"{}\"{}>", resp.total, limit, since_attr);
                 if resp.posts.is_empty() {
-                    println!("  <!-- no new activity -->");
+                    println!("<!-- no new activity -->");
                 } else {
                     for p in &resp.posts {
                         let ago = slug_types::timeago::timeago(now_ms, p.ts);
-                        println!("  <post id=\"{}\" ts=\"{}\">", p.id, ago);
-                        for line in p.body.lines() {
-                            println!("    {}", line);
-                        }
-                        println!("  </post>");
+                        println!("<post id=\"{}\" ts=\"{}\">", p.id, ago);
+                        print!("{}", p.body);
+                        if !p.body.ends_with('\n') { println!(); }
+                        println!("</post>");
                     }
                 }
                 println!("</feed>");
