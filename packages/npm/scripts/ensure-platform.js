@@ -1,8 +1,8 @@
 "use strict";
 /**
- * npm/npx sometimes skip optionalDependencies (e.g. omit=optional, or exec cache).
- * This postinstall pulls the correct @sortersocial/slugsocial-* for this OS/arch
- * into the same node_modules tree as slugsocial.
+ * npm/npx sometimes skip optionalDependencies (omit=optional) or lifecycle scripts
+ * (npm exec). We run this from postinstall when possible, and from the bin shim
+ * before spawning the native binary so `npx slugsocial` always works.
  */
 const fs = require("fs");
 const path = require("path");
@@ -20,28 +20,33 @@ function platformPkgName() {
   return `@sortersocial/slugsocial-${plat}-${arch}`;
 }
 
-function main() {
-  const pkgRoot = path.join(__dirname, "..");
-  const pkgJsonPath = path.join(pkgRoot, "package.json");
-  const pkg = JSON.parse(fs.readFileSync(pkgJsonPath, "utf8"));
+/**
+ * @param {string} pkgRoot absolute path to slugsocial package root (…/node_modules/slugsocial)
+ * @returns {boolean} true if the platform package is available after any install attempt
+ */
+function ensurePlatformInstalled(pkgRoot) {
   const name = platformPkgName();
   if (!name) {
-    return;
+    return false;
   }
   try {
     require.resolve(`${name}/package.json`, { paths: [pkgRoot] });
-    return;
+    return true;
   } catch (_) {
-    /* fall through */
+    /* continue */
   }
 
+  const pkgJsonPath = path.join(pkgRoot, "package.json");
+  if (!fs.existsSync(pkgJsonPath)) {
+    return false;
+  }
+  const pkg = JSON.parse(fs.readFileSync(pkgJsonPath, "utf8"));
   const version = pkg.version;
   if (!version) {
-    return;
+    return false;
   }
 
   const nm = path.join(pkgRoot, "..");
-  // Parent of node_modules (works for npx cache and normal installs).
   const installRoot = path.dirname(nm);
   const npm = process.platform === "win32" ? "npm.cmd" : "npm";
   const args = [
@@ -49,6 +54,7 @@ function main() {
     "--no-fund",
     "--no-audit",
     "--no-package-lock",
+    "--prefer-online",
     "--include=optional",
     "--prefix",
     installRoot,
@@ -59,11 +65,32 @@ function main() {
     env: process.env,
   });
   if (r.status !== 0) {
+    return false;
+  }
+  try {
+    require.resolve(`${name}/package.json`, { paths: [pkgRoot] });
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+function main() {
+  const pkgRoot = path.join(__dirname, "..");
+  if (!ensurePlatformInstalled(pkgRoot)) {
+    const name = platformPkgName();
+    const pkg = JSON.parse(
+      fs.readFileSync(path.join(pkgRoot, "package.json"), "utf8"),
+    );
     console.warn(
-      `slugsocial: postinstall could not install ${name}@${version} (exit ${r.status}). ` +
-        `Try: npm install ${name}@${version}`,
+      `slugsocial: postinstall could not install ${name}@${pkg.version}. ` +
+        `The CLI will retry on first run.`,
     );
   }
 }
 
-main();
+if (require.main === module) {
+  main();
+}
+
+module.exports = { ensurePlatformInstalled, platformPkgName };

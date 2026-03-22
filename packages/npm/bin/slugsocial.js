@@ -7,6 +7,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const childProcess = require("node:child_process");
+const { ensurePlatformInstalled } = require("../scripts/ensure-platform.js");
 
 function die(msg) {
   console.error(msg);
@@ -30,21 +31,34 @@ function resolvePlatformPackage() {
   const { plat, arch } = platformTriple();
   const name = `@sortersocial/slugsocial-${plat}-${arch}`;
   const pkgRoot = path.join(__dirname, "..");
-  try {
-    const pkgJson = require.resolve(`${name}/package.json`, { paths: [pkgRoot] });
-    return path.dirname(pkgJson);
-  } catch (_) {
-    /* optionalDependency missing or hoisted oddly */
+  function tryResolve() {
+    try {
+      const pkgJson = require.resolve(`${name}/package.json`, {
+        paths: [pkgRoot],
+      });
+      return path.dirname(pkgJson);
+    } catch (_) {
+      /* continue */
+    }
+    const sibling = path.join(
+      pkgRoot,
+      "..",
+      "@sortersocial",
+      `slugsocial-${plat}-${arch}`,
+      "package.json",
+    );
+    if (fs.existsSync(sibling)) {
+      return path.dirname(sibling);
+    }
+    return null;
   }
-  const sibling = path.join(
-    pkgRoot,
-    "..",
-    "@sortersocial",
-    `slugsocial-${plat}-${arch}`,
-    "package.json",
-  );
-  if (fs.existsSync(sibling)) {
-    return path.dirname(sibling);
+  let dir = tryResolve();
+  if (!dir) {
+    ensurePlatformInstalled(pkgRoot);
+    dir = tryResolve();
+  }
+  if (dir) {
+    return dir;
   }
   die(
     [
