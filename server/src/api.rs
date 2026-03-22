@@ -607,15 +607,25 @@ pub async fn get_rank_history(
             })
             .unwrap_or_default();
 
+        // Compute 1-indexed chronological position within the thread.
+        // ingests_by_thread is most-recent-first, so index from back + 1.
+        let thread_post_index = reduced.ingests_by_thread
+            .get(&e.thread)
+            .and_then(|q| q.iter().rev().position(|id| id == &e.post_id))
+            .map(|i| i + 1)
+            .unwrap_or(0);
+
         slug_types::RankHistoryRow {
             ts: e.ts,
             scope_rank: e.scope_rank,
             scope_rank_delta: e.scope_rank_delta,
+            scope_total: e.scope_total,
             global_rank: e.global_rank,
             global_rank_delta: e.global_rank_delta,
+            global_total: e.global_total,
             score: e.score,
             thread: format!("#{}", e.thread),
-            post_id: e.post_id.clone(),
+            thread_post_index,
             caused_by,
         }
     }).collect();

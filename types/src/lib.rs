@@ -316,15 +316,19 @@ pub struct RankHistoryRow {
     pub scope_rank: usize,
     /// scope_rank delta vs prior entry (after - before; 0 on first appearance).
     pub scope_rank_delta: i32,
+    /// Total items in scope at time of this ingest.
+    pub scope_total: usize,
     /// 1-indexed rank globally across all items after this ingest. 0 = not in ranking group.
     pub global_rank: usize,
     /// global_rank delta vs prior entry (after - before; 0 on first appearance).
     pub global_rank_delta: i32,
+    /// Total items in the global ranking group at time of this ingest.
+    pub global_total: usize,
     pub score: f64,
     /// Thread tag of the ingest that triggered this rank change.
     pub thread: String,
-    /// Ingest ID — use with /api/v0/thread to link to the source post.
-    pub post_id: String,
+    /// 1-indexed chronological position of this post within the thread.
+    pub thread_post_index: usize,
     /// Votes from this ingest that directly touched this item. Empty when change was transitive.
     pub caused_by: Vec<VoteRow>,
 }

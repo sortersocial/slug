@@ -346,23 +346,33 @@ fn print_rank_history_response(resp: &slug_types::RankHistoryResponse) {
         println!("  (no rank history)");
         return;
     }
-    for e in &resp.history {
-        let scope_arrow = match e.scope_rank_delta.cmp(&0) {
-            std::cmp::Ordering::Less    => format!("↑{}", e.scope_rank_delta.unsigned_abs()),
-            std::cmp::Ordering::Greater => format!("↓{}", e.scope_rank_delta),
-            std::cmp::Ordering::Equal   => "  ".to_string(),
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64;
+    let n = resp.history.len();
+    for (i, e) in resp.history.iter().enumerate() {
+        let label = if i == 0 { " ← first appearance" } else if i == n - 1 { " ← current" } else { "" };
+        let scope_delta = match e.scope_rank_delta.cmp(&0) {
+            std::cmp::Ordering::Less    => format!(" ↑{}", e.scope_rank_delta.unsigned_abs()),
+            std::cmp::Ordering::Greater => format!(" ↓{}", e.scope_rank_delta),
+            std::cmp::Ordering::Equal   => String::new(),
         };
-        let global_arrow = match e.global_rank_delta.cmp(&0) {
-            std::cmp::Ordering::Less    => format!("↑{}", e.global_rank_delta.unsigned_abs()),
-            std::cmp::Ordering::Greater => format!("↓{}", e.global_rank_delta),
-            std::cmp::Ordering::Equal   => "  ".to_string(),
+        let global_delta = match e.global_rank_delta.cmp(&0) {
+            std::cmp::Ordering::Less    => format!(" ↑{}", e.global_rank_delta.unsigned_abs()),
+            std::cmp::Ordering::Greater => format!(" ↓{}", e.global_rank_delta),
+            std::cmp::Ordering::Equal   => String::new(),
         };
         println!(
-            "  scope #{:<3} {:>4}  global #{:<5} {:>4}  {}  {}",
-            e.scope_rank, scope_arrow, e.global_rank, global_arrow, e.thread, e.post_id
+            "\n  #{} of {} among siblings{}   #{} of {} globally{}   {}   {} post #{}{}",
+            e.scope_rank, e.scope_total, scope_delta,
+            e.global_rank, e.global_total, global_delta,
+            slug_types::timeago::timeago(now_ms, e.ts),
+            e.thread, e.thread_post_index,
+            label,
         );
         for v in &e.caused_by {
-            println!("    {}  {}  {}", v.ratio, v.a, v.b);
+            println!("    {} {} {} {}", v.a, v.ratio, v.b, v.actor.as_deref().map(|a| format!("  ({})", a)).unwrap_or_default());
             if !v.body.is_empty() {
                 println!("      {}", v.body.lines().next().unwrap_or(&v.body).trim());
             }
@@ -371,6 +381,7 @@ fn print_rank_history_response(resp: &slug_types::RankHistoryResponse) {
             println!("    (transitive — rank shifted by votes elsewhere in the graph)");
         }
     }
+    println!();
 }
 
 fn print_global_rank_response(resp: &GlobalRankResponse) {

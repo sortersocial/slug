@@ -123,8 +123,10 @@ pub struct RankHistoryEntry {
     pub ts: i64,
     pub scope_rank: usize,
     pub scope_rank_delta: i32,
+    pub scope_total: usize,
     pub global_rank: usize,
     pub global_rank_delta: i32,
+    pub global_total: usize,
     pub score: f64,
     pub thread: String,
     pub post_id: String,
@@ -480,12 +482,17 @@ impl ReducerState {
                         let prev = self.rank_history.get(item).and_then(|v| v.last());
                         let scope_delta  = if prev.is_none() { 0 } else { after_scope as i32 - before_scope as i32 };
                         let global_delta = if prev.is_none() { 0 } else { after_global as i32 - before_global as i32 };
+                        let scope = item_parent_path(item).unwrap_or_default();
+                        let scope_total  = self.item_children.get(&scope).map(|s| s.len()).unwrap_or(0);
+                        let global_total = self.ranking_group.idx_to_item.len();
                         self.rank_history.entry(item.clone()).or_default().push(RankHistoryEntry {
                             ts: ing.ts,
                             scope_rank: after_scope,
                             scope_rank_delta: scope_delta,
+                            scope_total,
                             global_rank: after_global,
                             global_rank_delta: global_delta,
+                            global_total,
                             score,
                             thread: thread.clone(),
                             post_id: ing.id.clone(),
