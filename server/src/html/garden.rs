@@ -32,21 +32,6 @@ pub async fn garden_index(State(state): State<AppState>) -> impl IntoResponse {
     let child_rankings = {
         let reduced = state.reduced.read().await;
         build_children_rankings(&reduced, "")
-        let mut v: Vec<(String, usize)> = reduced
-            .item_children
-            .get("")
-            .map(|s| {
-                s.iter()
-                    .filter(|path| path_owner_uuid(path).is_none())
-                    .map(|path| {
-                        let children = reduced.item_children.get(path).map(|c| c.len()).unwrap_or(0);
-                        (path.clone(), children)
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        v.sort_by(|a, b| a.0.cmp(&b.0));
-        v
     };
 
     let views = state.views.get_views("/~");

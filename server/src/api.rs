@@ -474,6 +474,10 @@ pub async fn get_rank(State(state): State<AppState>, headers: HeaderMap, Query(q
                 ranking: c
                     .ranked
                     .into_iter()
+                    .filter(|r| match crate::events::path_owner_uuid(&r.item) {
+                        None => true,
+                        Some(owner) => authed_uuid.as_deref() == Some(owner),
+                    })
                     .map(|r| RankRow {
                         item: format!("/{}", r.item),
                         percent: if want_percent {
@@ -485,27 +489,16 @@ pub async fn get_rank(State(state): State<AppState>, headers: HeaderMap, Query(q
                     })
                     .collect(),
             }
-        .map(|c| RankComponent {
-            pairs: c.pairs,
-            ranking: c
-                .ranked
-                .into_iter()
-                .filter(|r| match crate::events::path_owner_uuid(&r.item) {
-                    None => true,
-                    Some(owner) => authed_uuid.as_deref() == Some(owner),
-                })
-                .map(|r| RankRow {
-                    item: format!("/{}", r.item),
-                    score: r.score,
-                    percent: None,
-                })
-                .collect(),
         })
         .collect();
 
     let prefixed_unranked: Vec<String> = rankings
         .unranked_items
         .into_iter()
+        .filter(|p| match crate::events::path_owner_uuid(p) {
+            None => true,
+            Some(owner) => authed_uuid.as_deref() == Some(owner),
+        })
         .map(|s| format!("/{s}"))
         .collect();
 
@@ -519,12 +512,6 @@ pub async fn get_rank(State(state): State<AppState>, headers: HeaderMap, Query(q
     Json(RankResponse {
         components,
         unranked_items,
-        unranked_items: rankings.unranked_items.into_iter()
-            .filter(|p| match crate::events::path_owner_uuid(p) {
-                None => true,
-                Some(owner) => authed_uuid.as_deref() == Some(owner),
-            })
-            .collect(),
     })
     .into_response()
 }
@@ -1083,7 +1070,7 @@ pub async fn get_thread(State(state): State<AppState>, Query(q): Query<ThreadDet
     let tag = canonicalize_tag(&q.tag);
     let reduced = reduced_arc.read().await;
 
-    // Single post lookup by ingest ID.
+    // Single post lookup by ingest ID — return full body untruncated.
     if let Some(ref post_id) = q.post_id {
         let thread_ids = reduced.ingests_by_thread.get(&tag);
         let index = thread_ids.and_then(|ids| {
@@ -1100,6 +1087,7 @@ pub async fn get_thread(State(state): State<AppState>, Query(q): Query<ThreadDet
                     actor: ing.actor.clone(),
                     voter_key_id: ing.voter_key_id.clone(),
                     body: ing.raw.clone(),
+                    truncated: false,
                 }],
                 total: 1,
                 offset: idx,
@@ -1117,40 +1105,6 @@ pub async fn get_thread(State(state): State<AppState>, Query(q): Query<ThreadDet
         .map(|q| q.iter().rev().cloned().collect())
         .unwrap_or_default();
 
-    let posts: Vec<PostRow> = {
-        let mut ids = ingest_ids;
-        ids.sort_by_key(|id| {
-            reduced
-                .ingests_by_id
-                .get(id)
-                .map(|ing| ing.ts)
-                .unwrap_or(0)
-        });
-        ids
-            .into_iter()
-            .filter_map(|ing_id| reduced.ingests_by_id.get(&ing_id))
-            .filter(|ing| {
-                q.post_id.as_ref().is_none_or(|pid| &ing.id == pid)
-            })
-            .map(|ing: &Ingest| {
-                const MAX_BODY: usize = 2000;
-                let skip_truncation = q.post_id.is_some();
-                let (body, truncated) = if !skip_truncation && ing.raw.len() > MAX_BODY {
-                    (ing.raw[..MAX_BODY].to_string(), true)
-                } else {
-                    (ing.raw.clone(), false)
-                };
-                PostRow {
-                    ts: ing.ts,
-                    voter_key_id: ing.voter_key_id.clone(),
-                    id: ing.id.clone(),
-                    actor: ing.actor.clone(),
-                    body,
-                    truncated,
-                }
-            })
-            .collect()
-    };
     let actor_prefix = q.actor.as_deref().unwrap_or("").to_lowercase();
     let filtered: Vec<(usize, _)> = all_ids
         .into_iter()
@@ -1163,17 +1117,26 @@ pub async fn get_thread(State(state): State<AppState>, Query(q): Query<ThreadDet
 
     let total = filtered.len();
 
+    const MAX_BODY: usize = 2000;
     let posts: Vec<PostRow> = filtered
         .into_iter()
         .skip(offset)
         .take(limit)
-        .map(|(idx, ing)| PostRow {
-            id: ing.id.clone(),
-            index: idx,
-            ts: ing.ts,
-            actor: ing.actor.clone(),
-            voter_key_id: ing.voter_key_id.clone(),
-            body: ing.raw.clone(),
+        .map(|(idx, ing)| {
+            let (body, truncated) = if ing.raw.len() > MAX_BODY {
+                (ing.raw[..MAX_BODY].to_string(), true)
+            } else {
+                (ing.raw.clone(), false)
+            };
+            PostRow {
+                id: ing.id.clone(),
+                index: idx,
+                ts: ing.ts,
+                actor: ing.actor.clone(),
+                voter_key_id: ing.voter_key_id.clone(),
+                body,
+                truncated,
+            }
         })
         .collect();
 
@@ -1647,13 +1610,6 @@ pub async fn post_check(
     let mut simulated = { reduced_arc.read().await.clone() };
     simulated.apply_event(event);
 
-    let ranking = ranked_items(&mut simulated.ranking_group, 10000, 1e-8)
-        .into_iter()
-        .take(25)
-        .map(|r| RankRow {
-            item: format!("/{}", r.item),
-            score: r.score,
-            percent: None,
     // Collect parent scopes touched by votes in this document.
     let voted_parents: Vec<String> = {
         let mut parents: std::collections::HashSet<String> = std::collections::HashSet::new();

@@ -14,7 +14,7 @@ use crate::{
 };
 
 use super::{
-    bc_segment, bc_threads, cli_panel, layout, linkify_slugs, now_ms, recency_class,
+    actor_label, bc_segment, bc_threads, cli_panel, layout, linkify_slugs, now_ms, recency_class,
 };
 
 #[derive(Clone)]
@@ -118,67 +118,6 @@ fn bc_thread_post(tag: &str, index: usize) -> Markup {
     }
 }
 
-/// Thread post permalink — `/t/:tag/:index` — single post with prev/next nav.
-pub async fn thread_post_view(
-    State(state): State<AppState>,
-    Path((tag, index)): Path<(String, usize)>,
-) -> impl IntoResponse {
-    let tag = canonicalize_tag(&tag);
-
-    let (total, ingest) = {
-        let reduced = state.reduced.read().await;
-        let ids: Vec<String> = reduced
-            .ingests_by_thread
-            .get(&tag)
-            .map(|q| q.iter().rev().cloned().collect())
-            .unwrap_or_default();
-        let ing = ids.get(index).and_then(|id| reduced.ingests_by_id.get(id).cloned());
-        (ids.len(), ing)
-    };
-
-    let Some(ing) = ingest else {
-        return (StatusCode::NOT_FOUND, "post not found").into_response();
-    };
-
-    let now = now_ms();
-    let hover = timeago::rfc3339_utc(ing.ts);
-    let ago = timeago::timeago(now, ing.ts);
-
-    let prev_href = (index > 0).then(|| format!("/t/{tag}/{}", index - 1));
-    let next_href = (index + 1 < total).then(|| format!("/t/{tag}/{}", index + 1));
-
-    let views = state.views.get_views(&format!("/t/{tag}/{index}"));
-    let page = layout(
-        &format!("#{tag}/{index}"),
-        "view-thread",
-        html! {
-            nav class="breadcrumb" { (bc_thread_post(&tag, index)) }
-            div class="post-nav" {
-                @if let Some(href) = &prev_href {
-                    a href=(href) class="post-nav-btn" { "← prev" }
-                } @else {
-                    span class="post-nav-btn disabled" { "← prev" }
-                }
-                span class="post-nav-pos muted" { (index) " / " (total.saturating_sub(1)) }
-                @if let Some(href) = &next_href {
-                    a href=(href) class="post-nav-btn" { "next →" }
-                } @else {
-                    span class="post-nav-btn disabled" { "next →" }
-                }
-            }
-            div class="ingest-entry" data-ingest-id=(ing.id) {
-                div class="ingest-meta muted" title=(hover) {
-                    span class="post-num" { "#" (index) }
-                    " · "
-                    (ago)
-                }
-                pre { (maud::PreEscaped(linkify_slugs(&ing.raw))) }
-            }
-        },
-        Some(views),
-    );
-    Html(page.into_string()).into_response()
-}
 
 #[derive(Debug, Deserialize)]
 pub struct ThreadViewQuery {
@@ -307,6 +246,7 @@ pub async fn thread_post_view(
         reduced.ingests_by_id.get(&post_id).cloned()
     };
 
+    let views = state.views.get_views(&format!("/t/{tag}/{post_id}"));
     let page = layout(
         &format!("#{tag} / post"),
         "view-thread",
@@ -328,6 +268,7 @@ pub async fn thread_post_view(
                 p class="muted" { "post not found" }
             }
         },
+        Some(views),
     );
     Html(page.into_string()).into_response()
 }

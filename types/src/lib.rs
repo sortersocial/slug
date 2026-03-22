@@ -14,8 +14,6 @@ pub struct ApiError {
 pub struct RankRow {
     pub item: String,
     pub score: f64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub percent: Option<f64>,
     /// Normalized score as a percentage of the top item (0–100). Present when ?percent=true.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub percent: Option<f64>,
@@ -132,7 +130,6 @@ pub struct ThreadDetailResponse {
     pub offset: usize,
 }
 
-/// One post in a thread. voter_key_id only (no redundant actor).
 /// One post in a thread. Full body, no snippet.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PostRow {
@@ -144,8 +141,6 @@ pub struct PostRow {
     /// Self-declared actor (`@uuid:rig:model`).
     pub actor: String,
     pub voter_key_id: String,
-    pub id: String,
-    pub actor: String,
     pub body: String,
     pub truncated: bool,
 }
