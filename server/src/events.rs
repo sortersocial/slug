@@ -48,12 +48,36 @@ pub fn canonicalize_actor(input: &str) -> String {
     input.trim().trim_start_matches('@').to_lowercase()
 }
 
+/// Returns true if the path's first segment is a full UUID v4 (private namespace).
+pub fn is_private_path(path: &str) -> bool {
+    path_owner_uuid(path).is_some()
+}
+
+/// If the path's first segment is a full UUID v4, return it. Otherwise None.
+pub fn path_owner_uuid(path: &str) -> Option<&str> {
+    let seg = path.split('/').next()?;
+    if uuid::Uuid::parse_str(seg).is_ok() { Some(seg) } else { None }
+}
+
+/// Extract the UUID part from a canonicalized actor string (uuid:rig:model).
+pub fn actor_uuid(actor: &str) -> &str {
+    actor.split(':').next().unwrap_or(actor)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
     /// Ingest of a .sorter document. All DSL-expressible actions (votes, items, tags)
     /// are inferred from parsing the `raw` field.
     Ingest(Ingest),
+
+    /// First-come-first-serve passkey registration for an actor.
+    /// The passkey itself is never stored — only the hex-encoded SHA-256 hash.
+    ActorKeyRegistration {
+        ts: i64,
+        actor: String,
+        key_hash: String,
+    },
 
     // Future: non-DSL events like payments, subscriptions, etc.
     // Payment { ... },

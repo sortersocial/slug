@@ -5,7 +5,8 @@ use axum::{
     Json,
 };
 use rand::seq::SliceRandom;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use sha2::{Digest, Sha256};
 use slug_types::*;
 use std::collections::{BTreeSet, HashSet};
 
@@ -14,22 +15,20 @@ use std::collections::HashMap;
 use crate::{
     dsl,
     events::{canonicalize_actor, canonicalize_item, canonicalize_tag, item_parent_path, Event},
-    ranking::{ranked_items, ranked_items_subset},
+    ranking::{connected_components_from_voted_pairs, ranked_items_subset},
     reducer::ReducerState,
     state::AppState,
 };
 use crate::events::Ingest;
 
-fn channel_from_headers(headers: &HeaderMap) -> Option<String> {
-    headers
-        .get("x-slug-channel")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-}
-
 fn api_error(status: StatusCode, error: impl Into<String>, hint: Option<String>) -> axum::response::Response {
     (status, Json(ApiError { ok: false, error: error.into(), hint })).into_response()
+}
+
+fn sha256_hex(s: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(s.as_bytes());
+    format!("{:x}", hasher.finalize())
 }
 
 fn now_ms() -> i64 {
@@ -37,6 +36,20 @@ fn now_ms() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
     t.as_millis() as i64
+}
+
+/// Verify actor passkey and return the UUID portion if valid.
+fn verified_actor_uuid(reduced: &ReducerState, actor: Option<&str>, passkey: Option<&str>) -> Option<String> {
+    let actor_str = actor?;
+    let pk = passkey?;
+    let actor_can = canonicalize_actor(actor_str);
+    let stored_hash = reduced.actor_keys.get(&actor_can)?;
+    let hash = sha256_hex(pk);
+    if hash == *stored_hash {
+        Some(crate::events::actor_uuid(&actor_can).to_string())
+    } else {
+        None
+    }
 }
 
 /// Resolve an item path as a first-class canonical path.
@@ -242,13 +255,94 @@ pub fn validate_ingest_document(
         )
     })?;
 
+    let actor_u = crate::events::actor_uuid(&actor).to_string();
+
+    // Private namespace ownership checks.
+    for s in &doc.statements {
+        match s {
+            dsl::Stmt::Item { title, .. } => {
+                let item = canonicalize_item(title);
+                if let Some(owner) = crate::events::path_owner_uuid(&item) {
+                    if owner != actor_u {
+                        return Err((
+                            StatusCode::FORBIDDEN,
+                            "private namespace: path owner does not match actor".to_string(),
+                            Some(format!(
+                                "/{} belongs to UUID {}, but your actor UUID is {}",
+                                item, owner, actor_u
+                            )),
+                        ));
+                    }
+                }
+            }
+            dsl::Stmt::Vote { item1, item2, .. } => {
+                let a = canonicalize_item(item1);
+                let b = canonicalize_item(item2);
+                let a_owner = crate::events::path_owner_uuid(&a);
+                let b_owner = crate::events::path_owner_uuid(&b);
+                match (a_owner, b_owner) {
+                    (None, None) => {} // both public, fine
+                    (Some(oa), Some(ob)) if oa == ob => {
+                        // both private, same owner — actor must match
+                        if oa != actor_u {
+                            return Err((
+                                StatusCode::FORBIDDEN,
+                                "private namespace: vote owner does not match actor".to_string(),
+                                Some(format!("these items belong to UUID {}, not {}", oa, actor_u)),
+                            ));
+                        }
+                    }
+                    _ => {
+                        return Err((
+                            StatusCode::BAD_REQUEST,
+                            "cross-votes between private and public items are not allowed".to_string(),
+                            Some("votes must either be between two public items or two private items owned by the same actor".to_string()),
+                        ));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
     let threads: Vec<String> = threads_seen.into_iter().collect();
     if threads.is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "ingest requires at least one #tag".to_string(),
-            Some("declare a thread with #tag, e.g. #sorting-hat".to_string()),
-        ));
+        // Thread is optional only when every item and vote is under the actor's private namespace.
+        // Pure prose posts and public items still require a #tag.
+        let all_private = {
+            let mut has_content = false;
+            let mut all_under_actor = true;
+            for s in &doc.statements {
+                match s {
+                    dsl::Stmt::Item { title, .. } => {
+                        has_content = true;
+                        let item = canonicalize_item(title);
+                        if crate::events::path_owner_uuid(&item) != Some(actor_u.as_str()) {
+                            all_under_actor = false;
+                        }
+                    }
+                    dsl::Stmt::Vote { item1, item2, .. } => {
+                        has_content = true;
+                        let a = canonicalize_item(item1);
+                        let b = canonicalize_item(item2);
+                        if crate::events::path_owner_uuid(&a) != Some(actor_u.as_str())
+                            || crate::events::path_owner_uuid(&b) != Some(actor_u.as_str())
+                        {
+                            all_under_actor = false;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            has_content && all_under_actor
+        };
+        if !all_private {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                "ingest requires at least one #tag".to_string(),
+                Some("declare a thread with #tag, e.g. #sorting-hat\n(#tag is optional only when all items are in your private ~/uuid/ namespace)".to_string()),
+            ));
+        }
     }
 
     Ok(ValidatedIngest {
@@ -282,6 +376,10 @@ pub struct RankQuery {
     /// How many levels deep to resolve children (default 1 = direct children only).
     #[serde(default)]
     pub depth: Option<usize>,
+    #[serde(default)]
+    pub actor: Option<String>,
+    #[serde(default)]
+    pub passkey: Option<String>,
 }
 
 fn parse_parent_specs(parent: Option<&String>) -> Vec<String> {
@@ -342,10 +440,11 @@ fn paginate_rankings(
 }
 
 pub async fn get_rank(State(state): State<AppState>, headers: HeaderMap, Query(q): Query<RankQuery>) -> impl IntoResponse {
-    let ch = channel_from_headers(&headers);
-    let (reduced_arc, _) = state.resolve(ch.as_deref()).await;
+    let reduced_arc = state.reduced.clone();
     let reduced = reduced_arc.read().await;
 
+    let passkey = headers.get("x-slug-passkey").and_then(|v| v.to_str().ok()).map(|s| s.to_string()).or(q.passkey);
+    let authed_uuid = verified_actor_uuid(&reduced, q.actor.as_deref(), passkey.as_deref());
     let specs = parse_parent_specs(q.parent.as_ref());
     let is_global = q.parent.as_deref().map(|p| p.trim() == "~").unwrap_or(false);
     let depth = q.depth.unwrap_or(1).max(1);
@@ -386,6 +485,21 @@ pub async fn get_rank(State(state): State<AppState>, headers: HeaderMap, Query(q
                     })
                     .collect(),
             }
+        .map(|c| RankComponent {
+            pairs: c.pairs,
+            ranking: c
+                .ranked
+                .into_iter()
+                .filter(|r| match crate::events::path_owner_uuid(&r.item) {
+                    None => true,
+                    Some(owner) => authed_uuid.as_deref() == Some(owner),
+                })
+                .map(|r| RankRow {
+                    item: format!("/{}", r.item),
+                    score: r.score,
+                    percent: None,
+                })
+                .collect(),
         })
         .collect();
 
@@ -405,8 +519,214 @@ pub async fn get_rank(State(state): State<AppState>, headers: HeaderMap, Query(q
     Json(RankResponse {
         components,
         unranked_items,
+        unranked_items: rankings.unranked_items.into_iter()
+            .filter(|p| match crate::events::path_owner_uuid(p) {
+                None => true,
+                Some(owner) => authed_uuid.as_deref() == Some(owner),
+            })
+            .collect(),
     })
     .into_response()
+}
+
+// ============================================================================
+// Global rank — flat, paginated ranking across all items
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+pub struct GlobalRankQuery {
+    #[serde(default)]
+    pub limit: Option<usize>,
+    #[serde(default)]
+    pub offset: Option<usize>,
+    /// When true, add a `percent` field to each row (top item = 100, bottom = 0).
+    #[serde(default)]
+    pub percent: Option<bool>,
+    #[serde(default)]
+    pub actor: Option<String>,
+    #[serde(default)]
+    pub passkey: Option<String>,
+}
+
+pub async fn get_global_rank(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<GlobalRankQuery>,
+) -> impl IntoResponse {
+    const DEFAULT_LIMIT: usize = 50;
+    const MAX_LIMIT: usize = 500;
+
+    let limit = q.limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT);
+    let offset = q.offset.unwrap_or(0);
+    let want_percent = q.percent.unwrap_or(false);
+
+    let reduced_arc = state.reduced.clone();
+    // Write lock needed to update cached_scores when dirty.
+    let mut reduced = reduced_arc.write().await;
+    let passkey = headers
+        .get("x-slug-passkey")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string())
+        .or(q.passkey);
+    let authed_uuid = verified_actor_uuid(&reduced, q.actor.as_deref(), passkey.as_deref());
+
+    // Find connected components in global graph; rank within each; largest component first.
+    let n = reduced.ranking_group.idx_to_item.len();
+    let (mut comps, _) = connected_components_from_voted_pairs(
+        n, reduced.ranking_group.voted_pairs.iter().copied(),
+    );
+    comps.sort_by(|a, b| b.len().cmp(&a.len()));
+
+    let mut ranked: Vec<RankRow> = Vec::new();
+    for comp in &comps {
+        let items = ranked_items_subset(&reduced.ranking_group, comp, 10000, 1e-8);
+        let top = items.first().map(|r| r.score).unwrap_or(1.0);
+        let bot = items.last().map(|r| r.score).unwrap_or(0.0);
+        let range = (top - bot).max(1e-12);
+        for r in items {
+            if let Some(owner) = crate::events::path_owner_uuid(&r.item) {
+                if authed_uuid.as_deref() != Some(owner) { continue; }
+            }
+            let pct = want_percent.then(|| ((r.score - bot) / range * 100.0).clamp(0.0, 100.0));
+            ranked.push(RankRow { item: format!("/{}", r.item), score: r.score, percent: pct });
+        }
+    }
+
+    let ranked_total = ranked.len();
+
+    // Items that exist but have never been voted on.
+    let mut unranked: Vec<String> = reduced
+        .items
+        .iter()
+        .filter(|it| !reduced.ranking_group.item_to_idx.contains_key(*it))
+        .filter(|it| match crate::events::path_owner_uuid(it) {
+            None => true,
+            Some(owner) => authed_uuid.as_deref() == Some(owner),
+        })
+        .cloned()
+        .collect();
+    unranked.sort();
+    let unranked_total = unranked.len();
+
+    let page: Vec<RankRow> = ranked
+        .into_iter()
+        .chain(unranked.into_iter().map(|it| RankRow {
+            item: format!("/{}", it),
+            score: 0.0,
+            percent: want_percent.then_some(0.0),
+        }))
+        .skip(offset)
+        .take(limit)
+        .collect();
+
+    Json(GlobalRankResponse {
+        ranked_total,
+        unranked_total,
+        offset,
+        limit,
+        items: page,
+    })
+    .into_response()
+}
+
+// ============================================================================
+// Rank history — per-item rank ledger
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+pub struct RankHistoryQuery {
+    pub item: String,
+    #[serde(default)]
+    pub actor: Option<String>,
+    #[serde(default)]
+    pub passkey: Option<String>,
+}
+
+pub async fn get_rank_history(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<RankHistoryQuery>,
+) -> impl IntoResponse {
+    let reduced_arc = state.reduced.clone();
+    let reduced = reduced_arc.read().await;
+    let passkey = headers
+        .get("x-slug-passkey")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string())
+        .or(q.passkey);
+    let authed_uuid = verified_actor_uuid(&reduced, q.actor.as_deref(), passkey.as_deref());
+
+    let item = crate::events::canonicalize_item(&q.item);
+
+    // Private item access check.
+    if let Some(owner) = crate::events::path_owner_uuid(&item) {
+        if authed_uuid.as_deref() != Some(owner) {
+            return (axum::http::StatusCode::FORBIDDEN, Json(slug_types::ApiError {
+                ok: false,
+                error: "forbidden".to_string(),
+                hint: None,
+            })).into_response();
+        }
+    }
+
+    let entries = reduced.rank_history.get(&item).cloned().unwrap_or_default();
+
+    // Resolve caused_by at query time: look up the ingest and filter relevant votes.
+    let history: Vec<slug_types::RankHistoryRow> = entries.iter().map(|e| {
+        let caused_by: Vec<VoteRow> = reduced.ingests_by_id.get(&e.post_id)
+            .and_then(|ing| crate::dsl::parse_full(&ing.raw).ok())
+            .map(|doc| {
+                doc.statements.into_iter().filter_map(|s| {
+                    if let crate::dsl::Stmt::Vote { item1, item2, ratio_left, ratio_right, explanation } = s {
+                        let a = crate::events::canonicalize_item(&item1);
+                        let b = crate::events::canonicalize_item(&item2);
+                        if a == item || b == item {
+                            Some(VoteRow {
+                                ts: e.ts,
+                                a: format!("/{}", a),
+                                b: format!("/{}", b),
+                                ratio: format!("{}:{}", ratio_left, ratio_right),
+                                actor: reduced.ingests_by_id.get(&e.post_id).map(|ing| ing.actor.clone()),
+                                body: explanation,
+                                thread: Some(format!("#{}", e.thread)),
+                            })
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                }).collect()
+            })
+            .unwrap_or_default();
+
+        // Compute 1-indexed chronological position within the thread.
+        // ingests_by_thread is most-recent-first, so index from back + 1.
+        let thread_post_index = reduced.ingests_by_thread
+            .get(&e.thread)
+            .and_then(|q| q.iter().rev().position(|id| id == &e.post_id))
+            .map(|i| i + 1)
+            .unwrap_or(0);
+
+        slug_types::RankHistoryRow {
+            ts: e.ts,
+            scope_rank: e.scope_rank,
+            scope_rank_delta: e.scope_rank_delta,
+            scope_total: e.scope_total,
+            global_rank: e.global_rank,
+            global_rank_delta: e.global_rank_delta,
+            global_total: e.global_total,
+            score: e.score,
+            thread: format!("#{}", e.thread),
+            thread_post_index,
+            caused_by,
+        }
+    }).collect();
+
+    Json(slug_types::RankHistoryResponse {
+        item: format!("/{}", item),
+        history,
+    }).into_response()
 }
 
 #[derive(Debug, Deserialize)]
@@ -416,6 +736,10 @@ pub struct PairQuery {
     pub parent: Option<String>,
     #[serde(default)]
     pub random: Option<bool>,
+    #[serde(default)]
+    pub actor: Option<String>,
+    #[serde(default)]
+    pub passkey: Option<String>,
 }
 
 
@@ -445,19 +769,72 @@ fn is_pair_voted(group: &crate::reducer::GroupState, a: &str, b: &str) -> bool {
     group.voted_pairs.contains(&(i, j))
 }
 
+/// Compute graph connectivity stats for a set of items within the ranking group.
+fn compute_connectivity_stats(reduced: &ReducerState, pool: &[String]) -> ConnectivityStats {
+    let group = &reduced.ranking_group;
+    let n = pool.len();
+
+    // Map pool items to global indices (items not yet in the group get no index)
+    let global_idxs: Vec<Option<usize>> = pool
+        .iter()
+        .map(|it| group.item_to_idx.get(it).copied())
+        .collect();
+    let present: Vec<usize> = global_idxs.iter().filter_map(|x| *x).collect();
+
+    // Build local index mapping for items that exist in the ranking group
+    let global_to_local: HashMap<usize, usize> = present
+        .iter()
+        .enumerate()
+        .map(|(local, &global)| (global, local))
+        .collect();
+
+    let (comps, isolates) = connected_components_from_voted_pairs(
+        present.len(),
+        group.voted_pairs.iter().filter_map(|(i, j)| {
+            let li = global_to_local.get(i).copied()?;
+            let lj = global_to_local.get(j).copied()?;
+            Some((li, lj))
+        }),
+    );
+
+    // Items not in the ranking group at all are also isolates
+    let items_not_in_group = global_idxs.iter().filter(|x| x.is_none()).count();
+
+    let num_components = comps.len() + isolates.len() + items_not_in_group;
+
+    let pairs_voted = group
+        .voted_pairs
+        .iter()
+        .filter(|(i, j)| global_to_local.contains_key(i) && global_to_local.contains_key(j))
+        .count();
+
+    ConnectivityStats {
+        items: n,
+        components: num_components,
+        comparisons_until_connected: if num_components > 0 { num_components - 1 } else { 0 },
+        pairs_voted,
+        pairs_possible: n * n.saturating_sub(1) / 2,
+    }
+}
+
 pub async fn get_pair(State(state): State<AppState>, headers: HeaderMap, Query(q): Query<PairQuery>) -> impl IntoResponse {
-    let ch = channel_from_headers(&headers);
-    let (reduced_arc, _) = state.resolve(ch.as_deref()).await;
+    let reduced_arc = state.reduced.clone();
     let force_random = q.random.unwrap_or(false);
 
     let pool: Vec<String> = {
         let reduced = reduced_arc.read().await;
+        let passkey = headers.get("x-slug-passkey").and_then(|v| v.to_str().ok()).map(|s| s.to_string()).or_else(|| q.passkey.clone());
+        let authed_uuid = verified_actor_uuid(&reduced, q.actor.as_deref(), passkey.as_deref());
         let specs = parse_parent_specs(q.parent.as_ref());
-        if specs.is_empty() {
+        let raw_pool = if specs.is_empty() {
             reduced.ranking_group.idx_to_item.clone()
         } else {
             crate::scope_rank::resolve_scope(&reduced, &specs)
-        }
+        };
+        raw_pool.into_iter().filter(|it| match crate::events::path_owner_uuid(it) {
+            None => true,
+            Some(owner) => authed_uuid.as_deref() == Some(owner),
+        }).collect()
     };
 
     if pool.len() < 2 {
@@ -473,7 +850,7 @@ pub async fn get_pair(State(state): State<AppState>, headers: HeaderMap, Query(q
         let Some((left, right)) = pick_random_distinct(&pool) else {
             return api_error(StatusCode::BAD_REQUEST, "need at least 2 items", None);
         };
-        let (left_body, right_body, threads) = {
+        let (left_body, right_body, threads, connectivity) = {
             let reduced = reduced_arc.read().await;
             let lb = reduced.item_bodies.get(&left).cloned();
             let rb = reduced.item_bodies.get(&right).cloned();
@@ -486,7 +863,8 @@ pub async fn get_pair(State(state): State<AppState>, headers: HeaderMap, Query(q
                 .collect::<std::collections::HashSet<_>>()
                 .into_iter()
                 .collect();
-            (lb, rb, th)
+            let cs = compute_connectivity_stats(&reduced, &pool);
+            (lb, rb, th, cs)
         };
         return Json(PairResponse {
             left: format!("/{}", left),
@@ -494,6 +872,7 @@ pub async fn get_pair(State(state): State<AppState>, headers: HeaderMap, Query(q
             left_body,
             right_body,
             threads,
+            connectivity: Some(connectivity),
         })
         .into_response();
     }
@@ -556,7 +935,7 @@ pub async fn get_pair(State(state): State<AppState>, headers: HeaderMap, Query(q
         return api_error(StatusCode::BAD_REQUEST, "need at least 2 items", None);
     };
 
-    let (left_body, right_body, threads) = {
+    let (left_body, right_body, threads, connectivity) = {
         let reduced = reduced_arc.read().await;
         let lb = reduced.item_bodies.get(&left).cloned();
         let rb = reduced.item_bodies.get(&right).cloned();
@@ -569,7 +948,8 @@ pub async fn get_pair(State(state): State<AppState>, headers: HeaderMap, Query(q
             .collect::<std::collections::HashSet<_>>()
             .into_iter()
             .collect();
-        (lb, rb, th)
+        let cs = compute_connectivity_stats(&reduced, &pool);
+        (lb, rb, th, cs)
     };
     Json(PairResponse {
         left: format!("/{}", left),
@@ -577,6 +957,7 @@ pub async fn get_pair(State(state): State<AppState>, headers: HeaderMap, Query(q
         left_body,
         right_body,
         threads,
+        connectivity: Some(connectivity),
     })
     .into_response()
 }
@@ -585,17 +966,33 @@ pub async fn get_pair(State(state): State<AppState>, headers: HeaderMap, Query(q
 // Exploration APIs (read-only)
 // ============================================================================
 
+#[derive(Debug, Deserialize)]
+pub struct PathsQuery {
+    #[serde(default)]
+    pub actor: Option<String>,
+    #[serde(default)]
+    pub passkey: Option<String>,
+}
+
 /// List root paths (items with parent "").
-pub async fn get_paths(State(state): State<AppState>, headers: HeaderMap) -> impl IntoResponse {
-    let ch = channel_from_headers(&headers);
-    let (reduced_arc, _) = state.resolve(ch.as_deref()).await;
+pub async fn get_paths(State(state): State<AppState>, headers: HeaderMap, Query(q): Query<PathsQuery>) -> impl IntoResponse {
+    let reduced_arc = state.reduced.clone();
     let reduced = reduced_arc.read().await;
+    let passkey = headers.get("x-slug-passkey").and_then(|v| v.to_str().ok()).map(|s| s.to_string()).or(q.passkey);
+    let authed_uuid = verified_actor_uuid(&reduced, q.actor.as_deref(), passkey.as_deref());
 
     let out: Vec<PathSummary> = reduced
         .item_children
         .get("")
         .map(|roots| {
-            let mut v: Vec<PathSummary> = roots.iter().map(|path| {
+            let mut v: Vec<PathSummary> = roots.iter()
+                .filter(|path| {
+                    match crate::events::path_owner_uuid(path) {
+                        None => true,
+                        Some(owner) => authed_uuid.as_deref() == Some(owner),
+                    }
+                })
+                .map(|path| {
                 let children = reduced.item_children.get(path).map(|s| s.len()).unwrap_or(0);
                 PathSummary {
                     path: format!("~/{}", path),
@@ -611,25 +1008,39 @@ pub async fn get_paths(State(state): State<AppState>, headers: HeaderMap) -> imp
     Json(PathsResponse { paths: out }).into_response()
 }
 
+#[derive(Debug, Deserialize)]
+pub struct LeavesQuery {
+    #[serde(default)]
+    pub actor: Option<String>,
+    #[serde(default)]
+    pub passkey: Option<String>,
+}
+
 /// List every leaf item (full path). Items that have no children. Does not scale; works for now.
-pub async fn get_leaves(State(state): State<AppState>, headers: HeaderMap) -> impl IntoResponse {
-    let ch = channel_from_headers(&headers);
-    let (reduced_arc, _) = state.resolve(ch.as_deref()).await;
+pub async fn get_leaves(State(state): State<AppState>, headers: HeaderMap, Query(q): Query<LeavesQuery>) -> impl IntoResponse {
+    let reduced_arc = state.reduced.clone();
     let reduced = reduced_arc.read().await;
+    let passkey = headers.get("x-slug-passkey").and_then(|v| v.to_str().ok()).map(|s| s.to_string()).or(q.passkey);
+    let authed_uuid = verified_actor_uuid(&reduced, q.actor.as_deref(), passkey.as_deref());
     let parents: HashSet<&String> = reduced.item_children.keys().collect();
     let mut paths: Vec<String> = reduced
         .items
         .iter()
         .filter(|p| !parents.contains(p))
+        .filter(|p| {
+            match crate::events::path_owner_uuid(p) {
+                None => true,
+                Some(owner) => authed_uuid.as_deref() == Some(owner),
+            }
+        })
         .cloned()
         .collect();
     paths.sort();
     Json(LeavesResponse { paths }).into_response()
 }
 
-pub async fn get_threads(State(state): State<AppState>, headers: HeaderMap) -> impl IntoResponse {
-    let ch = channel_from_headers(&headers);
-    let (reduced_arc, _) = state.resolve(ch.as_deref()).await;
+pub async fn get_threads(State(state): State<AppState>) -> impl IntoResponse {
+    let reduced_arc = state.reduced.clone();
     let reduced = reduced_arc.read().await;
 
     let mut out: Vec<ThreadSummary> = reduced
@@ -639,7 +1050,6 @@ pub async fn get_threads(State(state): State<AppState>, headers: HeaderMap) -> i
             ThreadSummary {
                 thread: format!("#{thread}"),
                 last_activity_ts: ts.last_activity_ts,
-                subscriber_count: ts.subscriber_count,
                 web: format!("https://slug.social/t/{}", thread),
             }
         })
@@ -653,20 +1063,58 @@ pub async fn get_threads(State(state): State<AppState>, headers: HeaderMap) -> i
 pub struct ThreadDetailQuery {
     pub tag: String,
     #[serde(default)]
+    /// Chronological offset (0 = oldest). Default: 0.
+    pub offset: Option<usize>,
+    /// Number of posts to return. Default: 10, max: 500.
+    pub limit: Option<usize>,
+    /// Only posts at or after this Unix ms timestamp.
+    pub since: Option<i64>,
+    /// Only posts strictly before this Unix ms timestamp.
+    pub before: Option<i64>,
+    /// Filter to posts whose actor starts with this prefix (UUID prefix or full actor string).
+    pub actor: Option<String>,
+    /// Return the single post with this ingest ID.
     pub post_id: Option<String>,
 }
 
-/// Thread (forum) detail by tag — all posts, full body. Not the same as get_path (garden).
-pub async fn get_thread(State(state): State<AppState>, headers: HeaderMap, Query(q): Query<ThreadDetailQuery>) -> impl IntoResponse {
-    let ch = channel_from_headers(&headers);
-    let (reduced_arc, _) = state.resolve(ch.as_deref()).await;
+/// Thread (forum) detail by tag — paginated, filterable posts, full body.
+pub async fn get_thread(State(state): State<AppState>, Query(q): Query<ThreadDetailQuery>) -> impl IntoResponse {
+    let reduced_arc = state.reduced.clone();
     let tag = canonicalize_tag(&q.tag);
     let reduced = reduced_arc.read().await;
 
-    let ingest_ids = reduced
+    // Single post lookup by ingest ID.
+    if let Some(ref post_id) = q.post_id {
+        let thread_ids = reduced.ingests_by_thread.get(&tag);
+        let index = thread_ids.and_then(|ids| {
+            ids.iter().rev().enumerate().find(|(_, id)| *id == post_id).map(|(i, _)| i)
+        });
+        return match index.and_then(|idx| reduced.ingests_by_id.get(post_id).map(|ing| (idx, ing))) {
+            None => api_error(StatusCode::NOT_FOUND, "post not found", None),
+            Some((idx, ing)) => Json(ThreadDetailResponse {
+                thread: format!("#{}", tag),
+                posts: vec![PostRow {
+                    id: ing.id.clone(),
+                    index: idx,
+                    ts: ing.ts,
+                    actor: ing.actor.clone(),
+                    voter_key_id: ing.voter_key_id.clone(),
+                    body: ing.raw.clone(),
+                }],
+                total: 1,
+                offset: idx,
+            }).into_response(),
+        };
+    }
+
+    let offset = q.offset.unwrap_or(0);
+    let limit = q.limit.unwrap_or(10).clamp(1, 500);
+
+    // ingests_by_thread is newest-first; reverse to chronological order.
+    let all_ids: Vec<String> = reduced
         .ingests_by_thread
         .get(&tag)
-        .map(|q| q.iter().cloned().collect::<Vec<_>>())
+        .map(|q| q.iter().rev().cloned().collect())
         .unwrap_or_default();
 
     let posts: Vec<PostRow> = {
@@ -703,23 +1151,61 @@ pub async fn get_thread(State(state): State<AppState>, headers: HeaderMap, Query
             })
             .collect()
     };
+    let actor_prefix = q.actor.as_deref().unwrap_or("").to_lowercase();
+    let filtered: Vec<(usize, _)> = all_ids
+        .into_iter()
+        .enumerate()
+        .filter_map(|(idx, id)| reduced.ingests_by_id.get(&id).map(|ing| (idx, ing.clone())))
+        .filter(|(_, ing)| q.since.map_or(true, |s| ing.ts >= s))
+        .filter(|(_, ing)| q.before.map_or(true, |b| ing.ts < b))
+        .filter(|(_, ing)| actor_prefix.is_empty() || ing.actor.to_lowercase().starts_with(&actor_prefix))
+        .collect();
+
+    let total = filtered.len();
+
+    let posts: Vec<PostRow> = filtered
+        .into_iter()
+        .skip(offset)
+        .take(limit)
+        .map(|(idx, ing)| PostRow {
+            id: ing.id.clone(),
+            index: idx,
+            ts: ing.ts,
+            actor: ing.actor.clone(),
+            voter_key_id: ing.voter_key_id.clone(),
+            body: ing.raw.clone(),
+        })
+        .collect();
 
     Json(ThreadDetailResponse {
         thread: format!("#{}", tag),
         posts,
+        total,
+        offset,
     }).into_response()
 }
 
 #[derive(Debug, Deserialize)]
 pub struct ItemQuery {
     pub item: String,
+    #[serde(default)]
+    pub actor: Option<String>,
+    #[serde(default)]
+    pub passkey: Option<String>,
 }
 
 pub async fn get_item(State(state): State<AppState>, headers: HeaderMap, Query(q): Query<ItemQuery>) -> impl IntoResponse {
-    let ch = channel_from_headers(&headers);
-    let (reduced_arc, _) = state.resolve(ch.as_deref()).await;
+    let reduced_arc = state.reduced.clone();
     let item = canonicalize_item(&q.item);
     let reduced = reduced_arc.read().await;
+    let passkey = headers.get("x-slug-passkey").and_then(|v| v.to_str().ok()).map(|s| s.to_string()).or(q.passkey);
+    let authed_uuid = verified_actor_uuid(&reduced, q.actor.as_deref(), passkey.as_deref());
+
+    if let Some(owner) = crate::events::path_owner_uuid(&item) {
+        if authed_uuid.as_deref() != Some(owner) {
+            return api_error(StatusCode::FORBIDDEN, "private item: authentication required", Some("provide ?actor=@... and x-slug-passkey header".to_string()));
+        }
+    }
 
     let body = reduced.item_bodies.get(&item).cloned();
     let threads: Vec<String> = reduced
@@ -742,6 +1228,10 @@ pub struct RecentVotesQuery {
     pub parent: Option<String>,
     #[serde(default)]
     pub limit: Option<usize>,
+    #[serde(default)]
+    pub actor: Option<String>,
+    #[serde(default)]
+    pub passkey: Option<String>,
 }
 
 fn vote_touches_path(a: &str, b: &str, parent_canon: &str) -> bool {
@@ -754,11 +1244,12 @@ pub async fn get_recent_votes(
     headers: HeaderMap,
     Query(q): Query<RecentVotesQuery>,
 ) -> impl IntoResponse {
-    let ch = channel_from_headers(&headers);
-    let (reduced_arc, _) = state.resolve(ch.as_deref()).await;
+    let reduced_arc = state.reduced.clone();
     let limit = q.limit.unwrap_or(25).clamp(1, 200);
 
     let reduced = reduced_arc.read().await;
+    let passkey = headers.get("x-slug-passkey").and_then(|v| v.to_str().ok()).map(|s| s.to_string()).or(q.passkey);
+    let authed_uuid = verified_actor_uuid(&reduced, q.actor.as_deref(), passkey.as_deref());
     let group = &reduced.ranking_group;
 
     let iter = group.recent_votes.iter();
@@ -769,15 +1260,29 @@ pub async fn get_recent_votes(
         Box::new(iter)
     };
 
-    let out: Vec<VoteRow> = iter.take(limit).map(|v| VoteRow {
-        ts: v.ts,
-        a: format!("/{}", v.a),
-        b: format!("/{}", v.b),
-        ratio: format!("{}:{}", v.ratio_left, v.ratio_right),
-        actor: Some(format!("@{}", v.actor)),
-        body: v.body.clone(),
-        thread: Some(format!("#{}", v.thread)),
-    }).collect();
+    let authed_uuid_clone = authed_uuid.clone();
+    let out: Vec<VoteRow> = iter
+        .filter(move |v| {
+            // Filter out votes involving private items not owned by authed actor
+            for it in [&v.a, &v.b] {
+                if let Some(owner) = crate::events::path_owner_uuid(it) {
+                    if authed_uuid_clone.as_deref() != Some(owner) {
+                        return false;
+                    }
+                }
+            }
+            true
+        })
+        .take(limit)
+        .map(|v| VoteRow {
+            ts: v.ts,
+            a: format!("/{}", v.a),
+            b: format!("/{}", v.b),
+            ratio: format!("{}:{}", v.ratio_left, v.ratio_right),
+            actor: Some(format!("@{}", v.actor)),
+            body: v.body.clone(),
+            thread: Some(format!("#{}", v.thread)),
+        }).collect();
 
     Json(RecentVotesResponse { votes: out }).into_response()
 }
@@ -787,6 +1292,10 @@ pub struct MatchupQuery {
     pub item: String,
     #[serde(default)]
     pub limit: Option<usize>,
+    #[serde(default)]
+    pub actor: Option<String>,
+    #[serde(default)]
+    pub passkey: Option<String>,
 }
 
 /// Vote history for one item (matchup: wins/losses with thread per vote).
@@ -795,18 +1304,37 @@ pub async fn get_matchup(
     headers: HeaderMap,
     Query(q): Query<MatchupQuery>,
 ) -> impl IntoResponse {
-    let ch = channel_from_headers(&headers);
-    let (reduced_arc, _) = state.resolve(ch.as_deref()).await;
+    let reduced_arc = state.reduced.clone();
     let item = canonicalize_item(&q.item);
     let limit = q.limit.unwrap_or(50).clamp(1, 200);
 
     let reduced = reduced_arc.read().await;
+    let passkey = headers.get("x-slug-passkey").and_then(|v| v.to_str().ok()).map(|s| s.to_string()).or(q.passkey);
+    let authed_uuid = verified_actor_uuid(&reduced, q.actor.as_deref(), passkey.as_deref());
+
+    if let Some(owner) = crate::events::path_owner_uuid(&item) {
+        if authed_uuid.as_deref() != Some(owner) {
+            return api_error(StatusCode::FORBIDDEN, "private item: authentication required", Some("provide ?actor=@... and x-slug-passkey header".to_string()));
+        }
+    }
+
     let votes: Vec<VoteRow> = reduced
         .item_votes
         .get(&item)
         .map(|q| {
             q.iter()
                 .take(limit)
+                .filter(|v| {
+                    // Filter out votes involving private opponents not owned by authed actor
+                    for it in [&v.a, &v.b] {
+                        if let Some(owner) = crate::events::path_owner_uuid(it) {
+                            if authed_uuid.as_deref() != Some(owner) {
+                                return false;
+                            }
+                        }
+                    }
+                    true
+                })
                 .map(|v| VoteRow {
                     ts: v.ts,
                     a: format!("/{}", v.a),
@@ -830,29 +1358,6 @@ pub async fn get_matchup(
 // ============================================================================
 // Ingest
 // ============================================================================
-
-#[derive(Debug, Deserialize)]
-pub struct IngestRequest {
-    pub text: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct IngestResponse {
-    pub ok: bool,
-    pub threads: Vec<String>,
-    pub events_appended: usize,
-    pub next: NextMoves,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub ranking_changes: Vec<ScopeRankChanges>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct CheckResponse {
-    pub ok: bool,
-    pub threads: Vec<String>,
-    pub ranking: Vec<RankRow>,
-    pub next: Vec<String>,
-}
 
 /// Compute ranking changes between two snapshots of a parent scope's rankings.
 /// Returns None if nothing changed.
@@ -920,11 +1425,11 @@ fn compute_scope_rank_changes(
 
 pub async fn post_ingest(
     State(state): State<AppState>,
-    headers: axum::http::HeaderMap,
+    headers: HeaderMap,
     Json(req): Json<IngestRequest>,
 ) -> impl IntoResponse {
-    let ch = channel_from_headers(&headers);
-    let (reduced_arc, event_log) = state.resolve(ch.as_deref()).await;
+    let reduced_arc = state.reduced.clone();
+    let event_log = state.event_log.clone();
     let reduced = reduced_arc.read().await;
     let v = match validate_ingest_document(
         &reduced,
@@ -935,6 +1440,69 @@ pub async fn post_ingest(
         Err((status, msg, hint)) => return api_error(status, msg, hint).into_response(),
     };
     drop(reduced);
+
+    // Passkey: header takes priority over JSON body field.
+    let passkey: Option<String> = headers
+        .get("x-slug-passkey")
+        .and_then(|hv| hv.to_str().ok())
+        .map(|s| s.to_string())
+        .or_else(|| req.passkey.clone());
+
+    // Passkey auth gate.
+    // generated_passkey is Some when this is a new actor's first ingest (server-generated key).
+    let generated_passkey: Option<String> = {
+        let reduced = reduced_arc.read().await;
+        match reduced.actor_keys.get(&v.actor) {
+            Some(stored_hash) => {
+                // Actor IS registered — passkey required.
+                match &passkey {
+                    None => {
+                        return api_error(
+                            StatusCode::UNAUTHORIZED,
+                            "this actor requires a passkey",
+                            Some("pass --passkey <slug_sk_...> or set SLUG_PASSKEY".to_string()),
+                        );
+                    }
+                    Some(pk) => {
+                        if sha256_hex(pk) != *stored_hash {
+                            return api_error(StatusCode::UNAUTHORIZED, "invalid passkey", None);
+                        }
+                    }
+                }
+                None
+            }
+            None => {
+                // Actor NOT registered — server generates passkey on first ingest.
+                if passkey.is_some() {
+                    return api_error(
+                        StatusCode::UNAUTHORIZED,
+                        "no passkey registered for this account",
+                        Some("do not supply a passkey for a new actor; the server will generate one".to_string()),
+                    );
+                }
+                Some(format!("slug_sk_{}", uuid::Uuid::new_v4().simple()))
+            }
+        }
+    };
+
+    // If registering: append ActorKeyRegistration event before the Ingest event.
+    let mut events_appended: usize = 0;
+    if let Some(ref pk) = generated_passkey {
+        let key_hash = sha256_hex(pk);
+        let reg_event = crate::events::Event::ActorKeyRegistration {
+            ts: v.ts,
+            actor: v.actor.clone(),
+            key_hash,
+        };
+        if let Err(err) = event_log.append(&reg_event).await {
+            return api_error(StatusCode::INTERNAL_SERVER_ERROR, format!("{err}"), None);
+        }
+        {
+            let mut reduced = reduced_arc.write().await;
+            reduced.apply_event(reg_event);
+        }
+        events_appended += 1;
+    }
 
     // Collect parent scopes for all voted items so we can compute ranking deltas.
     let voted_parent_scopes: Vec<String> = {
@@ -952,7 +1520,7 @@ pub async fn post_ingest(
         out
     };
 
-    // Snapshot rankings before the event is applied.
+    // Snapshot rankings before the ingest event is applied.
     let pre_rankings: HashMap<String, crate::scope_rank::ChildrenRankings> =
         if !voted_parent_scopes.is_empty() {
             let reduced = reduced_arc.read().await;
@@ -964,7 +1532,7 @@ pub async fn post_ingest(
             HashMap::new()
         };
 
-    let event = Event::Ingest(Ingest {
+    let ingest_event = Event::Ingest(Ingest {
         ts: v.ts,
         id: uuid::Uuid::new_v4().to_string(),
         raw: v.raw_text.clone(),
@@ -972,13 +1540,15 @@ pub async fn post_ingest(
         actor: v.actor.clone(),
     });
 
-    if let Err(err) = event_log.append(&event).await {
+    if let Err(err) = event_log.append(&ingest_event).await {
         return api_error(StatusCode::INTERNAL_SERVER_ERROR, format!("{err}"), None);
     }
+    events_appended += 1;
+
     let actor_for_stream = v.actor.clone();
     {
         let mut reduced = reduced_arc.write().await;
-        reduced.apply_event(event);
+        reduced.apply_event(ingest_event);
     }
 
     // Snapshot rankings after the event and compute per-scope deltas.
@@ -996,25 +1566,25 @@ pub async fn post_ingest(
         vec![]
     };
 
-    if ch.is_none() {
-        let _ = state.stream_tx.send(crate::state::StreamEvent {
-            ts: v.ts,
-            actor: actor_for_stream,
-            tags: v.threads.iter().map(|t| format!("#{t}")).collect(),
-            snippet: v.raw_text.chars().take(200).collect(),
-        });
-        let html = crate::html::thread_feed_html(&state).await;
-        let _ = state.html_tx.send(crate::state::HtmlFragment {
-            selector: "#thread-feed".to_string(),
-            html,
-        });
-    }
+    let _ = state.stream_tx.send(crate::state::StreamEvent {
+        ts: v.ts,
+        actor: actor_for_stream,
+        tags: v.threads.iter().map(|t| format!("#{t}")).collect(),
+        snippet: v.raw_text.chars().take(200).collect(),
+    });
+    let html = crate::html::thread_feed_html(&state).await;
+    let _ = state.html_tx.send(crate::state::HtmlFragment {
+        selector: "#thread-feed".to_string(),
+        html,
+    });
 
     let primary_thread = v.threads.first().cloned().unwrap_or_else(|| "untagged".to_string());
     Json(IngestResponse {
         ok: true,
         threads: v.threads.iter().map(|t| format!("#{t}")).collect(),
-        events_appended: 1,
+        events_appended,
+        registered: generated_passkey.is_some(),
+        passkey: generated_passkey,
         next: NextMoves {
             pair: "npx slugsocial pair".to_string(),
             rank: "npx slugsocial rank".to_string(),
@@ -1024,27 +1594,12 @@ pub async fn post_ingest(
     }).into_response()
 }
 
-pub async fn post_web_ingest(
-    State(state): State<AppState>,
-    axum::extract::Form(req): axum::extract::Form<IngestRequest>,
-) -> impl IntoResponse {
-    let json_req = Json(req);
-    let headers = axum::http::HeaderMap::new();
-    let resp = post_ingest(State(state), headers, json_req).await.into_response();
-    if resp.status().is_success() {
-        StatusCode::NO_CONTENT.into_response()
-    } else {
-        resp
-    }
-}
-
 pub async fn post_check(
     State(state): State<AppState>,
-    headers: axum::http::HeaderMap,
+    headers: HeaderMap,
     Json(req): Json<IngestRequest>,
 ) -> impl IntoResponse {
-    let ch = channel_from_headers(&headers);
-    let (reduced_arc, _) = state.resolve(ch.as_deref()).await;
+    let reduced_arc = state.reduced.clone();
     let reduced = reduced_arc.read().await;
     let v = match validate_ingest_document(
         &reduced,
@@ -1054,6 +1609,31 @@ pub async fn post_check(
         Ok(x) => x,
         Err((status, msg, hint)) => return api_error(status, msg, hint).into_response(),
     };
+
+    // Passkey verification for registered actors (read-only — no registration on check).
+    let passkey: Option<String> = headers
+        .get("x-slug-passkey")
+        .and_then(|hv| hv.to_str().ok())
+        .map(|s| s.to_string())
+        .or_else(|| req.passkey.clone());
+
+    if let Some(stored_hash) = reduced.actor_keys.get(&v.actor) {
+        match &passkey {
+            None => {
+                return api_error(
+                    StatusCode::UNAUTHORIZED,
+                    "this actor requires a passkey",
+                    Some("pass --passkey <slug_sk_...> or set SLUG_PASSKEY".to_string()),
+                );
+            }
+            Some(pk) => {
+                if sha256_hex(pk) != *stored_hash {
+                    return api_error(StatusCode::UNAUTHORIZED, "invalid passkey", None);
+                }
+            }
+        }
+    }
+
     drop(reduced);
 
     let event = Event::Ingest(Ingest {
@@ -1074,6 +1654,56 @@ pub async fn post_check(
             item: format!("/{}", r.item),
             score: r.score,
             percent: None,
+    // Collect parent scopes touched by votes in this document.
+    let voted_parents: Vec<String> = {
+        let mut parents: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for s in &v.doc.statements {
+            if let dsl::Stmt::Vote { item1, item2, .. } = s {
+                if let (Ok(a), Ok(b)) = (resolve_item(item1), resolve_item(item2)) {
+                    parents.insert(item_parent_path(&a).unwrap_or_default());
+                    parents.insert(item_parent_path(&b).unwrap_or_default());
+                }
+            }
+        }
+        let mut out: Vec<String> = parents.into_iter().collect();
+        out.sort();
+        out
+    };
+
+    // Show the scoped rankings for affected parent paths; fall back to empty if no votes.
+    let rankings: Vec<slug_types::CheckScopeRanking> = voted_parents
+        .iter()
+        .map(|parent| {
+            let scoped = crate::scope_rank::build_children_rankings(&simulated, parent);
+            let components: Vec<RankComponent> = scoped
+                .component_rankings
+                .into_iter()
+                .map(|comp| RankComponent {
+                    pairs: comp.pairs,
+                    ranking: comp
+                        .ranked
+                        .into_iter()
+                        .map(|r| RankRow {
+                            item: format!("/{}", r.item),
+                            score: r.score,
+                            percent: None,
+                        })
+                        .collect(),
+                })
+                .collect();
+            slug_types::CheckScopeRanking {
+                parent: if parent.is_empty() {
+                    "/".to_string()
+                } else {
+                    format!("/{}", parent)
+                },
+                components,
+                unranked_items: scoped
+                    .unranked_items
+                    .into_iter()
+                    .map(|it| format!("/{}", it))
+                    .collect(),
+            }
         })
         .collect();
 
@@ -1082,7 +1712,7 @@ pub async fn post_check(
     Json(CheckResponse {
         ok: true,
         threads: v.threads.iter().map(|t| format!("#{t}")).collect(),
-        ranking,
+        rankings,
         next: vec![
             "npx slugsocial ingest <file.sorter>".to_string(),
             "npx slugsocial threads".to_string(),
@@ -1092,98 +1722,214 @@ pub async fn post_check(
 }
 
 // ============================================================================
-// Notifications
+// Feed — global reverse-chronological ingest stream since a cutoff
 // ============================================================================
 
 #[derive(Debug, Deserialize)]
-pub struct NotificationsQuery {
+pub struct FeedQuery {
     pub actor: String,
+    /// Override the lower bound (ms). Defaults to actor's last ingest timestamp.
     #[serde(default)]
     pub since: Option<i64>,
+    #[serde(default)]
+    pub limit: Option<usize>,
+    #[serde(default)]
+    pub offset: Option<usize>,
 }
 
-pub async fn get_notifications(
+pub async fn get_feed(
     State(state): State<AppState>,
-    headers: HeaderMap,
-    Query(q): Query<NotificationsQuery>,
+    Query(q): Query<FeedQuery>,
 ) -> impl IntoResponse {
-    let ch = channel_from_headers(&headers);
-    let (reduced_arc, _) = state.resolve(ch.as_deref()).await;
+    const DEFAULT_LIMIT: usize = 50;
+    const MAX_LIMIT: usize = 200;
+
+    let reduced_arc = state.reduced.clone();
+    let reduced = reduced_arc.read().await;
     let actor = canonicalize_actor(&q.actor);
-    let since = q.since.unwrap_or(0);
+    let since = q.since.or_else(|| reduced.actor_last_post_ts.get(&actor).copied());
+    let cutoff = since.unwrap_or(0);
+    let limit = q.limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT);
+    let offset = q.offset.unwrap_or(0);
 
-    let notifications = {
-        let reduced = reduced_arc.read().await;
-        reduced
-            .notifications
-            .get(&actor)
-            .map(|queue| {
-                queue.iter()
-                    .filter(|n| n.ts > since)
-                    .cloned()
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default()
-    };
+    // Scan ingests_ordered backwards (newest first), stop once ts <= cutoff.
+    let matching: Vec<&str> = reduced.ingests_ordered.iter().rev()
+        .map(|id| id.as_str())
+        .take_while(|id| reduced.ingests_by_id.get(*id).map_or(false, |ing| ing.ts > cutoff))
+        .collect();
 
-    Json(NotificationsResponse {
-        ok: true,
+    let total = matching.len();
+    let posts: Vec<slug_types::FeedPost> = matching.into_iter()
+        .skip(offset)
+        .take(limit)
+        .filter_map(|id| reduced.ingests_by_id.get(id))
+        .map(|ing| {
+            // Extract primary thread tag from raw doc.
+            let thread = crate::dsl::parse_full(&ing.raw).ok().and_then(|doc| {
+                doc.statements.into_iter().find_map(|s| {
+                    if let crate::dsl::Stmt::Hashtag { name } = s {
+                        Some(crate::events::canonicalize_tag(&name))
+                    } else { None }
+                })
+            });
+            let thread_post_index = thread.as_deref().and_then(|t| {
+                reduced.ingests_by_thread.get(t).and_then(|q| {
+                    q.iter().rev().position(|id| id == &ing.id).map(|i| i + 1)
+                })
+            });
+            slug_types::FeedPost {
+                ts: ing.ts,
+                id: ing.id.clone(),
+                thread,
+                thread_post_index,
+                body: ing.raw.clone(),
+            }
+        })
+        .collect();
+
+    Json(slug_types::FeedResponse {
         actor: format!("@{}", actor),
-        notifications,
+        since,
+        posts,
+        total,
     }).into_response()
 }
 
 // ============================================================================
-// Presence (thread pages)
+// Search
 // ============================================================================
 
 #[derive(Debug, Deserialize)]
-pub struct PresencePingRequest {
-    pub session_id: String,
-    pub thread_tag: String,
-    #[serde(default)]
-    pub cursor_anchor: Option<String>,
+pub struct SearchApiQuery {
+    pub q: Option<String>,
+    pub limit: Option<usize>,
 }
 
-#[derive(Debug, Serialize)]
-pub struct PresencePingResponse {
-    pub ok: bool,
-    pub global_viewers: usize,
-    pub local_viewers: usize,
+fn tokenize_query(q: &str) -> Vec<String> {
+    q.split_whitespace()
+        .map(|w| w.to_lowercase())
+        .filter(|w| !w.is_empty())
+        .collect()
 }
 
-pub async fn post_presence_ping(
+fn text_contains_all(text: &str, words: &[String]) -> bool {
+    let lower = text.to_lowercase();
+    words.iter().all(|w| lower.contains(w.as_str()))
+}
+
+fn text_contains_any(text: &str, words: &[String]) -> usize {
+    let lower = text.to_lowercase();
+    words.iter().filter(|w| lower.contains(w.as_str())).count()
+}
+
+fn snippet_around(text: &str, words: &[String], max_len: usize) -> String {
+    let lower = text.to_lowercase();
+    let first_pos = words.iter().filter_map(|w| lower.find(w.as_str())).min().unwrap_or(0);
+    let start = first_pos.saturating_sub(max_len / 3);
+    let start = if start > 0 {
+        let mut i = start;
+        while i < text.len() && !text.is_char_boundary(i) { i += 1; }
+        text[i..].find(' ').map(|j| i + j + 1).unwrap_or(i)
+    } else {
+        0
+    };
+    let mut end = (start + max_len).min(text.len());
+    while end < text.len() && !text.is_char_boundary(end) { end += 1; }
+    text[start..end].to_string()
+}
+
+pub async fn get_search(
     State(state): State<AppState>,
-    Json(req): Json<PresencePingRequest>,
+    Query(params): Query<SearchApiQuery>,
 ) -> impl IntoResponse {
-    let session_id = req.session_id.trim().to_string();
-    if session_id.is_empty() {
-        return api_error(
-            StatusCode::BAD_REQUEST,
-            "missing session_id",
-            Some("provide a stable client session id".to_string()),
-        );
+    let q = params.q.unwrap_or_default();
+    let limit = params.limit.unwrap_or(50).min(200);
+
+    if q.len() < 2 {
+        return Json(slug_types::SearchResponse {
+            items: vec![], threads: vec![], posts: vec![],
+        }).into_response();
     }
 
-    let thread_tag = canonicalize_tag(&req.thread_tag);
-    if thread_tag.is_empty() {
-        return api_error(
-            StatusCode::BAD_REQUEST,
-            "missing thread_tag",
-            Some("presence is only valid for /t/:tag pages".to_string()),
-        );
+    let words = tokenize_query(&q);
+    if words.is_empty() {
+        return Json(slug_types::SearchResponse {
+            items: vec![], threads: vec![], posts: vec![],
+        }).into_response();
     }
 
-    let counts = state
-        .upsert_presence(session_id, thread_tag, req.cursor_anchor)
-        .await;
+    let reduced = state.reduced.read().await;
 
-    Json(PresencePingResponse {
-        ok: true,
-        global_viewers: counts.global_viewers,
-        local_viewers: counts.local_viewers,
-    })
-    .into_response()
+    let mut scored_items: Vec<(u32, slug_types::SearchItemHit)> = Vec::new();
+    for item in &reduced.items {
+        let mut score: u32 = 0;
+        if text_contains_all(item, &words) { score += 10; }
+        else if text_contains_any(item, &words) > 0 { score += 5; }
+        if let Some(body) = reduced.item_bodies.get(item) {
+            if text_contains_all(body, &words) { score += 6; }
+            else {
+                let any = text_contains_any(body, &words);
+                if any > 0 { score += any as u32; }
+            }
+        }
+        if score > 0 {
+            scored_items.push((score, slug_types::SearchItemHit {
+                path: format!("/{item}"),
+                body: reduced.item_bodies.get(item).map(|b| snippet_around(b, &words, 120)),
+            }));
+        }
+    }
+
+    let mut scored_threads: Vec<(u32, i64, slug_types::SearchThreadHit)> = Vec::new();
+    for (tag, ts) in &reduced.threads {
+        let mut score: u32 = 0;
+        if text_contains_all(tag, &words) { score += 8; }
+        else if text_contains_any(tag, &words) > 0 { score += 4; }
+        if score > 0 {
+            let post_count = reduced.ingests_by_thread.get(tag).map(|q| q.len()).unwrap_or(0);
+            scored_threads.push((score, ts.last_activity_ts, slug_types::SearchThreadHit {
+                tag: format!("#{tag}"),
+                post_count,
+                last_activity: ts.last_activity_ts,
+            }));
+        }
+    }
+
+    let mut scored_posts: Vec<(u32, i64, slug_types::SearchPostHit)> = Vec::new();
+    for (id, ingest) in &reduced.ingests_by_id {
+        let mut score: u32 = 0;
+        if text_contains_all(&ingest.raw, &words) { score += 4; }
+        else {
+            let any = text_contains_any(&ingest.raw, &words);
+            if any > 0 { score += any as u32; }
+        }
+        if score > 0 {
+            let thread = reduced.ingests_by_thread.iter()
+                .find(|(_, ids)| ids.contains(id))
+                .map(|(tag, _)| format!("#{tag}"))
+                .unwrap_or_else(|| "#unknown".to_string());
+            scored_posts.push((score, ingest.ts, slug_types::SearchPostHit {
+                thread,
+                actor: format!("@{}", ingest.actor),
+                snippet: snippet_around(&ingest.raw, &words, 160),
+                ts: ingest.ts,
+            }));
+        }
+    }
+
+    scored_items.sort_by(|a, b| b.0.cmp(&a.0));
+    scored_threads.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.cmp(&a.1)));
+    scored_posts.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.cmp(&a.1)));
+
+    scored_items.truncate(limit);
+    scored_threads.truncate(limit);
+    scored_posts.truncate(limit);
+
+    Json(slug_types::SearchResponse {
+        items: scored_items.into_iter().map(|(_, h)| h).collect(),
+        threads: scored_threads.into_iter().map(|(_, _, h)| h).collect(),
+        posts: scored_posts.into_iter().map(|(_, _, h)| h).collect(),
+    }).into_response()
 }
 
 // ============================================================================
@@ -1196,6 +1942,7 @@ pub async fn get_html_stream(State(state): State<AppState>) -> impl IntoResponse
     use tokio_stream::wrappers::BroadcastStream;
     use tokio_stream::StreamExt as _;
 
+    // Initial thread feed.
     let initial_html = crate::html::thread_feed_html(&state).await;
     let initial = stream::once(async move {
         Ok::<_, std::convert::Infallible>(
@@ -1203,15 +1950,18 @@ pub async fn get_html_stream(State(state): State<AppState>) -> impl IntoResponse
         )
     });
 
-    let rx = state.html_tx.subscribe();
-    let updates = BroadcastStream::new(rx).filter_map(|msg| match msg {
+    // HTML fragment updates (morphing).
+    let html_rx = state.html_tx.subscribe();
+    let html_updates = BroadcastStream::new(html_rx).filter_map(|msg| match msg {
         Ok(frag) => Some(Ok::<_, std::convert::Infallible>(
             SseEvent::default().data(format!("{}\n{}", frag.selector, frag.html)),
         )),
         Err(_) => None,
     });
 
-    Sse::new(initial.chain(updates)).keep_alive(KeepAlive::default())
+    let stream = initial.chain(html_updates);
+
+    Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
 pub async fn get_stream(State(state): State<AppState>) -> impl IntoResponse {

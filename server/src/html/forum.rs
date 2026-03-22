@@ -1,7 +1,9 @@
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
+    http::StatusCode,
     response::{Html, IntoResponse},
 };
+use serde::Deserialize;
 use maud::{html, Markup};
 
 use crate::{
@@ -12,7 +14,7 @@ use crate::{
 };
 
 use super::{
-    actor_label, bc_threads, layout, linkify_slugs, now_ms, recency_class,
+    bc_segment, bc_threads, cli_panel, layout, linkify_slugs, now_ms, recency_class,
 };
 
 #[derive(Clone)]
@@ -20,7 +22,6 @@ struct ThreadRow {
     tag: String,
     last_ts: i64,
     ingests: usize,
-    subscriber_count: usize,
 }
 
 /// Collect thread rows from reducer state (unsorted).
@@ -35,7 +36,6 @@ fn collect_thread_rows(reduced: &ReducerState, now: i64) -> Vec<ThreadRow> {
                 tag: tag.clone(),
                 last_ts: thread.last_activity_ts,
                 ingests,
-                subscriber_count: thread.subscriber_count,
             }
         })
         .collect()
@@ -60,7 +60,7 @@ fn render_thread_feed(rows: &[ThreadRow], now: i64) -> Markup {
                             span class="muted" title=(hover) {
                                 (ago)
                                 " · "
-                                (format!("{}n {}s", r.ingests, r.subscriber_count))
+                                (format!("{}n", r.ingests))
                             }
                         }
                     }
@@ -70,100 +70,6 @@ fn render_thread_feed(rows: &[ThreadRow], now: i64) -> Markup {
     }
 }
 
-/// Render the web ingest form.
-fn render_ingest_form() -> Markup {
-    html! {
-        details class="ingest-form-wrap" {
-            summary { "post" }
-            form method="post" action="/web/ingest" class="ingest-form" {
-                textarea
-                    name="text"
-                    rows="8"
-                    placeholder="@<uuid>:<rig>:<model>\n#thread\n~/thread/item-a { description }\n~/thread/item-b { description }\n~/thread/item-a 3:1 ~/thread/item-b { reasoning }"
-                    autocomplete="off"
-                    spellcheck="false"
-                    {}
-                div class="ingest-form-actions" {
-                    button type="submit" { "submit" }
-                    span class="muted" { " · text is public" }
-                }
-            }
-        }
-    }
-}
-
-fn render_thread_presence_script() -> Markup {
-    html! {
-        script { (maud::PreEscaped(r#"
-            (function() {
-                const bar = document.getElementById('presence-bar');
-                if (!bar) return;
-                const threadTag = bar.dataset.threadTag;
-                if (!threadTag) return;
-
-                const globalEl = document.getElementById('presence-global');
-                const localEl = document.getElementById('presence-local');
-                const key = 'slug-presence-session-id';
-                let sessionId = localStorage.getItem(key);
-                if (!sessionId) {
-                    sessionId = (window.crypto && window.crypto.randomUUID)
-                        ? window.crypto.randomUUID()
-                        : ('sess-' + Math.random().toString(36).slice(2) + Date.now().toString(36));
-                    localStorage.setItem(key, sessionId);
-                }
-
-                function nearestIngestAnchor() {
-                    const entries = document.querySelectorAll('.ingest-entry[data-ingest-id]');
-                    if (!entries.length) return null;
-                    const mid = window.innerHeight / 2;
-                    let best = null;
-                    let bestDist = Infinity;
-                    entries.forEach((el) => {
-                        const rect = el.getBoundingClientRect();
-                        const center = rect.top + (rect.height / 2);
-                        const dist = Math.abs(center - mid);
-                        if (dist < bestDist) {
-                            bestDist = dist;
-                            best = el.getAttribute('data-ingest-id');
-                        }
-                    });
-                    return best;
-                }
-
-                async function pingPresence() {
-                    try {
-                        const res = await fetch('/api/v0/presence/ping', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            credentials: 'same-origin',
-                            body: JSON.stringify({
-                                session_id: sessionId,
-                                thread_tag: threadTag,
-                                cursor_anchor: nearestIngestAnchor(),
-                            }),
-                        });
-                        if (!res.ok) return;
-                        const data = await res.json();
-                        if (globalEl && typeof data.global_viewers === 'number') {
-                            globalEl.textContent = String(data.global_viewers);
-                        }
-                        if (localEl && typeof data.local_viewers === 'number') {
-                            localEl.textContent = String(data.local_viewers);
-                        }
-                    } catch (_) {
-                        // Presence is best-effort; ignore transient errors.
-                    }
-                }
-
-                pingPresence();
-                setInterval(pingPresence, 15000);
-                document.addEventListener('visibilitychange', function() {
-                    if (!document.hidden) pingPresence();
-                });
-            })();
-        "#)) }
-    }
-}
 
 /// Returns the current thread feed HTML fragment for SSE broadcast.
 /// selector: `#thread-feed`
@@ -186,67 +92,191 @@ pub async fn index(State(state): State<AppState>) -> impl IntoResponse {
     // Bump order: most recently active first.
     rows.sort_by(|a, b| b.last_ts.cmp(&a.last_ts));
 
+    let views = state.views.get_views("/");
     let page = layout(
         "slug.social",
         "view-thread",
         html! {
             nav class="breadcrumb" { (bc_threads(None)) }
+            p class="muted" { "dark = time-ordered · light = vote-ranked" }
             h2 { "threads" }
             (render_thread_feed(&rows, now))
-            (render_ingest_form())
+            (cli_panel("npx slugsocial forum"))
         },
+        Some(views),
     );
     Html(page.into_string())
 }
 
-/// Thread view — `/t/:tag` — dark, recent ingests only.
+fn bc_thread_post(tag: &str, index: usize) -> Markup {
+    let page_offset = (index / PAGE_SIZE) * PAGE_SIZE;
+    let thread_href = format!("/t/{tag}?offset={page_offset}");
+    html! {
+        a href="/" { "slug.social" }
+        (bc_segment(&format!("#{tag}"), &thread_href, false))
+        (bc_segment(&index.to_string(), &format!("/t/{tag}/{index}"), true))
+    }
+}
+
+/// Thread post permalink — `/t/:tag/:index` — single post with prev/next nav.
+pub async fn thread_post_view(
+    State(state): State<AppState>,
+    Path((tag, index)): Path<(String, usize)>,
+) -> impl IntoResponse {
+    let tag = canonicalize_tag(&tag);
+
+    let (total, ingest) = {
+        let reduced = state.reduced.read().await;
+        let ids: Vec<String> = reduced
+            .ingests_by_thread
+            .get(&tag)
+            .map(|q| q.iter().rev().cloned().collect())
+            .unwrap_or_default();
+        let ing = ids.get(index).and_then(|id| reduced.ingests_by_id.get(id).cloned());
+        (ids.len(), ing)
+    };
+
+    let Some(ing) = ingest else {
+        return (StatusCode::NOT_FOUND, "post not found").into_response();
+    };
+
+    let now = now_ms();
+    let hover = timeago::rfc3339_utc(ing.ts);
+    let ago = timeago::timeago(now, ing.ts);
+
+    let prev_href = (index > 0).then(|| format!("/t/{tag}/{}", index - 1));
+    let next_href = (index + 1 < total).then(|| format!("/t/{tag}/{}", index + 1));
+
+    let views = state.views.get_views(&format!("/t/{tag}/{index}"));
+    let page = layout(
+        &format!("#{tag}/{index}"),
+        "view-thread",
+        html! {
+            nav class="breadcrumb" { (bc_thread_post(&tag, index)) }
+            div class="post-nav" {
+                @if let Some(href) = &prev_href {
+                    a href=(href) class="post-nav-btn" { "← prev" }
+                } @else {
+                    span class="post-nav-btn disabled" { "← prev" }
+                }
+                span class="post-nav-pos muted" { (index) " / " (total.saturating_sub(1)) }
+                @if let Some(href) = &next_href {
+                    a href=(href) class="post-nav-btn" { "next →" }
+                } @else {
+                    span class="post-nav-btn disabled" { "next →" }
+                }
+            }
+            div class="ingest-entry" data-ingest-id=(ing.id) {
+                div class="ingest-meta muted" title=(hover) {
+                    span class="post-num" { "#" (index) }
+                    " · "
+                    (ago)
+                }
+                pre { (maud::PreEscaped(linkify_slugs(&ing.raw))) }
+            }
+        },
+        Some(views),
+    );
+    Html(page.into_string()).into_response()
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ThreadViewQuery {
+    pub offset: Option<usize>,
+}
+
+const PAGE_SIZE: usize = 10;
+
+fn render_thread_paginator(tag: &str, offset: usize, total: usize, top: bool) -> Markup {
+    let newer_offset = offset.checked_add(PAGE_SIZE).filter(|&o| o < total);
+    let older_offset = if offset > 0 { Some(offset.saturating_sub(PAGE_SIZE)) } else { None };
+    let latest_offset = total.saturating_sub(PAGE_SIZE);
+    let on_latest = offset >= latest_offset;
+    let (id, scroll_href, scroll_label) = if top {
+        ("top", "#bottom", "↓")
+    } else {
+        ("bottom", "#top", "↑")
+    };
+    html! {
+        div class="thread-paginator" id=(id) {
+            a href=(scroll_href) class="post-nav-btn" { (scroll_label) }
+            @if let Some(o) = older_offset {
+                a href=(format!("/t/{tag}?offset={o}")) class="post-nav-btn" { "← older" }
+            } @else {
+                span class="post-nav-btn disabled" { "← older" }
+            }
+            span class="post-nav-pos muted" {
+                (offset + 1) "–" (total.min(offset + PAGE_SIZE)) " / " (total)
+            }
+            @if let Some(o) = newer_offset {
+                a href=(format!("/t/{tag}?offset={o}")) class="post-nav-btn" { "newer →" }
+            } @else {
+                span class="post-nav-btn disabled" { "newer →" }
+            }
+            @if !on_latest {
+                a href=(format!("/t/{tag}?offset={latest_offset}")) class="post-nav-btn" { "latest" }
+            }
+        }
+    }
+}
+
+/// Thread view — `/t/:tag` — dark, paginated.
 pub async fn thread_view(
     State(state): State<AppState>,
     Path(tag): Path<String>,
+    Query(q): Query<ThreadViewQuery>,
 ) -> impl IntoResponse {
     let tag = canonicalize_tag(&tag);
-    let presence = state.presence_counts_for_thread(&tag).await;
 
-    let ingest_ids = {
+    // ingests_by_thread is newest-first; collect all IDs in chronological order.
+    let all_ids: Vec<String> = {
         let reduced = state.reduced.read().await;
-        reduced.ingests_by_thread.get(&tag).cloned().unwrap_or_default()
+        reduced
+            .ingests_by_thread
+            .get(&tag)
+            .map(|q| q.iter().rev().cloned().collect())
+            .unwrap_or_default()
     };
-    let ingests = {
+
+    let total = all_ids.len();
+    // Default: first page (oldest posts first, like a book).
+    let offset = q.offset.unwrap_or(0);
+    let page_ids: Vec<String> = all_ids.into_iter().skip(offset).take(PAGE_SIZE).collect();
+
+    let display_ingests = {
         let reduced = state.reduced.read().await;
-        ingest_ids
+        page_ids
             .iter()
             .filter_map(|id| reduced.ingests_by_id.get(id).cloned())
             .collect::<Vec<_>>()
     };
 
-    // ingests_by_thread is newest-first (push_front). Take 50 most recent, render oldest-first.
-    let mut display_ingests: Vec<_> = ingests.iter().take(50).collect();
-    display_ingests.reverse();
-
     let now = now_ms();
+    let paginator_top = render_thread_paginator(&tag, offset, total, true);
+    let paginator_bot = render_thread_paginator(&tag, offset, total, false);
 
+    let views = state.views.get_views(&format!("/t/{tag}"));
     let page = layout(
         &format!("#{tag}"),
         "view-thread",
         html! {
             nav class="breadcrumb" { (bc_threads(Some(&tag))) }
             h2 { "#" (tag) }
-            div id="presence-bar" class="presence-bar muted" data-thread-tag=(tag) {
-                span { "viewing now: " span id="presence-global" { (presence.global_viewers) } }
-                " · "
-                span { "neighbors here: " span id="presence-local" { (presence.local_viewers) } }
-            }
+            p class="muted" { "top=oldest · bottom=newest" }
             @if display_ingests.is_empty() {
                 p class="muted" { "no activity yet" }
             } @else {
-                @for ing in &display_ingests {
+                (paginator_top)
+                @for (i, ing) in display_ingests.iter().enumerate() {
+                    @let post_idx = offset + i;
+                    @let post_href = format!("/t/{tag}/{post_idx}");
                     @let hover = timeago::rfc3339_utc(ing.ts);
                     @let ago = timeago::timeago(now, ing.ts);
                     @let truncated = ing.raw.len() > 2000;
                     @let display_body = if truncated { &ing.raw[..2000] } else { &ing.raw[..] };
                     div class="ingest-entry" data-ingest-id=(ing.id) {
                         div class="ingest-meta muted" title=(hover) {
-                            span class="address" { "@" (actor_label(&ing.actor)) }
+                            a href=(post_href) class="post-num" { "#" (post_idx) }
                             " · "
                             (ago)
                         }
@@ -256,10 +286,11 @@ pub async fn thread_view(
                         }
                     }
                 }
+                (paginator_bot)
             }
-            (render_ingest_form())
-            (render_thread_presence_script())
+            (cli_panel(&format!("npx slugsocial forum {tag}")))
         },
+        Some(views),
     );
     Html(page.into_string()).into_response()
 }

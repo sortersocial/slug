@@ -5,6 +5,7 @@ use slugsocial_server::{
     reducer::{GroupState, ReducerState},
 };
 
+
 use tempfile::TempDir;
 
 fn ingest_event(ts: i64, raw: &str) -> Event {
@@ -428,5 +429,218 @@ fn ranking_repeated_votes_normalized() {
     let eps = 1e-6;
     assert!((ranked_once[0].score - ranked_many[0].score).abs() < eps,
         "scores differ: once={:.6} many={:.6}", ranked_once[0].score, ranked_many[0].score);
+// ============================================================================
+// Phase 1: Reducer Edge Cases
+// ============================================================================
+
+#[test]
+fn reducer_malformed_ingest_is_skipped_no_panic() {
+    let mut state = ReducerState::default();
+    // Completely invalid raw text that will fail dsl::parse_full
+    state.apply_event(ingest_event(1, "this is {{ not valid DSL at all }{"));
+    // State should remain empty — no panic, no items
+    assert!(state.items.is_empty());
+    assert!(state.ranking_group.idx_to_item.is_empty());
+}
+
+#[test]
+fn reducer_zero_zero_vote_ratio_normalizes_to_one_one() {
+    let mut state = ReducerState::default();
+    state.apply_event(ingest_event(
+        1,
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n~/t/a {a}\n~/t/b {b}\n~/t/a 0:0 ~/t/b {zero}\n",
+    ));
+    let group = &state.ranking_group;
+    let a_idx = group.item_to_idx["t/a"];
+    let b_idx = group.item_to_idx["t/b"];
+    // 0:0 should normalize to 1:1 — both directions should have weight
+    assert!(group.edges.contains_key(&(a_idx, b_idx)));
+    assert!(group.edges.contains_key(&(b_idx, a_idx)));
+    let w_ab = group.edges[&(a_idx, b_idx)];
+    let w_ba = group.edges[&(b_idx, a_idx)];
+    assert!((w_ab - w_ba).abs() < 1e-9, "0:0 should produce equal weights");
+}
+
+#[test]
+fn reducer_negative_ratio_clamped_to_zero() {
+    let _state = ReducerState::default();
+    // GroupState::apply_vote clamps negatives to 0, then 0:0 -> 1:1
+    let mut group = GroupState::new();
+    group.apply_vote(slugsocial_server::reducer::VoteData {
+        ts: 1,
+        a: "t/a".to_string(),
+        b: "t/b".to_string(),
+        ratio_left: -5,
+        ratio_right: -3,
+        body: "negative".to_string(),
+        actor: "00000000-0000-0000-0000-000000000000:test:local/test".to_string(),
+        thread: "t".to_string(),
+    });
+    assert_eq!(group.idx_to_item.len(), 2);
+    // Both edges should exist (negatives clamped to 0, then 0:0 -> 1:1)
+    let a_idx = group.item_to_idx["t/a"];
+    let b_idx = group.item_to_idx["t/b"];
+    assert!(group.edges.contains_key(&(a_idx, b_idx)));
+    assert!(group.edges.contains_key(&(b_idx, a_idx)));
+}
+
+
+#[test]
+fn reducer_deep_path_ancestor_materialization_four_levels() {
+    let mut state = ReducerState::default();
+    state.apply_event(ingest_event(
+        1,
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n~/a/b/c/d {leaf}\n",
+    ));
+    // All intermediate children edges should exist
+    let root = state.item_children.get("").expect("root should exist");
+    assert!(root.contains("a"), "root should contain 'a'");
+
+    let a_children = state.item_children.get("a").expect("a should have children");
+    assert!(a_children.contains("a/b"));
+
+    let ab_children = state.item_children.get("a/b").expect("a/b should have children");
+    assert!(ab_children.contains("a/b/c"));
+
+    let abc_children = state.item_children.get("a/b/c").expect("a/b/c should have children");
+    assert!(abc_children.contains("a/b/c/d"));
+
+    // Only the leaf should be in items set
+    assert!(state.items.contains("a/b/c/d"));
+    assert!(!state.items.contains("a"));
+    assert!(!state.items.contains("a/b"));
+    assert!(!state.items.contains("a/b/c"));
+}
+
+// ============================================================================
+// Phase 1: Ranking Edge Cases
+// ============================================================================
+
+#[test]
+fn ranking_single_node_scores_one() {
+    let mut group = GroupState::new();
+    group.ensure_item_pub("solo");
+    let ranked = ranked_items(&mut group, 1000, 1e-9);
+    assert_eq!(ranked.len(), 1);
+    assert!((ranked[0].score - 1.0).abs() < 1e-9, "single node should score 1.0");
+}
+
+#[test]
+fn ranking_two_nodes_no_edges_uniform() {
+    let mut group = GroupState::new();
+    group.ensure_item_pub("x");
+    group.ensure_item_pub("y");
+    let ranked = ranked_items(&mut group, 1000, 1e-9);
+    assert_eq!(ranked.len(), 2);
+    assert!(
+        (ranked[0].score - ranked[1].score).abs() < 1e-9,
+        "no-edge items should have equal scores"
+    );
+}
+
+#[test]
+fn ranking_convergence_tolerance_triggers_early_exit() {
+    let mut state = ReducerState::default();
+    state.apply_event(ingest_event(
+        1,
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n~/t/a {a}\n~/t/b {b}\n~/t/a 3:1 ~/t/b {because}\n",
+    ));
+    let mut group = state.ranking_group.clone();
+    // Very tight tolerance but huge max_iters — should still converge fast
+    let ranked = ranked_items(&mut group, 1_000_000, 1e-15);
+    assert_eq!(ranked.len(), 2);
+    assert_eq!(ranked[0].item, "t/a");
+}
+
+// ============================================================================
+// Passkey / ActorKeyRegistration Tests
+// ============================================================================
+
+#[test]
+fn reducer_actor_key_registration_applies() {
+    let mut state = ReducerState::default();
+    assert!(state.actor_keys.is_empty());
+
+    state.apply_event(Event::ActorKeyRegistration {
+        ts: 1,
+        actor: "@testactor:rig:test/model".to_string(),
+        key_hash: "deadbeef".to_string(),
+    });
+
+    // canonicalize_actor strips '@' and lowercases
+    assert_eq!(
+        state.actor_keys.get("testactor:rig:test/model"),
+        Some(&"deadbeef".to_string()),
+        "actor_keys should contain the registered hash"
+    );
+    assert_eq!(state.actor_keys.len(), 1);
+}
+
+#[test]
+fn reducer_actor_key_first_registration_wins() {
+    let mut state = ReducerState::default();
+    let actor = "@testactor:rig:test/model".to_string();
+
+    // First registration.
+    state.apply_event(Event::ActorKeyRegistration {
+        ts: 1,
+        actor: actor.clone(),
+        key_hash: "first_hash".to_string(),
+    });
+
+    // Second registration for the same actor — must NOT overwrite.
+    state.apply_event(Event::ActorKeyRegistration {
+        ts: 2,
+        actor: actor.clone(),
+        key_hash: "second_hash".to_string(),
+    });
+
+    assert_eq!(
+        state.actor_keys.get("testactor:rig:test/model"),
+        Some(&"first_hash".to_string()),
+        "first registration must win; second is silently ignored"
+    );
+}
+
+#[test]
+fn reducer_actor_key_canonicalizes_actor() {
+    let mut state = ReducerState::default();
+
+    // Register with uppercase (unusual but valid raw input).
+    state.apply_event(Event::ActorKeyRegistration {
+        ts: 1,
+        actor: "@TESTACTOR:RIG:TEST/MODEL".to_string(),
+        key_hash: "hashval".to_string(),
+    });
+
+    // Should be stored under canonicalized (lowercased) key.
+    assert!(
+        state.actor_keys.contains_key("testactor:rig:test/model"),
+        "actor key should be canonicalized to lowercase"
+    );
+    assert!(
+        !state.actor_keys.contains_key("TESTACTOR:RIG:TEST/MODEL"),
+        "uppercase form should not be present"
+    );
+}
+
+#[test]
+fn reducer_multiple_actors_independent_keys() {
+    let mut state = ReducerState::default();
+
+    state.apply_event(Event::ActorKeyRegistration {
+        ts: 1,
+        actor: "@actor1:rig:p/m".to_string(),
+        key_hash: "hash1".to_string(),
+    });
+    state.apply_event(Event::ActorKeyRegistration {
+        ts: 2,
+        actor: "@actor2:rig:p/m".to_string(),
+        key_hash: "hash2".to_string(),
+    });
+
+    assert_eq!(state.actor_keys.len(), 2);
+    assert_eq!(state.actor_keys.get("actor1:rig:p/m"), Some(&"hash1".to_string()));
+    assert_eq!(state.actor_keys.get("actor2:rig:p/m"), Some(&"hash2".to_string()));
 }
 

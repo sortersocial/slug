@@ -8,10 +8,12 @@ use maud::{html, Markup, DOCTYPE};
 mod breadcrumb_path;
 mod forum;
 mod garden;
+mod search;
 use breadcrumb_path::OntologyPath;
 
 pub use forum::{index, thread_feed_html, thread_post_view, thread_view};
 pub use garden::{garden_index, ontology_path};
+pub use search::{search_page, search_results_fragment};
 
 // Embed CSS files at compile time
 const THEME_DEFAULT_CSS: &str = include_str!("../../static/theme_default.css");
@@ -38,7 +40,7 @@ pub async fn serve_theme_css(Path(filename): Path<String>) -> impl IntoResponse 
         .into_response()
 }
 
-pub(super) fn layout(title: &str, view: &str, body: Markup) -> Markup {
+pub(super) fn layout(title: &str, view: &str, body: Markup, views: Option<u64>) -> Markup {
     html! {
         (DOCTYPE)
         html {
@@ -50,6 +52,9 @@ pub(super) fn layout(title: &str, view: &str, body: Markup) -> Markup {
                 script src="https://unpkg.com/idiomorph@0.3.0/dist/idiomorph.min.js" {}
             }
             body class=(view) {
+                @if let Some(n) = views {
+                    span class="view-meta muted" { " · " (n) " views" }
+                }
                 (body)
                 div id="controls" {
                     a href="https://github.com/sortersocial/slug" id="src-link" { "src" }
@@ -57,6 +62,7 @@ pub(super) fn layout(title: &str, view: &str, body: Markup) -> Markup {
                         span { "spread" }
                         input type="range" id="spread-slider" min="0" max="1" step="0.05" value="1";
                     }
+                    a id="search-btn" href="/search" { "search" }
                     div id="theme-switcher" { "theme" }
                 }
                 details id="slug-masthead" {
@@ -126,6 +132,31 @@ pub(super) fn layout(title: &str, view: &str, body: Markup) -> Markup {
                             if (btn) { btn.disabled = false; btn.textContent = 'submit'; }
                             f.reset();
                         });
+
+                        // Search: debounced fetch + idiomorph.
+                        (function() {
+                            const si = document.getElementById('search-input');
+                            if (!si) return;
+                            let st;
+                            si.addEventListener('input', () => {
+                                clearTimeout(st);
+                                st = setTimeout(async () => {
+                                    const q = si.value.trim();
+                                    const el = document.getElementById('search-results');
+                                    if (!el) return;
+                                    if (q.length < 2) { el.innerHTML = ''; return; }
+                                    const r = await fetch('/search/results?q=' + encodeURIComponent(q));
+                                    Idiomorph.morph(el, await r.text());
+                                }, 150);
+                            });
+                            // Focus search input on / key
+                            document.addEventListener('keydown', (e) => {
+                                if (e.key === '/' && document.activeElement !== si) {
+                                    e.preventDefault();
+                                    si.focus();
+                                }
+                            });
+                        })();
 
                         // Poem: SSE morph.
                         (function connectSSE() {
@@ -266,6 +297,16 @@ pub(super) fn linkify_slugs(raw: &str) -> String {
         }
     }
     out
+}
+
+/// Small CLI hint panel showing how to look up this page from the terminal.
+pub(super) fn cli_panel(cmd: &str) -> Markup {
+    html! {
+        div class="cli-panel" {
+            span class="cli-panel-label muted" { "cli" }
+            code class="cli-panel-cmd" { (cmd) }
+        }
+    }
 }
 
 /// Age bucket for recency coloring of thread entries.

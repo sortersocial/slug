@@ -4,26 +4,30 @@ pub mod dsl;
 pub mod event_log;
 pub mod events;
 pub mod html;
+pub mod middleware;
 pub mod ranking;
 pub mod reducer;
 pub mod scope_rank;
 pub mod state;
 pub mod timeago;
+pub mod views;
 
-use axum::Router;
+use axum::{middleware as axum_middleware, Router};
 use tower_http::trace::TraceLayer;
 
-use crate::state::AppState;
+use crate::{middleware::view_count_middleware, state::AppState};
 
 pub use reducer::ReducerState;
 
 pub fn create_app(state: AppState) -> Router {
+    let state_for_middleware = state.clone();
     Router::new()
         .route("/healthz", axum::routing::get(|| async { "ok" }))
         .route("/", axum::routing::get(html::index))
         .route("/~", axum::routing::get(html::garden_index))
         .route("/t/:tag", axum::routing::get(html::thread_view))
         .route("/t/:tag/:id", axum::routing::get(html::thread_post_view))
+        .route("/t/:tag/:index", axum::routing::get(html::thread_post_view))
         .route("/~/*path", axum::routing::get(html::ontology_path))
         .route("/api/v0/paths", axum::routing::get(api::get_paths))
         .route("/api/v0/leaves", axum::routing::get(api::get_leaves))
@@ -37,13 +41,20 @@ pub fn create_app(state: AppState) -> Router {
         .route("/api/v0/check", axum::routing::post(api::post_check))
         .route("/api/v0/pair", axum::routing::get(api::get_pair))
         .route("/api/v0/rank", axum::routing::get(api::get_rank))
-        .route("/api/v0/notifications", axum::routing::get(api::get_notifications))
-        .route("/api/v0/presence/ping", axum::routing::post(api::post_presence_ping))
+        .route("/api/v0/global-rank", axum::routing::get(api::get_global_rank))
+        .route("/api/v0/rank-history", axum::routing::get(api::get_rank_history))
+        .route("/api/v0/feed", axum::routing::get(api::get_feed))
+        .route("/api/v0/search", axum::routing::get(api::get_search))
         .route("/api/v0/stream", axum::routing::get(api::get_stream))
         .route("/sse", axum::routing::get(api::get_html_stream))
-        .route("/web/ingest", axum::routing::post(api::post_web_ingest))
+        .route("/search", axum::routing::get(html::search_page))
+        .route("/search/results", axum::routing::get(html::search_results_fragment))
         .route("/static/:filename", axum::routing::get(html::serve_theme_css))
         .with_state(state)
+        .layer(axum_middleware::from_fn_with_state(
+            state_for_middleware,
+            view_count_middleware,
+        ))
         .layer(TraceLayer::new_for_http())
 }
 

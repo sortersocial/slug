@@ -2,23 +2,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use tokio::sync::{broadcast, RwLock};
 
-use crate::{event_log::EventLog, reducer::ReducerState};
-
-const PRESENCE_TTL_MS: i64 = 60_000;
-
-/// UUIDv5 namespace for deriving channel IDs from secrets.
-const CHANNEL_NAMESPACE: uuid::Uuid = uuid::Uuid::from_bytes([
-    0x6b, 0xa7, 0xb8, 0x11, 0x9d, 0xad, 0x11, 0xd1,
-    0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30, 0xc8,
-]);
-
-/// A private channel: isolated ReducerState + event log, gated by a shared secret.
-/// The secret is never stored; channel_id is UUIDv5(secret).
-#[derive(Clone)]
-pub struct ChannelData {
-    pub reduced: Arc<RwLock<ReducerState>>,
-    pub event_log: Arc<EventLog>,
-}
+use crate::{event_log::EventLog, reducer::ReducerState, views::ViewStore};
 
 /// An SSE event broadcast to all live stream subscribers when an ingest occurs.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -50,6 +34,9 @@ pub struct AppConfig {
     pub event_log_path: String,
     pub keys: Vec<KeyRecord>,
     pub rate_limit_per_minute: u32,
+    /// Override for views DB path. When None, uses `{data_dir}/views.redb`.
+    /// Useful when multiple servers share the same data_dir (e.g. integration tests).
+    pub views_path: Option<String>,
 }
 
 #[derive(Clone)]
@@ -58,13 +45,11 @@ pub struct AppState {
     pub event_log: Arc<EventLog>,
     pub reduced: Arc<RwLock<ReducerState>>,
     pub rate: Arc<RwLock<HashMap<String, RateWindow>>>,
-    /// Active thread-page viewers keyed by stable browser session id.
-    pub presence: Arc<RwLock<HashMap<String, PresenceSession>>>,
     /// Broadcast channel for SSE live-streaming. Capacity = 64 events.
     pub stream_tx: broadcast::Sender<StreamEvent>,
     /// Broadcast channel for web SSE HTML fragments (poem pattern). Capacity = 64.
     pub html_tx: broadcast::Sender<HtmlFragment>,
-    pub channels: Arc<RwLock<HashMap<String, ChannelData>>>,
+    pub views: ViewStore,
 }
 
 #[derive(Debug, Clone)]
@@ -73,127 +58,26 @@ pub struct RateWindow {
     pub count: u32,
 }
 
-#[derive(Debug, Clone)]
-pub struct PresenceSession {
-    pub thread_tag: String,
-    pub last_seen_ms: i64,
-    pub cursor_anchor: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct PresenceCounts {
-    pub global_viewers: usize,
-    pub local_viewers: usize,
-}
-
-fn now_ms() -> i64 {
-    let t = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default();
-    t.as_millis() as i64
-}
 
 impl AppState {
     pub fn new(cfg: AppConfig) -> Self {
         let event_log = EventLog::new(cfg.event_log_path.clone());
         let (stream_tx, _) = broadcast::channel(64);
         let (html_tx, _) = broadcast::channel(64);
+        let views_path = cfg
+            .views_path
+            .clone()
+            .unwrap_or_else(|| format!("{}/views.json", cfg.data_dir));
+        let views = ViewStore::new(&views_path);
         Self {
             cfg: Arc::new(cfg),
             event_log: Arc::new(event_log),
             reduced: Arc::new(RwLock::new(ReducerState::default())),
             rate: Arc::new(RwLock::new(HashMap::new())),
-            presence: Arc::new(RwLock::new(HashMap::new())),
             stream_tx,
             html_tx,
-            channels: Arc::new(RwLock::new(HashMap::new())),
-        }
-    }
-
-    /// Derive a stable channel ID from a shared secret (UUIDv5, never stores the secret).
-    pub fn channel_id_from_secret(secret: &str) -> String {
-        uuid::Uuid::new_v5(&CHANNEL_NAMESPACE, secret.as_bytes()).to_string()
-    }
-
-    /// Get or lazily create a private channel by secret.
-    pub async fn get_or_create_channel(&self, secret: &str) -> ChannelData {
-        let id = Self::channel_id_from_secret(secret);
-        {
-            let channels = self.channels.read().await;
-            if let Some(ch) = channels.get(&id) {
-                return ch.clone();
-            }
-        }
-        let mut channels = self.channels.write().await;
-        if let Some(ch) = channels.get(&id) {
-            return ch.clone();
-        }
-        let event_log = Arc::new(EventLog::new(
-            format!("{}/channels/{}/events.jsonl", self.cfg.data_dir, id),
-        ));
-        let ch = ChannelData {
-            reduced: Arc::new(RwLock::new(ReducerState::default())),
-            event_log,
-        };
-        channels.insert(id, ch.clone());
-        ch
-    }
-
-    /// Resolve (reduced_state, event_log) for a given channel secret (or global if None).
-    pub async fn resolve(&self, channel_secret: Option<&str>) -> (Arc<RwLock<ReducerState>>, Arc<EventLog>) {
-        match channel_secret {
-            None => (Arc::clone(&self.reduced), Arc::clone(&self.event_log)),
-            Some(s) => {
-                let ch = self.get_or_create_channel(s).await;
-                (ch.reduced, ch.event_log)
-            }
-        }
-    }
-
-    /// Update one viewer heartbeat and return (global, local) active counts.
-    pub async fn upsert_presence(
-        &self,
-        session_id: String,
-        thread_tag: String,
-        cursor_anchor: Option<String>,
-    ) -> PresenceCounts {
-        let now = now_ms();
-        let mut presence = self.presence.write().await;
-        presence.retain(|_, entry| now.saturating_sub(entry.last_seen_ms) <= PRESENCE_TTL_MS);
-        presence.insert(
-            session_id,
-            PresenceSession {
-                thread_tag: thread_tag.clone(),
-                last_seen_ms: now,
-                cursor_anchor,
-            },
-        );
-        let global_viewers = presence.len();
-        let local_viewers = presence
-            .values()
-            .filter(|entry| entry.thread_tag == thread_tag)
-            .count();
-        PresenceCounts {
-            global_viewers,
-            local_viewers,
-        }
-    }
-
-    /// Read presence counts for initial server-rendered thread view.
-    pub async fn presence_counts_for_thread(&self, thread_tag: &str) -> PresenceCounts {
-        let now = now_ms();
-        let mut presence = self.presence.write().await;
-        presence.retain(|_, entry| now.saturating_sub(entry.last_seen_ms) <= PRESENCE_TTL_MS);
-        let global_viewers = presence.len();
-        let local_viewers = presence
-            .values()
-            .filter(|entry| entry.thread_tag == thread_tag)
-            .count();
-        PresenceCounts {
-            global_viewers,
-            local_viewers,
+            views,
         }
     }
 }
-
 

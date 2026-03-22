@@ -16,6 +16,24 @@ pub struct RankRow {
     pub score: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub percent: Option<f64>,
+    /// Normalized score as a percentage of the top item (0–100). Present when ?percent=true.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub percent: Option<f64>,
+}
+
+/// Flat, paginated global ranking across all items regardless of scope.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GlobalRankResponse {
+    /// Total ranked items (have at least one vote connecting them to another item).
+    pub ranked_total: usize,
+    /// Total unranked items (exist but have no votes).
+    pub unranked_total: usize,
+    /// Pagination offset applied.
+    pub offset: usize,
+    /// Pagination limit applied.
+    pub limit: usize,
+    /// The page of items: ranked items first (descending score), then unranked (alphabetical).
+    pub items: Vec<RankRow>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -30,6 +48,21 @@ pub struct RankResponse {
     pub unranked_items: Vec<String>,
 }
 
+/// Graph connectivity stats for a scope, returned with pair suggestions.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ConnectivityStats {
+    /// Total items in scope.
+    pub items: usize,
+    /// Number of connected components (each isolate counts as one).
+    pub components: usize,
+    /// Minimum comparisons needed to make the graph fully connected (components - 1).
+    pub comparisons_until_connected: usize,
+    /// Number of distinct pairs that have been voted on in this scope.
+    pub pairs_voted: usize,
+    /// Total possible pairs: items * (items - 1) / 2.
+    pub pairs_possible: usize,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PairResponse {
     pub left: String,
@@ -39,6 +72,9 @@ pub struct PairResponse {
     /// Thread tags that discuss either item (connective tissue to forum).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub threads: Vec<String>,
+    /// Graph connectivity stats for the scope.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub connectivity: Option<ConnectivityStats>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -75,7 +111,6 @@ pub struct ThreadsResponse {
 pub struct ThreadSummary {
     pub thread: String,
     pub last_activity_ts: i64,
-    pub subscriber_count: usize,
     pub web: String,
 }
 
@@ -86,17 +121,28 @@ pub struct PathDetailResponse {
     pub recent_ingests: Vec<IngestRow>,
 }
 
-/// Thread detail: thread tag and full list of posts (no truncation).
+/// Thread detail with pagination.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ThreadDetailResponse {
     pub thread: String,
     pub posts: Vec<PostRow>,
+    /// Total posts in this thread.
+    pub total: usize,
+    /// Chronological offset of the first post in this page.
+    pub offset: usize,
 }
 
 /// One post in a thread. voter_key_id only (no redundant actor).
+/// One post in a thread. Full body, no snippet.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PostRow {
+    /// Stable ingest ID (UUID). Use with `--post <id>` to fetch this post directly.
+    pub id: String,
+    /// Chronological index within the thread (0 = oldest).
+    pub index: usize,
     pub ts: i64,
+    /// Self-declared actor (`@uuid:rig:model`).
+    pub actor: String,
     pub voter_key_id: String,
     pub id: String,
     pub actor: String,
@@ -133,7 +179,7 @@ pub struct MatchupResponse {
     pub votes: Vec<VoteRow>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VoteRow {
     pub ts: i64,
     pub a: String,
@@ -146,36 +192,37 @@ pub struct VoteRow {
     pub thread: Option<String>,
 }
 
+/// Response for the feed endpoint — all ingests since a cutoff, newest first.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct NotificationsResponse {
-    pub ok: bool,
+pub struct FeedResponse {
     pub actor: String,
-    pub notifications: Vec<Notification>,
+    /// The lower-bound timestamp used (actor's last ingest, ms). None if actor has never posted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub since: Option<i64>,
+    pub posts: Vec<FeedPost>,
+    pub total: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Notification {
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FeedPost {
     pub ts: i64,
-    pub ingest_id: String,
-    pub actor: String,
-    #[serde(flatten)]
-    pub notification_type: NotificationType,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum NotificationType {
-    ThreadActivity {
-        thread: String,
-        activity: String,
-        actor: String,
-        details: String,
-    },
+    pub id: String,
+    /// Primary thread tag (without #), if the ingest declared one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thread: Option<String>,
+    /// 1-indexed chronological position of this post within the thread.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thread_post_index: Option<usize>,
+    /// Full raw body of the ingest document.
+    pub body: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct IngestRequest {
     pub text: String,
+    /// Passkey for the actor (alternative to X-Slug-Passkey header; header takes precedence).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub passkey: Option<String>,
 }
 
 /// One item's position within a ranking component.
@@ -216,14 +263,92 @@ pub struct IngestResponse {
     /// Empty when the ingest contained no votes.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ranking_changes: Vec<ScopeRankChanges>,
+    /// True when this ingest registered a new passkey for the actor.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub registered: bool,
+    /// The server-generated passkey for this actor, present only on first ingest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub passkey: Option<String>,
+}
+
+/// One scoped ranking preview for `check` (dry-run), grouped into components.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CheckScopeRanking {
+    /// Parent scope path (e.g. "/models" or "/" for root).
+    pub parent: String,
+    pub components: Vec<RankComponent>,
+    pub unranked_items: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CheckResponse {
     pub ok: bool,
     pub threads: Vec<String>,
-    pub ranking: Vec<RankRow>,
+    /// Ranking previews for each parent scope touched by votes in this doc.
+    /// Empty when the doc contains no votes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rankings: Vec<CheckScopeRanking>,
     pub next: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SearchResponse {
+    pub items: Vec<SearchItemHit>,
+    pub threads: Vec<SearchThreadHit>,
+    pub posts: Vec<SearchPostHit>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SearchItemHit {
+    pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SearchThreadHit {
+    pub tag: String,
+    pub post_count: usize,
+    pub last_activity: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SearchPostHit {
+    pub thread: String,
+    pub actor: String,
+    pub snippet: String,
+    pub ts: i64,
+}
+
+/// One snapshot in an item's rank history.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RankHistoryRow {
+    pub ts: i64,
+    /// 1-indexed rank within the item's parent scope after this ingest. 0 = unranked.
+    pub scope_rank: usize,
+    /// scope_rank delta vs prior entry (after - before; 0 on first appearance).
+    pub scope_rank_delta: i32,
+    /// Total items in scope at time of this ingest.
+    pub scope_total: usize,
+    /// 1-indexed rank globally across all items after this ingest. 0 = not in ranking group.
+    pub global_rank: usize,
+    /// global_rank delta vs prior entry (after - before; 0 on first appearance).
+    pub global_rank_delta: i32,
+    /// Total items in the global ranking group at time of this ingest.
+    pub global_total: usize,
+    pub score: f64,
+    /// Thread tag of the ingest that triggered this rank change.
+    pub thread: String,
+    /// 1-indexed chronological position of this post within the thread.
+    pub thread_post_index: usize,
+    /// Votes from this ingest that directly touched this item. Empty when change was transitive.
+    pub caused_by: Vec<VoteRow>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RankHistoryResponse {
+    pub item: String,
+    pub history: Vec<RankHistoryRow>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

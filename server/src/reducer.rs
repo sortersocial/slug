@@ -1,7 +1,6 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use serde::{Deserialize, Serialize};
-pub use slug_types::{Notification, NotificationType};
 
 use crate::events::{
     canonicalize_actor, canonicalize_item, canonicalize_tag, item_parent_path, Event, Ingest,
@@ -69,6 +68,11 @@ impl GroupState {
         idx
     }
 
+    /// Public test helper: insert an item into the group without a vote (for unit tests).
+    pub fn ensure_item_pub(&mut self, item: &str) -> usize {
+        self.ensure_item(item)
+    }
+
     fn add_edge_weight(&mut self, src: usize, dst: usize, w: f64) {
         if w <= 0.0 {
             return;
@@ -111,11 +115,26 @@ impl GroupState {
     }
 }
 
-/// First-class thread state. Tracks bump order and subscriber count.
+/// Compact rank-history entry stored per item in the ledger.
+/// `caused_by` is resolved lazily at query time from `ingests_by_id`.
+#[derive(Debug, Clone)]
+pub struct RankHistoryEntry {
+    pub ts: i64,
+    pub scope_rank: usize,
+    pub scope_rank_delta: i32,
+    pub scope_total: usize,
+    pub global_rank: usize,
+    pub global_rank_delta: i32,
+    pub global_total: usize,
+    pub score: f64,
+    pub thread: String,
+    pub post_id: String,
+}
+
+/// First-class thread state.
 #[derive(Debug, Clone, Default)]
 pub struct ThreadState {
     pub last_activity_ts: i64,
-    pub subscriber_count: usize,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -144,11 +163,18 @@ pub struct ReducerState {
     /// First-class thread state: bump time, subscriber count.
     pub threads: HashMap<String, ThreadState>,
 
-    /// Track thread subscriptions: thread -> set(actor)
-    pub thread_subscriptions: HashMap<String, HashSet<String>>,
+    /// Actor passkey hashes: actor -> hex-encoded SHA-256 of the registered passkey.
+    /// First registration wins; subsequent ActorKeyRegistration events for the same actor are ignored.
+    pub actor_keys: HashMap<String, String>,
 
-    /// Pending notifications per actor (last 100 per actor).
-    pub notifications: HashMap<String, VecDeque<Notification>>,
+    /// Last ingest timestamp (ms) per actor. Used by feed to default `since`.
+    pub actor_last_post_ts: HashMap<String, i64>,
+
+    /// All ingest IDs in chronological order (oldest first). Used by the feed endpoint.
+    pub ingests_ordered: Vec<String>,
+
+    /// Per-item rank history, oldest first.
+    pub rank_history: HashMap<String, Vec<RankHistoryEntry>>,
 }
 
 impl ReducerState {
@@ -180,6 +206,72 @@ impl ReducerState {
         Some(c)
     }
 
+    /// 1-indexed rank of `item` within its connected component in the parent scope.
+    /// 0 if the item has no votes connecting it to siblings (unranked).
+    fn scope_rank_of(group: &GroupState, item: &str, item_children: &HashMap<String, HashSet<String>>) -> usize {
+        let scope = item_parent_path(item).unwrap_or_default();
+        let children = match item_children.get(&scope) {
+            None => return 0,
+            Some(c) => c,
+        };
+        let &item_global_idx = match group.item_to_idx.get(item) {
+            None => return 0,
+            Some(i) => i,
+        };
+        // Map scope children to compact local indices.
+        let sibling_idxs: Vec<usize> = children.iter()
+            .filter_map(|c| group.item_to_idx.get(c).copied())
+            .collect();
+        let global_to_local: HashMap<usize, usize> = sibling_idxs.iter()
+            .enumerate().map(|(l, &g)| (g, l)).collect();
+        let item_local = match global_to_local.get(&item_global_idx) {
+            None => return 0,
+            Some(&l) => l,
+        };
+        // Connected components within scope.
+        let (comps, _) = crate::ranking::connected_components_from_voted_pairs(
+            sibling_idxs.len(),
+            group.voted_pairs.iter().filter_map(|(a, b)| {
+                Some((global_to_local.get(a).copied()?, global_to_local.get(b).copied()?))
+            }),
+        );
+        // Find the component containing this item.
+        let comp_local = match comps.iter().find(|c| c.contains(&item_local)) {
+            None => return 0,
+            Some(c) => c,
+        };
+        let comp_global: Vec<usize> = comp_local.iter()
+            .filter_map(|&l| sibling_idxs.get(l).copied())
+            .collect();
+        let ranked = crate::ranking::ranked_items_subset(group, &comp_global, 10000, 1e-8);
+        ranked.iter().position(|r| r.item == item).map(|i| i + 1).unwrap_or(0)
+    }
+
+    /// 1-indexed position of `item` in the component-aware global flat list.
+    /// Components sorted largest-first; items ranked within each component.
+    /// 0 if the item is not in the ranking group.
+    fn global_rank_of(group: &GroupState, item: &str) -> usize {
+        if !group.item_to_idx.contains_key(item) {
+            return 0;
+        }
+        let n = group.idx_to_item.len();
+        let (mut comps, _) = crate::ranking::connected_components_from_voted_pairs(
+            n, group.voted_pairs.iter().copied(),
+        );
+        comps.sort_by(|a, b| b.len().cmp(&a.len()));
+        let mut pos = 1usize;
+        for comp in &comps {
+            let ranked = crate::ranking::ranked_items_subset(group, comp, 10000, 1e-8);
+            for r in &ranked {
+                if r.item == item {
+                    return pos;
+                }
+                pos += 1;
+            }
+        }
+        0
+    }
+
     pub fn apply_event(&mut self, event: Event) {
         match event {
             Event::Ingest(mut ing) => {
@@ -193,6 +285,31 @@ impl ReducerState {
                         eprintln!("WARNING: Skipping malformed ingest event {}: {}", ing.id, e);
                         return;
                     }
+                };
+
+                // Pre-scan: collect items directly voted on in this ingest.
+                let voted_items: Vec<String> = doc.statements.iter().filter_map(|s| {
+                    if let crate::dsl::Stmt::Vote { item1, item2, .. } = s {
+                        Some([item1, item2])
+                    } else {
+                        None
+                    }
+                }).flat_map(|pair| pair.into_iter())
+                    .filter_map(|raw| Self::normalize_item(raw))
+                    .collect::<std::collections::HashSet<_>>()
+                    .into_iter().collect();
+
+                // Snapshot ranks before votes are applied (force-compute if stale).
+                let before: HashMap<String, (usize, usize)> = if !voted_items.is_empty() {
+                    crate::ranking::compute_group_ranking(&mut self.ranking_group, 10000, 1e-8);
+                    voted_items.iter()
+                        .map(|it| (it.clone(), (
+                            Self::scope_rank_of(&self.ranking_group, it, &self.item_children),
+                            Self::global_rank_of(&self.ranking_group, it),
+                        )))
+                        .collect()
+                } else {
+                    HashMap::new()
                 };
 
                 let mut current_thread: Option<String> = None;
@@ -263,53 +380,10 @@ impl ReducerState {
 
                             self.ranking_group.apply_vote(vote.clone());
 
-                            // Index vote by item and notify prior voters.
+                            // Index vote by item.
                             for it in [&item_a, &item_b] {
-                                let prior_voters: Vec<String> = self
-                                    .item_votes
-                                    .get(it)
-                                    .map(|q| {
-                                        q.iter()
-                                            .map(|v| v.actor.clone())
-                                            .filter(|a| a != &vote.actor)
-                                            .collect::<HashSet<_>>()
-                                            .into_iter()
-                                            .collect()
-                                    })
-                                    .unwrap_or_default();
-
                                 let q = self.item_votes.entry(it.clone()).or_default();
                                 q.push_front(vote.clone());
-
-                                let detail = format!(
-                                    "{} {} {}:{} {} {}",
-                                    vote.actor, it,
-                                    vote.ratio_left, vote.ratio_right,
-                                    vote.a, vote.b
-                                );
-                                for prior_actor in prior_voters {
-                                    // Notify about vote on items they've previously voted on.
-                                    // Thread attribution uses explicit ingest thread context when present.
-                                    let thread_label = current_thread
-                                        .as_deref()
-                                        .unwrap_or("unknown");
-                                    let notification = Notification {
-                                        ts: ing.ts,
-                                        ingest_id: ing.id.clone(),
-                                        actor: vote.actor.clone(),
-                                        notification_type: NotificationType::ThreadActivity {
-                                            thread: format!("#{}", thread_label),
-                                            activity: "vote".to_string(),
-                                            actor: vote.actor.clone(),
-                                            details: detail.clone(),
-                                        },
-                                    };
-                                    let queue = self.notifications.entry(prior_actor).or_default();
-                                    queue.push_front(notification);
-                                    while queue.len() > 100 {
-                                        queue.pop_back();
-                                    }
-                                }
                             }
                         }
                         crate::dsl::Stmt::Prose { .. } => {}
@@ -332,49 +406,11 @@ impl ReducerState {
                     }
                 }
 
-                // Bump thread state and subscriptions for explicitly declared threads.
-                let snippet = ing.raw.chars().take(200).collect::<String>();
+                // Bump thread state for explicitly declared threads.
                 for thread in &touched_threads {
                     let state = self.threads.entry(thread.clone()).or_default();
                     if ing.ts > state.last_activity_ts {
                         state.last_activity_ts = ing.ts;
-                    }
-                }
-
-                for thread in &touched_threads {
-                    let subscribers = self
-                        .thread_subscriptions
-                        .get(thread)
-                        .cloned()
-                        .unwrap_or_default();
-
-                    for subscriber in subscribers.iter() {
-                        if subscriber != &ing.actor {
-                            let notification = Notification {
-                                ts: ing.ts,
-                                ingest_id: ing.id.clone(),
-                                actor: ing.actor.clone(),
-                                notification_type: NotificationType::ThreadActivity {
-                                    thread: format!("#{}", thread),
-                                    activity: "ingest".to_string(),
-                                    actor: ing.actor.clone(),
-                                    details: snippet.clone(),
-                                },
-                            };
-                            let queue = self.notifications.entry(subscriber.clone()).or_default();
-                            queue.push_front(notification);
-                            while queue.len() > 100 {
-                                queue.pop_back();
-                            }
-                        }
-                    }
-
-                    let subs = self.thread_subscriptions
-                        .entry(thread.clone())
-                        .or_default();
-                    subs.insert(ing.actor.clone());
-                    if let Some(ts) = self.threads.get_mut(thread) {
-                        ts.subscriber_count = subs.len();
                     }
                 }
 
@@ -383,6 +419,46 @@ impl ReducerState {
                     let q = self.ingests_by_thread.entry(thread).or_default();
                     q.push_front(ing.id.clone());
                 }
+
+                self.ingests_ordered.push(ing.id.clone());
+
+                // Snapshot ranks after votes and push history entries.
+                if !voted_items.is_empty() {
+                    crate::ranking::compute_group_ranking(&mut self.ranking_group, 10000, 1e-8);
+                    let thread = current_thread.clone().unwrap_or_else(|| "untagged".to_string());
+                    for item in &voted_items {
+                        let after_scope  = Self::scope_rank_of(&self.ranking_group, item, &self.item_children);
+                        let after_global = Self::global_rank_of(&self.ranking_group, item);
+                        let score = self.ranking_group.item_to_idx.get(item)
+                            .and_then(|&i| self.ranking_group.cached_scores.get(i))
+                            .copied().unwrap_or(0.0);
+                        let (before_scope, before_global) = before.get(item).copied().unwrap_or((0, 0));
+                        let prev = self.rank_history.get(item).and_then(|v| v.last());
+                        let scope_delta  = if prev.is_none() { 0 } else { after_scope as i32 - before_scope as i32 };
+                        let global_delta = if prev.is_none() { 0 } else { after_global as i32 - before_global as i32 };
+                        let scope = item_parent_path(item).unwrap_or_default();
+                        let scope_total  = self.item_children.get(&scope).map(|s| s.len()).unwrap_or(0);
+                        let global_total = self.ranking_group.idx_to_item.len();
+                        self.rank_history.entry(item.clone()).or_default().push(RankHistoryEntry {
+                            ts: ing.ts,
+                            scope_rank: after_scope,
+                            scope_rank_delta: scope_delta,
+                            scope_total,
+                            global_rank: after_global,
+                            global_rank_delta: global_delta,
+                            global_total,
+                            score,
+                            thread: thread.clone(),
+                            post_id: ing.id.clone(),
+                        });
+                    }
+                }
+
+                self.actor_last_post_ts.insert(ing.actor.clone(), ing.ts);
+            }
+            Event::ActorKeyRegistration { actor, key_hash, .. } => {
+                let actor = canonicalize_actor(&actor);
+                self.actor_keys.entry(actor).or_insert(key_hash);
             }
         }
     }

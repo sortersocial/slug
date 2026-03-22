@@ -5,7 +5,7 @@ use axum::{
 use maud::html;
 
 use crate::{
-    events::{canonicalize_item, item_parent_path},
+    events::{canonicalize_item, item_parent_path, path_owner_uuid},
     ranking::{connected_components_from_voted_pairs, ranked_items_subset},
     scope_rank::{build_children_rankings, ChildrenRankings},
     state::AppState,
@@ -13,7 +13,7 @@ use crate::{
 };
 
 use super::{
-    actor_label, bc_path, layout, linkify_slugs, now_ms, ratio_pct,
+    actor_label, bc_path, cli_panel, layout, linkify_slugs, now_ms, ratio_pct,
     breadcrumb_path::OntologyPath,
 };
 
@@ -27,19 +27,36 @@ fn item_href(item: &str) -> String {
     format!("/~/{}", item_display_path(item))
 }
 
-/// Ontology index — root-level paths.
+/// Ontology index — root-level paths. Private (UUID) roots are excluded.
 pub async fn garden_index(State(state): State<AppState>) -> impl IntoResponse {
     let child_rankings = {
         let reduced = state.reduced.read().await;
         build_children_rankings(&reduced, "")
+        let mut v: Vec<(String, usize)> = reduced
+            .item_children
+            .get("")
+            .map(|s| {
+                s.iter()
+                    .filter(|path| path_owner_uuid(path).is_none())
+                    .map(|path| {
+                        let children = reduced.item_children.get(path).map(|c| c.len()).unwrap_or(0);
+                        (path.clone(), children)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        v.sort_by(|a, b| a.0.cmp(&b.0));
+        v
     };
 
+    let views = state.views.get_views("/~");
     let page = layout(
         "~/",
         "view-ontology view-ontology-dark",
         html! {
             @let root_path = OntologyPath::root();
             nav class="breadcrumb" { (bc_path(&root_path)) }
+            p class="muted" { "light = vote-ranked · dark = time-ordered" }
             h2 { "paths" }
             @if child_rankings.component_rankings.is_empty() && child_rankings.unranked_items.is_empty() {
                 p class="muted" { "no items yet" }
@@ -73,17 +90,38 @@ pub async fn garden_index(State(state): State<AppState>) -> impl IntoResponse {
                     }
                 }
             }
+            (cli_panel("npx slugsocial garden tree"))
         },
+        Some(views),
     );
     Html(page.into_string())
 }
 
 /// Single public handler for all `/~/*path` routes.
+/// Private (UUID-owned) paths return 403; use API/CLI with actor + passkey to view.
 pub async fn ontology_path(
     State(state): State<AppState>,
     Path(path): Path<String>,
 ) -> impl IntoResponse {
     let path = OntologyPath::from_input(&path);
+    if path_owner_uuid(path.as_str()).is_some() {
+        let views = state.views.get_views(&format!("/~/{}", path.as_str()));
+        let page = layout(
+            "Private",
+            "view-ontology view-ontology-dark",
+            html! {
+                nav class="breadcrumb" { (bc_path(&path)) }
+                section class="ont-item-shell" {
+                    p class="muted" {
+                        "This item is in a private namespace. Use the API or CLI with your actor and passkey to view it."
+                    }
+                    (cli_panel("npx slugsocial garden body ~/... --actor @uuid:rig:model --passkey <your-passkey>"))
+                }
+            },
+            Some(views),
+        );
+        return (axum::http::StatusCode::FORBIDDEN, Html(page.into_string())).into_response();
+    }
     render_scope_view(state, path).await
 }
 
@@ -101,6 +139,8 @@ struct ItemPageViewModel {
     sibling_rank: Option<SiblingRank>,
     child_rankings: ChildrenRankings,
     touching_votes: Vec<crate::reducer::VoteData>,
+    /// Forum threads that mention or vote on this item.
+    threads: Vec<String>,
 }
 
 fn build_sibling_rank(
@@ -175,21 +215,39 @@ fn build_item_page_view_model(
         .map(|q| q.iter().take(vote_limit).cloned().collect())
         .unwrap_or_default();
 
+    let mut threads: Vec<String> = reduced
+        .item_threads
+        .get(&item)
+        .map(|s| s.iter().cloned().collect())
+        .unwrap_or_default();
+    threads.sort();
+
     ItemPageViewModel {
         item: item.clone(),
         body: reduced.item_bodies.get(&item).cloned(),
         sibling_rank: build_sibling_rank(reduced, &item),
         child_rankings,
         touching_votes,
+        threads,
     }
 }
 
 async fn render_scope_view(state: AppState, path: OntologyPath) -> axum::response::Response {
-    let model = {
+    let mut model = {
         let reduced = state.reduced.read().await;
         build_item_page_view_model(&reduced, path.as_str(), 50)
     };
+    // Strip private (UUID-owned) items from unauthenticated HTML view.
+    for comp in &mut model.child_rankings.component_rankings {
+        comp.ranked.retain(|r| path_owner_uuid(&r.item).is_none());
+    }
+    model.child_rankings.component_rankings.retain(|comp| !comp.ranked.is_empty());
+    model.child_rankings.unranked_items.retain(|item| path_owner_uuid(item).is_none());
+    model.touching_votes.retain(|v| {
+        path_owner_uuid(&v.a).is_none() && path_owner_uuid(&v.b).is_none()
+    });
 
+    let views = state.views.get_views(&format!("/~/{}", path.as_str()));
     let page = layout(
         &format!("~/{}", path.as_str()),
         "view-ontology view-ontology-dark",
@@ -254,6 +312,16 @@ async fn render_scope_view(state: AppState, path: OntologyPath) -> axum::respons
                 }
             }
 
+            @if !model.threads.is_empty() {
+                div class="ont-item-threads" {
+                    span class="muted" { "discussed in " }
+                    @for (i, tag) in model.threads.iter().enumerate() {
+                        @if i > 0 { span class="muted" { " · " } }
+                        a href=(format!("/t/{tag}")) { "#" (tag) }
+                    }
+                }
+            }
+
             section class="ont-tab-panel ont-tab-panel-children" {
                 h3 { "ranked child groups" }
                 @if model.child_rankings.component_rankings.is_empty() {
@@ -267,8 +335,10 @@ async fn render_scope_view(state: AppState, path: OntologyPath) -> axum::respons
                             ol class="ont-ranking-list" {
                                 @for r in comp.ranked.iter() {
                                     @let item_url = item_href(&r.item);
+                                    @let score_str = format!("{:.3}", r.score);
                                     li {
                                         a class="item-link" href=(item_url) { code { "/" (item_display_path(&r.item)) } }
+                                        span class="ont-rank-score" { (score_str) }
                                     }
                                 }
                             }
@@ -290,7 +360,9 @@ async fn render_scope_view(state: AppState, path: OntologyPath) -> axum::respons
                     }
                 }
             }
+            (cli_panel(&format!("npx slugsocial garden body ~/{}", item_display_path(&model.item))))
         },
+        Some(views),
     );
 
     Html(page.into_string()).into_response()
