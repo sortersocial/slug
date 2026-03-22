@@ -668,6 +668,54 @@ fn is_pair_voted(group: &crate::reducer::GroupState, a: &str, b: &str) -> bool {
     group.voted_pairs.contains(&(i, j))
 }
 
+/// Compute graph connectivity stats for a set of items within the ranking group.
+fn compute_connectivity_stats(reduced: &ReducerState, pool: &[String]) -> ConnectivityStats {
+    let group = &reduced.ranking_group;
+    let n = pool.len();
+
+    // Map pool items to global indices (items not yet in the group get no index)
+    let global_idxs: Vec<Option<usize>> = pool
+        .iter()
+        .map(|it| group.item_to_idx.get(it).copied())
+        .collect();
+    let present: Vec<usize> = global_idxs.iter().filter_map(|x| *x).collect();
+
+    // Build local index mapping for items that exist in the ranking group
+    let global_to_local: HashMap<usize, usize> = present
+        .iter()
+        .enumerate()
+        .map(|(local, &global)| (global, local))
+        .collect();
+
+    let (comps, isolates) = connected_components_from_voted_pairs(
+        present.len(),
+        group.voted_pairs.iter().filter_map(|(i, j)| {
+            let li = global_to_local.get(i).copied()?;
+            let lj = global_to_local.get(j).copied()?;
+            Some((li, lj))
+        }),
+    );
+
+    // Items not in the ranking group at all are also isolates
+    let items_not_in_group = global_idxs.iter().filter(|x| x.is_none()).count();
+
+    let num_components = comps.len() + isolates.len() + items_not_in_group;
+
+    let pairs_voted = group
+        .voted_pairs
+        .iter()
+        .filter(|(i, j)| global_to_local.contains_key(i) && global_to_local.contains_key(j))
+        .count();
+
+    ConnectivityStats {
+        items: n,
+        components: num_components,
+        comparisons_until_connected: if num_components > 0 { num_components - 1 } else { 0 },
+        pairs_voted,
+        pairs_possible: n * n.saturating_sub(1) / 2,
+    }
+}
+
 pub async fn get_pair(State(state): State<AppState>, headers: HeaderMap, Query(q): Query<PairQuery>) -> impl IntoResponse {
     let reduced_arc = state.reduced.clone();
     let force_random = q.random.unwrap_or(false);
@@ -701,7 +749,7 @@ pub async fn get_pair(State(state): State<AppState>, headers: HeaderMap, Query(q
         let Some((left, right)) = pick_random_distinct(&pool) else {
             return api_error(StatusCode::BAD_REQUEST, "need at least 2 items", None);
         };
-        let (left_body, right_body, threads) = {
+        let (left_body, right_body, threads, connectivity) = {
             let reduced = reduced_arc.read().await;
             let lb = reduced.item_bodies.get(&left).cloned();
             let rb = reduced.item_bodies.get(&right).cloned();
@@ -714,14 +762,16 @@ pub async fn get_pair(State(state): State<AppState>, headers: HeaderMap, Query(q
                 .collect::<std::collections::HashSet<_>>()
                 .into_iter()
                 .collect();
-            (lb, rb, th)
+            let cs = compute_connectivity_stats(&reduced, &pool);
+            (lb, rb, th, cs)
         };
         return Json(PairResponse {
             left: format!("/{}", left),
             right: format!("/{}", right),
-            left_body: left_body,
-            right_body: right_body,
+            left_body,
+            right_body,
             threads,
+            connectivity: Some(connectivity),
         })
         .into_response();
     }
@@ -784,7 +834,7 @@ pub async fn get_pair(State(state): State<AppState>, headers: HeaderMap, Query(q
         return api_error(StatusCode::BAD_REQUEST, "need at least 2 items", None);
     };
 
-    let (left_body, right_body, threads) = {
+    let (left_body, right_body, threads, connectivity) = {
         let reduced = reduced_arc.read().await;
         let lb = reduced.item_bodies.get(&left).cloned();
         let rb = reduced.item_bodies.get(&right).cloned();
@@ -797,7 +847,8 @@ pub async fn get_pair(State(state): State<AppState>, headers: HeaderMap, Query(q
             .collect::<std::collections::HashSet<_>>()
             .into_iter()
             .collect();
-        (lb, rb, th)
+        let cs = compute_connectivity_stats(&reduced, &pool);
+        (lb, rb, th, cs)
     };
     Json(PairResponse {
         left: format!("/{}", left),
@@ -805,6 +856,7 @@ pub async fn get_pair(State(state): State<AppState>, headers: HeaderMap, Query(q
         left_body,
         right_body,
         threads,
+        connectivity: Some(connectivity),
     })
     .into_response()
 }

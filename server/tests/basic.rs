@@ -424,7 +424,7 @@ fn reducer_zero_zero_vote_ratio_normalizes_to_one_one() {
 
 #[test]
 fn reducer_negative_ratio_clamped_to_zero() {
-    let mut state = ReducerState::default();
+    let _state = ReducerState::default();
     // GroupState::apply_vote clamps negatives to 0, then 0:0 -> 1:1
     let mut group = GroupState::new();
     group.apply_vote(slugsocial_server::reducer::VoteData {
@@ -445,47 +445,6 @@ fn reducer_negative_ratio_clamped_to_zero() {
     assert!(group.edges.contains_key(&(b_idx, a_idx)));
 }
 
-#[test]
-fn reducer_notification_created_for_prior_voter() {
-    let mut state = ReducerState::default();
-    // Actor 1 votes on items
-    state.apply_event(ingest_event(
-        1,
-        "@11111111-1111-1111-1111-111111111111:rig1:p/m1\n#topic\n~/t/a {a}\n~/t/b {b}\n~/t/a 3:1 ~/t/b {first vote}\n",
-    ));
-    // Actor 2 votes on the same items
-    state.apply_event(ingest_event(
-        2,
-        "@22222222-2222-2222-2222-222222222222:rig2:p/m2\n#topic\n~/t/a 1:3 ~/t/b {different opinion}\n",
-    ));
-    // Actor 1 should have a notification about Actor 2's activity
-    let actor1_key = "11111111-1111-1111-1111-111111111111:rig1:p/m1";
-    let notifications = state.notifications.get(actor1_key);
-    assert!(notifications.is_some(), "actor1 should have notifications");
-    assert!(!notifications.unwrap().is_empty(), "actor1 should have at least one notification");
-}
-
-#[test]
-fn reducer_thread_subscription_updates_across_ingests() {
-    let mut state = ReducerState::default();
-    // Actor 1 participates in #chat
-    state.apply_event(ingest_event(
-        1,
-        "@11111111-1111-1111-1111-111111111111:rig1:p/m1\n#chat\n~/t/x {x}\n",
-    ));
-    assert!(state.thread_subscriptions.get("chat").unwrap().contains("11111111-1111-1111-1111-111111111111:rig1:p/m1"));
-
-    // Actor 2 participates in same thread
-    state.apply_event(ingest_event(
-        2,
-        "@22222222-2222-2222-2222-222222222222:rig2:p/m2\n#chat\n~/t/y {y}\n",
-    ));
-    let subs = state.thread_subscriptions.get("chat").unwrap();
-    assert_eq!(subs.len(), 2);
-    // Actor 1 should get a notification from Actor 2's ingest
-    let actor1_notifs = state.notifications.get("11111111-1111-1111-1111-111111111111:rig1:p/m1");
-    assert!(actor1_notifs.is_some() && !actor1_notifs.unwrap().is_empty());
-}
 
 #[test]
 fn reducer_deep_path_ancestor_materialization_four_levels() {

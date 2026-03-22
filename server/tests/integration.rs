@@ -810,3 +810,76 @@ async fn test_rank_history() {
     );
 }
 
+#[tokio::test]
+async fn pair_returns_connectivity_stats() {
+    let (addr, _tmp, _log, _handle) = create_test_server().await;
+    let client = reqwest::Client::new();
+
+    // Ingest 4 items with 1 vote (a vs b), leaving c and d as isolates.
+    let doc = "@00000000-0000-0000-0000-000000000001:testrig:test/model\n\
+               #connectivity-test\n\
+               ~/conn/a { item a }\n\
+               ~/conn/b { item b }\n\
+               ~/conn/c { item c }\n\
+               ~/conn/d { item d }\n\
+               ~/conn/a 3:1 ~/conn/b { a is better }\n";
+    let resp = client
+        .post(&format!("http://{}/api/v0/ingest", addr))
+        .header("x-slug-key", "test-key:test-secret")
+        .json(&serde_json::json!({ "text": doc }))
+        .send()
+        .await
+        .unwrap();
+    assert!(resp.status().is_success(), "ingest should succeed");
+    let resp_body: serde_json::Value = resp.json().await.unwrap();
+    let passkey = resp_body["passkey"].as_str().unwrap().to_string();
+
+    // Request pair under ~/conn — should include connectivity stats.
+    let pair_resp = client
+        .get(&format!("http://{}/api/v0/pair", addr))
+        .query(&[("parent", "conn")])
+        .send()
+        .await
+        .unwrap();
+    assert!(pair_resp.status().is_success());
+    let pair: serde_json::Value = pair_resp.json().await.unwrap();
+
+    let conn = &pair["connectivity"];
+    assert!(!conn.is_null(), "pair response should include connectivity stats");
+    assert_eq!(conn["items"].as_u64().unwrap(), 4, "4 items in scope");
+    // 1 component (a,b) + 2 isolates (c,d) = 3 components
+    assert_eq!(conn["components"].as_u64().unwrap(), 3, "3 components (1 connected + 2 isolates)");
+    assert_eq!(conn["comparisons_until_connected"].as_u64().unwrap(), 2, "need 2 more comparisons");
+    assert_eq!(conn["pairs_voted"].as_u64().unwrap(), 1, "1 pair voted");
+    assert_eq!(conn["pairs_possible"].as_u64().unwrap(), 6, "4*3/2 = 6 possible pairs");
+
+    // Add a vote connecting c to a — should reduce components.
+    let doc2 = "@00000000-0000-0000-0000-000000000001:testrig:test/model\n\
+                #connectivity-test\n\
+                ~/conn/c 2:1 ~/conn/a { c beats a }\n";
+    let resp2 = client
+        .post(&format!("http://{}/api/v0/ingest", addr))
+        .header("x-slug-key", "test-key:test-secret")
+        .header("x-slug-passkey", &passkey)
+        .json(&serde_json::json!({ "text": doc2 }))
+        .send()
+        .await
+        .unwrap();
+    let resp2_status = resp2.status();
+    let resp2_body: serde_json::Value = resp2.json().await.unwrap();
+    assert!(resp2_status.is_success(), "second ingest failed: {}", resp2_body);
+
+    let pair_resp2 = client
+        .get(&format!("http://{}/api/v0/pair", addr))
+        .query(&[("parent", "conn")])
+        .send()
+        .await
+        .unwrap();
+    let pair2: serde_json::Value = pair_resp2.json().await.unwrap();
+    let conn2 = &pair2["connectivity"];
+    // Now: component (a,b,c) + isolate (d) = 2 components
+    assert_eq!(conn2["components"].as_u64().unwrap(), 2, "2 components after connecting c");
+    assert_eq!(conn2["comparisons_until_connected"].as_u64().unwrap(), 1, "1 more comparison to connect");
+    assert_eq!(conn2["pairs_voted"].as_u64().unwrap(), 2, "2 pairs voted now");
+}
+

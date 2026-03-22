@@ -46,6 +46,21 @@ pub struct RankResponse {
     pub unranked_items: Vec<String>,
 }
 
+/// Graph connectivity stats for a scope, returned with pair suggestions.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ConnectivityStats {
+    /// Total items in scope.
+    pub items: usize,
+    /// Number of connected components (each isolate counts as one).
+    pub components: usize,
+    /// Minimum comparisons needed to make the graph fully connected (components - 1).
+    pub comparisons_until_connected: usize,
+    /// Number of distinct pairs that have been voted on in this scope.
+    pub pairs_voted: usize,
+    /// Total possible pairs: items * (items - 1) / 2.
+    pub pairs_possible: usize,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PairResponse {
     pub left: String,
@@ -55,6 +70,9 @@ pub struct PairResponse {
     /// Thread tags that discuss either item (connective tissue to forum).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub threads: Vec<String>,
+    /// Graph connectivity stats for the scope.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub connectivity: Option<ConnectivityStats>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
