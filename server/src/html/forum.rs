@@ -1,7 +1,7 @@
 use axum::{
     extract::{Path, Query, State},
-    http::StatusCode,
-    response::{Html, IntoResponse},
+    http::{header, StatusCode},
+    response::{Html, IntoResponse, Response},
 };
 use serde::Deserialize;
 use maud::{html, Markup};
@@ -221,7 +221,10 @@ pub async fn thread_view(
                         }
                         pre { (maud::PreEscaped(linkify_slugs(display_body))) }
                         @if truncated {
-                            a href=(post_href) class="show-full-link" { "[show full post]" }
+                            a href="#" class="show-full-link"
+                              onclick=(format!("fetch('/t/{tag}/{post_idx}/expand').then(r=>r.text()).then(eval);return false")) {
+                                "[show full post]"
+                            }
                         }
                     }
                 }
@@ -275,4 +278,63 @@ pub async fn thread_post_view(
         Some(views),
     );
     Html(page.into_string()).into_response()
+}
+
+/// Inline expand handler — `/t/:tag/:id/expand`
+/// Returns a JS snippet that morphs the truncated post into its full version.
+pub async fn thread_post_expand(
+    State(state): State<AppState>,
+    Path((tag, index_str)): Path<(String, String)>,
+) -> impl IntoResponse {
+    let tag = canonicalize_tag(&tag);
+    let index: usize = index_str.parse().unwrap_or(0);
+    let now = now_ms();
+
+    let ing = {
+        let reduced = state.reduced.read().await;
+        reduced
+            .ingests_by_thread
+            .get(&tag)
+            .and_then(|q| q.iter().rev().nth(index))
+            .and_then(|id| reduced.ingests_by_id.get(id).cloned())
+    };
+
+    let Some(ing) = ing else {
+        return (StatusCode::NOT_FOUND, "post not found").into_response();
+    };
+
+    let post_href = format!("/t/{tag}/{index}");
+    let hover = timeago::rfc3339_utc(ing.ts);
+    let ago = timeago::timeago(now, ing.ts);
+
+    let full_html = html! {
+        div class="ingest-entry" data-ingest-id=(ing.id) {
+            div class="ingest-meta muted" title=(hover) {
+                a href=(post_href) class="post-num" { "#" (index) }
+                " · "
+                (ago)
+            }
+            pre { (maud::PreEscaped(linkify_slugs(&ing.raw))) }
+        }
+    };
+
+    let full_html_str = full_html.into_string();
+    // Escape backticks and backslashes for JS template literal
+    let escaped = full_html_str
+        .replace('\\', "\\\\")
+        .replace('`', "\\`")
+        .replace("${", "\\${");
+
+    let ingest_id_escaped = ing.id.replace('\\', "\\\\").replace('\'', "\\'");
+
+    let js = format!(
+        "Idiomorph.morph(document.querySelector('[data-ingest-id=\"{ingest_id_escaped}\"]'), `{escaped}`)"
+    );
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/javascript; charset=utf-8")
+        .body(js)
+        .unwrap()
+        .into_response()
 }

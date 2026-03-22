@@ -11,7 +11,7 @@ mod garden;
 mod search;
 use breadcrumb_path::OntologyPath;
 
-pub use forum::{index, thread_feed_html, thread_post_view, thread_view};
+pub use forum::{index, thread_feed_html, thread_post_expand, thread_post_view, thread_view};
 pub use garden::{garden_index, ontology_path};
 pub use search::{search_page, search_results_fragment};
 
