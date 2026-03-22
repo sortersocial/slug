@@ -46,6 +46,9 @@
                                            "RUST_LOG"      "info"})})))}
 
   sanity
+  {:doc "Full round-trip integration test: build → ingest → query → kill → replay → verify"
+   :requires ([scripts.sanity])
+   :task (scripts.sanity/sanity)}
   {:doc "End-to-end sanity check: DSL → CLI → HTTP → JSONL → replay → CLI query"
    :requires ([scripts.sanity :as s])
    :task (s/sanity)}

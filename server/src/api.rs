@@ -100,14 +100,15 @@ fn validate_actor_format(actor: &str) -> Result<(), String> {
     }
 
     if !model_part.contains('/') {
-        return Err(format!(
+        return Err(
             "Invalid model format in actor.\n\
              Expected format: @<uuid>:<rig>:<provider/model>\n\
              Example: @7a3b9c2d...:claudecode:anthropic/claude-sonnet-4.5\n\
              \n\
              Generate a valid identity:\n\
              npx slugsocial identity --rig <name> --model <slug>"
-        ));
+                .to_string(),
+        );
     }
 
     Ok(())
@@ -361,10 +362,20 @@ pub fn validate_ingest_document(
 #[derive(Debug, Deserialize)]
 pub struct RankQuery {
     /// Parent path(s). Comma-separated to merge scopes: ~/a,~/b (e.g. rank ~/models ~/ai-models).
+    /// Use `~` alone for global ranking across all items.
     #[serde(default)]
     pub parent: Option<String>,
     #[serde(default)]
     pub limit: Option<usize>,
+    /// Skip the first N items (for pagination).
+    #[serde(default)]
+    pub offset: Option<usize>,
+    /// When true, each RankRow includes a `percent` field: score as % of max score in its component.
+    #[serde(default)]
+    pub percent: Option<bool>,
+    /// How many levels deep to resolve children (default 1 = direct children only).
+    #[serde(default)]
+    pub depth: Option<usize>,
     #[serde(default)]
     pub actor: Option<String>,
     #[serde(default)]
@@ -382,22 +393,98 @@ fn parse_parent_specs(parent: Option<&String>) -> Vec<String> {
     s.split(',').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect()
 }
 
+/// Apply offset+limit pagination to the flattened component rankings.
+/// Items are flattened in component order (largest component first), then unranked last.
+/// Returns (components, unranked_items) after the window.
+fn paginate_rankings(
+    components: Vec<RankComponent>,
+    unranked_items: Vec<String>,
+    offset: usize,
+    limit: Option<usize>,
+) -> (Vec<RankComponent>, Vec<String>) {
+    let mut remaining_skip = offset;
+    let mut remaining_take = limit.unwrap_or(usize::MAX);
+    let mut out_components: Vec<RankComponent> = Vec::new();
+
+    for comp in components {
+        if remaining_take == 0 {
+            break;
+        }
+        let n = comp.ranking.len();
+        if remaining_skip >= n {
+            remaining_skip -= n;
+            continue;
+        }
+        let start = remaining_skip;
+        remaining_skip = 0;
+        let end = (start + remaining_take).min(n);
+        let taken = end - start;
+        remaining_take -= taken;
+        out_components.push(RankComponent {
+            pairs: comp.pairs,
+            ranking: comp.ranking[start..end].to_vec(),
+        });
+    }
+
+    let out_unranked: Vec<String> = if remaining_take > 0 {
+        unranked_items
+            .into_iter()
+            .skip(remaining_skip)
+            .take(remaining_take)
+            .collect()
+    } else {
+        vec![]
+    };
+
+    (out_components, out_unranked)
+}
+
 pub async fn get_rank(State(state): State<AppState>, headers: HeaderMap, Query(q): Query<RankQuery>) -> impl IntoResponse {
     let reduced_arc = state.reduced.clone();
     let reduced = reduced_arc.read().await;
+
     let passkey = headers.get("x-slug-passkey").and_then(|v| v.to_str().ok()).map(|s| s.to_string()).or(q.passkey);
     let authed_uuid = verified_actor_uuid(&reduced, q.actor.as_deref(), passkey.as_deref());
     let specs = parse_parent_specs(q.parent.as_ref());
-    let rankings = if specs.is_empty() {
+    let is_global = q.parent.as_deref().map(|p| p.trim() == "~").unwrap_or(false);
+    let depth = q.depth.unwrap_or(1).max(1);
+
+    let rankings = if is_global {
+        let all_items: Vec<String> = reduced.items.iter().cloned().collect();
+        crate::scope_rank::build_rankings_for_item_set(&reduced, &all_items)
+    } else if specs.is_empty() {
         crate::scope_rank::build_children_rankings(&reduced, "")
+    } else if depth > 1 {
+        let items = crate::scope_rank::resolve_scope_recursive(&reduced, &specs, depth);
+        crate::scope_rank::build_rankings_for_item_set(&reduced, &items)
     } else {
         let items = crate::scope_rank::resolve_scope(&reduced, &specs);
         crate::scope_rank::build_rankings_for_item_set(&reduced, &items)
     };
 
+    let want_percent = q.percent.unwrap_or(false);
+
     let components: Vec<RankComponent> = rankings
         .component_rankings
         .into_iter()
+        .map(|c| {
+            let max_score = c.ranked.first().map(|r| r.score).unwrap_or(1.0).max(1e-12);
+            RankComponent {
+                pairs: c.pairs,
+                ranking: c
+                    .ranked
+                    .into_iter()
+                    .map(|r| RankRow {
+                        item: format!("/{}", r.item),
+                        percent: if want_percent {
+                            Some((r.score / max_score) * 100.0)
+                        } else {
+                            None
+                        },
+                        score: r.score,
+                    })
+                    .collect(),
+            }
         .map(|c| RankComponent {
             pairs: c.pairs,
             ranking: c
@@ -416,8 +503,22 @@ pub async fn get_rank(State(state): State<AppState>, headers: HeaderMap, Query(q
         })
         .collect();
 
+    let prefixed_unranked: Vec<String> = rankings
+        .unranked_items
+        .into_iter()
+        .map(|s| format!("/{s}"))
+        .collect();
+
+    let offset = q.offset.unwrap_or(0);
+    let (components, unranked_items) = if offset > 0 || q.limit.is_some() {
+        paginate_rankings(components, prefixed_unranked, offset, q.limit)
+    } else {
+        (components, prefixed_unranked)
+    };
+
     Json(RankResponse {
         components,
+        unranked_items,
         unranked_items: rankings.unranked_items.into_iter()
             .filter(|p| match crate::events::path_owner_uuid(p) {
                 None => true,
@@ -961,6 +1062,7 @@ pub async fn get_threads(State(state): State<AppState>) -> impl IntoResponse {
 #[derive(Debug, Deserialize)]
 pub struct ThreadDetailQuery {
     pub tag: String,
+    #[serde(default)]
     /// Chronological offset (0 = oldest). Default: 0.
     pub offset: Option<usize>,
     /// Number of posts to return. Default: 10, max: 500.
@@ -1015,6 +1117,40 @@ pub async fn get_thread(State(state): State<AppState>, Query(q): Query<ThreadDet
         .map(|q| q.iter().rev().cloned().collect())
         .unwrap_or_default();
 
+    let posts: Vec<PostRow> = {
+        let mut ids = ingest_ids;
+        ids.sort_by_key(|id| {
+            reduced
+                .ingests_by_id
+                .get(id)
+                .map(|ing| ing.ts)
+                .unwrap_or(0)
+        });
+        ids
+            .into_iter()
+            .filter_map(|ing_id| reduced.ingests_by_id.get(&ing_id))
+            .filter(|ing| {
+                q.post_id.as_ref().is_none_or(|pid| &ing.id == pid)
+            })
+            .map(|ing: &Ingest| {
+                const MAX_BODY: usize = 2000;
+                let skip_truncation = q.post_id.is_some();
+                let (body, truncated) = if !skip_truncation && ing.raw.len() > MAX_BODY {
+                    (ing.raw[..MAX_BODY].to_string(), true)
+                } else {
+                    (ing.raw.clone(), false)
+                };
+                PostRow {
+                    ts: ing.ts,
+                    voter_key_id: ing.voter_key_id.clone(),
+                    id: ing.id.clone(),
+                    actor: ing.actor.clone(),
+                    body,
+                    truncated,
+                }
+            })
+            .collect()
+    };
     let actor_prefix = q.actor.as_deref().unwrap_or("").to_lowercase();
     let filtered: Vec<(usize, _)> = all_ids
         .into_iter()
@@ -1511,6 +1647,13 @@ pub async fn post_check(
     let mut simulated = { reduced_arc.read().await.clone() };
     simulated.apply_event(event);
 
+    let ranking = ranked_items(&mut simulated.ranking_group, 10000, 1e-8)
+        .into_iter()
+        .take(25)
+        .map(|r| RankRow {
+            item: format!("/{}", r.item),
+            score: r.score,
+            percent: None,
     // Collect parent scopes touched by votes in this document.
     let voted_parents: Vec<String> = {
         let mut parents: std::collections::HashSet<String> = std::collections::HashSet::new();

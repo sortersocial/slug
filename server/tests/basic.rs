@@ -390,6 +390,45 @@ fn canonicalization_is_consistent() {
     assert_eq!(canonicalize_item("ITEM"), "item");
 }
 
+#[test]
+fn ranking_repeated_votes_normalized() {
+    // Voting A>B with ratio 3:1 three times should give same ranking order as once.
+    // After normalization, total(A>B) / total(A<->B) = 9/12 = 0.75 = same as 3/4.
+    let mut state_once = ReducerState::default();
+    state_once.apply_event(ingest_event(
+        1,
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n~/norm/a {a}\n~/norm/b {b}\n~/norm/a 3:1 ~/norm/b {vote}\n",
+    ));
+
+    let mut state_many = ReducerState::default();
+    state_many.apply_event(ingest_event(
+        1,
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n~/norm/a {a}\n~/norm/b {b}\n~/norm/a 3:1 ~/norm/b {vote1}\n",
+    ));
+    state_many.apply_event(ingest_event(
+        2,
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n~/norm/a 3:1 ~/norm/b {vote2}\n",
+    ));
+    state_many.apply_event(ingest_event(
+        3,
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n~/norm/a 3:1 ~/norm/b {vote3}\n",
+    ));
+
+    let mut group_once = state_once.ranking_group.clone();
+    let mut group_many = state_many.ranking_group.clone();
+    let ranked_once = ranked_items(&mut group_once, 20000, 1e-9);
+    let ranked_many = ranked_items(&mut group_many, 20000, 1e-9);
+
+    // Same winner regardless of how many times voted.
+    assert_eq!(ranked_once[0].item, ranked_many[0].item);
+    assert_eq!(ranked_once[0].item, "norm/a");
+    assert_eq!(ranked_once[1].item, ranked_many[1].item);
+    assert_eq!(ranked_once[1].item, "norm/b");
+
+    // Scores should be identical (normalization makes repeated votes idempotent).
+    let eps = 1e-6;
+    assert!((ranked_once[0].score - ranked_many[0].score).abs() < eps,
+        "scores differ: once={:.6} many={:.6}", ranked_once[0].score, ranked_many[0].score);
 // ============================================================================
 // Phase 1: Reducer Edge Cases
 // ============================================================================

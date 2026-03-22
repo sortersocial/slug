@@ -29,8 +29,9 @@ fn item_href(item: &str) -> String {
 
 /// Ontology index — root-level paths. Private (UUID) roots are excluded.
 pub async fn garden_index(State(state): State<AppState>) -> impl IntoResponse {
-    let roots: Vec<(String, usize)> = {
+    let child_rankings = {
         let reduced = state.reduced.read().await;
+        build_children_rankings(&reduced, "")
         let mut v: Vec<(String, usize)> = reduced
             .item_children
             .get("")
@@ -57,15 +58,34 @@ pub async fn garden_index(State(state): State<AppState>) -> impl IntoResponse {
             nav class="breadcrumb" { (bc_path(&root_path)) }
             p class="muted" { "light = vote-ranked · dark = time-ordered" }
             h2 { "paths" }
-            @if roots.is_empty() {
+            @if child_rankings.component_rankings.is_empty() && child_rankings.unranked_items.is_empty() {
                 p class="muted" { "no items yet" }
             } @else {
-                ul {
-                    @for (path, children) in &roots {
-                        li {
-                            a href=(format!("/~/{}", path)) { "~/" (path) }
-                            " "
-                            span class="muted" { (format!("{}c", children)) }
+                @for (ci, comp) in child_rankings.component_rankings.iter().enumerate() {
+                    div class="ont-group-shell" {
+                        div class="ont-group-meta" {
+                            (format!("ordering {} items={} pairs={}", ci + 1, comp.ranked.len(), comp.pairs))
+                        }
+                        ol class="ont-ranking-list" {
+                            @for r in comp.ranked.iter() {
+                                @let href = item_href(&r.item);
+                                li {
+                                    a href=(href) { "~/" (item_display_path(&r.item)) }
+                                }
+                            }
+                        }
+                    }
+                }
+                @if !child_rankings.unranked_items.is_empty() {
+                    div class="ont-group-shell ont-group-unsorted" {
+                        div class="ont-group-meta" { "unranked" }
+                        ul class="ont-group-list" {
+                            @for name in &child_rankings.unranked_items {
+                                li {
+                                    @let href = item_href(name);
+                                    a href=(href) { "~/" (item_display_path(name)) }
+                                }
+                            }
                         }
                     }
                 }

@@ -112,18 +112,42 @@ fn compute_scores_from_edges(n: usize, edges: impl Iterator<Item = ((usize, usiz
         return vec![1.0];
     }
 
+    // Collect raw edges into a map for pairwise normalization.
+    let mut raw: HashMap<(usize, usize), f64> = HashMap::new();
+    for ((src, dst), w) in edges {
+        if src >= n || dst >= n || w <= 0.0 {
+            continue;
+        }
+        *raw.entry((src, dst)).or_insert(0.0) += w;
+    }
+
+    // Pairwise normalization: a_ij = A_ij / (A_ij + A_ji).
+    // This ensures repeated votes on the same pair don't inflate influence
+    // beyond what the ratio implies.
+    let keys: Vec<(usize, usize)> = raw.keys().copied().collect();
+    let mut normalized: HashMap<(usize, usize), f64> = HashMap::new();
+    for (i, j) in keys {
+        if normalized.contains_key(&(i, j)) {
+            continue;
+        }
+        let w_ij = *raw.get(&(i, j)).unwrap_or(&0.0);
+        let w_ji = *raw.get(&(j, i)).unwrap_or(&0.0);
+        let total = w_ij + w_ji;
+        if total <= 0.0 {
+            continue;
+        }
+        normalized.insert((i, j), w_ij / total);
+        if w_ji > 0.0 {
+            normalized.insert((j, i), w_ji / total);
+        }
+    }
+
     let mut out_edges: Vec<Vec<(usize, f64)>> = vec![Vec::new(); n];
     let mut out_deg: Vec<f64> = vec![0.0; n];
 
-    for ((src, dst), w) in edges {
-        if src >= n || dst >= n {
-            continue;
-        }
-        if w <= 0.0 {
-            continue;
-        }
-        out_edges[src].push((dst, w));
-        out_deg[src] += w;
+    for ((src, dst), w) in &normalized {
+        out_edges[*src].push((*dst, *w));
+        out_deg[*src] += w;
     }
 
     let mut max_out = 0.0f64;
