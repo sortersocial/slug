@@ -646,3 +646,217 @@ fn reducer_multiple_actors_independent_keys() {
     assert_eq!(state.actor_keys.get("actor2:rig:p/m"), Some(&"hash2".to_string()));
 }
 
+// ============================================================================
+// Coverage Audit Gap Tests
+// ============================================================================
+
+#[test]
+fn test_item_body_overwrite() {
+    let mut state = ReducerState::default();
+    state.apply_event(ingest_event(
+        1,
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n~/t/x {first}\n",
+    ));
+    assert_eq!(state.item_bodies.get("t/x"), Some(&"first".to_string()));
+
+    state.apply_event(ingest_event(
+        2,
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n~/t/x {second}\n",
+    ));
+    assert_eq!(
+        state.item_bodies.get("t/x"),
+        Some(&"second".to_string()),
+        "last writer should win for item bodies"
+    );
+}
+
+#[test]
+fn test_empty_body_not_stored() {
+    let mut state = ReducerState::default();
+    state.apply_event(ingest_event(
+        1,
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n~/t/blank {   }\n",
+    ));
+    assert!(state.items.contains("t/blank"), "item should exist");
+    assert!(
+        !state.item_bodies.contains_key("t/blank"),
+        "whitespace-only body should not be stored"
+    );
+}
+
+#[test]
+fn test_duplicate_items_across_ingests() {
+    let mut state = ReducerState::default();
+    state.apply_event(ingest_event(
+        1,
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n~/t/dup {first}\n",
+    ));
+    state.apply_event(ingest_event(
+        2,
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n~/t/dup {second}\n",
+    ));
+    let count = state.items.iter().filter(|i| *i == "t/dup").count();
+    assert_eq!(count, 1, "items set should deduplicate across ingests");
+}
+
+#[test]
+fn test_ingests_ordered_chronological() {
+    let mut state = ReducerState::default();
+    for ts in [100, 200, 300] {
+        state.apply_event(ingest_event(
+            ts,
+            "@00000000-0000-0000-0000-000000000000:test:local/test\n~/t/a {a}\n",
+        ));
+    }
+    assert_eq!(state.ingests_ordered.len(), 3);
+    assert_eq!(state.ingests_ordered[0], "test-100");
+    assert_eq!(state.ingests_ordered[1], "test-200");
+    assert_eq!(state.ingests_ordered[2], "test-300");
+}
+
+#[test]
+fn test_actor_last_post_ts() {
+    let mut state = ReducerState::default();
+    state.apply_event(ingest_event(
+        42,
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n~/t/a {a}\n",
+    ));
+    // The ingest_event helper sets actor="test", which is what gets stored in actor_last_post_ts.
+    assert_eq!(
+        state.actor_last_post_ts.get("test"),
+        Some(&42),
+        "actor_last_post_ts should be set to the ingest timestamp"
+    );
+}
+
+#[test]
+fn test_thread_timestamp_bump() {
+    let mut state = ReducerState::default();
+    state.apply_event(ingest_event(
+        100,
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n#my-thread\n~/t/a {a}\n",
+    ));
+    assert_eq!(state.threads.get("my-thread").unwrap().last_activity_ts, 100);
+
+    state.apply_event(ingest_event(
+        200,
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n#my-thread\n~/t/b {b}\n",
+    ));
+    assert_eq!(state.threads.get("my-thread").unwrap().last_activity_ts, 200);
+
+    // Ingest with earlier timestamp should NOT regress
+    state.apply_event(ingest_event(
+        150,
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n#my-thread\n~/t/c {c}\n",
+    ));
+    assert_eq!(
+        state.threads.get("my-thread").unwrap().last_activity_ts,
+        200,
+        "thread timestamp should not regress to an earlier value"
+    );
+}
+
+#[test]
+fn test_untagged_thread_fallback() {
+    let mut state = ReducerState::default();
+    // No #tag line — vote should fall back to "untagged"
+    state.apply_event(ingest_event(
+        1,
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n~/t/a {a}\n~/t/b {b}\n~/t/a 2:1 ~/t/b {reason}\n",
+    ));
+    let vote = state.item_votes.get("t/a").unwrap().front().unwrap();
+    assert_eq!(vote.thread, "untagged", "votes without a #tag should use 'untagged'");
+}
+
+#[test]
+fn test_rank_history_created_for_voted_items() {
+    let mut state = ReducerState::default();
+    state.apply_event(ingest_event(
+        1,
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n#rh\n~/t/a {a}\n~/t/b {b}\n~/t/a 3:1 ~/t/b {reason}\n",
+    ));
+    assert!(
+        state.rank_history.contains_key("t/a"),
+        "rank_history should have entry for voted item a"
+    );
+    assert!(
+        state.rank_history.contains_key("t/b"),
+        "rank_history should have entry for voted item b"
+    );
+}
+
+#[test]
+fn test_rank_history_not_created_for_unvoted_items() {
+    let mut state = ReducerState::default();
+    state.apply_event(ingest_event(
+        1,
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n#rh\n~/t/c {just a definition}\n",
+    ));
+    assert!(
+        !state.rank_history.contains_key("t/c"),
+        "rank_history should NOT have entry for item with no votes"
+    );
+}
+
+#[test]
+fn test_rank_history_first_entry_delta_zero() {
+    let mut state = ReducerState::default();
+    state.apply_event(ingest_event(
+        1,
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n#rh\n~/t/a {a}\n~/t/b {b}\n~/t/a 3:1 ~/t/b {reason}\n",
+    ));
+    let history_a = state.rank_history.get("t/a").unwrap();
+    assert_eq!(history_a.len(), 1);
+    assert_eq!(
+        history_a[0].scope_rank_delta, 0,
+        "first rank_history entry should have scope_rank_delta == 0"
+    );
+    assert_eq!(
+        history_a[0].global_rank_delta, 0,
+        "first rank_history entry should have global_rank_delta == 0"
+    );
+}
+
+#[test]
+fn test_multi_actor_in_single_ingest() {
+    let mut state = ReducerState::default();
+    state.apply_event(ingest_event(
+        1,
+        "@00000000-0000-0000-0000-000000000001:rig1:local/test\n\
+         #multi\n\
+         ~/t/a {a}\n\
+         ~/t/b {b}\n\
+         ~/t/a 2:1 ~/t/b {actor1 vote}\n\
+         @00000000-0000-0000-0000-000000000002:rig2:local/test\n\
+         ~/t/b 3:1 ~/t/a {actor2 vote}\n",
+    ));
+
+    let votes_a = state.item_votes.get("t/a").unwrap();
+    let actors: Vec<&str> = votes_a.iter().map(|v| v.actor.as_str()).collect();
+    assert!(
+        actors.contains(&"00000000-0000-0000-0000-000000000001:rig1:local/test"),
+        "first actor's vote should be attributed"
+    );
+    assert!(
+        actors.contains(&"00000000-0000-0000-0000-000000000002:rig2:local/test"),
+        "second actor's vote should be attributed"
+    );
+}
+
+#[test]
+fn test_ingests_by_thread_ordering() {
+    let mut state = ReducerState::default();
+    for ts in [100, 200, 300] {
+        state.apply_event(ingest_event(
+            ts,
+            "@00000000-0000-0000-0000-000000000000:test:local/test\n#order-thread\n~/t/a {a}\n",
+        ));
+    }
+    let thread_ingests = state.ingests_by_thread.get("order-thread").unwrap();
+    assert_eq!(thread_ingests.len(), 3);
+    // Most recent first (push_front ordering)
+    assert_eq!(thread_ingests[0], "test-300");
+    assert_eq!(thread_ingests[1], "test-200");
+    assert_eq!(thread_ingests[2], "test-100");
+}
+
