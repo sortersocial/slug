@@ -5,6 +5,7 @@ pub mod auth;
 pub mod bot;
 pub mod dsl;
 pub mod signal_bot;
+pub mod signal_store;
 pub mod event_log;
 pub mod events;
 pub mod html;

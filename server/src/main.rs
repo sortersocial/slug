@@ -88,29 +88,41 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("[boot] x bot enabled");
     }
 
-    // Signal bot config (optional — both env vars must be set to enable).
-    let signal_bot_cfg = match (
-        env_var("SLUG_SIGNAL_API_URL"),
-        env_var("SLUG_SIGNAL_PHONE"),
-    ) {
-        (Some(api_base_url), Some(phone_number)) => {
-            let poll_interval_secs = env_var("SLUG_SIGNAL_POLL_SECS")
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(5);
-            let public_url = env_var("SLUG_PUBLIC_URL")
-                .unwrap_or_else(|| "https://slug.social".to_string());
-            Some(SignalBotConfig {
-                api_base_url,
-                phone_number,
-                poll_interval_secs,
-                public_url,
-            })
+    // Signal bot config (optional — SLUG_SIGNAL_PHONE required to enable).
+    // If SLUG_SIGNAL_API_URL is also set, uses HTTP polling (test mode).
+    // Otherwise uses native libsignal-service-rs (production mode).
+    let signal_bot_cfg = env_var("SLUG_SIGNAL_PHONE").map(|phone_number| {
+        let api_base_url = env_var("SLUG_SIGNAL_API_URL");
+        let poll_interval_secs = env_var("SLUG_SIGNAL_POLL_SECS")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(5);
+        let public_url = env_var("SLUG_PUBLIC_URL")
+            .unwrap_or_else(|| "https://slug.social".to_string());
+        SignalBotConfig {
+            api_base_url: api_base_url.clone(),
+            phone_number,
+            poll_interval_secs,
+            public_url,
         }
-        _ => None,
-    };
+    });
 
-    if signal_bot_cfg.is_some() {
-        eprintln!("[boot] signal bot enabled");
+    if let Some(ref sig_cfg) = signal_bot_cfg {
+        if sig_cfg.api_base_url.is_some() {
+            eprintln!("[boot] signal bot enabled (http mode)");
+        } else {
+            eprintln!("[boot] signal bot enabled (native mode)");
+        }
+    }
+
+    // One-shot linking mode: link as secondary device then exit.
+    if env_var("SLUG_SIGNAL_LINK").is_some() {
+        if let Some(ref sig_cfg) = signal_bot_cfg {
+            signal_bot::link_device(&data_dir, &sig_cfg.phone_number).await;
+            return Ok(());
+        } else {
+            eprintln!("[error] SLUG_SIGNAL_LINK requires SLUG_SIGNAL_PHONE");
+            return Ok(());
+        }
     }
 
     let cfg = AppConfig {

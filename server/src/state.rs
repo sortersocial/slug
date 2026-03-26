@@ -49,11 +49,12 @@ pub struct XBotConfig {
 
 #[derive(Debug, Clone)]
 pub struct SignalBotConfig {
-    /// Base URL for the signal-cli-rest-api (e.g. http://localhost:8081).
-    pub api_base_url: String,
+    /// Base URL for a signal-cli-api REST endpoint. When set, uses HTTP polling.
+    /// When None, uses native libsignal-service-rs (production mode).
+    pub api_base_url: Option<String>,
     /// The bot's registered phone number (e.g. +1234567890).
     pub phone_number: String,
-    /// Poll interval in seconds (default 5 — Signal messages arrive faster than tweets).
+    /// Poll interval in seconds (default 5, only used in HTTP mode).
     pub poll_interval_secs: u64,
     /// Public base URL for links in replies (default https://slug.social).
     pub public_url: String,
