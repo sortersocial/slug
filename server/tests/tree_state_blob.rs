@@ -10,12 +10,20 @@ use tower::ServiceExt as _;
 use slugsocial_server::state::{AppConfig, AppState, KeyRecord};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct TreeStateV1 {
+enum SelectedRefV2 {
+    I(u32),
+    S(String),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct TreeStateV2 {
     v: u8,
     #[serde(default)]
-    open: Vec<String>,
+    base: String,
     #[serde(default)]
-    selected: Option<String>,
+    open_suffixes: Vec<String>,
+    #[serde(default)]
+    selected: Option<SelectedRefV2>,
 }
 
 #[tokio::test]
@@ -37,11 +45,13 @@ async fn tree_accepts_state_blob_s_param() {
     });
     let app = slugsocial_server::create_app(state);
 
-    // postcard(TreeStateV1) base64url(no pad)
-    let st = TreeStateV1 {
-        v: 1,
-        open: vec!["~/a/b".to_string(), "~/c/d".to_string()],
-        selected: Some("~/a/b".to_string()),
+    // postcard(TreeStateV2) base64url(no pad)
+    // Root is `/tree` => `~/` so these relative suffixes resolve to `~/a/b` and `~/c/d`.
+    let st = TreeStateV2 {
+        v: 2,
+        base: "".to_string(),
+        open_suffixes: vec!["a/b".to_string(), "c/d".to_string()],
+        selected: Some(SelectedRefV2::I(0)),
     };
     let bytes = postcard::to_allocvec(&st).unwrap();
     let s = URL_SAFE_NO_PAD.encode(bytes);
@@ -80,7 +90,7 @@ async fn tree_missing_s_redirects_to_baseline() {
     });
     let app = slugsocial_server::create_app(state);
 
-    let resp = app
+    let resp = app.clone()
         .oneshot(
             Request::builder()
                 .method("GET")
@@ -98,7 +108,20 @@ async fn tree_missing_s_redirects_to_baseline() {
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
 
-    // Baseline postcard blob for v=1, open=[], selected=None is 3 bytes -> 4 chars base64url: "AQAA".
-    assert!(loc.contains("s=AQAA"), "location should include baseline s=AQAA (got {loc})");
+    assert!(loc.contains("s="), "location should include s=... (got {loc})");
+
+    // Follow redirect target and ensure it's a valid baseline state.
+    let path = loc.strip_prefix("http://localhost").unwrap_or(loc);
+    let resp2 = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(path)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp2.status(), StatusCode::OK);
 }
 
