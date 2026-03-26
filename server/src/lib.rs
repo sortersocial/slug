@@ -32,6 +32,7 @@ pub fn create_app(state: AppState) -> Router {
         .route("/tree", axum::routing::get(html::tree_root))
         .route("/tree/*path", axum::routing::get(html::tree_path))
         .route("/tree/toggle", axum::routing::post(html::tree_toggle))
+        .route("/tree/select", axum::routing::post(html::tree_select))
         .route("/~", axum::routing::get(html::garden_index))
         .route("/t/:tag", axum::routing::get(html::thread_view))
         .route("/t/:tag/:id", axum::routing::get(html::thread_post_view))

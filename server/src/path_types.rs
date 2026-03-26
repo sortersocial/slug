@@ -41,6 +41,17 @@ impl CanonicalItemUrl {
     pub fn tilde_tail(&self) -> Option<&str> {
         self.0.strip_prefix("https://slug.social/~/")
     }
+
+    /// Returns the final non-empty `/`-separated segment of the path.
+    ///
+    /// `https://slug.social/~/a/b/c` → `"c"`
+    /// `https://slug.social/~/a`     → `"a"`
+    pub fn last_segment(&self) -> &str {
+        self.0
+            .rsplit('/')
+            .find(|s| !s.is_empty())
+            .unwrap_or(self.0.as_str())
+    }
 }
 
 impl fmt::Display for CanonicalItemUrl {

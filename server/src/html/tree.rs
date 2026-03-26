@@ -268,10 +268,13 @@ fn ranked_children_public(
     let rankings: ChildrenRankings =
         crate::scope_rank::build_children_rankings(reduced, parent_key);
     let mut out: Vec<CanonicalItemUrl> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+
     for comp in rankings.component_rankings {
         for r in comp.ranked {
             if path_owner_uuid(&r.item).is_none() {
                 if let Some(c) = CanonicalItemUrl::parse(&r.item) {
+                    seen.insert(r.item.clone());
                     out.push(c);
                 }
             }
@@ -280,10 +283,38 @@ fn ranked_children_public(
     for it in rankings.unranked_items {
         if path_owner_uuid(&it).is_none() {
             if let Some(c) = CanonicalItemUrl::parse(&it) {
+                seen.insert(it.clone());
                 out.push(c);
             }
         }
     }
+
+    // Also surface phantom intermediate nodes: keys of item_children that are
+    // direct children of parent_key but were never explicitly ingested as items
+    // (so they don't appear in any ranking). Example: ~/languages exists only as
+    // a parent of ~/languages/rust etc., never ranked at the root level.
+    let phantom_parent_prefix = format!("{}/", parent_key);
+    for key in reduced.item_children.keys() {
+        if !key.starts_with(&phantom_parent_prefix) {
+            continue;
+        }
+        // Must be a direct child: no further '/' after the prefix.
+        let tail = &key[phantom_parent_prefix.len()..];
+        if tail.contains('/') {
+            continue;
+        }
+        if seen.contains(key) {
+            continue;
+        }
+        if path_owner_uuid(key).is_some() {
+            continue;
+        }
+        if let Some(c) = CanonicalItemUrl::parse(key) {
+            seen.insert(key.clone());
+            out.push(c);
+        }
+    }
+
     out
 }
 
@@ -316,10 +347,7 @@ fn render_tree_node(
         vec![]
     };
 
-    let label = path_str
-        .strip_prefix("https://slug.social/~/")
-        .unwrap_or(path_str)
-        .to_string();
+    let label = path.last_segment().to_string();
     let has_children = reduced
         .item_children
         .get(path_str)
@@ -360,8 +388,11 @@ fn render_tree_node(
                 span class="tree-twist" { (twist) }
             }
 
-            a class="tree-label" href={(href_for(root, open, Some(path)))} {
-                code { "~/" (label) }
+            form method="post" action="/tree/select" class="tree-select-form" {
+                input type="hidden" name="root" value=(root);
+                input type="hidden" name="target" value=(path_str);
+                input type="hidden" name="s" value=(state_blob);
+                button type="submit" class="tree-label" { code { (label) } }
             }
         }
 
@@ -419,34 +450,41 @@ fn render_detail_pane(
 }
 
 fn tree_page_js() -> String {
-    // We intentionally do NOT rely on the global form POST interceptor in layout()
-    // (it discards the response). Here we want POST -> JS -> eval().
+    // Intercept all tree forms (toggle + select) ourselves so we can eval() the JS
+    // response.  We call stopPropagation() to prevent the global layout POST handler
+    // from also firing (it discards the response body and rewrites button text).
     r#"
 (function() {
+  async function treePost(action, formData, btn) {
+    try {
+      if (btn) btn.disabled = true;
+      const r = await fetch(action, {
+        method: 'POST',
+        body: new URLSearchParams(formData),
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        credentials: 'same-origin',
+      });
+      const js = await r.text();
+      eval(js);
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
   function interceptTreeForms() {
-    document.querySelectorAll('form.tree-toggle-form').forEach((f) => {
+    document.querySelectorAll('form.tree-toggle-form, form.tree-select-form').forEach((f) => {
       if (f.__tree_bound) return;
       f.__tree_bound = true;
-      f.addEventListener('submit', async (e) => {
+      f.addEventListener('submit', (e) => {
         e.preventDefault();
+        e.stopPropagation();
         const btn = f.querySelector('button[type="submit"]');
-        if (btn) btn.disabled = true;
-        const r = await fetch(f.action, {
-          method: 'POST',
-          body: new URLSearchParams(new FormData(f)),
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          credentials: 'same-origin',
-        });
-        const js = await r.text();
-        try { eval(js); } finally { if (btn) btn.disabled = false; }
+        treePost(f.action, new FormData(f), btn);
       });
     });
   }
 
-  // Initial bind
   interceptTreeForms();
-
-  // Rebind after morph
   const mo = new MutationObserver(() => interceptTreeForms());
   mo.observe(document.body, { subtree: true, childList: true });
 })();
@@ -508,14 +546,27 @@ async fn tree_render(
         "view-tree",
         html! {
             style { (maud::PreEscaped(r#"
-              .tree-shell { display: grid; grid-template-columns: minmax(320px, 1fr) minmax(320px, 1fr); gap: 18px; padding: 14px; }
+              .tree-shell { padding: 14px; padding-right: calc(360px + 18px); }
               .tree-list { list-style: none; margin: 10px 0 0 0; padding: 0; }
-              .tree-row { display: flex; align-items: center; gap: 8px; min-height: 22px; position: relative; }
-              .tree-row.selected { background: rgba(255,255,255,0.04); }
-              .tree-twist { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-                           background: transparent; border: 0; padding: 0 4px; cursor: pointer; color: inherit; }
+              .tree-row { display: flex; align-items: center; gap: 4px; min-height: 22px; }
+              .tree-row.selected > .tree-select-form > .tree-label,
+              .tree-row.selected > .tree-select-form > .tree-label code { background: rgba(255,255,255,0.07); }
+              .tree-twist {
+                font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+                background: transparent; border: 0; padding: 0 4px; cursor: pointer; color: inherit; flex-shrink: 0;
+              }
+              .tree-label {
+                background: transparent; border: 0; padding: 0 2px; cursor: pointer;
+                color: inherit; text-align: left; font: inherit;
+              }
               .tree-label code { font-size: 12px; }
-              .tree-toggle-form { display: inline; margin: 0; }
+              .tree-toggle-form, .tree-select-form { display: inline; margin: 0; }
+              #detail-pane {
+                position: fixed; top: 0; right: 0; width: 360px; height: 100vh;
+                overflow-y: auto; border-left: 1px solid rgba(128,128,128,0.2);
+                padding: 14px; box-sizing: border-box; z-index: 10;
+                background: var(--bg, #0d0d0d);
+              }
               #detail-pane pre { white-space: pre-wrap; }
             "#)) }
             h2 { "tree" }
@@ -589,6 +640,71 @@ pub async fn tree_toggle(
     let next_url = href_for(&root, &open, selected.as_ref());
 
     // Escape for template literal
+    let esc = |s: String| s.replace('\\', "\\\\").replace('`', "\\`").replace("${", "\\${");
+    let tree_esc = esc(new_tree_html);
+    let detail_esc = esc(new_detail_html);
+    let url_esc = next_url.replace('\\', "\\\\").replace('`', "\\`").replace("'", "\\'");
+
+    let js = format!(
+        "Idiomorph.morph(document.getElementById('tree-pane'), `{tree_esc}`);\
+         Idiomorph.morph(document.getElementById('detail-pane'), `{detail_esc}`);\
+         history.replaceState(null, '', '{url_esc}');"
+    );
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/javascript; charset=utf-8")
+        .body(js)
+        .unwrap()
+        .into_response()
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SelectForm {
+    pub root: String,
+    pub target: String,
+    #[serde(default)]
+    pub s: Option<String>,
+}
+
+/// POST /tree/select
+/// Changes `selected` to `target` without altering the open set.
+/// Returns JS that morphs both panes and updates the browser URL.
+pub async fn tree_select(
+    State(state): State<AppState>,
+    Form(f): Form<SelectForm>,
+) -> impl IntoResponse {
+    let root = canonicalize_item(&f.root);
+    let target = canonicalize_item(&f.target);
+
+    if root.is_empty() || target.is_empty() {
+        return (StatusCode::BAD_REQUEST, "missing root/target").into_response();
+    }
+    if path_owner_uuid(&root).is_some() || path_owner_uuid(&target).is_some() {
+        return (StatusCode::FORBIDDEN, "private namespace").into_response();
+    }
+    let target_can = match CanonicalItemUrl::parse(&target) {
+        Some(c) => c,
+        None => return (StatusCode::BAD_REQUEST, "invalid target").into_response(),
+    };
+
+    // Preserve the existing open set; only selection changes.
+    let open: CanonSet = f
+        .s
+        .as_deref()
+        .and_then(|blob| decode_state_blob_any(&root, blob))
+        .map(|d| d.open)
+        .unwrap_or_default();
+
+    let selected = Some(target_can);
+
+    let reduced = state.reduced.read().await;
+    let new_tree_html = render_tree_pane(&reduced, &root, &open, selected.as_ref()).into_string();
+    let new_detail_html = render_detail_pane(&reduced, selected.as_ref()).into_string();
+    drop(reduced);
+
+    let next_url = href_for(&root, &open, selected.as_ref());
+
     let esc = |s: String| s.replace('\\', "\\\\").replace('`', "\\`").replace("${", "\\${");
     let tree_esc = esc(new_tree_html);
     let detail_esc = esc(new_detail_html);

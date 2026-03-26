@@ -5,3 +5,5 @@ dev-data/
 .worktrees/
 .specstory/
 .specstory/
+test/playwright/__pycache__/
+.claude/
