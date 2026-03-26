@@ -82,3 +82,11 @@ body.view-ontology #controls { background: #ede8df; border-top: 1px solid #ccc; 
   color: #1a1a1a;
   color-scheme: light;
 }
+
+.tree-children {
+  border-left: 1px solid rgba(128, 128, 128, 0.25);
+  border-width: 10px;
+  border-style: inset;
+  border-right: none;
+  border-bottom: none;
+}
