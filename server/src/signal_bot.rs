@@ -1,12 +1,12 @@
 //! Signal message bot.
 //!
-//! Polls a signal-cli-rest-api instance for incoming messages. Each message is
+//! Polls a signal-cli-api instance for incoming messages. Each message is
 //! parsed as DSL, attributed to the sender's deterministic actor identity,
 //! and ingested through the standard event log pipeline.
 //!
-//! Architecture: signal-cli-rest-api (Docker sidecar running signal-cli in
-//! JSON-RPC mode) exposes a REST API. We poll GET /v1/receive/{number} which
-//! returns and consumes pending messages.
+//! Architecture: signal-cli-api (Rust crate, no Docker) wraps signal-cli and
+//! exposes a REST API. We poll GET /v1/receive/{number} which returns and
+//! consumes pending messages. Any compatible Signal REST API works.
 
 use std::time::Duration;
 
@@ -49,7 +49,7 @@ mod hex {
     }
 }
 
-// --- signal-cli-rest-api response types ---
+// --- signal-cli-api response types ---
 
 #[derive(Debug, Deserialize)]
 struct SignalEnvelope {
@@ -70,7 +70,7 @@ struct DataMessage {
     timestamp: Option<i64>,
 }
 
-/// Reply to a Signal user via the signal-cli-rest-api.
+/// Reply to a Signal user via signal-cli-api.
 async fn reply_to_signal(
     client: &reqwest::Client,
     cfg: &SignalBotConfig,
@@ -141,7 +141,7 @@ async fn poll_and_ingest(
     if !resp.status().is_success() {
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
-        return Err(format!("signal-cli-rest-api {status}: {body}"));
+        return Err(format!("signal-cli-api {status}: {body}"));
     }
 
     let envelopes: Vec<SignalEnvelope> = resp
