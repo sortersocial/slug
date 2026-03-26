@@ -19,6 +19,9 @@ use crate::{
     state::AppState,
 };
 
+// Convenience alias used throughout this module.
+type CanonSet = BTreeSet<CanonicalItemUrl>;
+
 use super::{layout, render_linkified_with_embeds};
 
 /// Query-state for the expandable tree UI.
@@ -38,12 +41,15 @@ struct TreeStateV1 {
     selected: Option<String>,
 }
 
+// Note: TreeStateV1/V2 intentionally use raw `String` / `Vec<String>` because
+// they are wire-format structs serialised with postcard.  All semantic types
+// (`CanonicalItemUrl`, `RelativePath`) are used in the in-memory
+// `DecodedTreeState` and in every function that works with live data.
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum SelectedRefV2 {
     /// Index into the expanded open list.
     I(u32),
-    /// A relative path (used when selection isn't in `open`).
-    S(String),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -61,8 +67,8 @@ struct TreeStateV2 {
 
 #[derive(Debug, Clone)]
 struct DecodedTreeState {
-    open: BTreeSet<String>, // canonical item urls
-    selected: Option<String>,
+    open: CanonSet,
+    selected: Option<CanonicalItemUrl>,
 }
 
 fn common_base_boundary(paths: &[String]) -> String {
@@ -118,27 +124,37 @@ fn canon_to_relative(root: &CanonicalItemUrl, item: &str) -> Option<RelativePath
     RelativePath::new(suffix)
 }
 
-fn relative_to_canon(root: &CanonicalItemUrl, rel: &RelativePath) -> Option<String> {
-    // Join under ontology root; return canonical string.
-    rel.join_under_ontology_root(root).map(|c| c.0)
+fn relative_to_canon(root: &CanonicalItemUrl, rel: &RelativePath) -> Option<CanonicalItemUrl> {
+    rel.join_under_ontology_root(root)
 }
 
-fn encode_state_blob_v2(root: &str, open: &BTreeSet<String>, selected: Option<&str>) -> String {
+fn encode_state_blob_v2(
+    root: &str,
+    open: &CanonSet,
+    selected: Option<&CanonicalItemUrl>,
+) -> String {
     let Some(root_can) = canon_root(root) else {
         return String::new();
     };
 
-    // Convert to sorted relative paths (strings).
+    // Convert to sorted relative paths (strings for wire encoding).
     let mut rels: Vec<String> = open
         .iter()
-        .filter_map(|it| canon_to_relative(&root_can, it).map(|r| r.0))
+        .filter_map(|it| canon_to_relative(&root_can, it.as_str()).map(|r| r.0.clone()))
         .collect();
     rels.sort();
     rels.dedup();
 
     let sel_rel: Option<String> = selected
-        .and_then(|s| canon_to_relative(&root_can, s))
-        .map(|r| r.0);
+        .and_then(|s| canon_to_relative(&root_can, s.as_str()))
+        .map(|r| r.0.clone());
+
+    // In v2 we enforce: selected ∈ open. This allows selected to be encoded as an index only.
+    if let Some(sr) = &sel_rel {
+        rels.push(sr.clone());
+        rels.sort();
+        rels.dedup();
+    }
 
     // base dedupe over open rels + selection (if present)
     let mut base_inputs = rels.clone();
@@ -152,13 +168,10 @@ fn encode_state_blob_v2(root: &str, open: &BTreeSet<String>, selected: Option<&s
         .map(|r| r.strip_prefix(&base).unwrap_or(r).to_string())
         .collect();
 
-    let selected_ref: Option<SelectedRefV2> = sel_rel.map(|sr| {
-        let full = sr;
-        if let Some(idx) = rels.iter().position(|r| r == &full) {
-            SelectedRefV2::I(idx as u32)
-        } else {
-            SelectedRefV2::S(full.strip_prefix(&base).unwrap_or(&full).to_string())
-        }
+    let selected_ref: Option<SelectedRefV2> = sel_rel.and_then(|full| {
+        rels.iter()
+            .position(|r| r == &full)
+            .map(|idx| SelectedRefV2::I(idx as u32))
     });
 
     let st = TreeStateV2 {
@@ -177,7 +190,7 @@ fn decode_state_blob_any(root: &str, s: &str) -> Option<DecodedTreeState> {
     // Try v2 first.
     if let Ok(st2) = postcard::from_bytes::<TreeStateV2>(&bytes) {
         if st2.v == 2 {
-            let mut open: BTreeSet<String> = BTreeSet::new();
+            let mut open: CanonSet = BTreeSet::new();
             for suf in st2.open_suffixes {
                 let full_rel = format!("{}{}", st2.base, suf);
                 if let Some(rp) = RelativePath::new(&full_rel) {
@@ -186,22 +199,14 @@ fn decode_state_blob_any(root: &str, s: &str) -> Option<DecodedTreeState> {
                     }
                 }
             }
-            let selected: Option<String> = match st2.selected {
+            let selected: Option<CanonicalItemUrl> = match st2.selected {
                 None => None,
                 Some(SelectedRefV2::I(i)) => {
                     let idx = i as usize;
-                    let rels: Vec<String> = open
-                        .iter()
-                        .filter_map(|it| canon_to_relative(&root_can, it).map(|r| r.0))
-                        .collect();
-                    rels.get(idx)
-                        .and_then(|r| RelativePath::new(r))
-                        .and_then(|rp| relative_to_canon(&root_can, &rp))
+                    // Index into the sorted open set (BTreeSet iteration is sorted).
+                    open.iter().nth(idx).cloned()
                 }
-                Some(SelectedRefV2::S(suf)) => {
-                    let full_rel = format!("{}{}", st2.base, suf);
-                    RelativePath::new(&full_rel).and_then(|rp| relative_to_canon(&root_can, &rp))
-                }
+                // v2 always encodes selected as an index; no string fallback
             };
             return Some(DecodedTreeState { open, selected });
         }
@@ -211,40 +216,30 @@ fn decode_state_blob_any(root: &str, s: &str) -> Option<DecodedTreeState> {
     if st1.v != 1 {
         return None;
     }
-    let open: BTreeSet<String> = st1
+    let open: CanonSet = st1
         .open
         .into_iter()
-        .map(|s| canonicalize_item(&s))
-        .filter(|s| !s.is_empty())
+        .filter_map(|s| CanonicalItemUrl::parse(&canonicalize_item(&s)))
         .collect();
     let selected = st1
         .selected
         .as_ref()
-        .map(|s| canonicalize_item(s))
-        .filter(|s| !s.is_empty());
+        .and_then(|s| CanonicalItemUrl::parse(&canonicalize_item(s)));
     Some(DecodedTreeState { open, selected })
 }
 
 fn baseline_state_blob() -> String {
     // Root doesn't affect empty state; V2 encodes open=[], selected=None.
     // We still build it via V2 encoder for forward-compat.
-    encode_state_blob_v2("https://slug.social/~/", &BTreeSet::new(), None)
+    encode_state_blob_v2("https://slug.social/~/", &CanonSet::new(), None)
 }
 
-fn href_for(root: &str, open: &BTreeSet<String>, selected: Option<&str>) -> String {
-    // root is already canonical; route path uses `/tree/*path` with raw segments, so we keep root canonical
-    // as a query param only when root is empty. For now, root is encoded in the path.
-    let parts = vec![format!("s={}", encode_state_blob_v2(root, open, selected))];
-    if parts.is_empty() {
-        format!("/tree/{}", root.trim_start_matches("https://slug.social/~/"))
-            .trim_end_matches('/')
-            .to_string()
-    } else {
-        let base = format!("/tree/{}", root.trim_start_matches("https://slug.social/~/"))
-            .trim_end_matches('/')
-            .to_string();
-        format!("{base}?{}", parts.join("&"))
-    }
+fn href_for(root: &str, open: &CanonSet, selected: Option<&CanonicalItemUrl>) -> String {
+    let blob = encode_state_blob_v2(root, open, selected);
+    let base = format!("/tree/{}", root.trim_start_matches("https://slug.social/~/"))
+        .trim_end_matches('/')
+        .to_string();
+    format!("{base}?s={blob}")
 }
 
 fn tree_root_from_path(path: Option<&str>) -> String {
@@ -257,19 +252,36 @@ fn tree_root_from_path(path: Option<&str>) -> String {
     }
 }
 
-fn ranked_children_public(reduced: &crate::reducer::ReducerState, parent: &str) -> Vec<String> {
-    let rankings: ChildrenRankings = crate::scope_rank::build_children_rankings(reduced, parent);
-    let mut out: Vec<String> = Vec::new();
+fn ranked_children_public(
+    reduced: &crate::reducer::ReducerState,
+    parent: &str,
+) -> Vec<CanonicalItemUrl> {
+    // Reducer parent keys are derived from `item_parent_path`, which uses
+    // `item_path_segments` and never preserves a trailing `/`.
+    //
+    // In particular, `canonicalize_item("~/")` is `"https://slug.social/~/"`, but
+    // the parent key for ontology items like `"https://slug.social/~/a"` is
+    // `"https://slug.social/~"`.
+    //
+    // Without this normalization, the tree root (`/tree` => `"~/") would render empty.
+    let parent_key = parent.trim_end_matches('/');
+    let rankings: ChildrenRankings =
+        crate::scope_rank::build_children_rankings(reduced, parent_key);
+    let mut out: Vec<CanonicalItemUrl> = Vec::new();
     for comp in rankings.component_rankings {
         for r in comp.ranked {
             if path_owner_uuid(&r.item).is_none() {
-                out.push(r.item);
+                if let Some(c) = CanonicalItemUrl::parse(&r.item) {
+                    out.push(c);
+                }
             }
         }
     }
     for it in rankings.unranked_items {
         if path_owner_uuid(&it).is_none() {
-            out.push(it);
+            if let Some(c) = CanonicalItemUrl::parse(&it) {
+                out.push(c);
+            }
         }
     }
     out
@@ -287,29 +299,30 @@ fn node_id(path: &str) -> String {
 
 fn render_tree_node(
     reduced: &crate::reducer::ReducerState,
-    path: &str,
+    path: &CanonicalItemUrl,
     root: &str,
-    open: &BTreeSet<String>,
-    selected: Option<&str>,
+    open: &CanonSet,
+    selected: Option<&CanonicalItemUrl>,
     depth: usize,
 ) -> Markup {
-    let id = node_id(path);
+    let path_str = path.as_str();
+    let id = node_id(path_str);
     let is_open = open.contains(path);
     let is_selected = selected == Some(path);
 
-    let children: Vec<String> = if is_open {
-        ranked_children_public(reduced, path)
+    let children: Vec<CanonicalItemUrl> = if is_open {
+        ranked_children_public(reduced, path_str)
     } else {
         vec![]
     };
 
-    let label = path
+    let label = path_str
         .strip_prefix("https://slug.social/~/")
-        .unwrap_or(path)
+        .unwrap_or(path_str)
         .to_string();
     let has_children = reduced
         .item_children
-        .get(path)
+        .get(path_str)
         .map(|s| !s.is_empty())
         .unwrap_or(false);
 
@@ -324,9 +337,14 @@ fn render_tree_node(
     // Build a POST form that returns a JS snippet we eval().
     let mut new_open = open.clone();
     if has_children {
-        if is_open { new_open.remove(path); } else { new_open.insert(path.to_string()); }
+        if is_open {
+            new_open.remove(path);
+        } else {
+            new_open.insert(path.clone());
+        }
     }
-    let _next_url = href_for(root, &new_open, selected.or(Some(path)));
+    let selected_or_path = selected.unwrap_or(path);
+    let _next_url = href_for(root, &new_open, Some(selected_or_path));
     let state_blob = encode_state_blob_v2(root, open, selected);
 
     html! {
@@ -334,7 +352,7 @@ fn render_tree_node(
             @if has_children {
                 form method="post" action="/tree/toggle" class="tree-toggle-form" {
                     input type="hidden" name="root" value=(root);
-                    input type="hidden" name="target" value=(path);
+                    input type="hidden" name="target" value=(path_str);
                     input type="hidden" name="s" value=(state_blob);
                     button type="submit" class="tree-twist" title="toggle" { (twist) }
                 }
@@ -358,10 +376,10 @@ fn render_tree_node(
 fn render_tree_pane(
     reduced: &crate::reducer::ReducerState,
     root: &str,
-    open: &BTreeSet<String>,
-    selected: Option<&str>,
+    open: &CanonSet,
+    selected: Option<&CanonicalItemUrl>,
 ) -> Markup {
-    let roots: Vec<String> = ranked_children_public(reduced, root);
+    let roots: Vec<CanonicalItemUrl> = ranked_children_public(reduced, root);
     html! {
         div id="tree-pane" {
             div class="muted" { "tree: " code { "~/" (root.strip_prefix("https://slug.social/~/").unwrap_or("")) } }
@@ -374,7 +392,10 @@ fn render_tree_pane(
     }
 }
 
-fn render_detail_pane(reduced: &crate::reducer::ReducerState, selected: Option<&str>) -> Markup {
+fn render_detail_pane(
+    reduced: &crate::reducer::ReducerState,
+    selected: Option<&CanonicalItemUrl>,
+) -> Markup {
     let Some(sel) = selected else {
         return html! {
             div id="detail-pane" {
@@ -382,11 +403,12 @@ fn render_detail_pane(reduced: &crate::reducer::ReducerState, selected: Option<&
             }
         };
     };
-    let body = reduced.item_bodies.get(sel).cloned();
+    let sel_str = sel.as_str();
+    let body = reduced.item_bodies.get(sel_str).cloned();
     html! {
         div id="detail-pane" {
             h3 { "selected" }
-            p { code { (sel) } }
+            p { code { (sel_str) } }
             @if let Some(b) = body {
                 (render_linkified_with_embeds(&b))
             } @else {
@@ -478,8 +500,8 @@ async fn tree_render(
     let selected = decoded.selected;
 
     let reduced = state.reduced.read().await;
-    let tree = render_tree_pane(&reduced, &root, &open, selected.as_deref());
-    let detail = render_detail_pane(&reduced, selected.as_deref());
+    let tree = render_tree_pane(&reduced, &root, &open, selected.as_ref());
+    let detail = render_detail_pane(&reduced, selected.as_ref());
 
     let page = layout(
         "tree — slug.social",
@@ -543,26 +565,28 @@ pub async fn tree_toggle(
     let Some(decoded) = decode_state_blob_any(&root, blob) else {
         return (StatusCode::BAD_REQUEST, "invalid state").into_response();
     };
-    let mut open: BTreeSet<String> = decoded.open;
+    let target_can = match CanonicalItemUrl::parse(&target) {
+        Some(c) => c,
+        None => return (StatusCode::BAD_REQUEST, "invalid target").into_response(),
+    };
+    let mut open: CanonSet = decoded.open;
 
-    if open.contains(&target) {
-        open.remove(&target);
+    if open.contains(&target_can) {
+        open.remove(&target_can);
     } else {
-        open.insert(target.clone());
+        open.insert(target_can.clone());
     }
 
-    let selected = decoded
+    let selected: Option<CanonicalItemUrl> = decoded
         .selected
-        .as_ref()
-        .cloned()
-        .or(Some(target.clone()));
+        .or(Some(target_can));
 
     let reduced = state.reduced.read().await;
-    let new_tree_html = render_tree_pane(&reduced, &root, &open, selected.as_deref()).into_string();
-    let new_detail_html = render_detail_pane(&reduced, selected.as_deref()).into_string();
+    let new_tree_html = render_tree_pane(&reduced, &root, &open, selected.as_ref()).into_string();
+    let new_detail_html = render_detail_pane(&reduced, selected.as_ref()).into_string();
     drop(reduced);
 
-    let next_url = href_for(&root, &open, selected.as_deref());
+    let next_url = href_for(&root, &open, selected.as_ref());
 
     // Escape for template literal
     let esc = |s: String| s.replace('\\', "\\\\").replace('`', "\\`").replace("${", "\\${");
@@ -582,5 +606,121 @@ pub async fn tree_toggle(
         .body(js)
         .unwrap()
         .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::events::{canonicalize_item, Event, Ingest};
+    use crate::reducer::ReducerState;
+
+    fn ingest(raw: &str) -> Event {
+        Event::Ingest(Ingest {
+            ts: 1,
+            id: "test-ingest".to_string(),
+            raw: raw.to_string(),
+            voter_key_id: "test".to_string(),
+            actor: "tester".to_string(),
+        })
+    }
+
+    fn reduced_with_items(raw: &str) -> ReducerState {
+        let mut r = ReducerState::default();
+        r.apply_event(ingest(raw));
+        r
+    }
+
+    #[test]
+    fn common_base_boundary_snaps_to_slash_boundary() {
+        let paths = vec![
+            "alphabet/a".to_string(),
+            "alphabet/b".to_string(),
+            "alphabet/c/d".to_string(),
+        ];
+        assert_eq!(common_base_boundary(&paths), "alphabet/".to_string());
+    }
+
+    #[test]
+    fn tree_root_from_path_canonicalizes_ontology_root() {
+        assert_eq!(tree_root_from_path(None), "https://slug.social/~/".to_string());
+        assert_eq!(
+            tree_root_from_path(Some("alphabet")),
+            "https://slug.social/~/alphabet".to_string()
+        );
+        assert_eq!(
+            tree_root_from_path(Some("/alphabet/")),
+            "https://slug.social/~/alphabet".to_string()
+        );
+    }
+
+    #[test]
+    fn canon_relative_roundtrip_under_root() {
+        let root = CanonicalItemUrl::parse("https://slug.social/~/alphabet").unwrap();
+        let item = "https://slug.social/~/alphabet/a/b";
+        let rel = canon_to_relative(&root, item).unwrap();
+        assert_eq!(rel.0, "a/b".to_string());
+        let back = relative_to_canon(&root, &rel).unwrap();
+        assert_eq!(back.as_str(), item);
+    }
+
+    #[test]
+    fn encode_decode_state_blob_v2_roundtrips() {
+        let root = "https://slug.social/~/alphabet";
+        let mut open: CanonSet = BTreeSet::new();
+        open.insert(CanonicalItemUrl::parse("https://slug.social/~/alphabet/a").unwrap());
+        open.insert(CanonicalItemUrl::parse("https://slug.social/~/alphabet/b").unwrap());
+        let selected = CanonicalItemUrl::parse("https://slug.social/~/alphabet/b").unwrap();
+
+        let s = encode_state_blob_v2(root, &open, Some(&selected));
+        let decoded = decode_state_blob_any(root, &s).expect("decode");
+        assert_eq!(decoded.open, open);
+        assert_eq!(decoded.selected.as_ref().map(|c| c.as_str()), Some(selected.as_str()));
+    }
+
+    #[test]
+    fn baseline_state_blob_decodes() {
+        let root = "https://slug.social/~/";
+        let s = baseline_state_blob();
+        let decoded = decode_state_blob_any(root, &s).expect("decode baseline");
+        assert!(decoded.open.is_empty());
+        assert!(decoded.selected.is_none());
+    }
+
+    #[test]
+    fn node_id_is_stable_for_same_path() {
+        let p = "https://slug.social/~/alphabet/a";
+        assert_eq!(node_id(p), node_id(p));
+        assert_ne!(node_id(p), node_id("https://slug.social/~/alphabet/b"));
+    }
+
+    #[test]
+    fn reducer_parent_key_for_tilde_items_is_without_trailing_slash() {
+        // This is the reducer invariant that the tree view must match.
+        let item = canonicalize_item("~/alphabet/a");
+        assert_eq!(crate::events::item_parent_path(&item).unwrap(), "https://slug.social/~/alphabet");
+        let item2 = canonicalize_item("~/a");
+        assert_eq!(crate::events::item_parent_path(&item2).unwrap(), "https://slug.social/~");
+    }
+
+    #[test]
+    fn ranked_children_public_root_lists_children_under_tree_root() {
+        // Regression test: /tree root uses "https://slug.social/~/", but reducer stores
+        // top-level ontology children under parent "https://slug.social/~".
+        let reduced = reduced_with_items(
+            r#"
+#t
+~/a
+~/b
+"#,
+        );
+
+        let root = "https://slug.social/~/";
+        let kids = ranked_children_public(&reduced, root);
+        let kids_s: BTreeSet<String> = kids.into_iter().map(|c| c.as_str().to_string()).collect();
+
+        assert!(kids_s.contains("https://slug.social/~/a"));
+        assert!(kids_s.contains("https://slug.social/~/b"));
+    }
 }
 
