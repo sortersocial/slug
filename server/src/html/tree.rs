@@ -334,7 +334,6 @@ fn render_tree_node(
     root: &str,
     open: &CanonSet,
     selected: Option<&CanonicalItemUrl>,
-    depth: usize,
 ) -> Markup {
     let path_str = path.as_str();
     let id = node_id(path_str);
@@ -354,7 +353,6 @@ fn render_tree_node(
         .map(|s| !s.is_empty())
         .unwrap_or(false);
 
-    let indent_px = (depth * 14) as i32;
     let row_cls = if is_selected { "tree-row selected" } else { "tree-row" };
     let twist = if has_children {
         if is_open { "▾" } else { "▸" }
@@ -362,21 +360,12 @@ fn render_tree_node(
         " "
     };
 
-    // Build a POST form that returns a JS snippet we eval().
-    let mut new_open = open.clone();
-    if has_children {
-        if is_open {
-            new_open.remove(path);
-        } else {
-            new_open.insert(path.clone());
-        }
-    }
-    let selected_or_path = selected.unwrap_or(path);
-    let _next_url = href_for(root, &new_open, Some(selected_or_path));
     let state_blob = encode_state_blob_v2(root, open, selected);
 
     html! {
-        li id=(id) class=(row_cls) style={(format!("padding-left: {}px", indent_px))} {
+        // Children are nested inside the li so the bevel border on .tree-children
+        // is the only structural indicator of depth — no explicit padding math.
+        li id=(id) class=(row_cls) {
             @if has_children {
                 form method="post" action="/tree/toggle" class="tree-toggle-form" {
                     input type="hidden" name="root" value=(root);
@@ -394,11 +383,13 @@ fn render_tree_node(
                 input type="hidden" name="s" value=(state_blob);
                 button type="submit" class="tree-label" { code { (label) } }
             }
-        }
 
-        @if is_open && !children.is_empty() {
-            @for child in children {
-                (render_tree_node(reduced, &child, root, open, selected, depth + 1))
+            @if is_open && !children.is_empty() {
+                ul class="tree-children" {
+                    @for child in &children {
+                        (render_tree_node(reduced, child, root, open, selected))
+                    }
+                }
             }
         }
     }
@@ -416,7 +407,7 @@ fn render_tree_pane(
             div class="muted" { "tree: " code { "~/" (root.strip_prefix("https://slug.social/~/").unwrap_or("")) } }
             ul class="tree-list" {
                 @for r in roots {
-                    (render_tree_node(reduced, &r, root, open, selected, 0))
+                    (render_tree_node(reduced, &r, root, open, selected))
                 }
             }
         }
@@ -547,16 +538,21 @@ async fn tree_render(
         html! {
             style { (maud::PreEscaped(r#"
               .tree-shell { padding: 14px; padding-right: calc(360px + 18px); }
-              .tree-list { list-style: none; margin: 10px 0 0 0; padding: 0; }
-              .tree-row { display: flex; align-items: center; gap: 4px; min-height: 22px; }
-              .tree-row.selected > .tree-select-form > .tree-label,
-              .tree-row.selected > .tree-select-form > .tree-label code { background: rgba(255,255,255,0.07); }
+              .tree-list, .tree-children { list-style: none; margin: 0; padding: 0; }
+              .tree-children {
+                margin-left: 10px;
+                margin-top: 2px;
+                padding-left: 10px;
+                border-left: 1px solid rgba(128,128,128,0.25);
+              }
+              .tree-row { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px; min-height: 22px; padding: 1px 0; }
+              .tree-row.selected > .tree-select-form > .tree-label code { background: rgba(255,255,255,0.07); border-radius: 2px; }
               .tree-twist {
                 font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-                background: transparent; border: 0; padding: 0 4px; cursor: pointer; color: inherit; flex-shrink: 0;
+                background: transparent; border: 0; padding: 0 2px; cursor: pointer; color: inherit; flex-shrink: 0;
               }
               .tree-label {
-                background: transparent; border: 0; padding: 0 2px; cursor: pointer;
+                background: transparent; border: 0; padding: 0; cursor: pointer;
                 color: inherit; text-align: left; font: inherit;
               }
               .tree-label code { font-size: 12px; }

@@ -130,9 +130,11 @@ class TestTreeInteraction:
         page.goto(f"{base_url}/tree")
         s_before = get_s_param(page.url)
 
-        # Click the first node label link
-        page.locator("a.tree-label").first.click()
-        page.wait_for_load_state("networkidle")
+        # Click the first node label link and wait for URL to change
+        page.locator("button.tree-label").first.click()
+        page.wait_for_function(
+            f"() => new URLSearchParams(window.location.search).get('s') !== '{s_before}'"
+        )
 
         s_after = get_s_param(page.url)
         # After selecting a node the state blob must be present (and may differ)
@@ -216,8 +218,11 @@ class TestTreeInteraction:
         """
         page.goto(f"{base_url}/tree")
 
-        page.locator("a.tree-label").first.click()
-        page.wait_for_load_state("networkidle")
+        page.locator("button.tree-label").first.click()
+        # Wait for detail pane to update (no longer shows placeholder)
+        page.wait_for_function(
+            "() => !document.querySelector('#detail-pane p.muted')"
+        )
 
         detail = page.locator("#detail-pane")
         # Either shows the item URL or body content — must not be the placeholder
@@ -244,7 +249,7 @@ class TestTreeInteraction:
         # Navigate away then back to the same URL
         page.goto(f"{base_url}/tree")
         page.goto(url_with_state)
-        page.wait_for_load_state("networkidle")
+        page.wait_for_load_state("domcontentloaded")
 
         open_after_reload = page.locator("button.tree-twist", has_text="▾").count()
         assert open_after_reload == open_after_expand, (
