@@ -255,7 +255,7 @@ pub async fn thread_post_view(
     let tag = canonicalize_tag(&tag);
     let now = now_ms();
     let index: usize = index_str.parse().unwrap_or(0);
-    let (ing, follower_label) = {
+    let (ing, follower_label, subtitle) = {
         let reduced = state.reduced.read().await;
         let ing = reduced.ingests_by_thread.get(&tag)
             .and_then(|q| q.iter().rev().nth(index))
@@ -263,15 +263,8 @@ pub async fn thread_post_view(
         let fl = ing.as_ref().and_then(|i| {
             reduced.x_profiles.get(&i.actor).map(|p| format_followers(p.followers))
         });
-        (ing, fl) {}}}]tarosietnarositenarst compile i don't know which one of these to keep
-    let (ing, subtitle) = {
-        let reduced = state.reduced.read().await;
-        // ingests_by_thread is most-recent-first; chronological index 0 = oldest = last in deque.
-        let ingest = reduced.ingests_by_thread.get(&tag)
-            .and_then(|q| q.iter().rev().nth(index))
-            .and_then(|id| reduced.ingests_by_id.get(id).cloned());
         let subtitle = reduced.threads.get(&tag).and_then(|t| t.subtitle.clone());
-        (ingest, subtitle)
+        (ing, fl, subtitle)
     };
 
     let views = state.views.get_views(&format!("/t/{tag}/{index}"));
