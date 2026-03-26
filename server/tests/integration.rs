@@ -107,7 +107,7 @@ async fn test_ingest_actor_with_colons_is_detected_and_validated() {
     // Old archive style: actor includes colons but UUID is only a prefix (invalid).
     // We should detect the actor line, then fail with "invalid actor format" (not "missing actor").
     let ingest_payload = serde_json::json!({
-        "text": "@aec1e31c:claudecode:anthropic/claude-sonnet-4.5\n/a {x}\n",
+        "text": "@aec1e31c:claudecode:anthropic/claude-sonnet-4.5\n~/x {x}\n",
     });
 
     let response = client
@@ -135,7 +135,7 @@ async fn test_vote_endpoint() {
 
     // /api/v0/vote was removed; all votes are submitted via ingest.
     let ingest_payload = serde_json::json!({
-        "text": "@00000000-0000-0000-0000-000000000000:test:local/test\n#cli\n/clap {cli parser}\n/argh {cli parser}\n/clap 3:1 /argh {because clap is more full-featured}\n",
+        "text": "@00000000-0000-0000-0000-000000000000:test:local/test\n#cli\n~/clap {cli parser}\n~/argh {cli parser}\n~/clap 3:1 ~/argh {because clap is more full-featured}\n",
     });
 
     let response = client
@@ -158,7 +158,7 @@ async fn test_rank_endpoint() {
 
     // Ingest items + vote (vote endpoint removed).
     let ingest_payload = serde_json::json!({
-        "text": "@00000000-0000-0000-0000-000000000000:test:local/test\n#langs\n/rust {systems}\n/go {concurrency}\n/rust 3:1 /go {because i prefer rust for systems work}\n",
+        "text": "@00000000-0000-0000-0000-000000000000:test:local/test\n#langs\n~/rust {systems}\n~/go {concurrency}\n~/rust 3:1 ~/go {because i prefer rust for systems work}\n",
     });
     client
         .post(&format!("http://{}/api/v0/ingest", addr))
@@ -167,9 +167,10 @@ async fn test_rank_endpoint() {
         .await
         .unwrap();
 
-    // Then query ranking
+    // Then query ranking (global: parent=~ — default empty parent only ranks direct children of "")
     let response = client
         .get(&format!("http://{}/api/v0/rank", addr))
+        .query(&[("parent", "~")])
         .send()
         .await
         .unwrap();
@@ -181,7 +182,7 @@ async fn test_rank_endpoint() {
     assert_eq!(components.len(), 1);
     let ranking = components[0]["ranking"].as_array().unwrap();
     assert_eq!(ranking.len(), 2);
-    assert_eq!(ranking[0]["item"], "/rust");
+    assert_eq!(ranking[0]["item"], "https://slug.social/~/rust");
     assert!(body["unranked_items"].is_array());
 }
 
@@ -191,7 +192,7 @@ async fn test_check_endpoint_does_not_commit() {
     let client = reqwest::Client::new();
 
     let check_payload = serde_json::json!({
-        "text": "@00000000-0000-0000-0000-000000000000:test:local/test\n#t\n/a {x}\n/b {y}\n/a 2:1 /b {because}\n",
+        "text": "@00000000-0000-0000-0000-000000000000:test:local/test\n#t\n~/a {x}\n~/b {y}\n~/a 2:1 ~/b {because}\n",
     });
     let resp = client
         .post(&format!("http://{}/api/v0/check", addr))
@@ -224,14 +225,14 @@ async fn test_ontology_item_page_shows_body_children_and_collapsible_votes() {
     let ingest_payload = serde_json::json!({
         "text": "@00000000-0000-0000-0000-000000000000:test:local/test\n\
 #topic\n\
-/topic {topic body}\n\
-/topic/a {alpha body}\n\
-/topic/b {beta body}\n\
-/topic/c {gamma body}\n\
-/other/x {x body}\n\
-/other/y {y body}\n\
-/topic/a 4:1 /topic/b {a over b}\n\
-/other/x 2:1 /other/y {other pair}\n",
+~/topic {topic body}\n\
+~/topic/a {alpha body}\n\
+~/topic/b {beta body}\n\
+~/topic/c {gamma body}\n\
+~/other/x {x body}\n\
+~/other/y {y body}\n\
+~/topic/a 4:1 ~/topic/b {a over b}\n\
+~/other/x 2:1 ~/other/y {other pair}\n",
     });
 
     let ingest_response = client
@@ -512,13 +513,13 @@ async fn test_garden_item_pair_matchup_include_threads() {
     // GET item: body + threads
     let item_resp = client
         .get(&format!("http://{}/api/v0/item", addr))
-        .query(&[("item", "sorts/insertion")])
+        .query(&[("item", "~/sorts/insertion")])
         .send()
         .await
         .unwrap();
     assert!(item_resp.status().is_success());
     let item: serde_json::Value = item_resp.json().await.unwrap();
-    assert_eq!(item["item"], "/sorts/insertion");
+    assert_eq!(item["item"], "https://slug.social/~/sorts/insertion");
     assert!(item["body"].as_str().unwrap().contains("O(n^2)"));
     let threads: Vec<&str> = item["threads"]
         .as_array()
@@ -531,7 +532,7 @@ async fn test_garden_item_pair_matchup_include_threads() {
     // GET pair (under sorts): left, right, threads
     let pair_resp = client
         .get(&format!("http://{}/api/v0/pair", addr))
-        .query(&[("parent", "sorts")])
+        .query(&[("parent", "~/sorts")])
         .send()
         .await
         .unwrap();
@@ -548,13 +549,13 @@ async fn test_garden_item_pair_matchup_include_threads() {
     // GET matchup: vote history with thread per vote
     let matchup_resp = client
         .get(&format!("http://{}/api/v0/matchup", addr))
-        .query(&[("item", "sorts/insertion")])
+        .query(&[("item", "~/sorts/insertion")])
         .send()
         .await
         .unwrap();
     assert!(matchup_resp.status().is_success());
     let matchup: serde_json::Value = matchup_resp.json().await.unwrap();
-    assert_eq!(matchup["item"], "/sorts/insertion");
+    assert_eq!(matchup["item"], "https://slug.social/~/sorts/insertion");
     let votes = matchup["votes"].as_array().unwrap();
     assert!(!votes.is_empty(), "matchup should have at least one vote");
     let first_thread = votes[0]["thread"].as_str().unwrap();
@@ -743,17 +744,18 @@ async fn test_rank_history() {
     ingest(
         "@00000000-0000-0000-0000-000000000001:rig:test/model\n\
          #hist-test\n\
-         /hist/rust { systems }\n\
-         /hist/python { scripting }\n\
-         /hist/go { concurrency }\n\
-         /hist/rust 3:1 /hist/python { ownership over gc }\n\
-         /hist/rust 2:1 /hist/go { performance over simplicity }\n",
+         ~/hist/rust { systems }\n\
+         ~/hist/python { scripting }\n\
+         ~/hist/go { concurrency }\n\
+         ~/hist/rust 3:1 ~/hist/python { ownership over gc }\n\
+         ~/hist/rust 2:1 ~/hist/go { performance over simplicity }\n",
     )
     .await;
 
     // History for rust should have one entry with two caused_by votes.
     let resp: serde_json::Value = client
-        .get(&format!("http://{}/api/v0/rank-history?item=hist/rust", addr))
+        .get(&format!("http://{}/api/v0/rank-history", addr))
+        .query(&[("item", "~/hist/rust")])
         .send()
         .await
         .unwrap()
@@ -761,7 +763,7 @@ async fn test_rank_history() {
         .await
         .unwrap();
 
-    assert_eq!(resp["item"], "/hist/rust");
+    assert_eq!(resp["item"], "https://slug.social/~/hist/rust");
     let history = resp["history"].as_array().unwrap();
     assert_eq!(history.len(), 1, "one ingest → one history entry");
     let entry = &history[0];
@@ -774,13 +776,14 @@ async fn test_rank_history() {
     ingest(
         "@00000000-0000-0000-0000-000000000002:rig:test/model\n\
          #hist-test\n\
-         /hist/python 3:1 /hist/go { dynamic typing is worth it }\n",
+         ~/hist/python 3:1 ~/hist/go { dynamic typing is worth it }\n",
     )
     .await;
 
     // Python history: two entries (appeared in first ingest, then voted again here).
     let resp2: serde_json::Value = client
-        .get(&format!("http://{}/api/v0/rank-history?item=hist/python", addr))
+        .get(&format!("http://{}/api/v0/rank-history", addr))
+        .query(&[("item", "~/hist/python")])
         .send()
         .await
         .unwrap()
@@ -798,7 +801,8 @@ async fn test_rank_history() {
 
     // Rust was NOT directly voted on in the second ingest — no new history entry.
     let resp3: serde_json::Value = client
-        .get(&format!("http://{}/api/v0/rank-history?item=hist/rust", addr))
+        .get(&format!("http://{}/api/v0/rank-history", addr))
+        .query(&[("item", "~/hist/rust")])
         .send()
         .await
         .unwrap()
@@ -839,7 +843,7 @@ async fn pair_returns_connectivity_stats() {
     // Request pair under ~/conn — should include connectivity stats.
     let pair_resp = client
         .get(&format!("http://{}/api/v0/pair", addr))
-        .query(&[("parent", "conn")])
+        .query(&[("parent", "~/conn")])
         .send()
         .await
         .unwrap();
@@ -873,7 +877,7 @@ async fn pair_returns_connectivity_stats() {
 
     let pair_resp2 = client
         .get(&format!("http://{}/api/v0/pair", addr))
-        .query(&[("parent", "conn")])
+        .query(&[("parent", "~/conn")])
         .send()
         .await
         .unwrap();

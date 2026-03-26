@@ -7,8 +7,18 @@ pub(super) struct OntologyPath {
 }
 
 impl OntologyPath {
+    /// Path is the `*path` segment from `/~/*path` (e.g. `topic/a`). Always treat it as under `~/`
+    /// so it canonicalizes to `https://slug.social/~/…`, not the non-tilde site path.
     pub(super) fn from_input(path: &str) -> Self {
-        Self::from_canonical(canonicalize_item(path))
+        let p = path.trim_start_matches('/');
+        let raw = if p.starts_with("http://") || p.starts_with("https://") {
+            p.to_string()
+        } else if p.is_empty() {
+            "~/".to_string()
+        } else {
+            format!("~/{}", p)
+        };
+        Self::from_canonical(canonicalize_item(&raw))
     }
 
     pub(super) fn from_canonical(path: String) -> Self {

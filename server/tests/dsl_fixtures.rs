@@ -32,8 +32,8 @@ fn parses_tutorial_fixture_with_prose() {
 
 #[test]
 fn parses_big_book_fixture_with_attached_bodies() {
-    // This doc heavily uses the "/name{...}" style with no whitespace.
-    let doc = dsl::parse_lines(BIG_BOOK).expect("parse_lines should succeed");
+    // This doc heavily uses the "~/name{...}" style with no whitespace.
+    let doc = dsl::parse_full(BIG_BOOK).expect("parse_full should succeed");
 
     let mut hashtags = 0usize;
     let mut items = 0usize;
@@ -41,7 +41,7 @@ fn parses_big_book_fixture_with_attached_bodies() {
 
     for s in &doc.statements {
         match s {
-            dsl::Stmt::Hashtag { name } => {
+            dsl::Stmt::Hashtag { name, .. } => {
                 hashtags += 1;
                 assert!(
                     name.to_lowercase().contains("big-book"),

@@ -56,7 +56,7 @@ pub async fn get_feed(
             // Extract primary thread tag from raw doc.
             let thread = crate::dsl::parse_full(&ing.raw).ok().and_then(|doc| {
                 doc.statements.into_iter().find_map(|s| {
-                    if let crate::dsl::Stmt::Hashtag { name } = s {
+                    if let crate::dsl::Stmt::Hashtag { name, .. } = s {
                         Some(crate::events::canonicalize_tag(&name))
                     } else { None }
                 })

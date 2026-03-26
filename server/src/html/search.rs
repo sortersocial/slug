@@ -37,6 +37,7 @@ struct ItemRow {
 
 struct ThreadRow {
     tag: String,
+    subtitle: Option<String>,
     post_count: usize,
     last_activity: i64,
 }
@@ -122,6 +123,7 @@ fn search(state: &ReducerState, q: &str, limit: usize) -> SearchResults {
             let post_count = state.ingests_by_thread.get(tag).map(|q| q.len()).unwrap_or(0);
             scored_threads.push((score, ThreadRow {
                 tag: tag.clone(),
+                subtitle: thread_state.subtitle.clone(),
                 post_count,
                 last_activity: thread_state.last_activity_ts,
             }));
@@ -299,6 +301,9 @@ fn render_search_results(results: &SearchResults, query: &str) -> Markup {
                             li {
                                 a href=(format!("/t/{}", r.tag)) {
                                     "#" (PreEscaped(highlight_snippet(&r.tag, &words, r.tag.len() + 10)))
+                                }
+                                @if let Some(subtitle) = &r.subtitle {
+                                    ": " (subtitle)
                                 }
                                 " "
                                 span class="muted" {

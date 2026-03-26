@@ -180,26 +180,25 @@ mod tests {
     #[test]
     fn resolve_one_scope_literal() {
         let reduced = reduced_with_children(&[
-            ("", &["a", "b"]),
-            ("models", &["models/x", "models/y"]),
+            ("https://slug.social/models", &["https://slug.social/models/x", "https://slug.social/models/y"]),
         ]);
         let out = resolve_one_scope(&reduced, "models");
         assert_eq!(out.len(), 2);
-        assert!(out.contains("models/x"));
-        assert!(out.contains("models/y"));
+        assert!(out.contains("https://slug.social/models/x"));
+        assert!(out.contains("https://slug.social/models/y"));
     }
 
     #[test]
     fn resolve_scope_multiple_parents_merges() {
         let reduced = reduced_with_children(&[
-            ("a", &["a/1", "a/2"]),
-            ("b", &["b/1", "b/2"]),
+            ("https://slug.social/a", &["https://slug.social/a/1", "https://slug.social/a/2"]),
+            ("https://slug.social/b", &["https://slug.social/b/1", "https://slug.social/b/2"]),
         ]);
         let out = resolve_scope(&reduced, &["a".into(), "b".into()]);
         assert_eq!(out.len(), 4);
-        assert!(out.contains(&"a/1".to_string()));
-        assert!(out.contains(&"a/2".to_string()));
-        assert!(out.contains(&"b/1".to_string()));
-        assert!(out.contains(&"b/2".to_string()));
+        assert!(out.contains(&"https://slug.social/a/1".to_string()));
+        assert!(out.contains(&"https://slug.social/a/2".to_string()));
+        assert!(out.contains(&"https://slug.social/b/1".to_string()));
+        assert!(out.contains(&"https://slug.social/b/2".to_string()));
     }
 }

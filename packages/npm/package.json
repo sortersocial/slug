@@ -10,8 +10,12 @@
   "bin": {
     "slugsocial": "bin/slugsocial.js"
   },
+  "scripts": {
+    "postinstall": "node scripts/ensure-platform.js"
+  },
   "files": [
     "bin/slugsocial.js",
+    "scripts/ensure-platform.js",
     "README.md",
     "package.json"
   ],

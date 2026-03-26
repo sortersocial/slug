@@ -1,16 +1,13 @@
 #!/usr/bin/env node
 // Ultra-thin shim: exec the Rust `slugsocial` binary bundled via platform packages.
 //
-// npm will download exactly one optionalDependency for this platform:
-// - @sortersocial/slugsocial-darwin-arm64
-// - @sortersocial/slugsocial-darwin-x64
-// - @sortersocial/slugsocial-linux-arm64
-// - @sortersocial/slugsocial-linux-x64
-// - @sortersocial/slugsocial-win32-arm64
-// - @sortersocial/slugsocial-win32-x64
+// Binary comes from optionalDependencies for this platform (darwin/linux × arm64/x64).
+// postinstall also installs the platform package if npm skipped optional deps (npx / omit=optional).
 
+const fs = require("node:fs");
 const path = require("node:path");
 const childProcess = require("node:child_process");
+const { ensurePlatformInstalled } = require("../scripts/ensure-platform.js");
 
 function die(msg) {
   console.error(msg);
@@ -21,7 +18,8 @@ function platformTriple() {
   const p = process.platform;
   const a = process.arch;
 
-  const plat = p === "darwin" ? "darwin" : p === "linux" ? "linux" : p === "win32" ? "windows" : null;
+  // Package names use darwin/linux only (see optionalDependencies).
+  const plat = p === "darwin" ? "darwin" : p === "linux" ? "linux" : null;
   const arch = a === "x64" ? "x64" : a === "arm64" ? "arm64" : null;
   if (!plat || !arch) {
     die(`unsupported platform/arch: ${p}/${a}`);
@@ -32,18 +30,43 @@ function platformTriple() {
 function resolvePlatformPackage() {
   const { plat, arch } = platformTriple();
   const name = `@sortersocial/slugsocial-${plat}-${arch}`;
-  try {
-    const pkgJson = require.resolve(`${name}/package.json`);
-    return path.dirname(pkgJson);
-  } catch {
-    die(
-      [
-        `missing platform package ${name}.`,
-        `This usually means npm didn't install optionalDependencies for your platform.`,
-        `Try: npm_config_optional=true npx slugsocial --help`,
-      ].join("\n")
+  const pkgRoot = path.join(__dirname, "..");
+  function tryResolve() {
+    try {
+      const pkgJson = require.resolve(`${name}/package.json`, {
+        paths: [pkgRoot],
+      });
+      return path.dirname(pkgJson);
+    } catch (_) {
+      /* continue */
+    }
+    const sibling = path.join(
+      pkgRoot,
+      "..",
+      "@sortersocial",
+      `slugsocial-${plat}-${arch}`,
+      "package.json",
     );
+    if (fs.existsSync(sibling)) {
+      return path.dirname(sibling);
+    }
+    return null;
   }
+  let dir = tryResolve();
+  if (!dir) {
+    ensurePlatformInstalled(pkgRoot);
+    dir = tryResolve();
+  }
+  if (dir) {
+    return dir;
+  }
+  die(
+    [
+      `missing platform package ${name}.`,
+      `Reinstall with optional deps, e.g. npm install slugsocial --include=optional`,
+      `or: npm install ${name}@<same version as slugsocial>`,
+    ].join("\n"),
+  );
 }
 
 async function main() {

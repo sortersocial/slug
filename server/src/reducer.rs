@@ -142,6 +142,7 @@ pub struct RankHistoryEntry {
 #[derive(Debug, Clone, Default)]
 pub struct ThreadState {
     pub last_activity_ts: i64,
+    pub subtitle: Option<String>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -327,6 +328,7 @@ impl ReducerState {
 
                 let mut current_actor: Option<String> = Some(ing.actor.clone());
                 let mut canonical_thread: Option<String> = None;
+                let mut thread_subtitle: Option<String> = None;
 
                 // Single-thread semantics: the first thread declaration wins for the whole ingest.
                 // Historical events that declared multiple threads are replayed into one canonical thread.
@@ -335,10 +337,11 @@ impl ReducerState {
 
                 for stmt in doc.statements {
                     match stmt {
-                        crate::dsl::Stmt::Hashtag { name } => {
+                        crate::dsl::Stmt::Hashtag { name, subtitle } => {
                             let t = canonicalize_tag(&name);
                             if canonical_thread.is_none() {
                                 canonical_thread = Some(t);
+                                thread_subtitle = subtitle;
                             }
                         }
                         crate::dsl::Stmt::Actor { name } => {
@@ -418,6 +421,10 @@ impl ReducerState {
                 // Bump thread state for the canonical thread.
                 if let Some(thread) = &canonical_thread {
                     let ts = self.threads.entry(thread.clone()).or_default();
+                    // Set subtitle only if this is the first post to the thread (immutable thereafter).
+                    if ts.subtitle.is_none() && thread_subtitle.is_some() {
+                        ts.subtitle = thread_subtitle.clone();
+                    }
                     nav!(ts.last_activity_ts, selected(ing.ts > ts.last_activity_ts, setval(ing.ts)));
                 }
 

@@ -16,7 +16,7 @@ use crate::{
 };
 
 use super::auth::validate_actor_format;
-use super::helpers::{api_error, now_ms, resolve_item, sha256_hex};
+use super::helpers::{api_error, item_path_for_api, now_ms, resolve_item, sha256_hex};
 
 /// Result of validating an ingest document. Shared by post_ingest and post_check.
 #[derive(Debug)]
@@ -68,7 +68,7 @@ pub fn validate_ingest_document(
                 current_actor = Some(a.clone());
                 voter_key_id = a;
             }
-            dsl::Stmt::Hashtag { name } => {
+            dsl::Stmt::Hashtag { name, .. } => {
                 let t = canonicalize_tag(name);
                 if !threads_seen.contains(&t) {
                     threads_seen.push(t);
@@ -84,14 +84,14 @@ pub fn validate_ingest_document(
                 let Some(body_text) = body else {
                     return Err((
                         StatusCode::BAD_REQUEST,
-                        format!("item missing body: /{item}"),
+                        format!("item missing body: {}", item_path_for_api(&item)),
                         Some("items must be declared with bodies, e.g. `~/path/item { ... }`".to_string()),
                     ));
                 };
                 if body_text.trim().is_empty() {
                     return Err((
                         StatusCode::BAD_REQUEST,
-                        format!("item body is empty: /{item}"),
+                        format!("item body is empty: {}", item_path_for_api(&item)),
                         Some("write at least one sentence inside `{ ... }`".to_string()),
                     ));
                 }
@@ -121,7 +121,7 @@ pub fn validate_ingest_document(
                 let missing: Vec<String> = [&a, &b]
                     .into_iter()
                     .filter(|it| !defined_in_doc.contains(*it) && !reduced.items.contains(*it))
-                    .map(|it| format!("/{it}"))
+                    .map(|it| item_path_for_api(it))
                     .collect();
                 if !missing.is_empty() {
                     return Err((
@@ -136,7 +136,7 @@ pub fn validate_ingest_document(
                 let missing_body: Vec<String> = [&a, &b]
                     .into_iter()
                     .filter(|it| !defined_in_doc.contains(*it) && !reduced.item_bodies.contains_key(*it))
-                    .map(|it| format!("/{it}"))
+                    .map(|it| item_path_for_api(it))
                     .collect();
                 if !missing_body.is_empty() {
                     return Err((
@@ -315,7 +315,7 @@ fn compute_scope_rank_changes(
         };
         if changed {
             changes.push(RankChange {
-                item: format!("/{}", item),
+                item: item_path_for_api(&item),
                 before: b,
                 after: a,
             });
@@ -334,7 +334,11 @@ fn compute_scope_rank_changes(
     });
 
     Some(ScopeRankChanges {
-        parent: if parent.is_empty() { "/".to_string() } else { format!("/{}", parent) },
+        parent: if parent.is_empty() {
+            "/".to_string()
+        } else {
+            item_path_for_api(parent)
+        },
         changes,
     })
 }
@@ -569,7 +573,7 @@ pub async fn post_check(
                         .ranked
                         .into_iter()
                         .map(|r| RankRow {
-                            item: format!("/{}", r.item),
+                            item: item_path_for_api(&r.item),
                             score: r.score,
                             percent: None,
                         })
@@ -580,13 +584,13 @@ pub async fn post_check(
                 parent: if parent.is_empty() {
                     "/".to_string()
                 } else {
-                    format!("/{}", parent)
+                    item_path_for_api(parent)
                 },
                 components,
                 unranked_items: scoped
                     .unranked_items
                     .into_iter()
-                    .map(|it| format!("/{}", it))
+                    .map(|it| item_path_for_api(&it))
                     .collect(),
             }
         })

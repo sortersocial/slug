@@ -11,7 +11,7 @@ pub struct Document {
 /// A single statement in the DSL (or prose when using `parse_full`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Stmt {
-    Hashtag { name: String },
+    Hashtag { name: String, subtitle: Option<String> },
     /// Actor signature. Canonical validation is enforced at ingest time.
     Actor { name: String },
     Item { title: String, body: Option<String> },
@@ -272,19 +272,17 @@ fn parse_item_name_at(s: &str, i: usize) -> Option<(String, usize)> {
         return Some((s[i..j].to_string(), j));
     }
 
-    // ITEM_REF: ("/" | "~/") ITEM_NAME
+    // ITEM_REF: "~/" ITEM_NAME  OR  https?:// URL
+    // Leading `/path` alone is not valid — use `~/path` for ontology items.
     let mut j = i;
-    if bytes[j] == b'~' {
-        j += 1;
-        if j >= bytes.len() || bytes[j] != b'/' {
-            return None;
-        }
-        j += 1;
-    } else if bytes[j] == b'/' {
-        j += 1;
-    } else {
+    if bytes[j] != b'~' {
         return None;
     }
+    j += 1;
+    if j >= bytes.len() || bytes[j] != b'/' {
+        return None;
+    }
+    j += 1;
     let start = j;
     while j < bytes.len() {
         if bytes[j..].starts_with(b"__BLOCK_") {
@@ -304,7 +302,7 @@ fn parse_item_name_at(s: &str, i: usize) -> Option<(String, usize)> {
     if !is_item_name(name) {
         return None;
     }
-    Some((name.to_string(), j))
+    Some((format!("~/{}", name), j))
 }
 
 fn parse_block_token_at(s: &str, i: usize) -> Option<(String, usize)> {
@@ -435,17 +433,17 @@ fn parse_quoted_thread_statement(stripped: &str, masker: &BlockMasker) -> Result
     }
 
     Ok(vec![
-        Stmt::Hashtag { name: tag },
+        Stmt::Hashtag { name: tag, subtitle: None },
         Stmt::Prose { text: body },
     ])
 }
 
 fn parse_item_statement(stripped: &str, masker: &BlockMasker) -> Result<Stmt, DslError> {
-    // item: ("/" | "~/") item_ref body?
-    // vote: ("/" | "~/") item_ref comparison ("/" | "~/") item_ref body?
+    // item: ("~/" | "https://..." | "http://...") item_ref body?
+    // vote: same for both operands.
     //
     // Important: body token can be adjacent to the item name (no whitespace),
-    // e.g. "/arrived{...}" -> "/arrived__BLOCK_x__".
+    // e.g. "~/arrived{...}" -> "~/arrived__BLOCK_x__".
     let s = stripped;
     let bytes = s.as_bytes();
     if bytes.is_empty() {
@@ -522,12 +520,39 @@ fn parse_line(masked_line: &str, masker: &BlockMasker) -> Result<Vec<Stmt>, DslE
     match first {
         '#' => {
             let rest = stripped[1..].trim();
-            if !is_item_name(rest) {
-                return Err(DslError::Parse(format!("invalid hashtag name: {rest}")));
+            let bytes = rest.as_bytes();
+            let mut j = 0;
+            while j < bytes.len() && !is_ws_byte(bytes[j]) && !bytes[j..].starts_with(b"__BLOCK_") {
+                j += 1;
             }
-            Ok(vec![Stmt::Hashtag {
-                name: rest.to_string(),
-            }])
+            let tag = &rest[..j];
+            if !is_item_name(tag) {
+                return Err(DslError::Parse(format!("invalid hashtag name: {tag}")));
+            }
+
+            let k = skip_ws(rest, j);
+            let subtitle = if let Some((tok, end)) = parse_block_token_at(rest, k) {
+                let sub = masker.extract_body(&tok);
+                if sub.is_empty() {
+                    return Err(DslError::Parse("subtitle cannot be empty".to_string()));
+                }
+                if sub.len() > 100 {
+                    return Err(DslError::Parse("subtitle exceeds 100 character limit".to_string()));
+                }
+                let tail = rest[end..].trim();
+                if !tail.is_empty() {
+                    return Err(DslError::Parse("extra tokens after hashtag subtitle".to_string()));
+                }
+                Some(sub)
+            } else {
+                let tail = rest[k..].trim();
+                if !tail.is_empty() {
+                    return Err(DslError::Parse("extra tokens after hashtag".to_string()));
+                }
+                None
+            };
+
+            Ok(vec![Stmt::Hashtag { name: tag.to_string(), subtitle }])
         }
         ':' => Err(DslError::Parse(
             "leading ':' is not supported".to_string(),
@@ -543,9 +568,10 @@ fn parse_line(masked_line: &str, masker: &BlockMasker) -> Result<Vec<Stmt>, DslE
                 name: name.to_string(),
             }])
         }
-        '/' => {
-            Ok(vec![parse_item_statement(stripped, masker)?])
-        }
+        '/' => Err(DslError::Parse(
+            "item paths must use `~/` (e.g. `~/languages/python`), not a leading `/`"
+                .to_string(),
+        )),
         '~' => {
             Ok(vec![parse_item_statement(stripped, masker)?])
         }
@@ -563,42 +589,6 @@ fn parse_line(masked_line: &str, masker: &BlockMasker) -> Result<Vec<Stmt>, DslE
         '"' => parse_quoted_thread_statement(stripped, masker),
         _ => Err(DslError::Parse("not a DSL line".to_string())),
     }
-}
-
-/// Parse EmailDSL text into AST (expects DSL-only content; prose will error).
-pub fn parse(text: &str) -> Result<Document, DslError> {
-    let (masker, masked) = mask_all(BlockMasker::new(), text);
-    let mut statements: Vec<Stmt> = Vec::new();
-    for line in masked.split('\n') {
-        let line_trim = line.trim();
-        if line_trim.is_empty() {
-            continue;
-        }
-        let line_stmts = parse_line(line, &masker)?;
-        statements.extend(line_stmts);
-    }
-    Ok(Document { statements })
-}
-
-/// Parse EmailDSL with stateless line-based filtering (drops non-DSL lines).
-pub fn parse_lines(text: &str) -> Result<Document, DslError> {
-    let (masker, masked) = mask_all(BlockMasker::new(), text);
-    let mut statements: Vec<Stmt> = Vec::new();
-    for line in masked.split('\n') {
-        let stripped = line.trim_start();
-        if stripped.is_empty() {
-            continue;
-        }
-        let first = stripped.chars().next().unwrap();
-        if "#:/@!~".contains(first)
-            || (first == 'h' && (stripped.starts_with("https://") || stripped.starts_with("http://")))
-            || (first == '"' && stripped.contains("__BLOCK_"))
-        {
-            let line_stmts = parse_line(line, &masker)?;
-            statements.extend(line_stmts);
-        }
-    }
-    Ok(Document { statements })
 }
 
 /// Parse EmailDSL preserving prose for rendering; interleaves `Prose` with DSL nodes.
@@ -665,12 +655,12 @@ mod tests {
 
     #[test]
     fn parse_item_with_body_strips_outer_braces() {
-        let input = "/rust { Systems language }";
-        let doc = parse(input).unwrap();
+        let input = "~/rust { Systems language }";
+        let doc = parse_full(input).unwrap();
         assert_eq!(
             doc.statements,
             vec![Stmt::Item {
-                title: "rust".to_string(),
+                title: "~/rust".to_string(),
                 body: Some("Systems language".to_string()),
             }]
         );
@@ -678,55 +668,41 @@ mod tests {
 
     #[test]
     fn parse_vote_ratio_and_symbols() {
-        let d1 = parse("/a 3:1 /b {because}").unwrap();
+        let d1 = parse_full("~/a 3:1 ~/b {because}").unwrap();
         assert_eq!(
             d1.statements,
             vec![Stmt::Vote {
-                item1: "a".to_string(),
-                item2: "b".to_string(),
+                item1: "~/a".to_string(),
+                item2: "~/b".to_string(),
                 ratio_left: 3,
                 ratio_right: 1,
                 explanation: "because".to_string()
             }]
         );
 
-        let d2 = parse("/a > /b {because}").unwrap();
+        let d2 = parse_full("~/a > ~/b {because}").unwrap();
         assert_eq!(
             d2.statements,
             vec![Stmt::Vote {
-                item1: "a".to_string(),
-                item2: "b".to_string(),
+                item1: "~/a".to_string(),
+                item2: "~/b".to_string(),
                 ratio_left: 2,
                 ratio_right: 1,
                 explanation: "because".to_string()
             }]
         );
 
-        let d3 = parse("/a = /b {because}").unwrap();
+        let d3 = parse_full("~/a = ~/b {because}").unwrap();
         assert_eq!(
             d3.statements,
             vec![Stmt::Vote {
-                item1: "a".to_string(),
-                item2: "b".to_string(),
+                item1: "~/a".to_string(),
+                item2: "~/b".to_string(),
                 ratio_left: 1,
                 ratio_right: 1,
                 explanation: "because".to_string()
             }]
         );
-    }
-
-    #[test]
-    fn parse_lines_filters_noise_but_keeps_bodies() {
-        let input = r#"
-hello there
-#tag
-/rust {Body line 1
-Body line 2}
-signature: thanks
-"#;
-        let doc = parse_lines(input).unwrap();
-        assert!(doc.statements.iter().any(|s| matches!(s, Stmt::Hashtag { .. })));
-        assert!(doc.statements.iter().any(|s| matches!(s, Stmt::Item { .. })));
     }
 
     #[test]
@@ -740,7 +716,8 @@ signature: thanks
                     text: "hello".to_string()
                 },
                 Stmt::Hashtag {
-                    name: "tag".to_string()
+                    name: "tag".to_string(),
+                    subtitle: None
                 },
                 Stmt::Prose {
                     text: "world".to_string()
@@ -751,12 +728,12 @@ signature: thanks
 
     #[test]
     fn parse_item_body_without_space_like_big_book() {
-        let input = "/arrived{I had arrived.}";
-        let doc = parse(input).unwrap();
+        let input = "~/arrived{I had arrived.}";
+        let doc = parse_full(input).unwrap();
         assert_eq!(
             doc.statements,
             vec![Stmt::Item {
-                title: "arrived".to_string(),
+                title: "~/arrived".to_string(),
                 body: Some("I had arrived.".to_string()),
             }]
         );
@@ -764,13 +741,13 @@ signature: thanks
 
     #[test]
     fn parse_vote_with_attached_body_without_space() {
-        let input = "/a 2:1 /b{because}";
-        let doc = parse(input).unwrap();
+        let input = "~/a 2:1 ~/b{because}";
+        let doc = parse_full(input).unwrap();
         assert_eq!(
             doc.statements,
             vec![Stmt::Vote {
-                item1: "a".to_string(),
-                item2: "b".to_string(),
+                item1: "~/a".to_string(),
+                item2: "~/b".to_string(),
                 ratio_left: 2,
                 ratio_right: 1,
                 explanation: "because".to_string()
@@ -781,11 +758,11 @@ signature: thanks
     #[test]
     fn parse_nested_path_item() {
         let input = "~/whitepaper/architectural-choices { Body }";
-        let doc = parse(input).unwrap();
+        let doc = parse_full(input).unwrap();
         assert_eq!(
             doc.statements,
             vec![Stmt::Item {
-                title: "whitepaper/architectural-choices".to_string(),
+                title: "~/whitepaper/architectural-choices".to_string(),
                 body: Some("Body".to_string()),
             }]
         );
@@ -794,12 +771,12 @@ signature: thanks
     #[test]
     fn parse_nested_path_vote() {
         let input = "~/whitepaper/a 3:1 ~/whitepaper/b { because }";
-        let doc = parse(input).unwrap();
+        let doc = parse_full(input).unwrap();
         assert_eq!(
             doc.statements,
             vec![Stmt::Vote {
-                item1: "whitepaper/a".to_string(),
-                item2: "whitepaper/b".to_string(),
+                item1: "~/whitepaper/a".to_string(),
+                item2: "~/whitepaper/b".to_string(),
                 ratio_left: 3,
                 ratio_right: 1,
                 explanation: "because".to_string()
@@ -809,8 +786,8 @@ signature: thanks
 
     #[test]
     fn parse_actor_allows_colons_for_full_identity_formats() {
-        let doc = parse_lines(
-            "@00000000-0000-0000-0000-000000000000:test:local/test\n#t\n/a {x}\n",
+        let doc = parse_full(
+            "@00000000-0000-0000-0000-000000000000:test:local/test\n#t\n~/a {x}\n",
         )
         .unwrap();
         assert!(doc.statements.iter().any(|s| matches!(
@@ -823,7 +800,7 @@ signature: thanks
     fn parse_rejects_leading_colon() {
         let inputs = [":beauty", ":x", ":"];
         for input in &inputs {
-            let result = parse(input);
+            let result = parse_full(input);
             assert!(result.is_err(), "expected parse error for {input:?}");
             assert!(
                 result.unwrap_err().to_string().contains("leading ':' is not supported"),
@@ -833,8 +810,19 @@ signature: thanks
     }
 
     #[test]
+    fn parse_rejects_slash_prefixed_item_path() {
+        let result = parse_full("/languages/python { use tilde }");
+        assert!(result.is_err(), "leading / item paths must be rejected");
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("~/") && msg.contains("not a leading `/`"),
+            "unexpected error: {msg}"
+        );
+    }
+
+    #[test]
     fn parse_full_rejects_vote_without_explanation() {
-        let input = "@test\n#test\n/a {item a}\n/b {item b}\n/a 2:1 /b\n";
+        let input = "@test\n#test\n~/a {item a}\n~/b {item b}\n~/a 2:1 ~/b\n";
         let result = parse_full(input);
         assert!(result.is_err(), "vote without explanation should fail");
         let err_msg = result.unwrap_err().to_string();
@@ -847,7 +835,7 @@ signature: thanks
         let doc = parse_full(input).unwrap();
         assert!(doc.statements.iter().any(|s| matches!(
             s,
-            Stmt::Hashtag { name } if name == "this-is-a-title"
+            Stmt::Hashtag { name, .. } if name == "this-is-a-title"
         )));
         assert!(doc.statements.iter().any(|s| matches!(
             s,
@@ -870,7 +858,7 @@ signature: thanks
     #[test]
     fn parse_url_item_statement() {
         let input = "https://slug.social/~/music/song-a { body }";
-        let doc = parse(input).unwrap();
+        let doc = parse_full(input).unwrap();
         assert_eq!(
             doc.statements,
             vec![Stmt::Item {
@@ -883,7 +871,7 @@ signature: thanks
     #[test]
     fn parse_url_vote_statement() {
         let input = "https://slug.social/~/music/a 3:1 https://slug.social/~/music/b { because }";
-        let doc = parse(input).unwrap();
+        let doc = parse_full(input).unwrap();
         assert_eq!(
             doc.statements,
             vec![Stmt::Vote {
