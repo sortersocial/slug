@@ -543,7 +543,6 @@ async fn tree_render(
                 margin-left: 10px;
                 margin-top: 2px;
                 padding-left: 10px;
-                border-left: 1px solid rgba(128,128,128,0.25);
               }
               .tree-row { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px; min-height: 22px; padding: 1px 0; }
               .tree-row.selected > .tree-select-form > .tree-label code { background: rgba(255,255,255,0.07); border-radius: 2px; }
