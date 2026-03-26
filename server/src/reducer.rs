@@ -189,6 +189,9 @@ pub struct ReducerState {
 
     /// Seen tweet IDs for bot dedup (avoids re-ingesting the same mention).
     pub seen_tweet_ids: HashSet<String>,
+
+    /// Seen Signal message timestamps for bot dedup.
+    pub seen_signal_ts: HashSet<String>,
 }
 
 impl ReducerState {
@@ -480,6 +483,9 @@ impl ReducerState {
                     followers,
                 });
                 self.seen_tweet_ids.insert(tweet_id);
+            }
+            Event::SignalMessage { signal_ts, .. } => {
+                self.seen_signal_ts.insert(signal_ts);
             }
         }
     }

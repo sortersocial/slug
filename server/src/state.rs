@@ -48,6 +48,18 @@ pub struct XBotConfig {
 }
 
 #[derive(Debug, Clone)]
+pub struct SignalBotConfig {
+    /// Base URL for the signal-cli-rest-api (e.g. http://localhost:8081).
+    pub api_base_url: String,
+    /// The bot's registered phone number (e.g. +1234567890).
+    pub phone_number: String,
+    /// Poll interval in seconds (default 5 — Signal messages arrive faster than tweets).
+    pub poll_interval_secs: u64,
+    /// Public base URL for links in replies (default https://slug.social).
+    pub public_url: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct AppConfig {
     pub data_dir: String,
     pub event_log_path: String,
@@ -58,6 +70,8 @@ pub struct AppConfig {
     pub views_path: Option<String>,
     /// X bot config. None = bot disabled.
     pub x_bot: Option<XBotConfig>,
+    /// Signal bot config. None = bot disabled.
+    pub signal_bot: Option<SignalBotConfig>,
 }
 
 #[derive(Clone)]

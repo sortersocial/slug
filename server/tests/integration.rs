@@ -22,6 +22,7 @@ async fn create_test_server() -> (SocketAddr, TempDir, EventLog, tokio::task::Jo
         rate_limit_per_minute: 1000,
         views_path: None,
         x_bot: None,
+        signal_bot: None,
     };
 
     let state = AppState::new(cfg);
@@ -53,6 +54,7 @@ async fn create_test_server_from_log(log_path: PathBuf) -> (SocketAddr, tokio::t
         rate_limit_per_minute: 1000,
         views_path: Some(views_path.to_string_lossy().to_string()),
         x_bot: None,
+        signal_bot: None,
     };
 
     let state = AppState::new(cfg.clone());

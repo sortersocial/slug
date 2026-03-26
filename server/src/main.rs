@@ -3,9 +3,10 @@ use tracing_subscriber::EnvFilter;
 
 use slugsocial_server::{
     bot,
+    signal_bot,
     event_log::EventLog,
     create_app,
-    state::{AppConfig, AppState, KeyRecord, XBotConfig},
+    state::{AppConfig, AppState, KeyRecord, SignalBotConfig, XBotConfig},
 };
 
 fn env_var(name: &str) -> Option<String> {
@@ -87,6 +88,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("[boot] x bot enabled");
     }
 
+    // Signal bot config (optional — both env vars must be set to enable).
+    let signal_bot_cfg = match (
+        env_var("SLUG_SIGNAL_API_URL"),
+        env_var("SLUG_SIGNAL_PHONE"),
+    ) {
+        (Some(api_base_url), Some(phone_number)) => {
+            let poll_interval_secs = env_var("SLUG_SIGNAL_POLL_SECS")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(5);
+            let public_url = env_var("SLUG_PUBLIC_URL")
+                .unwrap_or_else(|| "https://slug.social".to_string());
+            Some(SignalBotConfig {
+                api_base_url,
+                phone_number,
+                poll_interval_secs,
+                public_url,
+            })
+        }
+        _ => None,
+    };
+
+    if signal_bot_cfg.is_some() {
+        eprintln!("[boot] signal bot enabled");
+    }
+
     let cfg = AppConfig {
         data_dir: data_dir.clone(),
         event_log_path: event_log_path.clone(),
@@ -94,6 +120,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         rate_limit_per_minute,
         views_path: None,
         x_bot,
+        signal_bot: signal_bot_cfg,
     };
 
     let state = AppState::new(cfg);
@@ -115,6 +142,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let bot_state = state.clone();
         tokio::spawn(async move {
             bot::run_bot(bot_state, x_cfg).await;
+        });
+    }
+
+    // Start Signal bot if configured.
+    if let Some(sig_cfg) = state.cfg.signal_bot.clone() {
+        let bot_state = state.clone();
+        tokio::spawn(async move {
+            signal_bot::run_bot(bot_state, sig_cfg).await;
         });
     }
 
