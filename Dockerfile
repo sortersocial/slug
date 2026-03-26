@@ -3,6 +3,10 @@ FROM rust:1.88-slim as builder
 
 WORKDIR /build
 
+RUN apt-get update && \
+    apt-get install -y pkg-config libssl-dev && \
+    rm -rf /var/lib/apt/lists/*
+
 # Copy source and build. (Keep it simple to avoid remote build cache oddities.)
 COPY . .
 RUN cargo build --release --package slugsocial-server
