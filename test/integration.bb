@@ -5,32 +5,8 @@
   (:require [babashka.process :as p]
             [clojure.string :as str]
             [babashka.fs :as fs]
-            [cheshire.core :as json]))
-
-;; ---------------------------------------------------------------------------
-;; letlocals — ML-style sequential let with explicit bind and side-effect forms
-;;
-;;   (letlocals
-;;     (bind x 1)       ; (bind sym expr) → [sym expr] in let bindings
-;;     (println x)      ; bare expr      → [_ expr]    (side effect, result discarded)
-;;     (bind y (+ x 1)) ; can reference earlier bindings
-;;     (+ x y))         ; last form is the return expression
-;;
-;; If the last form is (bind sym expr), only expr is returned (sym unbound),
-;; matching the clj-kondo hook semantics.
-;; ---------------------------------------------------------------------------
-
-(defmacro letlocals [& body]
-  (let [all-but-last  (butlast body)
-        last-item     (last body)
-        last-binding? (and (seq? last-item) (= 'bind (first last-item)))
-        last-expr     (if last-binding? (last last-item) last-item)
-        bindings      (vec (mapcat (fn [item]
-                                     (if (and (seq? item) (= 'bind (first item)))
-                                       [(second item) (nth item 2)]
-                                       ['_ item]))
-                                   all-but-last))]
-    `(let ~bindings ~last-expr)))
+            [cheshire.core :as json]
+            [test.common :as common]))
 
 ;; ---------------------------------------------------------------------------
 ;; helpers
@@ -56,67 +32,21 @@
     (do (fail msg)
         (throw (ex-info (str "FAIL: " msg) {})))))
 
-(defn- pick-port
-  "Find a free port by binding :0 then closing."
-  []
-  (letlocals
-   (bind ss (java.net.ServerSocket. 0))
-   (bind port (.getLocalPort ss))
-   (.close ss)
-   port))
-
-(defn- wait-for-server
-  "Poll /healthz until it returns 'ok', up to `timeout-ms`."
-  [base-url timeout-ms]
-  (letlocals
-   (bind deadline (+ (System/currentTimeMillis) timeout-ms))
-   (loop []
-     (if (try (= "ok" (str/trim (slurp (str base-url "/healthz"))))
-              (catch Exception _ false))
-       true
-       (if (< (System/currentTimeMillis) deadline)
-         (do (Thread/sleep 200) (recur))
-         false)))))
-
-(def ^:private cargo-home (str (System/getProperty "user.home") "/.cargo/bin"))
-
-(def ^:private base-env
-  (-> (into {} (System/getenv))
-      (as-> env
-            (if (str/includes? (get env "PATH" "") cargo-home)
-              env
-              (assoc env "PATH" (str cargo-home ":" (get env "PATH" "")))))))
-
-(defn- cargo-bin
-  "Resolve cargo, preferring ~/.cargo/bin if not on PATH."
-  []
-  (if (fs/exists? (str cargo-home "/cargo"))
-    (str cargo-home "/cargo")
-    "cargo"))
-
-(defn- run-cli
-  "Run the slugsocial CLI binary with args, return {:exit :out :err}."
-  [binary base-url args & {:keys [input]}]
-  @(p/process (into [binary] args)
-              (cond-> {:out :string :err :string
-                       :env (merge base-env {"SLUG_SERVER" base-url})}
-                input (assoc :in input))))
-
 ;; ---------------------------------------------------------------------------
 ;; letlocals unit tests
 ;; ---------------------------------------------------------------------------
 
 (defn- test-letlocals []
   (println "━━━ letlocals unit tests ━━━\n")
-  (assert! (= 3  (letlocals (bind x 1) (bind y 2) (+ x y)))
+  (assert! (= 3  (common/letlocals (bind x 1) (bind y 2) (+ x y)))
            "letlocals: bind pairs + final expr")
-  (assert! (= 42 (letlocals (bind x 42) x))
+  (assert! (= 42 (common/letlocals (bind x 42) x))
            "letlocals: single bind returns sym")
-  (assert! (= 2  (letlocals (bind x 1) (bind y (inc x))))
+  (assert! (= 2  (common/letlocals (bind x 1) (bind y (inc x))))
            "letlocals: last (bind sym expr) returns expr without binding sym")
-  (assert! (= 10 (letlocals (bind x 5) (identity x) (* x 2)))
+  (assert! (= 10 (common/letlocals (bind x 5) (identity x) (* x 2)))
            "letlocals: bare expr for side effects, last form is return")
-  (assert! (= 6  (letlocals (bind a 1) (bind b (+ a 2)) (bind c (+ b 3)) c))
+  (assert! (= 6  (common/letlocals (bind a 1) (bind b (+ a 2)) (bind c (+ b 3)) c))
            "letlocals: chained dependencies"))
 
 ;; ---------------------------------------------------------------------------
@@ -169,16 +99,16 @@
   (test-letlocals)
 
   (println "\nbuilding binaries…")
-  (letlocals
+  (common/letlocals
     ;; 1. build
-   (bind build      @(p/process [(cargo-bin) "build" "--release" "-p" "slugsocial-server" "-p" "slugsocial"]
-                                {:inherit true :env base-env}))
+   (bind build      @(p/process [(common/cargo-bin) "build" "--release" "-p" "slugsocial-server" "-p" "slugsocial"]
+                                {:inherit true :env common/base-env}))
    (assert! (zero? (:exit build)) "cargo build succeeds")
 
    (bind server-bin "target/release/slugsocial-server")
    (bind cli-bin    "target/release/slugsocial")
    (bind tmp-dir    (str (fs/create-temp-dir {:prefix "slug-integration-"})))
-   (bind port       (pick-port))
+   (bind port       (common/pick-port))
    (bind base-url   (str "http://127.0.0.1:" port))
    (bind event-log  (str tmp-dir "/events.jsonl"))
    (assert! (fs/exists? server-bin) "server binary exists")
@@ -186,24 +116,24 @@
 
    (bind !server    (atom nil))
    (bind !server2   (atom nil))
-   (bind server-env (merge base-env
+   (bind server-env (merge common/base-env
                            {"SLUG_DATA_DIR" tmp-dir
                             "SLUG_KEYS"     "test:test"
                             "PORT"          (str port)
                             "RUST_LOG"      "warn"}))
 
    (try
-     (letlocals
+     (common/letlocals
         ;; 2. boot server — first run, empty state
       (println (str "\nstarting server on :" port " (data: " tmp-dir ")"))
-      (bind server     (p/process [server-bin] {:out :inherit :err :inherit :env server-env}))
+      (bind server     (common/start-server server-bin server-env))
       (reset! !server server)
       (bind server-pid (.pid (:proc server)))
-      (assert! (wait-for-server base-url 10000) "server responds to /healthz")
+      (assert! (common/wait-for-server base-url 10000) "server responds to /healthz")
 
         ;; 2.5 check endpoint — disconnected components not flattened
       (println "\nchecking (dry-run) returns discrete ranking groups…")
-      (bind check-result (run-cli cli-bin base-url ["check" "--json"] :input check-doc-disconnected))
+      (bind check-result (common/run-cli cli-bin base-url ["check" "--json"] :input check-doc-disconnected))
       (assert! (zero? (:exit check-result)) "cli check exits 0")
       (bind check-resp   (json/parse-string (:out check-result) true))
       (assert! (:ok check-resp) "check response ok=true")
@@ -218,7 +148,7 @@
 
         ;; 3. ingest via CLI
       (println "\ningesting .sorter document via CLI…")
-      (bind ingest1-result (run-cli cli-bin base-url ["ingest" "--json"] :input sorter-doc))
+      (bind ingest1-result (common/run-cli cli-bin base-url ["ingest" "--json"] :input sorter-doc))
       (assert! (zero? (:exit ingest1-result)) "cli ingest exits 0")
       (bind ingest1-resp   (json/parse-string (:out ingest1-result) true))
       (bind actor1-passkey (:passkey ingest1-resp))
@@ -234,25 +164,25 @@
       (bind private-path (str actor1-uuid "/private-note"))
       (bind private-doc  (str/join "\n" [actor-1 "" (str "~/" private-path " { secret diary content }")]))
 
-      (bind priv-result  (run-cli cli-bin base-url
-                                  ["ingest" "--json" "--passkey" actor1-passkey]
-                                  :input private-doc))
+      (bind priv-result  (common/run-cli cli-bin base-url
+                                         ["ingest" "--json" "--passkey" actor1-passkey]
+                                         :input private-doc))
       (assert! (zero? (:exit priv-result))
                (str "private item ingest exits 0 (err: " (:err priv-result) ")"))
 
-      (bind tree-result  (run-cli cli-bin base-url ["garden" "tree" "--json"]))
+      (bind tree-result  (common/run-cli cli-bin base-url ["garden" "tree" "--json"]))
       (assert! (zero? (:exit tree-result)) "garden tree exits 0")
       (bind tree-resp    (json/parse-string (:out tree-result) true))
       (assert! (not (some #(str/includes? % actor1-uuid) (:paths tree-resp)))
                "private item NOT visible in unauthenticated garden tree")
 
-      (bind body-unauth  (run-cli cli-bin base-url ["garden" "body" private-path "--json"]))
+      (bind body-unauth  (common/run-cli cli-bin base-url ["garden" "body" private-path "--json"]))
       (assert! (not (zero? (:exit body-unauth)))
                "garden body of private item fails without auth")
 
-      (bind body-auth    (run-cli cli-bin base-url
-                                  ["garden" "body" private-path "--json"
-                                   "--actor" actor-1 "--passkey" actor1-passkey]))
+      (bind body-auth    (common/run-cli cli-bin base-url
+                                         ["garden" "body" private-path "--json"
+                                          "--actor" actor-1 "--passkey" actor1-passkey]))
       (assert! (zero? (:exit body-auth))
                (str "garden body of private item succeeds with auth (err: " (:err body-auth) ")"))
       (bind auth-resp    (json/parse-string (:out body-auth) true))
@@ -261,7 +191,7 @@
 
         ;; 4. query rankings via CLI
       (println "\nquerying garden children via CLI…")
-      (bind children-result (run-cli cli-bin base-url ["garden" "children" "languages" "--json"]))
+      (bind children-result (common/run-cli cli-bin base-url ["garden" "children" "languages" "--json"]))
       (assert! (zero? (:exit children-result)) "cli garden children exits 0")
       (bind children-resp   (json/parse-string (:out children-result) true))
       (bind ranked          (mapv :item (mapcat :ranking (:components children-resp))))
@@ -280,14 +210,14 @@
 
         ;; 6. query forum via CLI
       (println "\nquerying forum via CLI…")
-      (bind forum-result (run-cli cli-bin base-url ["forum" "--json"]))
+      (bind forum-result (common/run-cli cli-bin base-url ["forum" "--json"]))
       (assert! (zero? (:exit forum-result)) "cli forum exits 0")
       (bind forum-resp   (json/parse-string (:out forum-result) true))
       (assert! (some (fn [t] (= "#integration-test" (:thread t))) (:threads forum-resp))
                "thread '#integration-test' visible in forum")
 
         ;; 7. query item body via CLI
-      (bind body-result (run-cli cli-bin base-url ["garden" "body" "languages/rust" "--json"]))
+      (bind body-result (common/run-cli cli-bin base-url ["garden" "body" "languages/rust" "--json"]))
       (assert! (zero? (:exit body-result)) "cli garden body exits 0")
       (bind body-resp   (json/parse-string (:out body-result) true))
       (assert! (str/includes? (or (:body body-resp) "") "ownership")
@@ -295,9 +225,9 @@
 
         ;; 8. feed: second actor ingests, actor-1 uses feed to see what happened
       (println "\ntesting feed endpoint…")
-      (bind ingest2-result (run-cli cli-bin base-url ["ingest" "--json"] :input sorter-doc-2))
+      (bind ingest2-result (common/run-cli cli-bin base-url ["ingest" "--json"] :input sorter-doc-2))
       (assert! (zero? (:exit ingest2-result)) "second actor ingest exits 0")
-      (bind feed-result    (run-cli cli-bin base-url ["feed" actor-1 "--json"]))
+      (bind feed-result    (common/run-cli cli-bin base-url ["feed" actor-1 "--json"]))
       (assert! (zero? (:exit feed-result)) "cli feed exits 0")
       (bind feed-resp      (json/parse-string (:out feed-result) true))
       (assert! (some? (:since feed-resp)) "feed since is set (actor has posted)")
@@ -307,7 +237,7 @@
 
         ;; 9. global rank endpoint
       (println "\ntesting global rank endpoint…")
-      (bind grank-result (run-cli cli-bin base-url ["garden" "rank" "--json"]))
+      (bind grank-result (common/run-cli cli-bin base-url ["garden" "rank" "--json"]))
       (assert! (zero? (:exit grank-result)) "cli garden rank exits 0")
       (bind grank-resp   (json/parse-string (:out grank-result) true))
       (assert! (pos? (:ranked_total grank-resp)) "global rank has ranked items")
@@ -315,13 +245,13 @@
       (assert! (str/ends-with? (:item (first (:items grank-resp))) "languages/rust")
                (str "rust is #1 globally (got " (:item (first (:items grank-resp))) ")"))
 
-      (bind grank-pct-result (run-cli cli-bin base-url ["garden" "rank" "--percent" "--limit" "2" "--json"]))
+      (bind grank-pct-result (common/run-cli cli-bin base-url ["garden" "rank" "--percent" "--limit" "2" "--json"]))
       (assert! (zero? (:exit grank-pct-result)) "cli garden rank --percent --limit 2 exits 0")
       (bind grank-pct-resp   (json/parse-string (:out grank-pct-result) true))
       (assert! (= 2 (count (:items grank-pct-resp))) "limit=2 returns 2 items")
       (assert! (= 100.0 (:percent (first (:items grank-pct-resp)))) "top item has 100.0% score")
 
-      (bind grank-off-result (run-cli cli-bin base-url ["garden" "rank" "--limit" "1" "--offset" "1" "--json"]))
+      (bind grank-off-result (common/run-cli cli-bin base-url ["garden" "rank" "--limit" "1" "--offset" "1" "--json"]))
       (assert! (zero? (:exit grank-off-result)) "cli garden rank --offset 1 exits 0")
       (bind grank-off-resp   (json/parse-string (:out grank-off-result) true))
       (assert! (= (:item (second (:items grank-pct-resp))) (:item (first (:items grank-off-resp))))
@@ -334,11 +264,11 @@
                                         "#integration-test"
                                         "~/languages/rust 4:1 ~/languages/python { type safety }"
                                         "~/languages/rust 3:1 ~/languages/go { zero-cost abstractions }"]))
-      (bind hist-ingest      (run-cli cli-bin base-url ["ingest" "--json"] :input two-vote-doc))
+      (bind hist-ingest      (common/run-cli cli-bin base-url ["ingest" "--json"] :input two-vote-doc))
       (assert! (zero? (:exit hist-ingest))
                (str "two-vote ingest exits 0 (err: " (:err hist-ingest) ")"))
 
-      (bind hist-result      (run-cli cli-bin base-url ["garden" "history" "languages/rust" "--json"]))
+      (bind hist-result      (common/run-cli cli-bin base-url ["garden" "history" "languages/rust" "--json"]))
       (assert! (zero? (:exit hist-result))
                (str "cli garden history exits 0 (err: " (:err hist-result) ")"))
       (bind hist-resp        (json/parse-string (:out hist-result) true))
@@ -353,18 +283,17 @@
 
         ;; 11. kill first server, restart from same JSONL — prove replay determinism
       (println "\nkilling server (pid" server-pid ")…")
-      (.destroyForcibly (:proc server))
-      (deref server)
+      (common/kill-server server)
       (reset! !server nil)
 
       (println "\nrestarting server from persisted JSONL…")
-      (bind server2 (p/process [server-bin] {:out :inherit :err :inherit :env server-env}))
+      (bind server2 (common/start-server server-bin server-env))
       (reset! !server2 server2)
-      (assert! (wait-for-server base-url 10000) "restarted server responds to /healthz")
+      (assert! (common/wait-for-server base-url 10000) "restarted server responds to /healthz")
 
         ;; 12. same query, same result
       (println "\nquerying rankings after replay…")
-      (bind replay-result (run-cli cli-bin base-url ["garden" "children" "languages" "--json"]))
+      (bind replay-result (common/run-cli cli-bin base-url ["garden" "children" "languages" "--json"]))
       (assert! (zero? (:exit replay-result)) "cli garden children exits 0 after restart")
       (bind replay-resp   (json/parse-string (:out replay-result) true))
       (bind replay-ranked (mapv :item (mapcat :ranking (:components replay-resp))))
@@ -375,12 +304,10 @@
      (finally
        (when-some [s @!server]
          (println "\nkilling server…")
-         (.destroyForcibly (:proc s))
-         (deref s))
+         (common/kill-server s))
        (when-some [s @!server2]
          (println "\nkilling restarted server…")
-         (.destroyForcibly (:proc s))
-         (deref s))
+         (common/kill-server s))
        (fs/delete-tree tmp-dir)))
 
    (bind {pass :pass} @counts)

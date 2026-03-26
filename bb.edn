@@ -53,6 +53,11 @@
    :task (do (integration/integration)
              (xbot/xbot-test))}
 
+  playwright
+  {:doc "Run Playwright end-to-end tests"
+   :requires ([test.playwright :as pw])
+   :task (pw/playwright-test)}
+
   perf
   {:doc "Performance test: concurrent HTTP requests to detect blocking I/O"
    :requires ([scripts.perf :as perf])
