@@ -14,7 +14,7 @@ use crate::{
 };
 
 use super::{
-    actor_label, bc_segment, bc_threads, cli_panel, layout, now_ms, recency_class,
+    actor_label, bc_threads, cli_panel, layout, now_ms, recency_class,
     render_linkified_with_embeds,
 };
 
@@ -115,17 +115,6 @@ pub async fn index(State(state): State<AppState>) -> impl IntoResponse {
     );
     Html(page.into_string())
 }
-
-fn bc_thread_post(tag: &str, index: usize) -> Markup {
-    let page_offset = (index / PAGE_SIZE) * PAGE_SIZE;
-    let thread_href = format!("/t/{tag}?offset={page_offset}");
-    html! {
-        a href="/" { "slug.social" }
-        (bc_segment(&format!("#{tag}"), &thread_href, false))
-        (bc_segment(&index.to_string(), &format!("/t/{tag}/{index}"), true))
-    }
-}
-
 
 #[derive(Debug, Deserialize)]
 pub struct ThreadViewQuery {
