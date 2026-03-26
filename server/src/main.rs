@@ -2,9 +2,10 @@ use axum::Router;
 use tracing_subscriber::EnvFilter;
 
 use slugsocial_server::{
+    bot,
     event_log::EventLog,
     create_app,
-    state::{AppConfig, AppState, KeyRecord},
+    state::{AppConfig, AppState, KeyRecord, XBotConfig},
 };
 
 fn env_var(name: &str) -> Option<String> {
@@ -54,12 +55,45 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         keys.len()
     );
 
+    // X bot config (optional — all three env vars must be set to enable).
+    let x_bot = match (
+        env_var("SLUG_X_BEARER_TOKEN"),
+        env_var("SLUG_X_BOT_USER_ID"),
+        env_var("SLUG_X_BOT_HANDLE"),
+    ) {
+        (Some(bearer_token), Some(bot_user_id), Some(bot_handle)) => {
+            let poll_interval_secs = env_var("SLUG_X_POLL_SECS")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(30);
+            let api_base_url = env_var("SLUG_X_API_BASE_URL")
+                .unwrap_or_else(|| "https://api.x.com".to_string());
+            let write_token = env_var("SLUG_X_WRITE_TOKEN");
+            let public_url = env_var("SLUG_PUBLIC_URL")
+                .unwrap_or_else(|| "https://slug.social".to_string());
+            Some(XBotConfig {
+                bearer_token,
+                bot_user_id,
+                bot_handle,
+                poll_interval_secs,
+                api_base_url,
+                write_token,
+                public_url,
+            })
+        }
+        _ => None,
+    };
+
+    if x_bot.is_some() {
+        eprintln!("[boot] x bot enabled");
+    }
+
     let cfg = AppConfig {
         data_dir: data_dir.clone(),
         event_log_path: event_log_path.clone(),
         keys,
         rate_limit_per_minute,
         views_path: None,
+        x_bot,
     };
 
     let state = AppState::new(cfg);
@@ -74,6 +108,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         for ev in events {
             reduced.apply_event(ev);
         }
+    }
+
+    // Start X bot if configured (polls mentions + keeps Fly.io machine alive).
+    if let Some(x_cfg) = state.cfg.x_bot.clone() {
+        let bot_state = state.clone();
+        tokio::spawn(async move {
+            bot::run_bot(bot_state, x_cfg).await;
+        });
     }
 
     // Single source of truth for routing lives in the library (`create_app`).

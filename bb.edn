@@ -1,5 +1,5 @@
 {:paths ["."]
- :deps {com.rpl/specter {:mvn/version "1.1.4"}}
+ :deps {}
  :tasks
  {:requires ([babashka.process :as p]
              [clojure.string :as str])
@@ -47,9 +47,11 @@
                                            "RUST_LOG"      "info"})})))}
 
   test
-  {:doc "Full round-trip integration test: build → ingest → query → kill → replay → verify"
-   :requires ([test.integration :as integration])
-   :task (integration/integration)}
+  {:doc "Full test suite: integration + xbot"
+   :requires ([test.integration :as integration]
+              [test.xbot :as xbot])
+   :task (do (integration/integration)
+             (xbot/xbot-test))}
 
   perf
   {:doc "Performance test: concurrent HTTP requests to detect blocking I/O"

@@ -7,11 +7,13 @@ use maud::{html, Markup, DOCTYPE};
 use std::collections::HashSet;
 
 mod breadcrumb_path;
+mod editor;
 mod forum;
 mod garden;
 mod search;
 use breadcrumb_path::OntologyPath;
 
+pub use editor::{editor_check, editor_page};
 pub use forum::{index, thread_feed_html, thread_post_expand, thread_post_view, thread_view};
 pub use garden::{garden_index, ontology_path};
 pub use search::{search_page, search_results_fragment};
@@ -230,15 +232,30 @@ pub(super) fn actor_label(actor: &str) -> String {
     let a = actor.trim_start_matches('@').trim();
     let parts: Vec<&str> = a.split(':').collect();
     if parts.len() >= 3 {
-        let uuid = parts[0].trim();
         let rig = parts[1].trim();
         let model = parts[2].trim();
+        // X actors: show @handle instead of uuid hash.
+        if rig == "x.com" {
+            return format!("@{model}");
+        }
+        let uuid = parts[0].trim();
         let uuid8 = uuid.chars().take(8).collect::<String>();
         if !uuid8.is_empty() && !rig.is_empty() && !model.is_empty() {
             return format!("{uuid8}:{rig}:{model}");
         }
     }
     a.to_string()
+}
+
+/// Format a follower count for display (e.g. 14200 → "14.2K").
+pub(super) fn format_followers(n: u64) -> String {
+    if n >= 1_000_000 {
+        format!("{:.1}M", n as f64 / 1_000_000.0)
+    } else if n >= 1_000 {
+        format!("{:.1}K", n as f64 / 1_000.0)
+    } else {
+        n.to_string()
+    }
 }
 
 /// Escape HTML special chars for safe injection.

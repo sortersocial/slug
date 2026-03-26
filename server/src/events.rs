@@ -128,9 +128,17 @@ pub enum Event {
         key_hash: String,
     },
 
-    // Future: non-DSL events like payments, subscriptions, etc.
-    // Payment { ... },
-    // Subscription { ... },
+    /// X (Twitter) mention ingested by the bot. Records provenance (handle,
+    /// follower count at mention time, tweet ID) alongside the actor identity.
+    /// Follower count is displayed provenance only — it does not affect vote weight.
+    XMention {
+        ts: i64,
+        actor: String,
+        x_user_id: String,
+        x_handle: String,
+        followers: u64,
+        tweet_id: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
