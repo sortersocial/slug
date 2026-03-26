@@ -4,9 +4,12 @@ use axum::{
     response::{Html, IntoResponse, Response},
     Form,
 };
+use axum::response::Redirect;
 use axum_extra::extract::Query;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine as _;
 use maud::{html, Markup};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 use crate::{
@@ -18,33 +21,46 @@ use crate::{
 use super::{layout, render_linkified_with_embeds};
 
 /// Query-state for the expandable tree UI.
-/// Repeated keys are supported: `?open=...&open=...`.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct TreeQuery {
+    /// Opaque state blob (base64url postcard).
     #[serde(default)]
-    pub open: Vec<String>,
-    #[serde(default)]
-    pub selected: Option<String>,
+    pub s: Option<String>,
 }
 
-fn canon_open_set(q: &TreeQuery) -> BTreeSet<String> {
-    q.open.iter().map(|s| canonicalize_item(s)).filter(|s| !s.is_empty()).collect()
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct TreeStateV1 {
+    v: u8,
+    #[serde(default)]
+    open: Vec<String>,
+    #[serde(default)]
+    selected: Option<String>,
 }
 
-fn canon_selected(q: &TreeQuery) -> Option<String> {
-    q.selected.as_ref().map(|s| canonicalize_item(s)).filter(|s| !s.is_empty())
+fn encode_state_blob(open: &BTreeSet<String>, selected: Option<&str>) -> String {
+    let st = TreeStateV1 {
+        v: 1,
+        open: open.iter().cloned().collect(),
+        selected: selected.map(|s| s.to_string()),
+    };
+    let bytes = postcard::to_allocvec(&st).unwrap_or_default();
+    URL_SAFE_NO_PAD.encode(bytes)
+}
+
+fn decode_state_blob(s: &str) -> Option<TreeStateV1> {
+    let bytes = URL_SAFE_NO_PAD.decode(s).ok()?;
+    let st: TreeStateV1 = postcard::from_bytes(&bytes).ok()?;
+    (st.v == 1).then_some(st)
+}
+
+fn baseline_state_blob() -> String {
+    encode_state_blob(&BTreeSet::new(), None)
 }
 
 fn href_for(root: &str, open: &BTreeSet<String>, selected: Option<&str>) -> String {
     // root is already canonical; route path uses `/tree/*path` with raw segments, so we keep root canonical
     // as a query param only when root is empty. For now, root is encoded in the path.
-    let mut parts: Vec<String> = Vec::new();
-    for o in open {
-        parts.push(format!("open={}", urlencoding::encode(o)));
-    }
-    if let Some(sel) = selected {
-        parts.push(format!("selected={}", urlencoding::encode(sel)));
-    }
+    let parts = vec![format!("s={}", encode_state_blob(open, selected))];
     if parts.is_empty() {
         format!("/tree/{}", root.trim_start_matches("https://slug.social/~/"))
             .trim_end_matches('/')
@@ -137,6 +153,7 @@ fn render_tree_node(
         if is_open { new_open.remove(path); } else { new_open.insert(path.to_string()); }
     }
     let _next_url = href_for(root, &new_open, selected.or(Some(path)));
+    let state_blob = encode_state_blob(open, selected);
 
     html! {
         li id=(id) class=(row_cls) style={(format!("padding-left: {}px", indent_px))} {
@@ -144,12 +161,7 @@ fn render_tree_node(
                 form method="post" action="/tree/toggle" class="tree-toggle-form" {
                     input type="hidden" name="root" value=(root);
                     input type="hidden" name="target" value=(path);
-                    @for o in open.iter() {
-                        input type="hidden" name="open" value=(o);
-                    }
-                    @if let Some(sel) = selected {
-                        input type="hidden" name="selected" value=(sel);
-                    }
+                    input type="hidden" name="s" value=(state_blob);
                     button type="submit" class="tree-twist" title="toggle" { (twist) }
                 }
             } @else {
@@ -274,8 +286,22 @@ async fn tree_render(
         return (StatusCode::FORBIDDEN, "private namespace").into_response();
     }
 
-    let open = canon_open_set(&q);
-    let selected = canon_selected(&q);
+    let blob = match q.s.as_deref().map(str::trim) {
+        None | Some("") => {
+            let base = format!("/tree/{}", root.trim_start_matches("https://slug.social/~/"))
+                .trim_end_matches('/')
+                .to_string();
+            let loc = format!("{base}?s={}", baseline_state_blob());
+            // Use 302; good enough for browser refresh/share flows here.
+            return Redirect::temporary(&loc).into_response();
+        }
+        Some(s) => s,
+    };
+    let Some(st) = decode_state_blob(blob) else {
+        return (StatusCode::BAD_REQUEST, "invalid state blob").into_response();
+    };
+    let open: BTreeSet<String> = st.open.into_iter().map(|s| canonicalize_item(&s)).filter(|s| !s.is_empty()).collect();
+    let selected = st.selected.as_ref().map(|s| canonicalize_item(s)).filter(|s| !s.is_empty());
 
     let reduced = state.reduced.read().await;
     let tree = render_tree_pane(&reduced, &root, &open, selected.as_deref());
@@ -297,7 +323,10 @@ async fn tree_render(
               #detail-pane pre { white-space: pre-wrap; }
             "#)) }
             h2 { "tree" }
-            p class="muted" { "expand in place; refreshable via query params: " code { "?open=...&open=...&selected=..." } }
+            p class="muted" {
+                "state is fully encoded in "
+                code { "?s=..." }
+            }
             div class="tree-shell" {
                 (tree)
                 (detail)
@@ -315,9 +344,7 @@ pub struct ToggleForm {
     pub root: String,
     pub target: String,
     #[serde(default)]
-    pub open: Vec<String>,
-    #[serde(default)]
-    pub selected: Option<String>,
+    pub s: Option<String>,
 }
 
 /// POST /tree/toggle
@@ -336,12 +363,13 @@ pub async fn tree_toggle(
         return (StatusCode::FORBIDDEN, "private namespace").into_response();
     }
 
-    let mut open: BTreeSet<String> = f
-        .open
-        .iter()
-        .map(|s| canonicalize_item(s))
-        .filter(|s| !s.is_empty())
-        .collect();
+    let Some(ref blob) = f.s else {
+        return (StatusCode::BAD_REQUEST, "missing state").into_response();
+    };
+    let Some(st) = decode_state_blob(blob) else {
+        return (StatusCode::BAD_REQUEST, "invalid state").into_response();
+    };
+    let mut open: BTreeSet<String> = st.open.into_iter().map(|s| canonicalize_item(&s)).filter(|s| !s.is_empty()).collect();
 
     if open.contains(&target) {
         open.remove(&target);
@@ -349,7 +377,7 @@ pub async fn tree_toggle(
         open.insert(target.clone());
     }
 
-    let selected = f
+    let selected = st
         .selected
         .as_ref()
         .map(|s| canonicalize_item(s))

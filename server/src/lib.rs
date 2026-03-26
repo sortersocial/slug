@@ -8,6 +8,7 @@ pub mod event_log;
 pub mod events;
 pub mod html;
 pub mod middleware;
+pub mod path_types;
 pub mod ranking;
 pub mod reducer;
 pub mod scope_rank;
