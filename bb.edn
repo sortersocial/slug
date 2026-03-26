@@ -55,19 +55,6 @@
              (run 'playwright))}
 
   playwright
-  {:doc "Install Playwright deps if needed, then run Python e2e tests in test/playwright/"
-   :task (do
-           (println "\ninstalling playwright python requirements…")
-           (deref (p/process ["pip" "install" "-q" "-r" "test/playwright/requirements.txt"]
-                             {:inherit true}))
-           (println "\ninstalling playwright chromium browser…")
-           (deref (p/process ["playwright" "install" "chromium"]
-                             {:inherit true}))
-           (println "\nrunning playwright tests…")
-           (deref (p/process ["pytest" "test/playwright/" "-v"]
-                             {:inherit true})))}
-
-  playwright
   {:doc "Run Playwright end-to-end tests"
    :requires ([test.playwright :as pw])
    :task (pw/playwright-test)}
