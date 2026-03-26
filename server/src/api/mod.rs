@@ -1,4 +1,5 @@
 mod auth;
+mod debug;
 mod feed;
 mod forum;
 mod garden;
@@ -11,6 +12,8 @@ mod stream;
 // Re-export all public items so `api::get_rank`, `api::post_ingest`, etc. still work.
 
 pub use auth::{validate_actor_format, verified_actor_uuid};
+
+pub use debug::{get_debug_query, DebugQuery};
 
 pub use feed::{get_feed, FeedQuery};
 
