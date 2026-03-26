@@ -3,10 +3,10 @@ use tracing_subscriber::EnvFilter;
 
 use slugsocial_server::{
     bot,
-    signal_bot,
+    telegram_bot,
     event_log::EventLog,
     create_app,
-    state::{AppConfig, AppState, KeyRecord, SignalBotConfig, XBotConfig},
+    state::{AppConfig, AppState, KeyRecord, TelegramBotConfig, XBotConfig},
 };
 
 fn env_var(name: &str) -> Option<String> {
@@ -88,41 +88,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("[boot] x bot enabled");
     }
 
-    // Signal bot config (optional — SLUG_SIGNAL_PHONE required to enable).
-    // If SLUG_SIGNAL_API_URL is also set, uses HTTP polling (test mode).
-    // Otherwise uses native libsignal-service-rs (production mode).
-    let signal_bot_cfg = env_var("SLUG_SIGNAL_PHONE").map(|phone_number| {
-        let api_base_url = env_var("SLUG_SIGNAL_API_URL");
-        let poll_interval_secs = env_var("SLUG_SIGNAL_POLL_SECS")
+    // Telegram bot config (optional — SLUG_TG_BOT_TOKEN required to enable).
+    let telegram_bot_cfg = env_var("SLUG_TG_BOT_TOKEN").map(|bot_token| {
+        let poll_interval_secs = env_var("SLUG_TG_POLL_SECS")
             .and_then(|s| s.parse().ok())
-            .unwrap_or(5);
+            .unwrap_or(2);
+        let api_base_url = env_var("SLUG_TG_API_BASE_URL")
+            .unwrap_or_else(|| "https://api.telegram.org".to_string());
         let public_url = env_var("SLUG_PUBLIC_URL")
             .unwrap_or_else(|| "https://slug.social".to_string());
-        SignalBotConfig {
-            api_base_url: api_base_url.clone(),
-            phone_number,
+        TelegramBotConfig {
+            bot_token,
             poll_interval_secs,
+            api_base_url,
             public_url,
         }
     });
 
-    if let Some(ref sig_cfg) = signal_bot_cfg {
-        if sig_cfg.api_base_url.is_some() {
-            eprintln!("[boot] signal bot enabled (http mode)");
-        } else {
-            eprintln!("[boot] signal bot enabled (native mode)");
-        }
-    }
-
-    // One-shot linking mode: link as secondary device then exit.
-    if env_var("SLUG_SIGNAL_LINK").is_some() {
-        if let Some(ref sig_cfg) = signal_bot_cfg {
-            signal_bot::link_device(&data_dir, &sig_cfg.phone_number).await;
-            return Ok(());
-        } else {
-            eprintln!("[error] SLUG_SIGNAL_LINK requires SLUG_SIGNAL_PHONE");
-            return Ok(());
-        }
+    if telegram_bot_cfg.is_some() {
+        eprintln!("[boot] telegram bot enabled");
     }
 
     let cfg = AppConfig {
@@ -132,7 +116,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         rate_limit_per_minute,
         views_path: None,
         x_bot,
-        signal_bot: signal_bot_cfg,
+        telegram_bot: telegram_bot_cfg,
     };
 
     let state = AppState::new(cfg);
@@ -157,11 +141,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
-    // Start Signal bot if configured.
-    if let Some(sig_cfg) = state.cfg.signal_bot.clone() {
+    // Start Telegram bot if configured.
+    if let Some(tg_cfg) = state.cfg.telegram_bot.clone() {
         let bot_state = state.clone();
         tokio::spawn(async move {
-            signal_bot::run_bot(bot_state, sig_cfg).await;
+            telegram_bot::run_bot(bot_state, tg_cfg).await;
         });
     }
 

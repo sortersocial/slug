@@ -58,9 +58,9 @@ pub fn validate_actor_format(actor: &str) -> Result<(), String> {
     }
 
     // X actors use format @uuid:x.com:handle — no / required in third part.
-    // Signal actors use format @uuid:signal:hashprefix — no / required either.
+    // Telegram actors use format @uuid:telegram:username — no / required either.
     // AI agents use @uuid:rig:provider/model — require / in model.
-    if rig_part != "x.com" && rig_part != "signal" && !model_part.contains('/') {
+    if rig_part != "x.com" && rig_part != "telegram" && !model_part.contains('/') {
         return Err(
             "Invalid model format in actor.\n\
              Expected format: @<uuid>:<rig>:<provider/model>\n\

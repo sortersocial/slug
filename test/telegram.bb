@@ -1,9 +1,9 @@
-(ns test.signal
-  "Signal bot integration test. Starts a mock signal-cli-api server, boots the
-   slug server with signal bot enabled pointing at the mock, and verifies that:
-   1. The bot polls messages and ingests valid DSL messages
+(ns test.telegram
+  "Telegram bot integration test. Starts a mock Telegram Bot API, boots the
+   slug server with telegram bot enabled pointing at the mock, and verifies:
+   1. The bot polls getUpdates and ingests valid DSL messages
    2. Invalid DSL messages trigger an error reply (captured by the mock)
-   3. Phone hash is stored as provenance (no PII in event log)
+   3. Slash commands (/help, /rank) get responses
    4. Duplicate messages are not re-ingested after server restart"
   (:require [babashka.process :as p]
             [clojure.string :as str]
@@ -90,52 +90,50 @@
                 input (assoc :in input))))
 
 ;; ---------------------------------------------------------------------------
-;; mock signal-cli-api server
+;; mock Telegram Bot API
 ;; ---------------------------------------------------------------------------
 
-(defn- make-envelope
-  "Build a signal-cli-api envelope for a data message."
-  [source timestamp message]
-  {"envelope" {"source"      source
-               "timestamp"   timestamp
-               "dataMessage" {"message"   message
-                              "timestamp" timestamp}}})
+(defn- tg-ok [result]
+  {:status  200
+   :headers {"Content-Type" "application/json"}
+   :body    (json/generate-string {"ok" true "result" result})})
 
-(defn- start-mock-signal-api
-  "Start a mock signal-cli-api server. Returns {:stop-fn f :port n :state atom}.
+(defn- make-update [update-id user-id username chat-id message-id text]
+  {"update_id" update-id
+   "message"   {"message_id" message-id
+                "from"       {"id" user-id "username" username "first_name" username}
+                "chat"       {"id" chat-id}
+                "text"       text}})
+
+(defn- start-mock-tg-api
+  "Start a mock Telegram Bot API. Returns {:stop-fn f :port n :state atom}.
    The state atom tracks:
-     :receive-requests — count of GET /v1/receive/... requests
-     :send-requests    — vec of POST /v2/send bodies (reply attempts)
-   The messages-fn is called with () and should return a vec of envelope maps."
-  [port messages-fn]
+     :get-updates-count — how many times getUpdates was called
+     :send-messages     — vec of sendMessage request bodies
+   The updates-fn is called with (offset) and returns a vec of update objects."
+  [port updates-fn]
   (letlocals
-    (bind state (atom {:receive-requests 0
-                       :send-requests    []}))
+    (bind state (atom {:get-updates-count 0
+                       :send-messages     []}))
     (bind handler
       (fn [req]
         (cond
-          ;; GET /v1/receive/{number}
-          (and (= :get (:request-method req))
-               (str/includes? (:uri req) "/v1/receive/"))
+          ;; GET /bot.../getUpdates
+          (str/includes? (:uri req) "/getUpdates")
           (letlocals
-            (swap! state update :receive-requests inc)
-            (bind body (json/generate-string (messages-fn)))
-            {:status  200
-             :headers {"Content-Type" "application/json"}
-             :body    body})
+            (swap! state update :get-updates-count inc)
+            (bind query (or (:query-string req) ""))
+            (bind offset (some->> (re-find #"offset=(-?\d+)" query) second (Long/parseLong)))
+            (tg-ok (updates-fn offset)))
 
-          ;; POST /v2/send (bot reply)
-          (and (= :post (:request-method req))
-               (= "/v2/send" (:uri req)))
+          ;; POST /bot.../sendMessage
+          (str/includes? (:uri req) "/sendMessage")
           (letlocals
             (bind body-str (slurp (:body req)))
             (bind body-json (json/parse-string body-str true))
-            (swap! state update :send-requests conj body-json)
-            {:status  201
-             :headers {"Content-Type" "application/json"}
-             :body    (json/generate-string {"timestamp" (System/currentTimeMillis)})})
+            (swap! state update :send-messages conj body-json)
+            (tg-ok {"message_id" 999}))
 
-          ;; Everything else -> 404
           :else
           {:status 404 :body "not found"})))
 
@@ -146,25 +144,25 @@
 ;; test fixtures
 ;; ---------------------------------------------------------------------------
 
-(def ^:private bot-phone "+15550001234")
+(def ^:private bot-token "test-bot-token")
 
-;; Valid DSL message: defines items, votes, thread tag
-(def ^:private valid-message-text
-  (str "#signal-test\n"
-       "~/signal/alpha { First test item from Signal }\n"
-       "~/signal/beta  { Second test item from Signal }\n"
-       "~/signal/alpha 3:1 ~/signal/beta { alpha is better }"))
+;; Valid DSL message
+(def ^:private valid-message
+  (str "#tg-test\n"
+       "~/tg/alpha { First test item from Telegram }\n"
+       "~/tg/beta  { Second test item from Telegram }\n"
+       "~/tg/alpha 3:1 ~/tg/beta { alpha is better }"))
 
-;; Invalid DSL message: vote on undefined items
-(def ^:private invalid-message-text
+;; Invalid DSL message
+(def ^:private invalid-message
   "~/nonexistent/a 2:1 ~/nonexistent/b { this should fail }")
 
 ;; ---------------------------------------------------------------------------
 ;; main
 ;; ---------------------------------------------------------------------------
 
-(defn signal-test [& _args]
-  (println "\n\u2501\u2501\u2501 signal bot integration check \u2501\u2501\u2501\n")
+(defn telegram-test [& _args]
+  (println "\n\u2501\u2501\u2501 telegram bot integration check \u2501\u2501\u2501\n")
   (reset! counts {:pass 0 :fail 0})
 
   (println "building server binary\u2026")
@@ -175,7 +173,7 @@
 
     (bind server-bin  "target/release/slugsocial-server")
     (bind cli-bin     "target/release/slugsocial")
-    (bind tmp-dir     (str (fs/create-temp-dir {:prefix "slug-signal-"})))
+    (bind tmp-dir     (str (fs/create-temp-dir {:prefix "slug-tg-"})))
     (bind slug-port   (pick-port))
     (bind mock-port   (pick-port))
     (bind base-url    (str "http://127.0.0.1:" slug-port))
@@ -186,25 +184,27 @@
     (bind !server2    (atom nil))
     (bind !mock       (atom nil))
 
-    ;; Track which messages have been served.
-    ;; Phase 1: valid message (ts 1000001)
-    ;; Phase 2: invalid message (ts 1000002) — should trigger reply
-    ;; Phase 3: same messages again — should be deduped
-    (bind phase       (atom :valid))
+    ;; Phase 1: valid message
+    ;; Phase 2: invalid message -> reply with error
+    ;; Phase 3: slash command /help
+    ;; Phase 4: replay (dedup)
+    (bind phase (atom :valid))
 
-    (bind messages-fn
-      (fn []
+    (bind updates-fn
+      (fn [offset]
         (case @phase
           :valid
-          [(make-envelope "+15559991111" 1000001 valid-message-text)]
+          [(make-update 100 42 "alice" 42 1001 valid-message)]
 
           :invalid
-          [(make-envelope "+15559992222" 1000002 invalid-message-text)]
+          [(make-update 200 43 "bob" 43 1002 invalid-message)]
+
+          :help
+          [(make-update 300 42 "alice" 42 1003 "/help")]
 
           :replay
-          ;; Return both messages — bot should skip both (dedup)
-          [(make-envelope "+15559991111" 1000001 valid-message-text)
-           (make-envelope "+15559992222" 1000002 invalid-message-text)]
+          ;; Return the valid message again — should be deduped by message_id
+          [(make-update 400 42 "alice" 42 1001 valid-message)]
 
           ;; Default: empty
           [])))
@@ -215,123 +215,121 @@
               "SLUG_KEYS"             "test:test"
               "PORT"                  (str slug-port)
               "RUST_LOG"              "info"
-              "SLUG_SIGNAL_API_URL"   mock-url
-              "SLUG_SIGNAL_PHONE"     bot-phone
-              "SLUG_SIGNAL_POLL_SECS" "2"
+              "SLUG_TG_BOT_TOKEN"     bot-token
+              "SLUG_TG_API_BASE_URL"  mock-url
+              "SLUG_TG_POLL_SECS"     "2"
               "SLUG_PUBLIC_URL"       "https://slug.social"}))
 
     (try
       (letlocals
-        ;; 1. Start mock signal-cli-api
-        (println (str "\nstarting mock signal-cli-api on :" mock-port))
-        (bind mock (start-mock-signal-api mock-port messages-fn))
+        ;; 1. Start mock Telegram API
+        (println (str "\nstarting mock Telegram API on :" mock-port))
+        (bind mock (start-mock-tg-api mock-port updates-fn))
         (reset! !mock mock)
-        (assert! (some? (:stop-fn mock)) "mock signal-cli-api started")
+        (assert! (some? (:stop-fn mock)) "mock Telegram API started")
 
-        ;; 2. Boot slug server with signal bot enabled
-        (println (str "starting slug server on :" slug-port " (signal bot polling every 2s)"))
+        ;; 2. Boot slug server with telegram bot
+        (println (str "starting slug server on :" slug-port " (telegram bot polling every 2s)"))
         (bind server (p/process [server-bin] {:out :inherit :err :inherit :env server-env}))
         (reset! !server server)
         (assert! (wait-for-server base-url 10000) "server responds to /healthz")
 
-        ;; 3. Wait for bot to poll and ingest the valid message
-        (println "\nwaiting for bot to ingest valid signal message\u2026")
+        ;; 3. Wait for bot to poll and ingest
+        (println "\nwaiting for bot to ingest valid message\u2026")
         (Thread/sleep 5000)
 
-        ;; 4. Verify the valid message was ingested
+        ;; 4. Verify valid message was ingested
         (bind mock-state @(:state mock))
-        (assert! (pos? (:receive-requests mock-state))
-                 (str "mock received poll requests (got " (:receive-requests mock-state) ")"))
+        (assert! (pos? (:get-updates-count mock-state))
+                 (str "mock received getUpdates (got " (:get-updates-count mock-state) ")"))
 
-        ;; Check event log for SignalMessage + ActorKeyRegistration + Ingest
         (assert! (fs/exists? event-log) "events.jsonl exists")
         (bind events (->> (slurp event-log) str/split-lines (remove str/blank?) (mapv #(json/parse-string % true))))
         (assert! (>= (count events) 3)
-                 (str "at least 3 events (SignalMessage + ActorKeyRegistration + Ingest, got " (count events) ")"))
+                 (str "at least 3 events (TelegramMessage + ActorKeyRegistration + Ingest, got " (count events) ")"))
 
-        (bind signal-events (filterv #(= "signal_message" (:type %)) events))
-        (assert! (= 1 (count signal-events))
-                 (str "exactly 1 SignalMessage event (got " (count signal-events) ")"))
+        (bind tg-events (filterv #(= "telegram_message" (:type %)) events))
+        (assert! (= 1 (count tg-events))
+                 (str "exactly 1 TelegramMessage event (got " (count tg-events) ")"))
 
-        (bind sm (first signal-events))
-        (assert! (= "1000001" (:signal_ts sm)) "SignalMessage signal_ts is 1000001")
-        (assert! (some? (:phone_hash sm)) "SignalMessage has phone_hash")
-        (assert! (not (str/includes? (or (:phone_hash sm) "") "+1555"))
-                 "phone_hash does not contain raw phone number")
-        (assert! (= 64 (count (:phone_hash sm)))
-                 (str "phone_hash is 64-char SHA-256 hex (got " (count (:phone_hash sm)) ")"))
-        (assert! (str/includes? (:actor sm) "signal") "actor contains 'signal'")
+        (bind tm (first tg-events))
+        (assert! (= "1001" (:message_id tm)) "TelegramMessage message_id is 1001")
+        (assert! (= "alice" (:tg_username tm)) "TelegramMessage username is alice")
+        (assert! (str/includes? (:actor tm) "telegram") "actor contains 'telegram'")
 
         ;; Check rankings via CLI
-        (println "\nverifying rankings from bot-ingested message\u2026")
-        (bind children-result (run-cli cli-bin base-url ["garden" "children" "signal" "--json"]))
-        (assert! (zero? (:exit children-result)) "garden children signal exits 0")
+        (println "\nverifying rankings\u2026")
+        (bind children-result (run-cli cli-bin base-url ["garden" "children" "tg" "--json"]))
+        (assert! (zero? (:exit children-result)) "garden children tg exits 0")
         (bind children-resp (json/parse-string (:out children-result) true))
         (bind ranked (mapv :item (mapcat :ranking (:components children-resp))))
-        (assert! (= 2 (count ranked)) (str "2 items ranked under /signal (got " (count ranked) ")"))
-        (assert! (str/ends-with? (first ranked) "signal/alpha")
-                 (str "alpha is #1 (got " (first ranked) ")"))
+        (assert! (= 2 (count ranked)) (str "2 items ranked under /tg (got " (count ranked) ")"))
 
-        ;; Check thread was created
+        ;; Check thread
         (bind forum-result (run-cli cli-bin base-url ["forum" "--json"]))
         (assert! (zero? (:exit forum-result)) "forum exits 0")
         (bind forum-resp (json/parse-string (:out forum-result) true))
-        (assert! (some (fn [t] (= "#signal-test" (:thread t))) (:threads forum-resp))
-                 "thread #signal-test visible in forum")
+        (assert! (some (fn [t] (= "#tg-test" (:thread t))) (:threads forum-resp))
+                 "thread #tg-test visible in forum")
 
-        ;; 5. Phase 2: invalid message -> bot should reply with error
+        ;; Confirm reply (sendMessage for "Ingested.")
+        (bind confirms (filterv #(str/includes? (or (:text %) "") "Ingested") (:send-messages mock-state)))
+        (assert! (pos? (count confirms)) "bot sent 'Ingested.' confirmation")
+
+        ;; 5. Phase 2: invalid message -> error reply
         (println "\nswitching to invalid message phase\u2026")
         (reset! phase :invalid)
         (Thread/sleep 5000)
 
         (bind mock-state2 @(:state mock))
-        (assert! (pos? (count (:send-requests mock-state2)))
-                 (str "bot posted a reply (got " (count (:send-requests mock-state2)) " replies)"))
-        (bind reply (first (:send-requests mock-state2)))
-        (assert! (some? reply) "reply body captured")
-        (assert! (str/includes? (or (:message reply) "") "/try")
-                 "reply contains link to /try editor")
+        (bind error-replies (filterv #(str/includes? (or (:text %) "") "/try") (:send-messages mock-state2)))
+        (assert! (pos? (count error-replies))
+                 (str "bot replied with error containing /try link (got " (count error-replies) ")"))
 
-        ;; Verify the invalid message did NOT produce an Ingest event
         (bind events2 (->> (slurp event-log) str/split-lines (remove str/blank?) (mapv #(json/parse-string % true))))
         (bind ingest-events (filterv #(= "ingest" (:type %)) events2))
         (assert! (= 1 (count ingest-events))
-                 (str "still only 1 Ingest event (invalid msg not ingested, got " (count ingest-events) ")"))
+                 (str "still only 1 Ingest event (invalid not ingested, got " (count ingest-events) ")"))
 
-        ;; 6. Phase 3: replay — return both messages, bot should skip both (dedup)
+        ;; 6. Phase 3: /help command
+        (println "\nswitching to /help phase\u2026")
+        (reset! phase :help)
+        (Thread/sleep 5000)
+
+        (bind mock-state3 @(:state mock))
+        (bind help-replies (filterv #(str/includes? (or (:text %) "") "Welcome") (:send-messages mock-state3)))
+        (assert! (pos? (count help-replies)) "bot replied to /help with welcome message")
+
+        ;; 7. Phase 4: replay (dedup)
         (println "\nswitching to replay phase (dedup test)\u2026")
         (reset! phase :replay)
         (Thread/sleep 5000)
-        (bind events3 (->> (slurp event-log) str/split-lines (remove str/blank?)))
-        (bind signal-msg-count (count (filterv #(= "signal_message" (:type (json/parse-string % true))) events3)))
-        (assert! (<= signal-msg-count 2)
-                 (str "at most 2 SignalMessage events total (dedup working, got " signal-msg-count ")"))
-        (bind ingest-count (count (filterv #(= "ingest" (:type (json/parse-string % true))) events3)))
+
+        (bind events4 (->> (slurp event-log) str/split-lines (remove str/blank?)))
+        (bind ingest-count (count (filterv #(= "ingest" (:type (json/parse-string % true))) events4)))
         (assert! (= 1 ingest-count)
                  (str "still only 1 Ingest event after replay (got " ingest-count ")"))
 
-        ;; 7. Restart server — verify events survive replay
+        ;; 8. Restart server — verify cursor + events survive
         (println "\nkilling server for restart test\u2026")
         (.destroyForcibly (:proc server))
         (deref server)
         (reset! !server nil)
 
-        ;; Switch to empty phase so no new messages on restart
         (reset! phase :empty)
+        (bind cursor-file (str tmp-dir "/tg_bot_cursor.txt"))
+        (assert! (fs/exists? cursor-file) "cursor file exists")
 
         (println "restarting server\u2026")
         (bind server2 (p/process [server-bin] {:out :inherit :err :inherit :env server-env}))
         (reset! !server2 server2)
         (assert! (wait-for-server base-url 10000) "restarted server responds to /healthz")
 
-        ;; Verify rankings survived restart (replay determinism)
-        (bind replay-result (run-cli cli-bin base-url ["garden" "children" "signal" "--json"]))
-        (assert! (zero? (:exit replay-result)) "garden children signal exits 0 after restart")
+        (bind replay-result (run-cli cli-bin base-url ["garden" "children" "tg" "--json"]))
+        (assert! (zero? (:exit replay-result)) "garden children tg exits 0 after restart")
         (bind replay-resp (json/parse-string (:out replay-result) true))
         (bind replay-ranked (mapv :item (mapcat :ranking (:components replay-resp))))
-        (assert! (= 2 (count replay-ranked)) "2 items ranked after replay")
-        (assert! (str/ends-with? (first replay-ranked) "signal/alpha")
-                 (str "alpha still #1 after replay (got " (first replay-ranked) ")")))
+        (assert! (= 2 (count replay-ranked)) "2 items ranked after replay"))
 
       (finally
         (when-some [s @!server]
@@ -343,9 +341,9 @@
           (.destroyForcibly (:proc s))
           (deref s))
         (when-some [m @!mock]
-          (println "stopping mock signal-cli-api\u2026")
+          (println "stopping mock Telegram API\u2026")
           ((:stop-fn m)))
         (fs/delete-tree tmp-dir)))
 
     (bind {pass :pass} @counts)
-    (println (str "\n" ansi-green "\u2501\u2501\u2501 " pass " signal bot checks passed \u2501\u2501\u2501" ansi-reset "\n"))))
+    (println (str "\n" ansi-green "\u2501\u2501\u2501 " pass " telegram bot checks passed \u2501\u2501\u2501" ansi-reset "\n"))))

@@ -48,14 +48,14 @@ pub struct XBotConfig {
 }
 
 #[derive(Debug, Clone)]
-pub struct SignalBotConfig {
-    /// Base URL for a signal-cli-api REST endpoint. When set, uses HTTP polling.
-    /// When None, uses native libsignal-service-rs (production mode).
-    pub api_base_url: Option<String>,
-    /// The bot's registered phone number (e.g. +1234567890).
-    pub phone_number: String,
-    /// Poll interval in seconds (default 5, only used in HTTP mode).
+pub struct TelegramBotConfig {
+    /// Bot token from @BotFather.
+    pub bot_token: String,
+    /// Poll interval in seconds (default 2).
     pub poll_interval_secs: u64,
+    /// Base URL for Telegram API (default https://api.telegram.org).
+    /// Override for testing with a mock server.
+    pub api_base_url: String,
     /// Public base URL for links in replies (default https://slug.social).
     pub public_url: String,
 }
@@ -71,8 +71,8 @@ pub struct AppConfig {
     pub views_path: Option<String>,
     /// X bot config. None = bot disabled.
     pub x_bot: Option<XBotConfig>,
-    /// Signal bot config. None = bot disabled.
-    pub signal_bot: Option<SignalBotConfig>,
+    /// Telegram bot config. None = bot disabled.
+    pub telegram_bot: Option<TelegramBotConfig>,
 }
 
 #[derive(Clone)]

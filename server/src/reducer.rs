@@ -122,6 +122,12 @@ pub struct XProfile {
     pub followers: u64,
 }
 
+/// Telegram user profile provenance.
+#[derive(Debug, Clone)]
+pub struct TgProfile {
+    pub tg_username: String,
+}
+
 /// Compact rank-history entry stored per item in the ledger.
 /// `caused_by` is resolved lazily at query time from `ingests_by_id`.
 #[derive(Debug, Clone)]
@@ -190,8 +196,11 @@ pub struct ReducerState {
     /// Seen tweet IDs for bot dedup (avoids re-ingesting the same mention).
     pub seen_tweet_ids: HashSet<String>,
 
-    /// Seen Signal message timestamps for bot dedup.
-    pub seen_signal_ts: HashSet<String>,
+    /// Telegram user profiles keyed by canonical actor string. Provenance only.
+    pub tg_profiles: HashMap<String, TgProfile>,
+
+    /// Seen Telegram message IDs for bot dedup.
+    pub seen_tg_message_ids: HashSet<String>,
 }
 
 impl ReducerState {
@@ -484,8 +493,10 @@ impl ReducerState {
                 });
                 self.seen_tweet_ids.insert(tweet_id);
             }
-            Event::SignalMessage { signal_ts, .. } => {
-                self.seen_signal_ts.insert(signal_ts);
+            Event::TelegramMessage { actor, tg_username, message_id, .. } => {
+                let actor = canonicalize_actor(&actor);
+                self.tg_profiles.insert(actor, TgProfile { tg_username });
+                self.seen_tg_message_ids.insert(message_id);
             }
         }
     }

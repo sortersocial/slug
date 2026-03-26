@@ -140,15 +140,14 @@ pub enum Event {
         tweet_id: String,
     },
 
-    /// Signal message ingested by the bot. Records provenance (phone number hash,
-    /// message timestamp) alongside the actor identity.
-    SignalMessage {
+    /// Telegram message ingested by the bot. Records provenance (username,
+    /// message ID) alongside the actor identity.
+    TelegramMessage {
         ts: i64,
         actor: String,
-        /// SHA-256 of the sender's phone number (we never store the raw number).
-        phone_hash: String,
-        /// Signal's message timestamp (used for dedup).
-        signal_ts: String,
+        tg_user_id: String,
+        tg_username: String,
+        message_id: String,
     },
 }
 

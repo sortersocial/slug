@@ -47,13 +47,13 @@
                                            "RUST_LOG"      "info"})})))}
 
   test
-  {:doc "Full test suite: integration + xbot + signal"
+  {:doc "Full test suite: integration + xbot + telegram"
    :requires ([test.integration :as integration]
               [test.xbot :as xbot]
-              [test.signal :as signal])
+              [test.telegram :as tg])
    :task (do (integration/integration)
              (xbot/xbot-test)
-             (signal/signal-test))}
+             (tg/telegram-test))}
 
   perf
   {:doc "Performance test: concurrent HTTP requests to detect blocking I/O"
