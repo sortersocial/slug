@@ -2,8 +2,10 @@
 Playwright end-to-end tests for the /tree view.
 
 These tests require a running slugsocial-server with tree data already
-ingested.  The Babashka rig (test/playwright.bb) boots the server and
-passes --base-url to pytest so Playwright pages land on it by default.
+ingested.  The conftest.py fixture boots the server automatically, but
+the tests that depend on visible tree nodes are expected to be run
+against a database that already contains public ontology items
+(e.g. ~/languages/rust, ~/languages/python, etc.).
 
 Tests that can pass with an empty database are marked accordingly.
 """
