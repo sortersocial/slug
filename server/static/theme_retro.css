@@ -1,8 +1,10 @@
 /* Browser defaults. Nothing. */
 
 /* Tight layout (retro loads standalone; match default's constraints) */
+/* light theme */
+
 body {
-  margin: 0 auto;
+  margin: 0;
   max-width: 560px;
   padding: 0 16px 48px;
 }
@@ -69,3 +71,14 @@ body.view-ontology #controls { background: #ede8df; border-top: 1px solid #ccc; 
 }
 .rich-embed.embed-spotify iframe { height: 152px; }
 .rich-embed.embed-youtube iframe { height: 292px; }
+
+
+#detail-pane {
+  border-left: 1px solid rgba(128,128,128,0.2);
+  padding: 14px;
+  box-sizing: border-box;
+  z-index: 10;
+  background: #f5f0e8;
+  color: #1a1a1a;
+  color-scheme: light;
+}
