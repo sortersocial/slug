@@ -560,7 +560,6 @@ async fn tree_render(
                 position: fixed; top: 0; right: 0; width: 360px; height: 100vh;
                 overflow-y: auto; border-left: 1px solid rgba(128,128,128,0.2);
                 padding: 14px; box-sizing: border-box; z-index: 10;
-                background: var(--bg, #0d0d0d);
               }
               #detail-pane pre { white-space: pre-wrap; }
             "#)) }
