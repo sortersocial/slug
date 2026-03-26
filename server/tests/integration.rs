@@ -180,7 +180,7 @@ async fn test_rank_endpoint() {
     assert_eq!(components.len(), 1);
     let ranking = components[0]["ranking"].as_array().unwrap();
     assert_eq!(ranking.len(), 2);
-    assert_eq!(ranking[0]["item"], "https://slug.social/~/rust");
+    assert_eq!(ranking[0]["item"], "/rust");
     assert!(body["unranked_items"].is_array());
 }
 
@@ -517,7 +517,7 @@ async fn test_garden_item_pair_matchup_include_threads() {
         .unwrap();
     assert!(item_resp.status().is_success());
     let item: serde_json::Value = item_resp.json().await.unwrap();
-    assert_eq!(item["item"], "https://slug.social/~/sorts/insertion");
+    assert_eq!(item["item"], "/sorts/insertion");
     assert!(item["body"].as_str().unwrap().contains("O(n^2)"));
     let threads: Vec<&str> = item["threads"]
         .as_array()
@@ -553,7 +553,7 @@ async fn test_garden_item_pair_matchup_include_threads() {
         .unwrap();
     assert!(matchup_resp.status().is_success());
     let matchup: serde_json::Value = matchup_resp.json().await.unwrap();
-    assert_eq!(matchup["item"], "https://slug.social/~/sorts/insertion");
+    assert_eq!(matchup["item"], "/sorts/insertion");
     let votes = matchup["votes"].as_array().unwrap();
     assert!(!votes.is_empty(), "matchup should have at least one vote");
     let first_thread = votes[0]["thread"].as_str().unwrap();
@@ -761,7 +761,7 @@ async fn test_rank_history() {
         .await
         .unwrap();
 
-    assert_eq!(resp["item"], "https://slug.social/~/hist/rust");
+    assert_eq!(resp["item"], "/hist/rust");
     let history = resp["history"].as_array().unwrap();
     assert_eq!(history.len(), 1, "one ingest → one history entry");
     let entry = &history[0];

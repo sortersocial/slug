@@ -149,7 +149,7 @@ pub async fn get_item(State(state): State<AppState>, headers: HeaderMap, Query(q
         .unwrap_or_default();
 
     Json(ItemResponse {
-        item: item.clone(),
+        item: item_path_for_api(&item),
         body,
         truncated,
         body_len,

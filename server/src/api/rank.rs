@@ -76,7 +76,7 @@ pub async fn get_rank(State(state): State<AppState>, headers: HeaderMap, Query(q
         let all_items: Vec<String> = reduced.items.iter().cloned().collect();
         crate::scope_rank::build_rankings_for_item_set(&reduced, &all_items)
     } else if specs.is_empty() {
-        crate::scope_rank::build_children_rankings(&reduced, "https://slug.social/~")
+        crate::scope_rank::build_children_rankings(&reduced, "")
     } else if depth > 1 {
         let items = crate::scope_rank::resolve_scope_recursive(&reduced, &specs, depth);
         crate::scope_rank::build_rankings_for_item_set(&reduced, &items)

@@ -31,7 +31,7 @@ fn item_href(item: &str) -> String {
 pub async fn garden_index(State(state): State<AppState>) -> impl IntoResponse {
     let child_rankings = {
         let reduced = state.reduced.read().await;
-        build_children_rankings(&reduced, "https://slug.social/~")
+        build_children_rankings(&reduced, "")
     };
 
     let views = state.views.get_views("/~");
@@ -537,8 +537,8 @@ mod tests {
 
         let model = build_item_page_view_model(&reduced, "~/topic/a", 50);
         assert_eq!(model.touching_votes.len(), 1);
-        assert_eq!(model.touching_votes[0].a, "https://slug.social/~/topic/a");
-        assert_eq!(model.touching_votes[0].b, "https://slug.social/~/topic/b");
+        assert_eq!(model.touching_votes[0].a, "topic/a");
+        assert_eq!(model.touching_votes[0].b, "topic/b");
     }
 
     #[test]
@@ -586,10 +586,10 @@ mod tests {
             .iter()
             .map(|r| r.item.as_str())
             .collect();
-        assert_eq!(names, vec!["https://slug.social/~/topic/a", "https://slug.social/~/topic/b"]);
+        assert_eq!(names, vec!["topic/a", "topic/b"]);
         assert!(
-            model.child_rankings.unranked_items.contains(&"https://slug.social/~/topic/kid1".to_string())
-                || model.child_rankings.unranked_items.contains(&"https://slug.social/~/topic/kid2".to_string())
+            model.child_rankings.unranked_items.contains(&"topic/kid1".to_string())
+                || model.child_rankings.unranked_items.contains(&"topic/kid2".to_string())
         );
     }
 }

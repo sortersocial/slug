@@ -311,8 +311,8 @@ mod tests {
             .iter()
             .map(|&i| g.idx_to_item[i].as_str())
             .collect::<Vec<_>>();
-        assert_eq!(comp0, vec!["https://slug.social/a", "https://slug.social/b"]);
-        assert_eq!(comp1, vec!["https://slug.social/c", "https://slug.social/d"]);
+        assert_eq!(comp0, vec!["a", "b"]);
+        assert_eq!(comp1, vec!["c", "d"]);
     }
 
     #[test]
@@ -330,10 +330,10 @@ mod tests {
             let ranked = ranked_items_subset(&g, &comp, 10000, 1e-8);
             assert_eq!(ranked.len(), 2);
             let names = ranked.iter().map(|r| r.item.as_str()).collect::<Vec<_>>();
-            if names.contains(&"https://slug.social/a") {
-                assert_eq!(names[0], "https://slug.social/a");
+            if names.contains(&"a") {
+                assert_eq!(names[0], "a");
             } else {
-                assert_eq!(names[0], "https://slug.social/d");
+                assert_eq!(names[0], "d");
             }
         }
     }

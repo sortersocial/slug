@@ -1,6 +1,6 @@
 use slugsocial_server::{
     event_log::EventLog,
-    events::{canonicalize_item, canonicalize_tag, Event, Ingest},
+    events::{canonicalize_item, canonicalize_tag, item_routes_as_away, item_reconstruct_https_url, item_api_path, Event, Ingest},
     ranking::ranked_items,
     reducer::{GroupState, ReducerState},
 };
@@ -43,9 +43,9 @@ fn reducer_and_ranking_linear_chain() {
     let mut group = state.ranking_group.clone();
     let ranked = ranked_items(&mut group, 20000, 1e-9);
     assert_eq!(ranked.len(), 3);
-    assert_eq!(ranked[0].item, "https://slug.social/~/t/a");
-    assert_eq!(ranked[1].item, "https://slug.social/~/t/b");
-    assert_eq!(ranked[2].item, "https://slug.social/~/t/c");
+    assert_eq!(ranked[0].item, "t/a");
+    assert_eq!(ranked[1].item, "t/b");
+    assert_eq!(ranked[2].item, "t/c");
 }
 
 #[test]
@@ -77,15 +77,15 @@ fn reducer_handles_item_and_body_from_ingest() {
         "@00000000-0000-0000-0000-000000000000:test:local/test\n~/t/test-item {Description here}\n",
     ));
 
-    assert!(state.items.contains("https://slug.social/~/t/test-item"));
+    assert!(state.items.contains("t/test-item"));
     assert_eq!(
-        state.item_bodies.get("https://slug.social/~/t/test-item"),
+        state.item_bodies.get("t/test-item"),
         Some(&"Description here".to_string())
     );
     assert!(state
         .item_children
-        .get("https://slug.social/~/t")
-        .map(|c| c.contains("https://slug.social/~/t/test-item"))
+        .get("t")
+        .map(|c| c.contains("t/test-item"))
         .unwrap_or(false));
 }
 
@@ -102,12 +102,12 @@ fn reducer_indexes_item_threads_and_vote_thread() {
          ~/sorts/insertion 3:1 ~/sorts/mergesort { simpler for small n }\n",
     ));
 
-    let threads_for_insertion = state.item_threads.get("https://slug.social/~/sorts/insertion").unwrap();
+    let threads_for_insertion = state.item_threads.get("sorts/insertion").unwrap();
     assert!(threads_for_insertion.contains("sorting-hat"));
-    let threads_for_mergesort = state.item_threads.get("https://slug.social/~/sorts/mergesort").unwrap();
+    let threads_for_mergesort = state.item_threads.get("sorts/mergesort").unwrap();
     assert!(threads_for_mergesort.contains("sorting-hat"));
 
-    let vote = state.item_votes.get("https://slug.social/~/sorts/insertion").unwrap().front().unwrap();
+    let vote = state.item_votes.get("sorts/insertion").unwrap().front().unwrap();
     assert_eq!(vote.thread, "sorting-hat");
 }
 
@@ -121,8 +121,8 @@ fn reducer_aggregates_multiple_votes() {
     }
 
     let group = &state.ranking_group;
-    let a_idx = group.item_to_idx["https://slug.social/~/t/a"];
-    let b_idx = group.item_to_idx["https://slug.social/~/t/b"];
+    let a_idx = group.item_to_idx["t/a"];
+    let b_idx = group.item_to_idx["t/b"];
 
     // Should have accumulated edge weights in both directions.
     assert!(group.edges.contains_key(&(a_idx, b_idx)));
@@ -198,7 +198,7 @@ fn ranking_dominant_item_wins() {
     let mut group = state.ranking_group.clone();
     let ranked = ranked_items(&mut group, 20000, 1e-9);
 
-    assert_eq!(ranked[0].item, "https://slug.social/~/t/champion");
+    assert_eq!(ranked[0].item, "t/champion");
     assert!(ranked[0].score > ranked[1].score);
 }
 
@@ -345,7 +345,7 @@ async fn full_workflow_reducer_and_ranking() {
     let ranked = ranked_items(&mut group, 20000, 1e-9);
 
     assert_eq!(ranked.len(), 2);
-    assert_eq!(ranked[0].item, "https://slug.social/~/langs/rust"); // Should win
+    assert_eq!(ranked[0].item, "langs/rust"); // Should win
     assert!(ranked[0].score > ranked[1].score);
 }
 
@@ -359,28 +359,28 @@ fn reducer_materializes_ancestor_path_segments() {
         "@00000000-0000-0000-0000-000000000000:test:local/test\n~/ai-models/anthropic/claude-opus {opus}\n~/ai-models/anthropic/claude-sonnet {sonnet}\n",
     ));
 
-    // The intermediate path "https://slug.social/~/ai-models/anthropic" should appear as a child of "https://slug.social/~/ai-models".
-    let ai_models_children = state.item_children.get("https://slug.social/~/ai-models").expect("ai-models should have children");
+    // The intermediate path "ai-models/anthropic" should appear as a child of "ai-models".
+    let ai_models_children = state.item_children.get("ai-models").expect("ai-models should have children");
     assert!(
-        ai_models_children.contains("https://slug.social/~/ai-models/anthropic"),
+        ai_models_children.contains("ai-models/anthropic"),
         "ai-models/anthropic should be a child of ai-models"
     );
 
-    // The leaf items should still be children of "https://slug.social/~/ai-models/anthropic".
-    let anthropic_children = state.item_children.get("https://slug.social/~/ai-models/anthropic").expect("ai-models/anthropic should have children");
-    assert!(anthropic_children.contains("https://slug.social/~/ai-models/anthropic/claude-opus"));
-    assert!(anthropic_children.contains("https://slug.social/~/ai-models/anthropic/claude-sonnet"));
+    // The leaf items should still be children of "ai-models/anthropic".
+    let anthropic_children = state.item_children.get("ai-models/anthropic").expect("ai-models/anthropic should have children");
+    assert!(anthropic_children.contains("ai-models/anthropic/claude-opus"));
+    assert!(anthropic_children.contains("ai-models/anthropic/claude-sonnet"));
 
-    // Root should contain "https://slug.social/~/ai-models".
-    let root_children = state.item_children.get("https://slug.social/~").expect("root should have children");
-    assert!(root_children.contains("https://slug.social/~/ai-models"));
+    // Root should contain "ai-models".
+    let root_children = state.item_children.get("").expect("root should have children");
+    assert!(root_children.contains("ai-models"));
 
     // The phantom intermediates should NOT be in the items set (they weren't explicitly created).
-    assert!(!state.items.contains("https://slug.social/~/ai-models"));
-    assert!(!state.items.contains("https://slug.social/~/ai-models/anthropic"));
+    assert!(!state.items.contains("ai-models"));
+    assert!(!state.items.contains("ai-models/anthropic"));
     // But the leaf items should be.
-    assert!(state.items.contains("https://slug.social/~/ai-models/anthropic/claude-opus"));
-    assert!(state.items.contains("https://slug.social/~/ai-models/anthropic/claude-sonnet"));
+    assert!(state.items.contains("ai-models/anthropic/claude-opus"));
+    assert!(state.items.contains("ai-models/anthropic/claude-sonnet"));
 }
 
 #[test]
@@ -389,17 +389,19 @@ fn canonicalization_is_consistent() {
     assert_eq!(canonicalize_tag("tag"), "tag");
     assert_eq!(canonicalize_tag("TAG"), "tag");
 
-    assert_eq!(canonicalize_item("/item"), "https://slug.social/item");
-    assert_eq!(canonicalize_item("item"), "https://slug.social/item");
-    assert_eq!(canonicalize_item("ITEM"), "https://slug.social/item");
-    assert_eq!(canonicalize_item("~/music/song"), "https://slug.social/~/music/song");
+    // Local items canonicalize to schemeless path
+    assert_eq!(canonicalize_item("/item"), "item");
+    assert_eq!(canonicalize_item("item"), "item");
+    assert_eq!(canonicalize_item("ITEM"), "item");
+    assert_eq!(canonicalize_item("~/music/song"), "music/song");
     assert_eq!(
-        canonicalize_item("https://slug.social/~/music/song"),
-        "https://slug.social/~/music/song"
+        canonicalize_item("music/song"),
+        "music/song"
     );
+    // External URLs canonicalize to schemeless: https://host/path -> host/path
     assert_eq!(
         canonicalize_item("https://open.spotify.com/track/AbC123"),
-        "https://open.spotify.com/track/AbC123"
+        "open.spotify.com/track/AbC123"
     );
 }
 
@@ -434,9 +436,9 @@ fn ranking_repeated_votes_normalized() {
 
     // Same winner regardless of how many times voted.
     assert_eq!(ranked_once[0].item, ranked_many[0].item);
-    assert_eq!(ranked_once[0].item, "https://slug.social/~/norm/a");
+    assert_eq!(ranked_once[0].item, "norm/a");
     assert_eq!(ranked_once[1].item, ranked_many[1].item);
-    assert_eq!(ranked_once[1].item, "https://slug.social/~/norm/b");
+    assert_eq!(ranked_once[1].item, "norm/b");
 
     // Scores should be identical (normalization makes repeated votes idempotent).
     let eps = 1e-6;
@@ -466,8 +468,8 @@ fn reducer_zero_zero_vote_ratio_normalizes_to_one_one() {
         "@00000000-0000-0000-0000-000000000000:test:local/test\n~/t/a {a}\n~/t/b {b}\n~/t/a 0:0 ~/t/b {zero}\n",
     ));
     let group = &state.ranking_group;
-    let a_idx = group.item_to_idx["https://slug.social/~/t/a"];
-    let b_idx = group.item_to_idx["https://slug.social/~/t/b"];
+    let a_idx = group.item_to_idx["t/a"];
+    let b_idx = group.item_to_idx["t/b"];
     // 0:0 should normalize to 1:1 — both directions should have weight
     assert!(group.edges.contains_key(&(a_idx, b_idx)));
     assert!(group.edges.contains_key(&(b_idx, a_idx)));
@@ -483,8 +485,8 @@ fn reducer_negative_ratio_clamped_to_zero() {
     let mut group = GroupState::new();
     group.apply_vote(slugsocial_server::reducer::VoteData {
         ts: 1,
-        a: "https://slug.social/~/t/a".to_string(),
-        b: "https://slug.social/~/t/b".to_string(),
+        a: "t/a".to_string(),
+        b: "t/b".to_string(),
         ratio_left: -5,
         ratio_right: -3,
         body: "negative".to_string(),
@@ -493,8 +495,8 @@ fn reducer_negative_ratio_clamped_to_zero() {
     });
     assert_eq!(group.idx_to_item.len(), 2);
     // Both edges should exist (negatives clamped to 0, then 0:0 -> 1:1)
-    let a_idx = group.item_to_idx["https://slug.social/~/t/a"];
-    let b_idx = group.item_to_idx["https://slug.social/~/t/b"];
+    let a_idx = group.item_to_idx["t/a"];
+    let b_idx = group.item_to_idx["t/b"];
     assert!(group.edges.contains_key(&(a_idx, b_idx)));
     assert!(group.edges.contains_key(&(b_idx, a_idx)));
 }
@@ -507,39 +509,33 @@ fn reducer_deep_path_ancestor_materialization_four_levels() {
         1,
         "@00000000-0000-0000-0000-000000000000:test:local/test\n~/a/b/c/d {leaf}\n",
     ));
-    // All intermediate children edges should exist (empty → host → ~/ → …).
+    // All intermediate children edges should exist: "" → "a" → "a/b" → "a/b/c" → "a/b/c/d"
     let root = state.item_children.get("").expect("root should exist");
     assert!(
-        root.contains("https://slug.social"),
-        "root should contain host URL segment"
+        root.contains("a"),
+        "root should contain 'a'"
     );
 
-    let host_children = state
+    let a_children = state
         .item_children
-        .get("https://slug.social")
-        .expect("host should have children");
-    assert!(host_children.contains("https://slug.social/~"));
+        .get("a")
+        .expect("a should have children");
+    assert!(a_children.contains("a/b"));
 
-    let tilde_scope = state
+    let ab_children = state
         .item_children
-        .get("https://slug.social/~")
-        .expect("~/ scope should have children");
-    assert!(tilde_scope.contains("https://slug.social/~/a"));
+        .get("a/b")
+        .expect("a/b should have children");
+    assert!(ab_children.contains("a/b/c"));
 
-    let a_children = state.item_children.get("https://slug.social/~/a").expect("a should have children");
-    assert!(a_children.contains("https://slug.social/~/a/b"));
-
-    let ab_children = state.item_children.get("https://slug.social/~/a/b").expect("a/b should have children");
-    assert!(ab_children.contains("https://slug.social/~/a/b/c"));
-
-    let abc_children = state.item_children.get("https://slug.social/~/a/b/c").expect("a/b/c should have children");
-    assert!(abc_children.contains("https://slug.social/~/a/b/c/d"));
+    let abc_children = state.item_children.get("a/b/c").expect("a/b/c should have children");
+    assert!(abc_children.contains("a/b/c/d"));
 
     // Only the leaf should be in items set
-    assert!(state.items.contains("https://slug.social/~/a/b/c/d"));
-    assert!(!state.items.contains("https://slug.social/~/a"));
-    assert!(!state.items.contains("https://slug.social/~/a/b"));
-    assert!(!state.items.contains("https://slug.social/~/a/b/c"));
+    assert!(state.items.contains("a/b/c/d"));
+    assert!(!state.items.contains("a"));
+    assert!(!state.items.contains("a/b"));
+    assert!(!state.items.contains("a/b/c"));
 }
 
 // ============================================================================
@@ -579,7 +575,7 @@ fn ranking_convergence_tolerance_triggers_early_exit() {
     // Very tight tolerance but huge max_iters — should still converge fast
     let ranked = ranked_items(&mut group, 1_000_000, 1e-15);
     assert_eq!(ranked.len(), 2);
-    assert_eq!(ranked[0].item, "https://slug.social/~/t/a");
+    assert_eq!(ranked[0].item, "t/a");
 }
 
 // ============================================================================
@@ -685,14 +681,14 @@ fn test_item_body_overwrite() {
         1,
         "@00000000-0000-0000-0000-000000000000:test:local/test\n~/t/x {first}\n",
     ));
-    assert_eq!(state.item_bodies.get("https://slug.social/~/t/x"), Some(&"first".to_string()));
+    assert_eq!(state.item_bodies.get("t/x"), Some(&"first".to_string()));
 
     state.apply_event(ingest_event(
         2,
         "@00000000-0000-0000-0000-000000000000:test:local/test\n~/t/x {second}\n",
     ));
     assert_eq!(
-        state.item_bodies.get("https://slug.social/~/t/x"),
+        state.item_bodies.get("t/x"),
         Some(&"second".to_string()),
         "last writer should win for item bodies"
     );
@@ -705,9 +701,9 @@ fn test_empty_body_not_stored() {
         1,
         "@00000000-0000-0000-0000-000000000000:test:local/test\n~/t/blank {   }\n",
     ));
-    assert!(state.items.contains("https://slug.social/~/t/blank"), "item should exist");
+    assert!(state.items.contains("t/blank"), "item should exist");
     assert!(
-        !state.item_bodies.contains_key("https://slug.social/~/t/blank"),
+        !state.item_bodies.contains_key("t/blank"),
         "whitespace-only body should not be stored"
     );
 }
@@ -723,7 +719,7 @@ fn test_duplicate_items_across_ingests() {
         2,
         "@00000000-0000-0000-0000-000000000000:test:local/test\n~/t/dup {second}\n",
     ));
-    let count = state.items.iter().filter(|i| *i == "https://slug.social/~/t/dup").count();
+    let count = state.items.iter().filter(|i| *i == "t/dup").count();
     assert_eq!(count, 1, "items set should deduplicate across ingests");
 }
 
@@ -792,7 +788,7 @@ fn test_untagged_thread_fallback() {
         1,
         "@00000000-0000-0000-0000-000000000000:test:local/test\n~/t/a {a}\n~/t/b {b}\n~/t/a 2:1 ~/t/b {reason}\n",
     ));
-    let vote = state.item_votes.get("https://slug.social/~/t/a").unwrap().front().unwrap();
+    let vote = state.item_votes.get("t/a").unwrap().front().unwrap();
     assert_eq!(vote.thread, "untagged", "votes without a #tag should use 'untagged'");
 }
 
@@ -805,17 +801,17 @@ fn test_multi_thread_historical_ingest_replays_to_first_thread_only() {
     ));
 
     // New replay semantics: single post belongs to one canonical thread (first declaration).
-    let vote = state.item_votes.get("https://slug.social/~/t/a").unwrap().front().unwrap();
+    let vote = state.item_votes.get("t/a").unwrap().front().unwrap();
     assert_eq!(vote.thread, "first");
     assert!(state.ingests_by_thread.contains_key("first"));
     assert!(!state.ingests_by_thread.contains_key("second"));
     assert!(state
         .item_threads
-        .get("https://slug.social/~/t/a")
+        .get("t/a")
         .is_some_and(|threads| threads.contains("first")));
     assert!(!state
         .item_threads
-        .get("https://slug.social/~/t/a")
+        .get("t/a")
         .is_some_and(|threads| threads.contains("second")));
 }
 
@@ -827,11 +823,11 @@ fn test_rank_history_created_for_voted_items() {
         "@00000000-0000-0000-0000-000000000000:test:local/test\n#rh\n~/t/a {a}\n~/t/b {b}\n~/t/a 3:1 ~/t/b {reason}\n",
     ));
     assert!(
-        state.rank_history.contains_key("https://slug.social/~/t/a"),
+        state.rank_history.contains_key("t/a"),
         "rank_history should have entry for voted item a"
     );
     assert!(
-        state.rank_history.contains_key("https://slug.social/~/t/b"),
+        state.rank_history.contains_key("t/b"),
         "rank_history should have entry for voted item b"
     );
 }
@@ -844,7 +840,7 @@ fn test_rank_history_not_created_for_unvoted_items() {
         "@00000000-0000-0000-0000-000000000000:test:local/test\n#rh\n~/t/c {just a definition}\n",
     ));
     assert!(
-        !state.rank_history.contains_key("https://slug.social/~/t/c"),
+        !state.rank_history.contains_key("t/c"),
         "rank_history should NOT have entry for item with no votes"
     );
 }
@@ -856,7 +852,7 @@ fn test_rank_history_first_entry_delta_zero() {
         1,
         "@00000000-0000-0000-0000-000000000000:test:local/test\n#rh\n~/t/a {a}\n~/t/b {b}\n~/t/a 3:1 ~/t/b {reason}\n",
     ));
-    let history_a = state.rank_history.get("https://slug.social/~/t/a").unwrap();
+    let history_a = state.rank_history.get("t/a").unwrap();
     assert_eq!(history_a.len(), 1);
     assert_eq!(
         history_a[0].scope_rank_delta, 0,
@@ -882,7 +878,7 @@ fn test_multi_actor_in_single_ingest() {
          ~/t/b 3:1 ~/t/a {actor2 vote}\n",
     ));
 
-    let votes_a = state.item_votes.get("https://slug.social/~/t/a").unwrap();
+    let votes_a = state.item_votes.get("t/a").unwrap();
     let actors: Vec<&str> = votes_a.iter().map(|v| v.actor.as_str()).collect();
     assert!(
         actors.contains(&"00000000-0000-0000-0000-000000000001:rig1:local/test"),
@@ -909,5 +905,91 @@ fn test_ingests_by_thread_ordering() {
     assert_eq!(thread_ingests[0], "test-300");
     assert_eq!(thread_ingests[1], "test-200");
     assert_eq!(thread_ingests[2], "test-100");
+}
+
+// ============================================================================
+// URL-away namespace tests
+// ============================================================================
+
+#[test]
+fn canonicalize_external_url_to_schemeless() {
+    // External URL: strip scheme, store as host/path
+    assert_eq!(
+        canonicalize_item("https://open.spotify.com/track/abc123"),
+        "open.spotify.com/track/abc123"
+    );
+
+    assert_eq!(
+        canonicalize_item("https://example.com/foo/bar"),
+        "example.com/foo/bar"
+    );
+
+    // Also support http://
+    assert_eq!(
+        canonicalize_item("http://example.com/path"),
+        "example.com/path"
+    );
+}
+
+#[test]
+fn canonicalize_local_items_to_schemeless() {
+    // Local items: strip ~/ prefix, store as path
+    assert_eq!(
+        canonicalize_item("~/languages/python"),
+        "languages/python"
+    );
+
+    assert_eq!(
+        canonicalize_item("~/my/item"),
+        "my/item"
+    );
+}
+
+#[test]
+fn item_routes_as_away_detects_external() {
+    // External: first segment contains .
+    assert!(item_routes_as_away("open.spotify.com/track/abc"));
+    assert!(item_routes_as_away("example.com/path"));
+
+    // Local: first segment does not contain .
+    assert!(!item_routes_as_away("languages/python"));
+    assert!(!item_routes_as_away("my/item"));
+    assert!(!item_routes_as_away("single"));
+}
+
+#[test]
+fn reconstruct_https_url_for_away_items() {
+    // External URL: schemeless -> add https://
+    assert_eq!(
+        item_reconstruct_https_url("open.spotify.com/track/abc123"),
+        "https://open.spotify.com/track/abc123"
+    );
+}
+
+#[test]
+fn reconstruct_https_url_for_local_items() {
+    // Local item: add slug.social/~/
+    assert_eq!(
+        item_reconstruct_https_url("languages/python"),
+        "https://slug.social/~/languages/python"
+    );
+}
+
+#[test]
+fn item_api_path_away_prefix() {
+    // External: use -/ prefix
+    assert_eq!(
+        item_api_path("open.spotify.com/track/abc123"),
+        "-/open.spotify.com/track/abc123"
+    );
+}
+
+#[test]
+fn item_api_path_local_prefix() {
+    // Local: use / prefix
+    assert_eq!(
+        item_api_path("languages/python"),
+        "/languages/python"
+    );
 }
 

@@ -13,26 +13,27 @@ pub fn canonicalize_item(input: &str) -> String {
         return String::new();
     }
 
+    // Handle external URLs: store schemeless as host/path
     if let Some(rest) = s.strip_prefix("https://") {
         let (host, tail) = rest.split_once('/').map_or((rest, ""), |(h, t)| (h, t));
         let host = host.trim().to_lowercase();
         if tail.is_empty() {
-            return format!("https://{}", host);
+            return host;
         } else {
-            return format!("https://{}/{}", host, tail);
+            return format!("{}/{}", host, tail);
         }
     }
     if let Some(rest) = s.strip_prefix("http://") {
         let (host, tail) = rest.split_once('/').map_or((rest, ""), |(h, t)| (h, t));
         let host = host.trim().to_lowercase();
         if tail.is_empty() {
-            return format!("http://{}", host);
+            return host;
         } else {
-            return format!("http://{}/{}", host, tail);
+            return format!("{}/{}", host, tail);
         }
     }
 
-    let is_tilde = s.starts_with("~/");
+    // Handle local items: ~/path becomes just path
     let rest = s.strip_prefix("~/").or_else(|| s.strip_prefix("/")).unwrap_or(s);
 
     let tail = rest
@@ -48,12 +49,38 @@ pub fn canonicalize_item(input: &str) -> String {
         .collect::<Vec<_>>()
         .join("/");
 
-    if is_tilde {
-        format!("https://slug.social/~/{}", tail)
-    } else if tail.is_empty() {
-        "https://slug.social".to_string()
+    // Return schemeless canonical form
+    tail
+}
+
+/// Check if a canonical item is an external/away item (contains `.` in first segment).
+pub fn item_routes_as_away(canonical: &str) -> bool {
+    if canonical.is_empty() {
+        return false;
+    }
+    canonical.split('/').next().map(|seg| seg.contains('.')).unwrap_or(false)
+}
+
+/// Reconstruct the HTTPS URL from a canonical item for embeds and external links.
+pub fn item_reconstruct_https_url(canonical: &str) -> String {
+    if canonical.is_empty() {
+        return "https://slug.social".to_string();
+    }
+    if item_routes_as_away(canonical) {
+        // External URL: schemeless canonical -> https://canonical
+        format!("https://{}", canonical)
     } else {
-        format!("https://slug.social/{}", tail)
+        // Local item: path -> https://slug.social/~/path
+        format!("https://slug.social/~/{}", canonical)
+    }
+}
+
+/// Get the API path prefix for an item: `/canonical` for local or `-/canonical` for away.
+pub fn item_api_path(canonical: &str) -> String {
+    if item_routes_as_away(canonical) {
+        format!("-/{}", canonical)
+    } else {
+        format!("/{}", canonical)
     }
 }
 
@@ -63,20 +90,7 @@ pub fn item_path_segments(input: &str) -> Vec<String> {
         return vec![];
     }
 
-    if let Some(rest) = canonical.strip_prefix("https://") {
-        let (host, tail) = rest.split_once('/').map_or((rest, ""), |(h, t)| (h, t));
-        let mut out = vec![format!("https://{}", host)];
-        out.extend(tail.split('/').filter(|s| !s.is_empty()).map(|s| s.to_string()));
-        return out;
-    }
-    if let Some(rest) = canonical.strip_prefix("http://") {
-        let (host, tail) = rest.split_once('/').map_or((rest, ""), |(h, t)| (h, t));
-        let mut out = vec![format!("http://{}", host)];
-        out.extend(tail.split('/').filter(|s| !s.is_empty()).map(|s| s.to_string()));
-        return out;
-    }
-
-    // Should be unreachable since all canonical items are now URLs
+    // All canonicals are schemeless now, split by /
     canonical
         .split('/')
         .filter(|s| !s.is_empty())
@@ -101,10 +115,17 @@ pub fn is_private_path(path: &str) -> bool {
     path_owner_uuid(path).is_some()
 }
 
-/// If the path's first segment after the ~ is a full UUID v4, return it. Otherwise None.
-pub fn path_owner_uuid(path: &str) -> Option<&str> {
-    let rest = path.strip_prefix("https://slug.social/~/")?;
-    let seg = rest.split('/').next()?;
+/// If the canonical path's first segment is a full UUID v4, return it. Otherwise None.
+/// Canonical paths for private items look like: "uuid/path/to/item"
+pub fn path_owner_uuid(canonical: &str) -> Option<&str> {
+    if canonical.is_empty() {
+        return None;
+    }
+    // For external/away items, first segment will contain a dot, so it can't be a UUID
+    if item_routes_as_away(canonical) {
+        return None;
+    }
+    let seg = canonical.split('/').next()?;
     if uuid::Uuid::parse_str(seg).is_ok() { Some(seg) } else { None }
 }
 

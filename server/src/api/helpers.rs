@@ -8,7 +8,7 @@ use slug_types::*;
 use std::collections::HashMap;
 
 use crate::{
-    events::canonicalize_item,
+    events::{canonicalize_item, item_api_path},
     ranking::connected_components_from_voted_pairs,
     reducer::ReducerState,
 };
@@ -30,13 +30,9 @@ pub fn now_ms() -> i64 {
     t.as_millis() as i64
 }
 
-/// Serialize a canonical item for JSON: absolute URLs stay as-is; bare paths get a `/` prefix.
-pub fn item_path_for_api(item: &str) -> String {
-    if item.starts_with("http://") || item.starts_with("https://") {
-        item.to_string()
-    } else {
-        format!("/{}", item)
-    }
+/// Serialize a canonical item for JSON: use item_api_path to get the correct prefix.
+pub fn item_path_for_api(canonical: &str) -> String {
+    item_api_path(canonical)
 }
 
 /// Resolve an item path as a first-class canonical path.
