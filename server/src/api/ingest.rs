@@ -11,6 +11,7 @@ use std::collections::{HashMap, HashSet};
 use crate::{
     dsl,
     events::{canonicalize_actor, canonicalize_item, canonicalize_tag, item_parent_path, Event, Ingest},
+    path_types::CanonicalItemUrl,
     reducer::ReducerState,
     state::AppState,
 };
@@ -120,7 +121,10 @@ pub fn validate_ingest_document(
                 };
                 let missing: Vec<String> = [&a, &b]
                     .into_iter()
-                    .filter(|it| !defined_in_doc.contains(*it) && !reduced.items.contains(*it))
+                    .filter(|it| {
+                        let key = CanonicalItemUrl((*it).clone());
+                        !defined_in_doc.contains(*it) && !reduced.items.contains(&key)
+                    })
                     .map(|it| item_path_for_api(it))
                     .collect();
                 if !missing.is_empty() {
@@ -135,7 +139,10 @@ pub fn validate_ingest_document(
                 }
                 let missing_body: Vec<String> = [&a, &b]
                     .into_iter()
-                    .filter(|it| !defined_in_doc.contains(*it) && !reduced.item_bodies.contains_key(*it))
+                    .filter(|it| {
+                        let key = CanonicalItemUrl((*it).clone());
+                        !defined_in_doc.contains(*it) && !reduced.item_bodies.contains_key(&key)
+                    })
                     .map(|it| item_path_for_api(it))
                     .collect();
                 if !missing_body.is_empty() {
@@ -287,11 +294,11 @@ fn compute_scope_rank_changes(
         for comp in &rankings.component_rankings {
             let total = comp.ranked.len();
             for (i, item) in comp.ranked.iter().enumerate() {
-                map.insert(item.item.clone(), Some(RankPosition { rank: i + 1, of: total }));
+                map.insert(item.item.as_str().to_string(), Some(RankPosition { rank: i + 1, of: total }));
             }
         }
         for item in &rankings.unranked_items {
-            map.insert(item.clone(), None);
+            map.insert(item.as_str().to_string(), None);
         }
         map
     }
@@ -573,7 +580,7 @@ pub async fn post_check(
                         .ranked
                         .into_iter()
                         .map(|r| RankRow {
-                            item: item_path_for_api(&r.item),
+                            item: item_path_for_api(r.item.as_str()),
                             score: r.score,
                             percent: None,
                         })
@@ -590,7 +597,7 @@ pub async fn post_check(
                 unranked_items: scoped
                     .unranked_items
                     .into_iter()
-                    .map(|it| item_path_for_api(&it))
+                    .map(|it| item_path_for_api(it.as_str()))
                     .collect(),
             }
         })

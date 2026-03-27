@@ -10,6 +10,7 @@ use std::collections::HashSet;
 
 use crate::{
     events::{canonicalize_item, path_owner_uuid},
+    path_types::CanonicalItemUrl,
     state::AppState,
 };
 
@@ -41,13 +42,13 @@ pub async fn get_paths(State(state): State<AppState>, headers: HeaderMap, Query(
         .map(|roots| {
             let mut v: Vec<PathSummary> = roots.iter()
                 .filter(|path| {
-                    match path_owner_uuid(path) {
+                    match path_owner_uuid(path.as_str()) {
                         None => true,
                         Some(owner) => authed_uuid.as_deref() == Some(owner),
                     }
                 })
                 .map(|path| {
-                let children = reduced.item_children.get(path).map(|s| s.len()).unwrap_or(0);
+                let children = reduced.item_children.get(path.as_str()).map(|s| s.len()).unwrap_or(0);
                 PathSummary {
                     path: format!("~/{}", path),
                     children,
@@ -76,18 +77,18 @@ pub async fn get_leaves(State(state): State<AppState>, headers: HeaderMap, Query
     let reduced = reduced_arc.read().await;
     let passkey = headers.get("x-slug-passkey").and_then(|v| v.to_str().ok()).map(|s| s.to_string()).or(q.passkey);
     let authed_uuid = verified_actor_uuid(&reduced, q.actor.as_deref(), passkey.as_deref());
-    let parents: HashSet<&String> = reduced.item_children.keys().collect();
+    let parents: HashSet<&str> = reduced.item_children.keys().map(|s| s.as_str()).collect();
     let mut paths: Vec<String> = reduced
         .items
         .iter()
-        .filter(|p| !parents.contains(p))
+        .filter(|p| !parents.contains(p.as_str()))
         .filter(|p| {
-            match path_owner_uuid(p) {
+            match path_owner_uuid(p.as_str()) {
                 None => true,
                 Some(owner) => authed_uuid.as_deref() == Some(owner),
             }
         })
-        .cloned()
+        .map(|p| p.as_str().to_string())
         .collect();
     paths.sort();
     Json(LeavesResponse { paths }).into_response()
@@ -107,12 +108,13 @@ pub struct ItemQuery {
 
 pub async fn get_item(State(state): State<AppState>, headers: HeaderMap, Query(q): Query<ItemQuery>) -> impl IntoResponse {
     let reduced_arc = state.reduced.clone();
-    let item = canonicalize_item(&q.item);
+    let item_str = canonicalize_item(&q.item);
+    let item = CanonicalItemUrl(item_str.clone());
     let reduced = reduced_arc.read().await;
     let passkey = headers.get("x-slug-passkey").and_then(|v| v.to_str().ok()).map(|s| s.to_string()).or(q.passkey);
     let authed_uuid = verified_actor_uuid(&reduced, q.actor.as_deref(), passkey.as_deref());
 
-    if let Some(owner) = path_owner_uuid(&item) {
+    if let Some(owner) = path_owner_uuid(&item_str) {
         if authed_uuid.as_deref() != Some(owner) {
             return api_error(StatusCode::FORBIDDEN, "private item: authentication required", Some("provide ?actor=@... and x-slug-passkey header".to_string()));
         }
@@ -122,7 +124,7 @@ pub async fn get_item(State(state): State<AppState>, headers: HeaderMap, Query(q
         return api_error(
             StatusCode::NOT_FOUND,
             "item not found",
-            Some(format!("{} does not exist", item_path_for_api(&item))),
+            Some(format!("{} does not exist", item_path_for_api(&item_str))),
         );
     }
 
@@ -149,7 +151,7 @@ pub async fn get_item(State(state): State<AppState>, headers: HeaderMap, Query(q
         .unwrap_or_default();
 
     Json(ItemResponse {
-        item: item.clone(),
+        item: item_str.clone(),
         body,
         truncated,
         body_len,
@@ -186,7 +188,7 @@ pub async fn get_recent_votes(
     let iter = group.recent_votes.iter();
     let iter: Box<dyn Iterator<Item = _>> = if let Some(parent) = &q.parent {
         let parent_can = canonicalize_item(parent);
-        Box::new(iter.filter(move |v| vote_touches_path(&v.a, &v.b, &parent_can)))
+        Box::new(iter.filter(move |v| vote_touches_path(v.a.as_str(), v.b.as_str(), &parent_can)))
     } else {
         Box::new(iter)
     };
@@ -196,7 +198,7 @@ pub async fn get_recent_votes(
         .filter(move |v| {
             // Filter out votes involving private items not owned by authed actor
             for it in [&v.a, &v.b] {
-                if let Some(owner) = path_owner_uuid(it) {
+                if let Some(owner) = path_owner_uuid(it.as_str()) {
                     if authed_uuid_clone.as_deref() != Some(owner) {
                         return false;
                     }
@@ -207,8 +209,8 @@ pub async fn get_recent_votes(
         .take(limit)
         .map(|v| VoteRow {
             ts: v.ts,
-            a: v.a.clone(),
-            b: v.b.clone(),
+            a: v.a.as_str().to_string(),
+            b: v.b.as_str().to_string(),
             ratio: format!("{}:{}", v.ratio_left, v.ratio_right),
             actor: Some(format!("@{}", v.actor)),
             body: v.body.clone(),
@@ -236,14 +238,15 @@ pub async fn get_matchup(
     Query(q): Query<MatchupQuery>,
 ) -> impl IntoResponse {
     let reduced_arc = state.reduced.clone();
-    let item = canonicalize_item(&q.item);
+    let item_str = canonicalize_item(&q.item);
+    let item = CanonicalItemUrl(item_str.clone());
     let limit = q.limit.unwrap_or(50).clamp(1, 200);
 
     let reduced = reduced_arc.read().await;
     let passkey = headers.get("x-slug-passkey").and_then(|v| v.to_str().ok()).map(|s| s.to_string()).or(q.passkey);
     let authed_uuid = verified_actor_uuid(&reduced, q.actor.as_deref(), passkey.as_deref());
 
-    if let Some(owner) = path_owner_uuid(&item) {
+    if let Some(owner) = path_owner_uuid(&item_str) {
         if authed_uuid.as_deref() != Some(owner) {
             return api_error(StatusCode::FORBIDDEN, "private item: authentication required", Some("provide ?actor=@... and x-slug-passkey header".to_string()));
         }
@@ -253,7 +256,7 @@ pub async fn get_matchup(
         return api_error(
             StatusCode::NOT_FOUND,
             "item not found",
-            Some(format!("{} does not exist", item_path_for_api(&item))),
+            Some(format!("{} does not exist", item_path_for_api(&item_str))),
         );
     }
 
@@ -266,7 +269,7 @@ pub async fn get_matchup(
                 .filter(|v| {
                     // Filter out votes involving private opponents not owned by authed actor
                     for it in [&v.a, &v.b] {
-                        if let Some(owner) = path_owner_uuid(it) {
+                        if let Some(owner) = path_owner_uuid(it.as_str()) {
                             if authed_uuid.as_deref() != Some(owner) {
                                 return false;
                             }
@@ -276,8 +279,8 @@ pub async fn get_matchup(
                 })
                 .map(|v| VoteRow {
                     ts: v.ts,
-                    a: v.a.clone(),
-                    b: v.b.clone(),
+                    a: v.a.as_str().to_string(),
+                    b: v.b.as_str().to_string(),
                     ratio: format!("{}:{}", v.ratio_left, v.ratio_right),
                     actor: Some(format!("@{}", v.actor)),
                     body: v.body.clone(),
@@ -288,7 +291,7 @@ pub async fn get_matchup(
         .unwrap_or_default();
 
     Json(MatchupResponse {
-        item: item_path_for_api(&item),
+        item: item_path_for_api(&item_str),
         votes,
     })
     .into_response()

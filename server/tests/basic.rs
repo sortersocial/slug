@@ -483,8 +483,8 @@ fn reducer_negative_ratio_clamped_to_zero() {
     let mut group = GroupState::new();
     group.apply_vote(slugsocial_server::reducer::VoteData {
         ts: 1,
-        a: "https://slug.social/~/t/a".to_string(),
-        b: "https://slug.social/~/t/b".to_string(),
+        a: slugsocial_server::path_types::CanonicalItemUrl("https://slug.social/~/t/a".to_string()),
+        b: slugsocial_server::path_types::CanonicalItemUrl("https://slug.social/~/t/b".to_string()),
         ratio_left: -5,
         ratio_right: -3,
         body: "negative".to_string(),

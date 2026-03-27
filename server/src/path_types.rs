@@ -9,6 +9,7 @@
 //! This module adds lightweight newtypes so code can be explicit about what it
 //! expects without changing core storage formats.
 
+use std::borrow::Borrow;
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
@@ -57,6 +58,31 @@ impl CanonicalItemUrl {
 impl fmt::Display for CanonicalItemUrl {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(f)
+    }
+}
+
+/// Allow `HashMap<CanonicalItemUrl, _>` to be searched by `&str`.
+impl Borrow<str> for CanonicalItemUrl {
+    fn borrow(&self) -> &str {
+        &self.0
+    }
+}
+
+impl PartialEq<str> for CanonicalItemUrl {
+    fn eq(&self, other: &str) -> bool {
+        self.0 == other
+    }
+}
+
+impl PartialEq<&str> for CanonicalItemUrl {
+    fn eq(&self, other: &&str) -> bool {
+        self.0 == *other
+    }
+}
+
+impl PartialEq<String> for CanonicalItemUrl {
+    fn eq(&self, other: &String) -> bool {
+        &self.0 == other
     }
 }
 

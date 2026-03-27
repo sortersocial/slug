@@ -9,6 +9,7 @@ use std::collections::HashMap;
 
 use crate::{
     events::canonicalize_item,
+    path_types::CanonicalItemUrl,
     ranking::connected_components_from_voted_pairs,
     reducer::ReducerState,
 };
@@ -126,8 +127,10 @@ pub fn pick_random_distinct(items: &[String]) -> Option<(String, String)> {
 }
 
 pub fn is_pair_voted(group: &crate::reducer::GroupState, a: &str, b: &str) -> bool {
-    let Some(&a_idx) = group.item_to_idx.get(a) else { return false; };
-    let Some(&b_idx) = group.item_to_idx.get(b) else { return false; };
+    let a_key = CanonicalItemUrl(a.to_string());
+    let b_key = CanonicalItemUrl(b.to_string());
+    let Some(&a_idx) = group.item_to_idx.get(&a_key) else { return false; };
+    let Some(&b_idx) = group.item_to_idx.get(&b_key) else { return false; };
     let (i, j) = if a_idx < b_idx { (a_idx, b_idx) } else { (b_idx, a_idx) };
     group.voted_pairs.contains(&(i, j))
 }
@@ -140,7 +143,10 @@ pub fn compute_connectivity_stats(reduced: &ReducerState, pool: &[String]) -> Co
     // Map pool items to global indices (items not yet in the group get no index)
     let global_idxs: Vec<Option<usize>> = pool
         .iter()
-        .map(|it| group.item_to_idx.get(it).copied())
+        .map(|it| {
+            let key = CanonicalItemUrl(it.clone());
+            group.item_to_idx.get(&key).copied()
+        })
         .collect();
     let present: Vec<usize> = global_idxs.iter().filter_map(|x| *x).collect();
 

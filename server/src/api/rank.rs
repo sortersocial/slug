@@ -10,6 +10,7 @@ use slug_types::*;
 use std::collections::HashSet;
 
 use crate::{
+    path_types::CanonicalItemUrl,
     ranking::{connected_components_from_voted_pairs, ranked_items_subset},
     state::AppState,
 };
@@ -61,7 +62,8 @@ pub async fn get_rank(State(state): State<AppState>, headers: HeaderMap, Query(q
     if !is_global && !specs.is_empty() {
         let none_exist = specs.iter().all(|spec| {
             let canon = crate::events::canonicalize_item(spec);
-            !reduced.items.contains(&canon) && !reduced.item_children.contains_key(&canon)
+            let canon_key = CanonicalItemUrl(canon.clone());
+            !reduced.items.contains(&canon_key) && !reduced.item_children.contains_key(&canon)
         });
         if none_exist {
             return api_error(
@@ -73,7 +75,7 @@ pub async fn get_rank(State(state): State<AppState>, headers: HeaderMap, Query(q
     }
 
     let rankings = if is_global {
-        let all_items: Vec<String> = reduced.items.iter().cloned().collect();
+        let all_items: Vec<CanonicalItemUrl> = reduced.items.iter().cloned().collect();
         crate::scope_rank::build_rankings_for_item_set(&reduced, &all_items)
     } else if specs.is_empty() {
         crate::scope_rank::build_children_rankings(&reduced, "https://slug.social/~")
@@ -97,12 +99,12 @@ pub async fn get_rank(State(state): State<AppState>, headers: HeaderMap, Query(q
                 ranking: c
                     .ranked
                     .into_iter()
-                    .filter(|r| match crate::events::path_owner_uuid(&r.item) {
+                    .filter(|r| match crate::events::path_owner_uuid(r.item.as_str()) {
                         None => true,
                         Some(owner) => authed_uuid.as_deref() == Some(owner),
                     })
                     .map(|r| RankRow {
-                        item: item_path_for_api(&r.item),
+                        item: item_path_for_api(r.item.as_str()),
                         percent: if want_percent {
                             Some((r.score / max_score) * 100.0)
                         } else {
@@ -118,11 +120,11 @@ pub async fn get_rank(State(state): State<AppState>, headers: HeaderMap, Query(q
     let prefixed_unranked: Vec<String> = rankings
         .unranked_items
         .into_iter()
-        .filter(|p| match crate::events::path_owner_uuid(p) {
+        .filter(|p| match crate::events::path_owner_uuid(p.as_str()) {
             None => true,
             Some(owner) => authed_uuid.as_deref() == Some(owner),
         })
-        .map(|s| item_path_for_api(&s))
+        .map(|s| item_path_for_api(s.as_str()))
         .collect();
 
     let offset = q.offset.unwrap_or(0);
@@ -194,11 +196,11 @@ pub async fn get_global_rank(
         let bot = items.last().map(|r| r.score).unwrap_or(0.0);
         let range = (top - bot).max(1e-12);
         for r in items {
-            if let Some(owner) = crate::events::path_owner_uuid(&r.item) {
+            if let Some(owner) = crate::events::path_owner_uuid(r.item.as_str()) {
                 if authed_uuid.as_deref() != Some(owner) { continue; }
             }
             let pct = want_percent.then(|| ((r.score - bot) / range * 100.0).clamp(0.0, 100.0));
-            ranked.push(RankRow { item: item_path_for_api(&r.item), score: r.score, percent: pct });
+            ranked.push(RankRow { item: item_path_for_api(r.item.as_str()), score: r.score, percent: pct });
         }
     }
 
@@ -209,11 +211,11 @@ pub async fn get_global_rank(
         .items
         .iter()
         .filter(|it| !reduced.ranking_group.item_to_idx.contains_key(*it))
-        .filter(|it| match crate::events::path_owner_uuid(it) {
+        .filter(|it| match crate::events::path_owner_uuid(it.as_str()) {
             None => true,
             Some(owner) => authed_uuid.as_deref() == Some(owner),
         })
-        .cloned()
+        .map(|it| it.as_str().to_string())
         .collect();
     unranked.sort();
     let unranked_total = unranked.len();
@@ -266,10 +268,11 @@ pub async fn get_rank_history(
         .or(q.passkey);
     let authed_uuid = verified_actor_uuid(&reduced, q.actor.as_deref(), passkey.as_deref());
 
-    let item = crate::events::canonicalize_item(&q.item);
+    let item_str = crate::events::canonicalize_item(&q.item);
+    let item = CanonicalItemUrl(item_str.clone());
 
     // Private item access check.
-    if let Some(owner) = crate::events::path_owner_uuid(&item) {
+    if let Some(owner) = crate::events::path_owner_uuid(&item_str) {
         if authed_uuid.as_deref() != Some(owner) {
             return (axum::http::StatusCode::FORBIDDEN, Json(slug_types::ApiError {
                 ok: false,
@@ -290,7 +293,7 @@ pub async fn get_rank_history(
                     if let crate::dsl::Stmt::Vote { item1, item2, ratio_left, ratio_right, explanation } = s {
                         let a = crate::events::canonicalize_item(&item1);
                         let b = crate::events::canonicalize_item(&item2);
-                        if a == item || b == item {
+                        if a == item_str || b == item_str {
                             Some(VoteRow {
                                 ts: e.ts,
                                 a: item_path_for_api(&a),
@@ -334,7 +337,7 @@ pub async fn get_rank_history(
     }).collect();
 
     Json(slug_types::RankHistoryResponse {
-        item: item_path_for_api(&item),
+        item: item_path_for_api(&item_str),
         history,
     }).into_response()
 }
@@ -361,15 +364,15 @@ pub async fn get_pair(State(state): State<AppState>, headers: HeaderMap, Query(q
         let passkey = headers.get("x-slug-passkey").and_then(|v| v.to_str().ok()).map(|s| s.to_string()).or_else(|| q.passkey.clone());
         let authed_uuid = verified_actor_uuid(&reduced, q.actor.as_deref(), passkey.as_deref());
         let specs = parse_parent_specs(q.parent.as_ref());
-        let raw_pool = if specs.is_empty() {
+        let raw_pool: Vec<CanonicalItemUrl> = if specs.is_empty() {
             reduced.ranking_group.idx_to_item.clone()
         } else {
             crate::scope_rank::resolve_scope(&reduced, &specs)
         };
-        raw_pool.into_iter().filter(|it| match crate::events::path_owner_uuid(it) {
+        raw_pool.into_iter().filter(|it| match crate::events::path_owner_uuid(it.as_str()) {
             None => true,
             Some(owner) => authed_uuid.as_deref() == Some(owner),
-        }).collect()
+        }).map(|it| it.0).collect()
     };
 
     if pool.len() < 2 {
@@ -387,13 +390,15 @@ pub async fn get_pair(State(state): State<AppState>, headers: HeaderMap, Query(q
         };
         let (left_body, right_body, threads, connectivity) = {
             let reduced = reduced_arc.read().await;
-            let lb = reduced.item_bodies.get(&left).cloned();
-            let rb = reduced.item_bodies.get(&right).cloned();
+            let left_key = CanonicalItemUrl(left.clone());
+            let right_key = CanonicalItemUrl(right.clone());
+            let lb = reduced.item_bodies.get(&left_key).cloned();
+            let rb = reduced.item_bodies.get(&right_key).cloned();
             let th: Vec<String> = reduced
                 .item_threads
-                .get(&left)
+                .get(&left_key)
                 .into_iter()
-                .chain(reduced.item_threads.get(&right))
+                .chain(reduced.item_threads.get(&right_key))
                 .flat_map(|s| s.iter().cloned())
                 .collect::<std::collections::HashSet<_>>()
                 .into_iter()
@@ -420,11 +425,14 @@ pub async fn get_pair(State(state): State<AppState>, headers: HeaderMap, Query(q
         } else {
                 let mut rng = rand::thread_rng();
                 let idxs: Vec<usize> = pool.iter()
-                    .filter_map(|it| group.item_to_idx.get(it).copied())
+                    .filter_map(|it| {
+                        let key = CanonicalItemUrl(it.clone());
+                        group.item_to_idx.get(&key).copied()
+                    })
                     .collect();
                 let ranked = ranked_items_subset(group, &idxs, 10000, 1e-8);
                 let ranked_set: std::collections::HashSet<String> =
-                    ranked.iter().map(|r| r.item.clone()).collect();
+                    ranked.iter().map(|r| r.item.as_str().to_string()).collect();
                 let unsorted: Vec<String> = pool.iter()
                     .filter(|it| !ranked_set.contains(*it))
                     .cloned()
@@ -434,7 +442,7 @@ pub async fn get_pair(State(state): State<AppState>, headers: HeaderMap, Query(q
                 if !unsorted.is_empty() {
                     if let Some(left) = unsorted.choose(&mut rng).cloned() {
                         let mut candidates: Vec<String> = if !ranked.is_empty() {
-                            ranked.iter().map(|r| r.item.clone()).collect()
+                            ranked.iter().map(|r| r.item.as_str().to_string()).collect()
                         } else {
                             pool.clone()
                         };
@@ -445,10 +453,10 @@ pub async fn get_pair(State(state): State<AppState>, headers: HeaderMap, Query(q
                     }
                 } else if ranked.len() >= 2 {
                     for i in 0..(ranked.len().saturating_sub(1)) {
-                        let a = &ranked[i].item;
-                        let b = &ranked[i + 1].item;
+                        let a = ranked[i].item.as_str();
+                        let b = ranked[i + 1].item.as_str();
                         if a != b && !is_pair_voted(group, a, b) {
-                            pick = Some((a.clone(), b.clone()));
+                            pick = Some((a.to_string(), b.to_string()));
                             break;
                         }
                     }
@@ -472,13 +480,15 @@ pub async fn get_pair(State(state): State<AppState>, headers: HeaderMap, Query(q
 
     let (left_body, right_body, threads, connectivity) = {
         let reduced = reduced_arc.read().await;
-        let lb = reduced.item_bodies.get(&left).cloned();
-        let rb = reduced.item_bodies.get(&right).cloned();
+        let left_key = CanonicalItemUrl(left.clone());
+        let right_key = CanonicalItemUrl(right.clone());
+        let lb = reduced.item_bodies.get(&left_key).cloned();
+        let rb = reduced.item_bodies.get(&right_key).cloned();
         let th: Vec<String> = reduced
             .item_threads
-            .get(&left)
+            .get(&left_key)
             .into_iter()
-            .chain(reduced.item_threads.get(&right))
+            .chain(reduced.item_threads.get(&right_key))
             .flat_map(|s| s.iter().cloned())
             .collect::<HashSet<_>>()
             .into_iter()

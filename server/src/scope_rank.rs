@@ -4,6 +4,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::events::canonicalize_item;
+use crate::path_types::CanonicalItemUrl;
 use crate::ranking::{connected_components_from_voted_pairs, ranked_items_subset, RankedItem};
 use crate::reducer::ReducerState;
 
@@ -17,11 +18,11 @@ pub struct ScopedComponent {
 pub struct ChildrenRankings {
     pub component_rankings: Vec<ScopedComponent>,
     /// Items in scope with no rank (no votes connecting them to others in this scope).
-    pub unranked_items: Vec<String>,
+    pub unranked_items: Vec<CanonicalItemUrl>,
 }
 
 /// Resolve one scope spec (literal path) to direct children of that parent. No wildcards.
-fn resolve_one_scope(reduced: &ReducerState, spec: &str) -> HashSet<String> {
+fn resolve_one_scope(reduced: &ReducerState, spec: &str) -> HashSet<CanonicalItemUrl> {
     let spec = spec.trim();
     if spec.is_empty() {
         return HashSet::new();
@@ -38,12 +39,12 @@ fn resolve_one_scope(reduced: &ReducerState, spec: &str) -> HashSet<String> {
 
 /// Resolve multiple scope specs (literal paths) to a single merged, deduplicated list of item paths.
 /// Used for rank/pair with multiple parents (explicit merge, e.g. rank ~/models ~/ai-models).
-pub fn resolve_scope(reduced: &ReducerState, specs: &[String]) -> Vec<String> {
+pub fn resolve_scope(reduced: &ReducerState, specs: &[String]) -> Vec<CanonicalItemUrl> {
     let mut set = HashSet::new();
     for spec in specs {
         set.extend(resolve_one_scope(reduced, spec));
     }
-    let mut out: Vec<String> = set.into_iter().collect();
+    let mut out: Vec<CanonicalItemUrl> = set.into_iter().collect();
     out.sort();
     out
 }
@@ -51,11 +52,11 @@ pub fn resolve_scope(reduced: &ReducerState, specs: &[String]) -> Vec<String> {
 /// Resolve scope specs recursively up to `depth` levels deep.
 /// depth=1 is equivalent to resolve_scope (direct children only).
 /// depth=2 includes grandchildren, etc.
-pub fn resolve_scope_recursive(reduced: &ReducerState, specs: &[String], depth: usize) -> Vec<String> {
+pub fn resolve_scope_recursive(reduced: &ReducerState, specs: &[String], depth: usize) -> Vec<CanonicalItemUrl> {
     if depth == 0 {
         return vec![];
     }
-    let mut visited: HashSet<String> = HashSet::new();
+    let mut visited: HashSet<CanonicalItemUrl> = HashSet::new();
     let mut frontier: Vec<String> = specs.iter().map(|s| canonicalize_item(s)).collect();
 
     for _level in 0..depth {
@@ -64,7 +65,7 @@ pub fn resolve_scope_recursive(reduced: &ReducerState, specs: &[String], depth: 
             if let Some(children) = reduced.item_children.get(parent) {
                 for child in children {
                     if visited.insert(child.clone()) {
-                        next_frontier.push(child.clone());
+                        next_frontier.push(child.as_str().to_string());
                     }
                 }
             }
@@ -75,16 +76,16 @@ pub fn resolve_scope_recursive(reduced: &ReducerState, specs: &[String], depth: 
         frontier = next_frontier;
     }
 
-    let mut out: Vec<String> = visited.into_iter().collect();
+    let mut out: Vec<CanonicalItemUrl> = visited.into_iter().collect();
     out.sort();
     out
 }
 
 /// Build connected-component rankings for an explicit set of item paths.
 /// Use this when scope comes from multiple parents (resolve_scope).
-pub fn build_rankings_for_item_set(reduced: &ReducerState, items_in_scope: &[String]) -> ChildrenRankings {
+pub fn build_rankings_for_item_set(reduced: &ReducerState, items_in_scope: &[CanonicalItemUrl]) -> ChildrenRankings {
     let group = &reduced.ranking_group;
-    let mut items_in_scope: Vec<String> = items_in_scope.to_vec();
+    let mut items_in_scope: Vec<CanonicalItemUrl> = items_in_scope.to_vec();
     items_in_scope.sort();
 
     let scoped_idxs: Vec<usize> = items_in_scope
@@ -126,7 +127,7 @@ pub fn build_rankings_for_item_set(reduced: &ReducerState, items_in_scope: &[Str
         })
         .collect();
 
-    let mut unranked_items: Vec<String> = isolate_local_idxs
+    let mut unranked_items: Vec<CanonicalItemUrl> = isolate_local_idxs
         .into_iter()
         .filter_map(|li| local_to_global.get(li).copied())
         .filter_map(|idx| group.idx_to_item.get(idx).cloned())
@@ -148,7 +149,7 @@ pub fn build_rankings_for_item_set(reduced: &ReducerState, items_in_scope: &[Str
 /// Build connected-component rankings for direct children of parent_scope.
 /// Matches the HTML garden view: multiple components, isolates, no-vote items.
 pub fn build_children_rankings(reduced: &ReducerState, parent_scope: &str) -> ChildrenRankings {
-    let items: Vec<String> = reduced
+    let items: Vec<CanonicalItemUrl> = reduced
         .item_children
         .get(parent_scope)
         .map(|s| s.iter().cloned().collect())
@@ -162,10 +163,10 @@ mod tests {
     use std::collections::{HashMap, HashSet};
 
     fn reduced_with_children(edges: &[(&str, &[&str])]) -> ReducerState {
-        let mut item_children: HashMap<String, HashSet<String>> = HashMap::new();
+        let mut item_children: HashMap<String, HashSet<CanonicalItemUrl>> = HashMap::new();
         for (parent, children) in edges {
             let parent = (*parent).to_string();
-            let set: HashSet<String> = children.iter().map(|s| (*s).to_string()).collect();
+            let set: HashSet<CanonicalItemUrl> = children.iter().map(|s| CanonicalItemUrl((*s).to_string())).collect();
             item_children.insert(parent, set);
         }
         ReducerState {
@@ -184,8 +185,8 @@ mod tests {
         ]);
         let out = resolve_one_scope(&reduced, "models");
         assert_eq!(out.len(), 2);
-        assert!(out.contains("https://slug.social/models/x"));
-        assert!(out.contains("https://slug.social/models/y"));
+        assert!(out.contains(&CanonicalItemUrl("https://slug.social/models/x".to_string())));
+        assert!(out.contains(&CanonicalItemUrl("https://slug.social/models/y".to_string())));
     }
 
     #[test]
@@ -196,9 +197,9 @@ mod tests {
         ]);
         let out = resolve_scope(&reduced, &["a".into(), "b".into()]);
         assert_eq!(out.len(), 4);
-        assert!(out.contains(&"https://slug.social/a/1".to_string()));
-        assert!(out.contains(&"https://slug.social/a/2".to_string()));
-        assert!(out.contains(&"https://slug.social/b/1".to_string()));
-        assert!(out.contains(&"https://slug.social/b/2".to_string()));
+        assert!(out.contains(&CanonicalItemUrl("https://slug.social/a/1".to_string())));
+        assert!(out.contains(&CanonicalItemUrl("https://slug.social/a/2".to_string())));
+        assert!(out.contains(&CanonicalItemUrl("https://slug.social/b/1".to_string())));
+        assert!(out.contains(&CanonicalItemUrl("https://slug.social/b/2".to_string())));
     }
 }

@@ -1,10 +1,11 @@
 use std::collections::HashMap;
 
+use crate::path_types::CanonicalItemUrl;
 use crate::reducer::GroupState;
 
 #[derive(Debug, Clone)]
 pub struct RankedItem {
-    pub item: String,
+    pub item: CanonicalItemUrl,
     pub score: f64,
 }
 
@@ -220,12 +221,13 @@ pub fn ranked_items_subset(group: &GroupState, idxs: &[usize], max_iters: usize,
 
     let scores = compute_scores_from_edges(idxs.len(), edges_iter, max_iters, tol);
 
+    // Filter out entries where idx_to_item doesn't have the slot (shouldn't happen, but be safe).
     let mut items: Vec<RankedItem> = idxs
         .iter()
         .enumerate()
-        .map(|(j, &orig)| RankedItem {
-            item: group.idx_to_item.get(orig).cloned().unwrap_or_default(),
-            score: *scores.get(j).unwrap_or(&0.0),
+        .filter_map(|(j, &orig)| {
+            let item = group.idx_to_item.get(orig)?.clone();
+            Some(RankedItem { item, score: *scores.get(j).unwrap_or(&0.0) })
         })
         .collect();
 
@@ -237,7 +239,7 @@ pub fn group_summary_scores(
     group: &mut GroupState,
     max_iters: usize,
     tol: f64,
-) -> HashMap<String, f64> {
+) -> HashMap<CanonicalItemUrl, f64> {
     ranked_items(group, max_iters, tol)
         .into_iter()
         .map(|r| (r.item, r.score))
@@ -254,10 +256,11 @@ mod tests {
     }
 
     fn vote(ts: i64, a: &str, b: &str, l: i32, r: i32) -> VoteData {
+        use crate::path_types::CanonicalItemUrl;
         VoteData {
             ts,
-            a: a.to_string(),
-            b: b.to_string(),
+            a: CanonicalItemUrl(a.to_string()),
+            b: CanonicalItemUrl(b.to_string()),
             ratio_left: l,
             ratio_right: r,
             body: "because".to_string(),

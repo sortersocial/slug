@@ -87,7 +87,7 @@ fn search(state: &ReducerState, q: &str, limit: usize) -> SearchResults {
     // Search items (paths + bodies)
     for item in &state.items {
         let mut score: u32 = 0;
-        let path_lower = item.to_lowercase();
+        let path_lower = item.as_str().to_lowercase();
         if contains_all(&path_lower, &words) {
             score += 10;
         } else if contains_any(&path_lower, &words) > 0 {
@@ -105,7 +105,7 @@ fn search(state: &ReducerState, q: &str, limit: usize) -> SearchResults {
         }
         if score > 0 {
             scored_items.push((score, ItemRow {
-                path: item.clone(),
+                path: item.as_str().to_string(),
                 body: state.item_bodies.get(item).cloned(),
             }));
         }

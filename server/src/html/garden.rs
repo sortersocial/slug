@@ -6,6 +6,7 @@ use maud::html;
 
 use crate::{
     events::{canonicalize_item, item_parent_path, path_owner_uuid},
+    path_types::CanonicalItemUrl,
     ranking::{connected_components_from_voted_pairs, ranked_items_subset},
     scope_rank::{build_children_rankings, ChildrenRankings},
     state::AppState,
@@ -53,9 +54,9 @@ pub async fn garden_index(State(state): State<AppState>) -> impl IntoResponse {
                         }
                         ol class="ont-ranking-list" {
                             @for r in comp.ranked.iter() {
-                                @let href = item_href(&r.item);
+                                @let href = item_href(r.item.as_str());
                                 li {
-                                    a href=(href) { "~/" (item_display_path(&r.item)) }
+                                    a href=(href) { "~/" (item_display_path(r.item.as_str())) }
                                 }
                             }
                         }
@@ -67,8 +68,8 @@ pub async fn garden_index(State(state): State<AppState>) -> impl IntoResponse {
                         ul class="ont-group-list" {
                             @for name in &child_rankings.unranked_items {
                                 li {
-                                    @let href = item_href(name);
-                                    a href=(href) { "~/" (item_display_path(name)) }
+                                    @let href = item_href(name.as_str());
+                                    a href=(href) { "~/" (item_display_path(name.as_str())) }
                                 }
                             }
                         }
@@ -147,7 +148,7 @@ fn build_sibling_rank(
 ) -> Option<SiblingRank> {
     let group = &reduced.ranking_group;
     let parent = item_parent_path(item).unwrap_or_default();
-    let siblings: Vec<String> = reduced
+    let siblings: Vec<CanonicalItemUrl> = reduced
         .item_children
         .get(&parent)
         .map(|s| s.iter().cloned().collect())
@@ -164,7 +165,8 @@ fn build_sibling_rank(
     if scoped_idxs.is_empty() {
         return None;
     }
-    let current_idx = *group.item_to_idx.get(item)?;
+    let item_key = CanonicalItemUrl(item.to_string());
+    let current_idx = *group.item_to_idx.get(&item_key)?;
     if !scoped_idxs.contains(&current_idx) {
         return None;
     }
@@ -192,7 +194,7 @@ fn build_sibling_rank(
         .filter_map(|li| local_to_global.get(*li).copied())
         .collect();
     let ranked = ranked_items_subset(group, &comp_global, 10000, 1e-8);
-    let position = ranked.iter().position(|r| r.item == item)? + 1;
+    let position = ranked.iter().position(|r| r.item.as_str() == item)? + 1;
     Some(SiblingRank {
         position,
         component_size: ranked.len(),
@@ -204,7 +206,8 @@ fn build_rank_history(
     reduced: &crate::reducer::ReducerState,
     item: &str,
 ) -> Vec<RankHistoryEntryView> {
-    let entries = match reduced.rank_history.get(item) {
+    let item_key = CanonicalItemUrl(item.to_string());
+    let entries = match reduced.rank_history.get(&item_key) {
         None => return vec![],
         Some(e) => e,
     };
@@ -216,12 +219,13 @@ fn build_rank_history(
             .map(|doc| {
                 doc.statements.into_iter().filter_map(|s| {
                     if let crate::dsl::Stmt::Vote { item1, item2, ratio_left, ratio_right, explanation } = s {
-                        let a = crate::events::canonicalize_item(&item1);
-                        let b = crate::events::canonicalize_item(&item2);
-                        if a == item || b == item {
+                        let a_str = crate::events::canonicalize_item(&item1);
+                        let b_str = crate::events::canonicalize_item(&item2);
+                        if a_str == item || b_str == item {
                             Some(crate::reducer::VoteData {
                                 ts: e.ts,
-                                a, b,
+                                a: CanonicalItemUrl(a_str),
+                                b: CanonicalItemUrl(b_str),
                                 ratio_left, ratio_right,
                                 body: explanation,
                                 actor: reduced.ingests_by_id.get(&e.post_id)
@@ -259,27 +263,28 @@ fn build_item_page_view_model(
     item: &str,
     vote_limit: usize,
 ) -> ItemPageViewModel {
-    let item = canonicalize_item(item);
-    let child_rankings = build_children_rankings(reduced, &item);
+    let item_str = canonicalize_item(item);
+    let item_key = CanonicalItemUrl(item_str.clone());
+    let child_rankings = build_children_rankings(reduced, &item_str);
     let touching_votes: Vec<crate::reducer::VoteData> = reduced
         .item_votes
-        .get(&item)
+        .get(&item_key)
         .map(|q| q.iter().take(vote_limit).cloned().collect())
         .unwrap_or_default();
 
-    let rank_history = build_rank_history(reduced, &item);
+    let rank_history = build_rank_history(reduced, &item_str);
 
     let mut threads: Vec<String> = reduced
         .item_threads
-        .get(&item)
+        .get(&item_key)
         .map(|s| s.iter().cloned().collect())
         .unwrap_or_default();
     threads.sort();
 
     ItemPageViewModel {
-        item: item.clone(),
-        body: reduced.item_bodies.get(&item).cloned(),
-        sibling_rank: build_sibling_rank(reduced, &item),
+        item: item_str.clone(),
+        body: reduced.item_bodies.get(&item_key).cloned(),
+        sibling_rank: build_sibling_rank(reduced, &item_str),
         child_rankings,
         touching_votes,
         rank_history,
@@ -294,12 +299,12 @@ async fn render_scope_view(state: AppState, path: OntologyPath) -> axum::respons
     };
     // Strip private (UUID-owned) items from unauthenticated HTML view.
     for comp in &mut model.child_rankings.component_rankings {
-        comp.ranked.retain(|r| path_owner_uuid(&r.item).is_none());
+        comp.ranked.retain(|r| path_owner_uuid(r.item.as_str()).is_none());
     }
     model.child_rankings.component_rankings.retain(|comp| !comp.ranked.is_empty());
-    model.child_rankings.unranked_items.retain(|item| path_owner_uuid(item).is_none());
+    model.child_rankings.unranked_items.retain(|item| path_owner_uuid(item.as_str()).is_none());
     model.touching_votes.retain(|v| {
-        path_owner_uuid(&v.a).is_none() && path_owner_uuid(&v.b).is_none()
+        path_owner_uuid(v.a.as_str()).is_none() && path_owner_uuid(v.b.as_str()).is_none()
     });
 
     let views = state.views.get_views(&format!("/~/{}", path.as_str()));
@@ -343,8 +348,8 @@ async fn render_scope_view(state: AppState, path: OntologyPath) -> axum::respons
                             @let pct = ratio_pct(v.ratio_left, v.ratio_right);
                             @let hover = timeago::rfc3339_utc(v.ts);
                             @let ago = timeago::timeago(now, v.ts);
-                            @let left_class = if v.a == model.item { "ratio-left current" } else { "ratio-left" };
-                            @let right_class = if v.b == model.item { "ratio-right current" } else { "ratio-right" };
+                            @let left_class = if v.a.as_str() == model.item { "ratio-left current" } else { "ratio-left" };
+                            @let right_class = if v.b.as_str() == model.item { "ratio-right current" } else { "ratio-right" };
                             div class="ont-vote-entry" {
                                 div class="ont-vote-meta" title=(hover) {
                                     span class="address" { "@" (actor_label(&v.actor)) }
@@ -405,8 +410,8 @@ async fn render_scope_view(state: AppState, path: OntologyPath) -> axum::respons
                             } @else {
                                 @for v in &e.caused_by {
                                     @let pct = ratio_pct(v.ratio_left, v.ratio_right);
-                                    @let left_class = if v.a == model.item { "ratio-left current" } else { "ratio-left" };
-                                    @let right_class = if v.b == model.item { "ratio-right current" } else { "ratio-right" };
+                                    @let left_class = if v.a.as_str() == model.item { "ratio-left current" } else { "ratio-left" };
+                                    @let right_class = if v.b.as_str() == model.item { "ratio-right current" } else { "ratio-right" };
                                     div class="rank-history-vote" {
                                         div class="ont-vote-header" {
                                             a class="item-link" href=(format!("/~/{}", v.a)) { code { "/" (v.a) } }
@@ -450,10 +455,10 @@ async fn render_scope_view(state: AppState, path: OntologyPath) -> axum::respons
                             }
                             ol class="ont-ranking-list" {
                                 @for r in comp.ranked.iter() {
-                                    @let item_url = item_href(&r.item);
+                                    @let item_url = item_href(r.item.as_str());
                                     @let score_str = format!("{:.3}", r.score);
                                     li {
-                                        a class="item-link" href=(item_url) { code { "/" (item_display_path(&r.item)) } }
+                                        a class="item-link" href=(item_url) { code { "/" (item_display_path(r.item.as_str())) } }
                                         span class="ont-rank-score" { (score_str) }
                                     }
                                 }
@@ -468,8 +473,8 @@ async fn render_scope_view(state: AppState, path: OntologyPath) -> axum::respons
                         ul class="ont-group-list" {
                             @for name in &model.child_rankings.unranked_items {
                                 li {
-                                    @let href = item_href(name);
-                                    a class="item-link" href=(href) { code { "/" (item_display_path(name)) } }
+                                    @let href = item_href(name.as_str());
+                                    a class="item-link" href=(href) { code { "/" (item_display_path(name.as_str())) } }
                                 }
                             }
                         }
@@ -537,8 +542,8 @@ mod tests {
 
         let model = build_item_page_view_model(&reduced, "~/topic/a", 50);
         assert_eq!(model.touching_votes.len(), 1);
-        assert_eq!(model.touching_votes[0].a, "https://slug.social/~/topic/a");
-        assert_eq!(model.touching_votes[0].b, "https://slug.social/~/topic/b");
+        assert_eq!(model.touching_votes[0].a.as_str(), "https://slug.social/~/topic/a");
+        assert_eq!(model.touching_votes[0].b.as_str(), "https://slug.social/~/topic/b");
     }
 
     #[test]
@@ -587,9 +592,10 @@ mod tests {
             .map(|r| r.item.as_str())
             .collect();
         assert_eq!(names, vec!["https://slug.social/~/topic/a", "https://slug.social/~/topic/b"]);
+        use crate::path_types::CanonicalItemUrl;
         assert!(
-            model.child_rankings.unranked_items.contains(&"https://slug.social/~/topic/kid1".to_string())
-                || model.child_rankings.unranked_items.contains(&"https://slug.social/~/topic/kid2".to_string())
+            model.child_rankings.unranked_items.contains(&CanonicalItemUrl("https://slug.social/~/topic/kid1".to_string()))
+                || model.child_rankings.unranked_items.contains(&CanonicalItemUrl("https://slug.social/~/topic/kid2".to_string()))
         );
     }
 }

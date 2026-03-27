@@ -272,20 +272,16 @@ fn ranked_children_public(
 
     for comp in rankings.component_rankings {
         for r in comp.ranked {
-            if path_owner_uuid(&r.item).is_none() {
-                if let Some(c) = CanonicalItemUrl::parse(&r.item) {
-                    seen.insert(r.item.clone());
-                    out.push(c);
-                }
+            if path_owner_uuid(r.item.as_str()).is_none() {
+                seen.insert(r.item.as_str().to_string());
+                out.push(r.item);
             }
         }
     }
     for it in rankings.unranked_items {
-        if path_owner_uuid(&it).is_none() {
-            if let Some(c) = CanonicalItemUrl::parse(&it) {
-                seen.insert(it.clone());
-                out.push(c);
-            }
+        if path_owner_uuid(it.as_str()).is_none() {
+            seen.insert(it.as_str().to_string());
+            out.push(it);
         }
     }
 
@@ -426,7 +422,7 @@ fn render_detail_pane(
         };
     };
     let sel_str = sel.as_str();
-    let body = reduced.item_bodies.get(sel_str).cloned();
+    let body = reduced.item_bodies.get(sel).cloned();
     html! {
         div id="detail-pane" {
             h3 { "selected" }
