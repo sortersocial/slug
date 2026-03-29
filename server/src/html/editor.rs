@@ -9,7 +9,6 @@ use serde::Deserialize;
 
 use crate::{
     api::{validate_ingest_document, resolve_item},
-    events::item_parent_path,
     state::AppState,
 };
 
@@ -116,17 +115,17 @@ pub async fn editor_check(
             simulated.apply_event(event);
 
             // Collect voted parent scopes.
-            let voted_parents: Vec<String> = {
+            let voted_parents: Vec<crate::path_types::CanonicalItemUrl> = {
                 let mut parents = std::collections::HashSet::new();
                 for s in &v.doc.statements {
                     if let crate::dsl::Stmt::Vote { item1, item2, .. } = s {
                         if let (Ok(a), Ok(b)) = (resolve_item(item1), resolve_item(item2)) {
-                            parents.insert(item_parent_path(&a).unwrap_or_default());
-                            parents.insert(item_parent_path(&b).unwrap_or_default());
+                            if let Some(p) = crate::path_types::CanonicalItemUrl::parse(&a).and_then(|c| c.parent()) { parents.insert(p); }
+                            if let Some(p) = crate::path_types::CanonicalItemUrl::parse(&b).and_then(|c| c.parent()) { parents.insert(p); }
                         }
                     }
                 }
-                let mut out: Vec<String> = parents.into_iter().collect();
+                let mut out: Vec<crate::path_types::CanonicalItemUrl> = parents.into_iter().collect();
                 out.sort();
                 out
             };
@@ -145,7 +144,7 @@ pub async fn editor_check(
                 div id="editor-results" {
                     @for parent in &voted_parents {
                         @let scoped = crate::scope_rank::build_children_rankings(&simulated, parent);
-                        @let label = if parent.is_empty() { "/".to_string() } else { format!("/{parent}") };
+                        @let label = format!("/{}", parent.tilde_tail().unwrap_or(parent.as_str()));
                         h3 { "ranking: " (label) }
                         @for comp in &scoped.component_rankings {
                             ol class="editor-ranking" {

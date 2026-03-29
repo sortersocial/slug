@@ -10,7 +10,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::{
     dsl,
-    events::{canonicalize_actor, canonicalize_item, canonicalize_tag, item_parent_path, Event, Ingest},
+    events::{canonicalize_actor, canonicalize_item, canonicalize_tag, Event, Ingest},
     path_types::CanonicalItemUrl,
     reducer::ReducerState,
     state::AppState,
@@ -432,23 +432,23 @@ pub async fn post_ingest(
     }
 
     // Collect parent scopes for all voted items so we can compute ranking deltas.
-    let voted_parent_scopes: Vec<String> = {
-        let mut parents: HashSet<String> = HashSet::new();
+    let voted_parent_scopes: Vec<CanonicalItemUrl> = {
+        let mut parents: HashSet<CanonicalItemUrl> = HashSet::new();
         for s in &v.doc.statements {
             if let dsl::Stmt::Vote { item1, item2, .. } = s {
                 if let (Ok(a), Ok(b)) = (resolve_item(item1), resolve_item(item2)) {
-                    parents.insert(item_parent_path(&a).unwrap_or_default());
-                    parents.insert(item_parent_path(&b).unwrap_or_default());
+                    if let Some(p) = CanonicalItemUrl::parse(&a).and_then(|c| c.parent()) { parents.insert(p); }
+                    if let Some(p) = CanonicalItemUrl::parse(&b).and_then(|c| c.parent()) { parents.insert(p); }
                 }
             }
         }
-        let mut out: Vec<String> = parents.into_iter().collect();
+        let mut out: Vec<CanonicalItemUrl> = parents.into_iter().collect();
         out.sort();
         out
     };
 
     // Snapshot rankings before the ingest event is applied.
-    let pre_rankings: HashMap<String, crate::scope_rank::ChildrenRankings> =
+    let pre_rankings: HashMap<CanonicalItemUrl, crate::scope_rank::ChildrenRankings> =
         if !voted_parent_scopes.is_empty() {
             let reduced = reduced_arc.read().await;
             voted_parent_scopes
@@ -486,7 +486,7 @@ pub async fn post_ingest(
             .filter_map(|p| {
                 let before = pre_rankings.get(p)?;
                 let after = crate::scope_rank::build_children_rankings(&reduced, p);
-                compute_scope_rank_changes(p, before, &after)
+                compute_scope_rank_changes(p.as_str(), before, &after)
             })
             .collect()
     } else {
@@ -551,17 +551,17 @@ pub async fn post_check(
     simulated.apply_event(event);
 
     // Collect parent scopes touched by votes in this document.
-    let voted_parents: Vec<String> = {
-        let mut parents: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let voted_parents: Vec<CanonicalItemUrl> = {
+        let mut parents: std::collections::HashSet<CanonicalItemUrl> = std::collections::HashSet::new();
         for s in &v.doc.statements {
             if let dsl::Stmt::Vote { item1, item2, .. } = s {
                 if let (Ok(a), Ok(b)) = (resolve_item(item1), resolve_item(item2)) {
-                    parents.insert(item_parent_path(&a).unwrap_or_default());
-                    parents.insert(item_parent_path(&b).unwrap_or_default());
+                    if let Some(p) = CanonicalItemUrl::parse(&a).and_then(|c| c.parent()) { parents.insert(p); }
+                    if let Some(p) = CanonicalItemUrl::parse(&b).and_then(|c| c.parent()) { parents.insert(p); }
                 }
             }
         }
-        let mut out: Vec<String> = parents.into_iter().collect();
+        let mut out: Vec<CanonicalItemUrl> = parents.into_iter().collect();
         out.sort();
         out
     };
@@ -588,11 +588,7 @@ pub async fn post_check(
                 })
                 .collect();
             slug_types::CheckScopeRanking {
-                parent: if parent.is_empty() {
-                    "/".to_string()
-                } else {
-                    item_path_for_api(parent)
-                },
+                parent: item_path_for_api(parent.as_str()),
                 components,
                 unranked_items: scoped
                     .unranked_items

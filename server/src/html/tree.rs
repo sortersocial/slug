@@ -264,51 +264,55 @@ fn ranked_children_public(
     // `"https://slug.social/~"`.
     //
     // Without this normalization, the tree root (`/tree` => `"~/") would render empty.
-    let parent_key = parent.trim_end_matches('/');
+    // Trim trailing slash so "https://slug.social/~/" becomes "https://slug.social/~"
+    // which is what item_children uses as the root parent key.
+    let parent_str = parent.trim_end_matches('/');
+    let parent_can = CanonicalItemUrl::parse(parent_str)
+        .or_else(|| CanonicalItemUrl::parse("~/"))
+        .unwrap();
     let rankings: ChildrenRankings =
-        crate::scope_rank::build_children_rankings(reduced, parent_key);
+        crate::scope_rank::build_children_rankings(reduced, &parent_can);
     let mut out: Vec<CanonicalItemUrl> = Vec::new();
-    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut seen: std::collections::HashSet<CanonicalItemUrl> = std::collections::HashSet::new();
 
     for comp in rankings.component_rankings {
         for r in comp.ranked {
             if path_owner_uuid(r.item.as_str()).is_none() {
-                seen.insert(r.item.as_str().to_string());
+                seen.insert(r.item.clone());
                 out.push(r.item);
             }
         }
     }
     for it in rankings.unranked_items {
         if path_owner_uuid(it.as_str()).is_none() {
-            seen.insert(it.as_str().to_string());
+            seen.insert(it.clone());
             out.push(it);
         }
     }
 
     // Also surface phantom intermediate nodes: keys of item_children that are
-    // direct children of parent_key but were never explicitly ingested as items
+    // direct children of parent but were never explicitly ingested as items
     // (so they don't appear in any ranking). Example: ~/languages exists only as
     // a parent of ~/languages/rust etc., never ranked at the root level.
-    let phantom_parent_prefix = format!("{}/", parent_key);
+    let phantom_parent_prefix = format!("{}/", parent_str);
     for key in reduced.item_children.keys() {
-        if !key.starts_with(&phantom_parent_prefix) {
+        let key_str = key.as_str();
+        if !key_str.starts_with(&phantom_parent_prefix) {
             continue;
         }
         // Must be a direct child: no further '/' after the prefix.
-        let tail = &key[phantom_parent_prefix.len()..];
+        let tail = &key_str[phantom_parent_prefix.len()..];
         if tail.contains('/') {
             continue;
         }
         if seen.contains(key) {
             continue;
         }
-        if path_owner_uuid(key).is_some() {
+        if path_owner_uuid(key_str).is_some() {
             continue;
         }
-        if let Some(c) = CanonicalItemUrl::parse(key) {
-            seen.insert(key.clone());
-            out.push(c);
-        }
+        seen.insert(key.clone());
+        out.push(key.clone());
     }
 
     out

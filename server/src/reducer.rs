@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use serde::{Deserialize, Serialize};
 
 use crate::events::{
-    canonicalize_actor, canonicalize_item, canonicalize_tag, item_parent_path, Event, Ingest,
+    canonicalize_actor, canonicalize_item, canonicalize_tag, Event, Ingest,
 };
 use crate::path_types::CanonicalItemUrl;
 
@@ -90,8 +90,8 @@ impl GroupState {
     }
 
     pub fn apply_vote(&mut self, mut vote: VoteData) {
-        vote.a = CanonicalItemUrl(canonicalize_item(vote.a.as_str()));
-        vote.b = CanonicalItemUrl(canonicalize_item(vote.b.as_str()));
+        vote.a = CanonicalItemUrl::parse(vote.a.as_str()).unwrap_or(vote.a);
+        vote.b = CanonicalItemUrl::parse(vote.b.as_str()).unwrap_or(vote.b);
         vote.actor = canonicalize_actor(&vote.actor);
         if vote.ratio_left < 0 {
             vote.ratio_left = 0;
@@ -160,8 +160,8 @@ pub struct ReducerState {
 
     pub items: HashSet<CanonicalItemUrl>,
     pub item_bodies: HashMap<CanonicalItemUrl, String>,
-    /// Parent path -> direct children. Root items have parent "".
-    pub item_children: HashMap<String, HashSet<CanonicalItemUrl>>,
+    /// Parent canonical URL -> direct children.
+    pub item_children: HashMap<CanonicalItemUrl, HashSet<CanonicalItemUrl>>,
 
     pub ingests_by_id: HashMap<String, Ingest>,
     /// Thread -> recent ingest ids (most recent first).
@@ -207,16 +207,13 @@ impl ReducerState {
     fn add_child_edge(&mut self, item: &CanonicalItemUrl) {
         let mut child = item.clone();
         loop {
-            let parent = item_parent_path(child.as_str()).unwrap_or_default();
+            let Some(parent) = child.parent() else { break };
             let is_new = self.item_children
                 .entry(parent.clone())
                 .or_default()
                 .insert(child);
-            if parent.is_empty() || !is_new {
-                break;
-            }
-            // Move up to parent; parent is a canonical URL string.
-            child = CanonicalItemUrl(parent);
+            if !is_new { break; }
+            child = parent;
         }
     }
 
@@ -227,8 +224,11 @@ impl ReducerState {
 
     /// 1-indexed rank of `item` within its connected component in the parent scope.
     /// 0 if the item has no votes connecting it to siblings (unranked).
-    fn scope_rank_of(group: &GroupState, item: &CanonicalItemUrl, item_children: &HashMap<String, HashSet<CanonicalItemUrl>>) -> usize {
-        let scope = item_parent_path(item.as_str()).unwrap_or_default();
+    fn scope_rank_of(group: &GroupState, item: &CanonicalItemUrl, item_children: &HashMap<CanonicalItemUrl, HashSet<CanonicalItemUrl>>) -> usize {
+        let scope = match item.parent() {
+            Some(p) => p,
+            None => return 0,
+        };
         let children = match item_children.get(&scope) {
             None => return 0,
             Some(c) => c,
@@ -454,8 +454,10 @@ impl ReducerState {
                         let prev = self.rank_history.get(item).and_then(|v| v.last());
                         let scope_delta  = if prev.is_none() { 0 } else { after_scope as i32 - before_scope as i32 };
                         let global_delta = if prev.is_none() { 0 } else { after_global as i32 - before_global as i32 };
-                        let scope = item_parent_path(item.as_str()).unwrap_or_default();
-                        let scope_total  = self.item_children.get(&scope).map(|s| s.len()).unwrap_or(0);
+                        let scope_total = item.parent()
+                            .and_then(|p| self.item_children.get(&p))
+                            .map(|s| s.len())
+                            .unwrap_or(0);
                         let global_total = self.ranking_group.idx_to_item.len();
                         self.rank_history.entry(item.clone()).or_default().push(RankHistoryEntry {
                             ts: ing.ts,

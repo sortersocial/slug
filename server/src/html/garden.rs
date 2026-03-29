@@ -5,7 +5,7 @@ use axum::{
 use maud::html;
 
 use crate::{
-    events::{canonicalize_item, item_parent_path, path_owner_uuid},
+    events::{canonicalize_item, path_owner_uuid},
     path_types::CanonicalItemUrl,
     ranking::{connected_components_from_voted_pairs, ranked_items_subset},
     scope_rank::{build_children_rankings, ChildrenRankings},
@@ -32,7 +32,7 @@ fn item_href(item: &str) -> String {
 pub async fn garden_index(State(state): State<AppState>) -> impl IntoResponse {
     let child_rankings = {
         let reduced = state.reduced.read().await;
-        build_children_rankings(&reduced, "https://slug.social/~")
+        build_children_rankings(&reduced, &CanonicalItemUrl::parse("~/").unwrap())
     };
 
     let views = state.views.get_views("/~");
@@ -144,10 +144,10 @@ struct ItemPageViewModel {
 
 fn build_sibling_rank(
     reduced: &crate::reducer::ReducerState,
-    item: &str,
+    item: &CanonicalItemUrl,
 ) -> Option<SiblingRank> {
     let group = &reduced.ranking_group;
-    let parent = item_parent_path(item).unwrap_or_default();
+    let parent = item.parent()?;
     let siblings: Vec<CanonicalItemUrl> = reduced
         .item_children
         .get(&parent)
@@ -165,8 +165,7 @@ fn build_sibling_rank(
     if scoped_idxs.is_empty() {
         return None;
     }
-    let item_key = CanonicalItemUrl(item.to_string());
-    let current_idx = *group.item_to_idx.get(&item_key)?;
+    let current_idx = *group.item_to_idx.get(item)?;
     if !scoped_idxs.contains(&current_idx) {
         return None;
     }
@@ -194,7 +193,7 @@ fn build_sibling_rank(
         .filter_map(|li| local_to_global.get(*li).copied())
         .collect();
     let ranked = ranked_items_subset(group, &comp_global, 10000, 1e-8);
-    let position = ranked.iter().position(|r| r.item.as_str() == item)? + 1;
+    let position = ranked.iter().position(|r| &r.item == item)? + 1;
     Some(SiblingRank {
         position,
         component_size: ranked.len(),
@@ -263,16 +262,16 @@ fn build_item_page_view_model(
     item: &str,
     vote_limit: usize,
 ) -> ItemPageViewModel {
-    let item_str = canonicalize_item(item);
-    let item_key = CanonicalItemUrl(item_str.clone());
-    let child_rankings = build_children_rankings(reduced, &item_str);
+    let item_key = CanonicalItemUrl::parse(item)
+        .unwrap_or_else(|| CanonicalItemUrl::parse("~/").unwrap());
+    let child_rankings = build_children_rankings(reduced, &item_key);
     let touching_votes: Vec<crate::reducer::VoteData> = reduced
         .item_votes
         .get(&item_key)
         .map(|q| q.iter().take(vote_limit).cloned().collect())
         .unwrap_or_default();
 
-    let rank_history = build_rank_history(reduced, &item_str);
+    let rank_history = build_rank_history(reduced, item_key.as_str());
 
     let mut threads: Vec<String> = reduced
         .item_threads
@@ -282,9 +281,9 @@ fn build_item_page_view_model(
     threads.sort();
 
     ItemPageViewModel {
-        item: item_str.clone(),
+        item: item_key.as_str().to_string(),
         body: reduced.item_bodies.get(&item_key).cloned(),
-        sibling_rank: build_sibling_rank(reduced, &item_str),
+        sibling_rank: build_sibling_rank(reduced, &item_key),
         child_rankings,
         touching_votes,
         rank_history,

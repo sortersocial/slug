@@ -61,9 +61,8 @@ pub async fn get_rank(State(state): State<AppState>, headers: HeaderMap, Query(q
     // 404 when a specific named path is requested but doesn't exist as a known item or parent.
     if !is_global && !specs.is_empty() {
         let none_exist = specs.iter().all(|spec| {
-            let canon = crate::events::canonicalize_item(spec);
-            let canon_key = CanonicalItemUrl(canon.clone());
-            !reduced.items.contains(&canon_key) && !reduced.item_children.contains_key(&canon)
+            let Some(canon) = CanonicalItemUrl::parse(spec) else { return true };
+            !reduced.items.contains(&canon) && !reduced.item_children.contains_key(&canon)
         });
         if none_exist {
             return api_error(
@@ -78,7 +77,7 @@ pub async fn get_rank(State(state): State<AppState>, headers: HeaderMap, Query(q
         let all_items: Vec<CanonicalItemUrl> = reduced.items.iter().cloned().collect();
         crate::scope_rank::build_rankings_for_item_set(&reduced, &all_items)
     } else if specs.is_empty() {
-        crate::scope_rank::build_children_rankings(&reduced, "https://slug.social/~")
+        crate::scope_rank::build_children_rankings(&reduced, &CanonicalItemUrl::parse("~/").unwrap())
     } else if depth > 1 {
         let items = crate::scope_rank::resolve_scope_recursive(&reduced, &specs, depth);
         crate::scope_rank::build_rankings_for_item_set(&reduced, &items)

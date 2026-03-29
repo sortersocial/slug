@@ -1,8 +1,9 @@
-use crate::events::canonicalize_item;
+use crate::path_types::CanonicalItemUrl;
 
 /// Semantic view of an ontology path for rendering and routing decisions.
 pub(super) struct OntologyPath {
-    canonical: String,
+    canonical: CanonicalItemUrl,
+    /// Breadcrumb segments: for `~/a/b` this is `["~", "a", "b"]`.
     segments: Vec<String>,
 }
 
@@ -18,27 +19,28 @@ impl OntologyPath {
         } else {
             format!("~/{}", p)
         };
-        Self::from_canonical(canonicalize_item(&raw))
+        let canonical = CanonicalItemUrl::parse(&raw)
+            .unwrap_or_else(|| CanonicalItemUrl::parse("~/").unwrap());
+        Self::from_canonical(canonical)
     }
 
-    pub(super) fn from_canonical(path: String) -> Self {
-        let segments = path
-            .split('/')
-            .filter(|s| !s.is_empty())
+    pub(super) fn from_canonical(canonical: CanonicalItemUrl) -> Self {
+        // Use tilde_segments() so we get ["~", "a", "b"] rather than splitting
+        // the full https://slug.social/~/a/b URL (which would include "https:" etc.).
+        let segments = canonical
+            .tilde_segments()
+            .into_iter()
             .map(|s| s.to_string())
             .collect();
-        Self {
-            canonical: path,
-            segments,
-        }
+        Self { canonical, segments }
     }
 
     pub(super) fn root() -> Self {
-        Self::from_canonical(String::new())
+        Self::from_canonical(CanonicalItemUrl::parse("~/").unwrap())
     }
 
     pub(super) fn is_root(&self) -> bool {
-        self.segments.is_empty()
+        self.segments.len() <= 1 // just ["~"] or empty
     }
 
     /// At ontology root, allow mode toggle to forum (`/`).
@@ -56,6 +58,6 @@ impl OntologyPath {
     }
 
     pub(super) fn as_str(&self) -> &str {
-        &self.canonical
+        self.canonical.as_str()
     }
 }

@@ -3,7 +3,6 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::events::canonicalize_item;
 use crate::path_types::CanonicalItemUrl;
 use crate::ranking::{connected_components_from_voted_pairs, ranked_items_subset, RankedItem};
 use crate::reducer::ReducerState;
@@ -23,11 +22,9 @@ pub struct ChildrenRankings {
 
 /// Resolve one scope spec (literal path) to direct children of that parent. No wildcards.
 fn resolve_one_scope(reduced: &ReducerState, spec: &str) -> HashSet<CanonicalItemUrl> {
-    let spec = spec.trim();
-    if spec.is_empty() {
+    let Some(parent) = CanonicalItemUrl::parse(spec.trim()) else {
         return HashSet::new();
-    }
-    let parent = canonicalize_item(spec);
+    };
     reduced
         .item_children
         .get(&parent)
@@ -57,15 +54,18 @@ pub fn resolve_scope_recursive(reduced: &ReducerState, specs: &[String], depth: 
         return vec![];
     }
     let mut visited: HashSet<CanonicalItemUrl> = HashSet::new();
-    let mut frontier: Vec<String> = specs.iter().map(|s| canonicalize_item(s)).collect();
+    let mut frontier: Vec<CanonicalItemUrl> = specs
+        .iter()
+        .filter_map(|s| CanonicalItemUrl::parse(s))
+        .collect();
 
     for _level in 0..depth {
-        let mut next_frontier: Vec<String> = Vec::new();
+        let mut next_frontier: Vec<CanonicalItemUrl> = Vec::new();
         for parent in &frontier {
             if let Some(children) = reduced.item_children.get(parent) {
                 for child in children {
                     if visited.insert(child.clone()) {
-                        next_frontier.push(child.as_str().to_string());
+                        next_frontier.push(child.clone());
                     }
                 }
             }
@@ -148,10 +148,10 @@ pub fn build_rankings_for_item_set(reduced: &ReducerState, items_in_scope: &[Can
 
 /// Build connected-component rankings for direct children of parent_scope.
 /// Matches the HTML garden view: multiple components, isolates, no-vote items.
-pub fn build_children_rankings(reduced: &ReducerState, parent_scope: &str) -> ChildrenRankings {
+pub fn build_children_rankings(reduced: &ReducerState, parent: &CanonicalItemUrl) -> ChildrenRankings {
     let items: Vec<CanonicalItemUrl> = reduced
         .item_children
-        .get(parent_scope)
+        .get(parent)
         .map(|s| s.iter().cloned().collect())
         .unwrap_or_default();
     build_rankings_for_item_set(reduced, &items)
@@ -163,9 +163,9 @@ mod tests {
     use std::collections::{HashMap, HashSet};
 
     fn reduced_with_children(edges: &[(&str, &[&str])]) -> ReducerState {
-        let mut item_children: HashMap<String, HashSet<CanonicalItemUrl>> = HashMap::new();
+        let mut item_children: HashMap<CanonicalItemUrl, HashSet<CanonicalItemUrl>> = HashMap::new();
         for (parent, children) in edges {
-            let parent = (*parent).to_string();
+            let parent = CanonicalItemUrl((*parent).to_string());
             let set: HashSet<CanonicalItemUrl> = children.iter().map(|s| CanonicalItemUrl((*s).to_string())).collect();
             item_children.insert(parent, set);
         }

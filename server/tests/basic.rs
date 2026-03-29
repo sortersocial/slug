@@ -507,19 +507,8 @@ fn reducer_deep_path_ancestor_materialization_four_levels() {
         1,
         "@00000000-0000-0000-0000-000000000000:test:local/test\n~/a/b/c/d {leaf}\n",
     ));
-    // All intermediate children edges should exist (empty → host → ~/ → …).
-    let root = state.item_children.get("").expect("root should exist");
-    assert!(
-        root.contains("https://slug.social"),
-        "root should contain host URL segment"
-    );
-
-    let host_children = state
-        .item_children
-        .get("https://slug.social")
-        .expect("host should have children");
-    assert!(host_children.contains("https://slug.social/~"));
-
+    // Ancestor chain: parent() now walks purely within the ontology namespace.
+    // The spurious "" → "https://slug.social" levels are gone; root is "https://slug.social/~".
     let tilde_scope = state
         .item_children
         .get("https://slug.social/~")

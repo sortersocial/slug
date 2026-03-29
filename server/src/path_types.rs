@@ -53,6 +53,44 @@ impl CanonicalItemUrl {
             .find(|s| !s.is_empty())
             .unwrap_or(self.0.as_str())
     }
+
+    /// Returns the parent of this canonical item URL by stripping the last
+    /// path segment, or `None` if there is no parent (already at root).
+    ///
+    /// `https://slug.social/~/a/b/c` → `Some("https://slug.social/~/a/b")`
+    /// `https://slug.social/~/a`     → `Some("https://slug.social/~")`
+    /// `https://slug.social/~/`      → `None`  (tilde root)
+    pub fn parent(&self) -> Option<Self> {
+        // tilde_tail() is None for non-ontology URLs and "" for the root ~/
+        if self.tilde_tail().map(|t| t.is_empty()).unwrap_or(true) {
+            return None;
+        }
+        // Strip everything from the last '/' onwards.
+        let last_slash = self.0.rfind('/')?;
+        let parent_str = &self.0[..last_slash];
+        if parent_str.is_empty() {
+            None
+        } else {
+            Some(Self(parent_str.to_string()))
+        }
+    }
+
+    /// Segments of an ontology path suitable for breadcrumb rendering.
+    /// Strips the `https://slug.social` prefix and returns the `~/…` parts.
+    ///
+    /// `https://slug.social/~/a/b` → `["~", "a", "b"]`
+    /// `https://slug.social/~/`    → `["~"]`
+    pub fn tilde_segments(&self) -> Vec<&str> {
+        match self.tilde_tail() {
+            Some(tail) if !tail.is_empty() => {
+                std::iter::once("~")
+                    .chain(tail.split('/').filter(|s| !s.is_empty()))
+                    .collect()
+            }
+            Some(_) => vec!["~"],
+            None => vec![],
+        }
+    }
 }
 
 impl fmt::Display for CanonicalItemUrl {
@@ -167,3 +205,44 @@ impl fmt::Display for RelativePath {
     }
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn canonical_parent_deep() {
+        let c = CanonicalItemUrl::parse("~/a/b/c").unwrap();
+        assert_eq!(c.parent().unwrap().as_str(), "https://slug.social/~/a/b");
+    }
+
+    #[test]
+    fn canonical_parent_one_level() {
+        let c = CanonicalItemUrl::parse("~/a").unwrap();
+        assert_eq!(c.parent().unwrap().as_str(), "https://slug.social/~");
+    }
+
+    #[test]
+    fn canonical_parent_root_is_none() {
+        let root = CanonicalItemUrl::parse("~/").unwrap();
+        assert!(root.parent().is_none());
+    }
+
+    #[test]
+    fn tilde_segments_deep() {
+        let c = CanonicalItemUrl::parse("~/a/b").unwrap();
+        assert_eq!(c.tilde_segments(), vec!["~", "a", "b"]);
+    }
+
+    #[test]
+    fn tilde_segments_root() {
+        let c = CanonicalItemUrl::parse("~/").unwrap();
+        assert_eq!(c.tilde_segments(), vec!["~"]);
+    }
+
+    #[test]
+    fn tilde_segments_non_ontology_is_empty() {
+        let c = CanonicalItemUrl::parse("https://example.com/foo").unwrap();
+        assert_eq!(c.tilde_segments(), Vec::<&str>::new());
+    }
+}
