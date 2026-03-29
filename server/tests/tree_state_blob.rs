@@ -7,7 +7,7 @@ use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use tower::ServiceExt as _;
 
-use slugsocial_server::state::{AppConfig, AppState, KeyRecord};
+use slugsocial_server::state::{AppConfig, AppState};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum SelectedRefV2 {
@@ -35,13 +35,7 @@ async fn tree_accepts_state_blob_s_param() {
     let state = AppState::new(AppConfig {
         data_dir,
         event_log_path,
-        keys: vec![KeyRecord {
-            id: "dev".to_string(),
-            secret: "dev".to_string(),
-        }],
-        rate_limit_per_minute: 9999,
         views_path: Some(format!("{}/views.json", tmp.path().to_string_lossy())),
-        x_bot: None,
     });
     let app = slugsocial_server::create_app(state);
 
@@ -80,13 +74,7 @@ async fn tree_missing_s_redirects_to_baseline() {
     let state = AppState::new(AppConfig {
         data_dir,
         event_log_path,
-        keys: vec![KeyRecord {
-            id: "dev".to_string(),
-            secret: "dev".to_string(),
-        }],
-        rate_limit_per_minute: 9999,
         views_path: Some(format!("{}/views.json", tmp.path().to_string_lossy())),
-        x_bot: None,
     });
     let app = slugsocial_server::create_app(state);
 

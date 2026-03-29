@@ -14,7 +14,6 @@ fn ingest_event(ts: i64, raw: &str) -> Event {
         // Stable ID for deterministic tests.
         id: format!("test-{ts}"),
         raw: raw.to_string(),
-        voter_key_id: "test".to_string(),
         // Required field; reducer will canonicalize and may be overridden by `@actor` in raw.
         actor: "test".to_string(),
     })
@@ -569,98 +568,6 @@ fn ranking_convergence_tolerance_triggers_early_exit() {
     let ranked = ranked_items(&mut group, 1_000_000, 1e-15);
     assert_eq!(ranked.len(), 2);
     assert_eq!(ranked[0].item, "https://slug.social/~/t/a");
-}
-
-// ============================================================================
-// Passkey / ActorKeyRegistration Tests
-// ============================================================================
-
-#[test]
-fn reducer_actor_key_registration_applies() {
-    let mut state = ReducerState::default();
-    assert!(state.actor_keys.is_empty());
-
-    state.apply_event(Event::ActorKeyRegistration {
-        ts: 1,
-        actor: "@testactor:rig:test/model".to_string(),
-        key_hash: "deadbeef".to_string(),
-    });
-
-    // canonicalize_actor strips '@' and lowercases
-    assert_eq!(
-        state.actor_keys.get("testactor:rig:test/model"),
-        Some(&"deadbeef".to_string()),
-        "actor_keys should contain the registered hash"
-    );
-    assert_eq!(state.actor_keys.len(), 1);
-}
-
-#[test]
-fn reducer_actor_key_first_registration_wins() {
-    let mut state = ReducerState::default();
-    let actor = "@testactor:rig:test/model".to_string();
-
-    // First registration.
-    state.apply_event(Event::ActorKeyRegistration {
-        ts: 1,
-        actor: actor.clone(),
-        key_hash: "first_hash".to_string(),
-    });
-
-    // Second registration for the same actor — must NOT overwrite.
-    state.apply_event(Event::ActorKeyRegistration {
-        ts: 2,
-        actor: actor.clone(),
-        key_hash: "second_hash".to_string(),
-    });
-
-    assert_eq!(
-        state.actor_keys.get("testactor:rig:test/model"),
-        Some(&"first_hash".to_string()),
-        "first registration must win; second is silently ignored"
-    );
-}
-
-#[test]
-fn reducer_actor_key_canonicalizes_actor() {
-    let mut state = ReducerState::default();
-
-    // Register with uppercase (unusual but valid raw input).
-    state.apply_event(Event::ActorKeyRegistration {
-        ts: 1,
-        actor: "@TESTACTOR:RIG:TEST/MODEL".to_string(),
-        key_hash: "hashval".to_string(),
-    });
-
-    // Should be stored under canonicalized (lowercased) key.
-    assert!(
-        state.actor_keys.contains_key("testactor:rig:test/model"),
-        "actor key should be canonicalized to lowercase"
-    );
-    assert!(
-        !state.actor_keys.contains_key("TESTACTOR:RIG:TEST/MODEL"),
-        "uppercase form should not be present"
-    );
-}
-
-#[test]
-fn reducer_multiple_actors_independent_keys() {
-    let mut state = ReducerState::default();
-
-    state.apply_event(Event::ActorKeyRegistration {
-        ts: 1,
-        actor: "@actor1:rig:p/m".to_string(),
-        key_hash: "hash1".to_string(),
-    });
-    state.apply_event(Event::ActorKeyRegistration {
-        ts: 2,
-        actor: "@actor2:rig:p/m".to_string(),
-        key_hash: "hash2".to_string(),
-    });
-
-    assert_eq!(state.actor_keys.len(), 2);
-    assert_eq!(state.actor_keys.get("actor1:rig:p/m"), Some(&"hash1".to_string()));
-    assert_eq!(state.actor_keys.get("actor2:rig:p/m"), Some(&"hash2".to_string()));
 }
 
 // ============================================================================

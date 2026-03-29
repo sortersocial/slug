@@ -2,34 +2,13 @@ use axum::Router;
 use tracing_subscriber::EnvFilter;
 
 use slugsocial_server::{
-    bot,
     event_log::EventLog,
     create_app,
-    state::{AppConfig, AppState, KeyRecord, XBotConfig},
+    state::{AppConfig, AppState},
 };
 
 fn env_var(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|s| !s.trim().is_empty())
-}
-
-fn parse_keys(s: &str) -> Vec<KeyRecord> {
-    // Format: "id1:key1,id2:key2" or "key1,key2" (id auto = first8 of key).
-    s.split(',')
-        .map(|part| part.trim())
-        .filter(|p| !p.is_empty())
-        .map(|p| {
-            if let Some((id, secret)) = p.split_once(':') {
-                KeyRecord {
-                    id: id.trim().to_string(),
-                    secret: secret.trim().to_string(),
-                }
-            } else {
-                let secret = p.to_string();
-                let id = secret.chars().take(8).collect::<String>();
-                KeyRecord { id, secret }
-            }
-        })
-        .collect()
 }
 
 #[tokio::main]
@@ -44,56 +23,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let data_dir = env_var("SLUG_DATA_DIR").unwrap_or_else(|| "/data".to_string());
     let event_log_path = env_var("SLUG_EVENT_LOG").unwrap_or_else(|| format!("{data_dir}/events.jsonl"));
-    let keys_raw = env_var("SLUG_KEYS").unwrap_or_else(|| "dev:dev".to_string());
-    let keys = parse_keys(&keys_raw);
-    let rate_limit_per_minute: u32 = env_var("SLUG_RATE_LIMIT_PER_MIN")
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(60);
 
-    eprintln!(
-        "[boot] data_dir={data_dir} event_log_path={event_log_path} keys={}",
-        keys.len()
-    );
-
-    // X bot config (optional — all three env vars must be set to enable).
-    let x_bot = match (
-        env_var("SLUG_X_BEARER_TOKEN"),
-        env_var("SLUG_X_BOT_USER_ID"),
-        env_var("SLUG_X_BOT_HANDLE"),
-    ) {
-        (Some(bearer_token), Some(bot_user_id), Some(bot_handle)) => {
-            let poll_interval_secs = env_var("SLUG_X_POLL_SECS")
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(30);
-            let api_base_url = env_var("SLUG_X_API_BASE_URL")
-                .unwrap_or_else(|| "https://api.x.com".to_string());
-            let write_token = env_var("SLUG_X_WRITE_TOKEN");
-            let public_url = env_var("SLUG_PUBLIC_URL")
-                .unwrap_or_else(|| "https://slug.social".to_string());
-            Some(XBotConfig {
-                bearer_token,
-                bot_user_id,
-                bot_handle,
-                poll_interval_secs,
-                api_base_url,
-                write_token,
-                public_url,
-            })
-        }
-        _ => None,
-    };
-
-    if x_bot.is_some() {
-        eprintln!("[boot] x bot enabled");
-    }
+    eprintln!("[boot] data_dir={data_dir} event_log_path={event_log_path}");
 
     let cfg = AppConfig {
         data_dir: data_dir.clone(),
         event_log_path: event_log_path.clone(),
-        keys,
-        rate_limit_per_minute,
         views_path: None,
-        x_bot,
     };
 
     let state = AppState::new(cfg);
@@ -108,14 +44,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         for ev in events {
             reduced.apply_event(ev);
         }
-    }
-
-    // Start X bot if configured (polls mentions + keeps Fly.io machine alive).
-    if let Some(x_cfg) = state.cfg.x_bot.clone() {
-        let bot_state = state.clone();
-        tokio::spawn(async move {
-            bot::run_bot(bot_state, x_cfg).await;
-        });
     }
 
     // Single source of truth for routing lives in the library (`create_app`).

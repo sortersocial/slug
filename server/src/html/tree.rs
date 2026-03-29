@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 use crate::{
-    events::{canonicalize_item, path_owner_uuid},
+    events::canonicalize_item,
     path_types::{CanonicalItemUrl, RelativePath},
     scope_rank::ChildrenRankings,
     state::AppState,
@@ -272,17 +272,13 @@ fn ranked_children_public(
 
     for comp in rankings.component_rankings {
         for r in comp.ranked {
-            if path_owner_uuid(r.item.as_str()).is_none() {
-                seen.insert(r.item.clone());
-                out.push(r.item);
-            }
+            seen.insert(r.item.clone());
+            out.push(r.item);
         }
     }
     for it in rankings.unranked_items {
-        if path_owner_uuid(it.as_str()).is_none() {
-            seen.insert(it.clone());
-            out.push(it);
-        }
+        seen.insert(it.clone());
+        out.push(it);
     }
 
     // Also surface phantom intermediate nodes: keys of item_children that are
@@ -301,9 +297,6 @@ fn ranked_children_public(
             continue;
         }
         if seen.contains(key) {
-            continue;
-        }
-        if path_owner_uuid(key_str).is_some() {
             continue;
         }
         seen.insert(key.clone());
@@ -502,9 +495,6 @@ async fn tree_render(
     if path.trim().is_empty() {
         // /tree maps to "~/"
     }
-    if path_owner_uuid(&root).is_some() {
-        return (StatusCode::FORBIDDEN, "private namespace").into_response();
-    }
 
     let blob = match q.s.as_deref().map(str::trim) {
         None | Some("") => {
@@ -595,9 +585,6 @@ pub async fn tree_toggle(
     if root.is_empty() || target.is_empty() {
         return (StatusCode::BAD_REQUEST, "missing root/target").into_response();
     }
-    if path_owner_uuid(&root).is_some() || path_owner_uuid(&target).is_some() {
-        return (StatusCode::FORBIDDEN, "private namespace").into_response();
-    }
 
     let Some(ref blob) = f.s else {
         return (StatusCode::BAD_REQUEST, "missing state").into_response();
@@ -669,9 +656,6 @@ pub async fn tree_select(
     if root.is_empty() || target.is_empty() {
         return (StatusCode::BAD_REQUEST, "missing root/target").into_response();
     }
-    if path_owner_uuid(&root).is_some() || path_owner_uuid(&target).is_some() {
-        return (StatusCode::FORBIDDEN, "private namespace").into_response();
-    }
     let target_can = match CanonicalItemUrl::parse(&target) {
         Some(c) => c,
         None => return (StatusCode::BAD_REQUEST, "invalid target").into_response(),
@@ -725,7 +709,6 @@ mod tests {
             ts: 1,
             id: "test-ingest".to_string(),
             raw: raw.to_string(),
-            voter_key_id: "test".to_string(),
             actor: "tester".to_string(),
         })
     }

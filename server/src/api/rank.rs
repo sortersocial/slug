@@ -1,6 +1,6 @@
 use axum::{
     extract::{Query, State},
-    http::{HeaderMap, StatusCode},
+    http::StatusCode,
     response::IntoResponse,
     Json,
 };
@@ -15,7 +15,6 @@ use crate::{
     state::AppState,
 };
 
-use super::auth::verified_actor_uuid;
 use super::helpers::{
     api_error, compute_connectivity_stats, is_pair_voted, item_path_for_api, paginate_rankings,
     parse_parent_specs, pick_random_distinct,
@@ -42,18 +41,12 @@ pub struct RankQuery {
     /// How many levels deep to resolve children (default 1 = direct children only).
     #[serde(default)]
     pub depth: Option<usize>,
-    #[serde(default)]
-    pub actor: Option<String>,
-    #[serde(default)]
-    pub passkey: Option<String>,
 }
 
-pub async fn get_rank(State(state): State<AppState>, headers: HeaderMap, Query(q): Query<RankQuery>) -> impl IntoResponse {
+pub async fn get_rank(State(state): State<AppState>, Query(q): Query<RankQuery>) -> impl IntoResponse {
     let reduced_arc = state.reduced.clone();
     let reduced = reduced_arc.read().await;
 
-    let passkey = headers.get("x-slug-passkey").and_then(|v| v.to_str().ok()).map(|s| s.to_string()).or(q.passkey);
-    let authed_uuid = verified_actor_uuid(&reduced, q.actor.as_deref(), passkey.as_deref());
     let specs = parse_parent_specs(q.parent.as_ref());
     let is_global = q.parent.as_deref().map(|p| p.trim() == "~").unwrap_or(false);
     let depth = q.depth.unwrap_or(1).max(1);
@@ -98,10 +91,6 @@ pub async fn get_rank(State(state): State<AppState>, headers: HeaderMap, Query(q
                 ranking: c
                     .ranked
                     .into_iter()
-                    .filter(|r| match crate::events::path_owner_uuid(r.item.as_str()) {
-                        None => true,
-                        Some(owner) => authed_uuid.as_deref() == Some(owner),
-                    })
                     .map(|r| RankRow {
                         item: item_path_for_api(r.item.as_str()),
                         percent: if want_percent {
@@ -119,10 +108,6 @@ pub async fn get_rank(State(state): State<AppState>, headers: HeaderMap, Query(q
     let prefixed_unranked: Vec<String> = rankings
         .unranked_items
         .into_iter()
-        .filter(|p| match crate::events::path_owner_uuid(p.as_str()) {
-            None => true,
-            Some(owner) => authed_uuid.as_deref() == Some(owner),
-        })
         .map(|s| item_path_for_api(s.as_str()))
         .collect();
 
@@ -153,15 +138,10 @@ pub struct GlobalRankQuery {
     /// When true, add a `percent` field to each row (top item = 100, bottom = 0).
     #[serde(default)]
     pub percent: Option<bool>,
-    #[serde(default)]
-    pub actor: Option<String>,
-    #[serde(default)]
-    pub passkey: Option<String>,
 }
 
 pub async fn get_global_rank(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Query(q): Query<GlobalRankQuery>,
 ) -> impl IntoResponse {
     const DEFAULT_LIMIT: usize = 50;
@@ -174,12 +154,6 @@ pub async fn get_global_rank(
     let reduced_arc = state.reduced.clone();
     // Write lock needed to update cached_scores when dirty.
     let reduced = reduced_arc.write().await;
-    let passkey = headers
-        .get("x-slug-passkey")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_string())
-        .or(q.passkey);
-    let authed_uuid = verified_actor_uuid(&reduced, q.actor.as_deref(), passkey.as_deref());
 
     // Find connected components in global graph; rank within each; largest component first.
     let n = reduced.ranking_group.idx_to_item.len();
@@ -195,9 +169,6 @@ pub async fn get_global_rank(
         let bot = items.last().map(|r| r.score).unwrap_or(0.0);
         let range = (top - bot).max(1e-12);
         for r in items {
-            if let Some(owner) = crate::events::path_owner_uuid(r.item.as_str()) {
-                if authed_uuid.as_deref() != Some(owner) { continue; }
-            }
             let pct = want_percent.then(|| ((r.score - bot) / range * 100.0).clamp(0.0, 100.0));
             ranked.push(RankRow { item: item_path_for_api(r.item.as_str()), score: r.score, percent: pct });
         }
@@ -210,10 +181,6 @@ pub async fn get_global_rank(
         .items
         .iter()
         .filter(|it| !reduced.ranking_group.item_to_idx.contains_key(*it))
-        .filter(|it| match crate::events::path_owner_uuid(it.as_str()) {
-            None => true,
-            Some(owner) => authed_uuid.as_deref() == Some(owner),
-        })
         .map(|it| it.as_str().to_string())
         .collect();
     unranked.sort();
@@ -247,39 +214,17 @@ pub async fn get_global_rank(
 #[derive(Debug, Deserialize)]
 pub struct RankHistoryQuery {
     pub item: String,
-    #[serde(default)]
-    pub actor: Option<String>,
-    #[serde(default)]
-    pub passkey: Option<String>,
 }
 
 pub async fn get_rank_history(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Query(q): Query<RankHistoryQuery>,
 ) -> impl IntoResponse {
     let reduced_arc = state.reduced.clone();
     let reduced = reduced_arc.read().await;
-    let passkey = headers
-        .get("x-slug-passkey")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.to_string())
-        .or(q.passkey);
-    let authed_uuid = verified_actor_uuid(&reduced, q.actor.as_deref(), passkey.as_deref());
 
     let item_str = crate::events::canonicalize_item(&q.item);
     let item = CanonicalItemUrl(item_str.clone());
-
-    // Private item access check.
-    if let Some(owner) = crate::events::path_owner_uuid(&item_str) {
-        if authed_uuid.as_deref() != Some(owner) {
-            return (axum::http::StatusCode::FORBIDDEN, Json(slug_types::ApiError {
-                ok: false,
-                error: "forbidden".to_string(),
-                hint: None,
-            })).into_response();
-        }
-    }
 
     let entries = reduced.rank_history.get(&item).cloned().unwrap_or_default();
 
@@ -348,30 +293,21 @@ pub struct PairQuery {
     pub parent: Option<String>,
     #[serde(default)]
     pub random: Option<bool>,
-    #[serde(default)]
-    pub actor: Option<String>,
-    #[serde(default)]
-    pub passkey: Option<String>,
 }
 
-pub async fn get_pair(State(state): State<AppState>, headers: HeaderMap, Query(q): Query<PairQuery>) -> impl IntoResponse {
+pub async fn get_pair(State(state): State<AppState>, Query(q): Query<PairQuery>) -> impl IntoResponse {
     let reduced_arc = state.reduced.clone();
     let force_random = q.random.unwrap_or(false);
 
     let pool: Vec<String> = {
         let reduced = reduced_arc.read().await;
-        let passkey = headers.get("x-slug-passkey").and_then(|v| v.to_str().ok()).map(|s| s.to_string()).or_else(|| q.passkey.clone());
-        let authed_uuid = verified_actor_uuid(&reduced, q.actor.as_deref(), passkey.as_deref());
         let specs = parse_parent_specs(q.parent.as_ref());
         let raw_pool: Vec<CanonicalItemUrl> = if specs.is_empty() {
             reduced.ranking_group.idx_to_item.clone()
         } else {
             crate::scope_rank::resolve_scope(&reduced, &specs)
         };
-        raw_pool.into_iter().filter(|it| match crate::events::path_owner_uuid(it.as_str()) {
-            None => true,
-            Some(owner) => authed_uuid.as_deref() == Some(owner),
-        }).map(|it| it.0).collect()
+        raw_pool.into_iter().map(|it| it.0).collect()
     };
 
     if pool.len() < 2 {

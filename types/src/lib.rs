@@ -140,7 +140,6 @@ pub struct PostRow {
     pub ts: i64,
     /// Self-declared actor (`@uuid:rig:model`).
     pub actor: String,
-    pub voter_key_id: String,
     pub body: String,
     pub truncated: bool,
 }
@@ -149,7 +148,6 @@ pub struct PostRow {
 pub struct IngestRow {
     pub ts: i64,
     pub actor: Option<String>,
-    pub voter_key_id: String,
     pub snippet: String,
 }
 
@@ -223,9 +221,6 @@ pub struct FeedPost {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct IngestRequest {
     pub text: String,
-    /// Passkey for the actor (alternative to X-Slug-Passkey header; header takes precedence).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub passkey: Option<String>,
 }
 
 /// One item's position within a ranking component.
@@ -266,12 +261,6 @@ pub struct IngestResponse {
     /// Empty when the ingest contained no votes.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ranking_changes: Vec<ScopeRankChanges>,
-    /// True when this ingest registered a new passkey for the actor.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub registered: bool,
-    /// The server-generated passkey for this actor, present only on first ingest.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub passkey: Option<String>,
 }
 
 /// One scoped ranking preview for `check` (dry-run), grouped into components.

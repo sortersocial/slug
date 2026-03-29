@@ -108,7 +108,6 @@ pub async fn editor_check(
                 ts: crate::api::now_ms(),
                 id: uuid::Uuid::new_v4().to_string(),
                 raw: form.text.clone(),
-                voter_key_id: v.voter_key_id.clone(),
                 actor: v.actor.clone(),
             });
             let mut simulated = { reduced_arc.read().await.clone() };

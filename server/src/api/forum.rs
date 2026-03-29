@@ -73,7 +73,6 @@ pub async fn get_thread(State(state): State<AppState>, Query(q): Query<ThreadDet
                     index: idx,
                     ts: ing.ts,
                     actor: ing.actor.clone(),
-                    voter_key_id: ing.voter_key_id.clone(),
                     body: ing.raw.clone(),
                     truncated: false,
                 }],
@@ -121,7 +120,6 @@ pub async fn get_thread(State(state): State<AppState>, Query(q): Query<ThreadDet
                 index: idx,
                 ts: ing.ts,
                 actor: ing.actor.clone(),
-                voter_key_id: ing.voter_key_id.clone(),
                 body,
                 truncated,
             }

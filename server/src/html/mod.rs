@@ -249,16 +249,6 @@ pub(super) fn actor_label(actor: &str) -> String {
     a.to_string()
 }
 
-/// Format a follower count for display (e.g. 14200 → "14.2K").
-pub(super) fn format_followers(n: u64) -> String {
-    if n >= 1_000_000 {
-        format!("{:.1}M", n as f64 / 1_000_000.0)
-    } else if n >= 1_000 {
-        format!("{:.1}K", n as f64 / 1_000.0)
-    } else {
-        n.to_string()
-    }
-}
 
 /// Escape HTML special chars for safe injection.
 fn escape_html(s: &str) -> String {

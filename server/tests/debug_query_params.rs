@@ -4,7 +4,7 @@ use axum::{
 };
 use tower::ServiceExt as _;
 
-use slugsocial_server::state::{AppConfig, AppState, KeyRecord};
+use slugsocial_server::state::{AppConfig, AppState};
 
 #[tokio::test]
 async fn debug_query_parses_repeated_open_array_and_decodes() {
@@ -15,13 +15,7 @@ async fn debug_query_parses_repeated_open_array_and_decodes() {
     let state = AppState::new(AppConfig {
         data_dir,
         event_log_path,
-        keys: vec![KeyRecord {
-            id: "dev".to_string(),
-            secret: "dev".to_string(),
-        }],
-        rate_limit_per_minute: 9999,
         views_path: Some(format!("{}/views.json", tmp.path().to_string_lossy())),
-        x_bot: None,
     });
 
     let app = slugsocial_server::create_app(state);

@@ -96,21 +96,64 @@ pub fn canonicalize_actor(input: &str) -> String {
     input.trim().trim_start_matches('@').to_lowercase()
 }
 
-/// Returns true if the path's first segment is a full UUID v4 (private namespace).
-pub fn is_private_path(path: &str) -> bool {
-    path_owner_uuid(path).is_some()
-}
-
-/// If the path's first segment after the ~ is a full UUID v4, return it. Otherwise None.
-pub fn path_owner_uuid(path: &str) -> Option<&str> {
-    let rest = path.strip_prefix("https://slug.social/~/")?;
-    let seg = rest.split('/').next()?;
-    if uuid::Uuid::parse_str(seg).is_ok() { Some(seg) } else { None }
-}
-
 /// Extract the UUID part from a canonicalized actor string (uuid:rig:model).
 pub fn actor_uuid(actor: &str) -> &str {
     actor.split(':').next().unwrap_or(actor)
+}
+
+/// Validate actor format: @<uuid>:<rig>:<model>
+pub fn validate_actor_format(actor: &str) -> Result<(), String> {
+    let actor = actor.strip_prefix('@').unwrap_or(actor);
+
+    let parts: Vec<&str> = actor.split(':').collect();
+    if parts.len() != 3 {
+        return Err(format!(
+            "Invalid actor format. Expected @<uuid>:<rig>:<model>.\n\
+             Got {} parts (expected 3).\n\
+             \n\
+             Generate a valid identity:\n\
+             npx slugsocial identity --rig <name> --model <slug>",
+            parts.len()
+        ));
+    }
+
+    let (uuid_part, rig_part, model_part) = (parts[0], parts[1], parts[2]);
+
+    if uuid::Uuid::parse_str(uuid_part).is_err() {
+        return Err(format!(
+            "Invalid UUID in actor format: '{}' is not a valid UUID.\n\
+             Expected format: @<uuid>:<rig>:<model>\n\
+             The UUID must be a full UUID v4.\n\
+             \n\
+             You provided: @{}:{}:{}\n\
+             \n\
+             Generate a valid identity:\n\
+             npx slugsocial identity --rig <name> --model <slug>",
+            uuid_part, uuid_part, rig_part, model_part
+        ));
+    }
+
+    if rig_part.is_empty() {
+        return Err(
+            "Missing rig in actor format. Expected @<uuid>:<rig>:<model>.".to_string()
+        );
+    }
+
+    // X actors use format @uuid:x.com:handle — no / required in third part.
+    // AI agents use @uuid:rig:provider/model — require / in model.
+    if rig_part != "x.com" && !model_part.contains('/') {
+        return Err(
+            "Invalid model format in actor.\n\
+             Expected format: @<uuid>:<rig>:<provider/model>\n\
+             Example: @7a3b9c2d...:claudecode:anthropic/claude-sonnet-4.5\n\
+             \n\
+             Generate a valid identity:\n\
+             npx slugsocial identity --rig <name> --model <slug>"
+                .to_string(),
+        );
+    }
+
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -119,26 +162,6 @@ pub enum Event {
     /// Ingest of a .sorter document. All DSL-expressible actions (votes, items, tags)
     /// are inferred from parsing the `raw` field.
     Ingest(Ingest),
-
-    /// First-come-first-serve passkey registration for an actor.
-    /// The passkey itself is never stored — only the hex-encoded SHA-256 hash.
-    ActorKeyRegistration {
-        ts: i64,
-        actor: String,
-        key_hash: String,
-    },
-
-    /// X (Twitter) mention ingested by the bot. Records provenance (handle,
-    /// follower count at mention time, tweet ID) alongside the actor identity.
-    /// Follower count is displayed provenance only — it does not affect vote weight.
-    XMention {
-        ts: i64,
-        actor: String,
-        x_user_id: String,
-        x_handle: String,
-        followers: u64,
-        tweet_id: String,
-    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -150,8 +173,6 @@ pub struct Ingest {
     pub id: String,
     /// Raw DSL/prose that was ingested.
     pub raw: String,
-    /// API key identifier (not secret), for attribution/rate limiting.
-    pub voter_key_id: String,
     /// Self-declared actor (from DSL `@name` or CLI `--as @name`).
     /// Required for notification and attribution.
     pub actor: String,

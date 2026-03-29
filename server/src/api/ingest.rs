@@ -1,6 +1,6 @@
 use axum::{
     extract::State,
-    http::{HeaderMap, StatusCode},
+    http::StatusCode,
     response::IntoResponse,
     Json,
 };
@@ -10,21 +10,18 @@ use std::collections::{HashMap, HashSet};
 
 use crate::{
     dsl,
-    events::{canonicalize_actor, canonicalize_item, canonicalize_tag, Event, Ingest},
+    events::{canonicalize_actor, canonicalize_tag, validate_actor_format, Event, Ingest},
     path_types::CanonicalItemUrl,
     reducer::ReducerState,
     state::AppState,
 };
-
-use super::auth::validate_actor_format;
-use super::helpers::{api_error, item_path_for_api, now_ms, resolve_item, sha256_hex};
+use super::helpers::{api_error, item_path_for_api, now_ms, resolve_item};
 
 /// Result of validating an ingest document. Shared by post_ingest and post_check.
 #[derive(Debug)]
 pub struct ValidatedIngest {
     pub doc: dsl::Document,
     pub ts: i64,
-    pub voter_key_id: String,
     pub actor: String,
     pub threads: Vec<String>,
     pub raw_text: String,
@@ -51,7 +48,6 @@ pub fn validate_ingest_document(
 
     let ts = now_ms();
     let mut current_actor: Option<String> = None;
-    let mut voter_key_id = "anon".to_string();
     let mut threads_seen: Vec<String> = Vec::new();
     let mut defined_in_doc: HashSet<String> = HashSet::new();
 
@@ -67,7 +63,6 @@ pub fn validate_ingest_document(
                 }
                 let a = canonicalize_actor(name);
                 current_actor = Some(a.clone());
-                voter_key_id = a;
             }
             dsl::Stmt::Hashtag { name, .. } => {
                 let t = canonicalize_tag(name);
@@ -168,56 +163,6 @@ pub fn validate_ingest_document(
         )
     })?;
 
-    let actor_u = crate::events::actor_uuid(&actor).to_string();
-
-    // Private namespace ownership checks.
-    for s in &doc.statements {
-        match s {
-            dsl::Stmt::Item { title, .. } => {
-                let item = canonicalize_item(title);
-                if let Some(owner) = crate::events::path_owner_uuid(&item) {
-                    if owner != actor_u {
-                        return Err((
-                            StatusCode::FORBIDDEN,
-                            "private namespace: path owner does not match actor".to_string(),
-                            Some(format!(
-                                "/{} belongs to UUID {}, but your actor UUID is {}",
-                                item, owner, actor_u
-                            )),
-                        ));
-                    }
-                }
-            }
-            dsl::Stmt::Vote { item1, item2, .. } => {
-                let a = canonicalize_item(item1);
-                let b = canonicalize_item(item2);
-                let a_owner = crate::events::path_owner_uuid(&a);
-                let b_owner = crate::events::path_owner_uuid(&b);
-                match (a_owner, b_owner) {
-                    (None, None) => {} // both public, fine
-                    (Some(oa), Some(ob)) if oa == ob => {
-                        // both private, same owner -- actor must match
-                        if oa != actor_u {
-                            return Err((
-                                StatusCode::FORBIDDEN,
-                                "private namespace: vote owner does not match actor".to_string(),
-                                Some(format!("these items belong to UUID {}, not {}", oa, actor_u)),
-                            ));
-                        }
-                    }
-                    _ => {
-                        return Err((
-                            StatusCode::BAD_REQUEST,
-                            "cross-votes between private and public items are not allowed".to_string(),
-                            Some("votes must either be between two public items or two private items owned by the same actor".to_string()),
-                        ));
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
     let threads: Vec<String> = threads_seen;
     if threads.len() > 1 {
         return Err((
@@ -234,48 +179,16 @@ pub fn validate_ingest_document(
         ));
     }
     if threads.is_empty() {
-        // Thread is optional only when every item and vote is under the actor's private namespace.
-        // Pure prose posts and public items still require a #tag.
-        let all_private = {
-            let mut has_content = false;
-            let mut all_under_actor = true;
-            for s in &doc.statements {
-                match s {
-                    dsl::Stmt::Item { title, .. } => {
-                        has_content = true;
-                        let item = canonicalize_item(title);
-                        if crate::events::path_owner_uuid(&item) != Some(actor_u.as_str()) {
-                            all_under_actor = false;
-                        }
-                    }
-                    dsl::Stmt::Vote { item1, item2, .. } => {
-                        has_content = true;
-                        let a = canonicalize_item(item1);
-                        let b = canonicalize_item(item2);
-                        if crate::events::path_owner_uuid(&a) != Some(actor_u.as_str())
-                            || crate::events::path_owner_uuid(&b) != Some(actor_u.as_str())
-                        {
-                            all_under_actor = false;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            has_content && all_under_actor
-        };
-        if !all_private {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                "ingest requires at least one #tag".to_string(),
-                Some("declare a thread with #tag (e.g. #sorting-hat) or a quoted title line (e.g. \"Sorting Hat\" { ... })\n(thread declaration is optional only when all items are in your private ~/uuid/ namespace)".to_string()),
-            ));
-        }
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "ingest requires at least one #tag".to_string(),
+            Some("declare a thread with #tag (e.g. #sorting-hat) or a quoted title line (e.g. \"Sorting Hat\" { ... })".to_string()),
+        ));
     }
 
     Ok(ValidatedIngest {
         doc,
         ts,
-        voter_key_id,
         actor,
         threads,
         raw_text: text.to_string(),
@@ -352,7 +265,6 @@ fn compute_scope_rank_changes(
 
 pub async fn post_ingest(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Json(req): Json<IngestRequest>,
 ) -> impl IntoResponse {
     let reduced_arc = state.reduced.clone();
@@ -368,68 +280,7 @@ pub async fn post_ingest(
     };
     drop(reduced);
 
-    // Passkey: header takes priority over JSON body field.
-    let passkey: Option<String> = headers
-        .get("x-slug-passkey")
-        .and_then(|hv| hv.to_str().ok())
-        .map(|s| s.to_string())
-        .or_else(|| req.passkey.clone());
-
-    // Passkey auth gate.
-    // generated_passkey is Some when this is a new actor's first ingest (server-generated key).
-    let generated_passkey: Option<String> = {
-        let reduced = reduced_arc.read().await;
-        match reduced.actor_keys.get(&v.actor) {
-            Some(stored_hash) => {
-                // Actor IS registered -- passkey required.
-                match &passkey {
-                    None => {
-                        return api_error(
-                            StatusCode::UNAUTHORIZED,
-                            "this actor requires a passkey",
-                            Some("pass --passkey <slug_sk_...> or set SLUG_PASSKEY".to_string()),
-                        );
-                    }
-                    Some(pk) => {
-                        if sha256_hex(pk) != *stored_hash {
-                            return api_error(StatusCode::UNAUTHORIZED, "invalid passkey", None);
-                        }
-                    }
-                }
-                None
-            }
-            None => {
-                // Actor NOT registered -- server generates passkey on first ingest.
-                if passkey.is_some() {
-                    return api_error(
-                        StatusCode::UNAUTHORIZED,
-                        "no passkey registered for this account",
-                        Some("do not supply a passkey for a new actor; the server will generate one".to_string()),
-                    );
-                }
-                Some(format!("slug_sk_{}", uuid::Uuid::new_v4().simple()))
-            }
-        }
-    };
-
-    // If registering: append ActorKeyRegistration event before the Ingest event.
     let mut events_appended: usize = 0;
-    if let Some(ref pk) = generated_passkey {
-        let key_hash = sha256_hex(pk);
-        let reg_event = crate::events::Event::ActorKeyRegistration {
-            ts: v.ts,
-            actor: v.actor.clone(),
-            key_hash,
-        };
-        if let Err(err) = event_log.append(&reg_event).await {
-            return api_error(StatusCode::INTERNAL_SERVER_ERROR, format!("{err}"), None);
-        }
-        {
-            let mut reduced = reduced_arc.write().await;
-            reduced.apply_event(reg_event);
-        }
-        events_appended += 1;
-    }
 
     // Collect parent scopes for all voted items so we can compute ranking deltas.
     let voted_parent_scopes: Vec<CanonicalItemUrl> = {
@@ -463,7 +314,6 @@ pub async fn post_ingest(
         ts: v.ts,
         id: uuid::Uuid::new_v4().to_string(),
         raw: v.raw_text.clone(),
-        voter_key_id: v.voter_key_id.clone(),
         actor: v.actor.clone(),
     });
 
@@ -510,8 +360,6 @@ pub async fn post_ingest(
         ok: true,
         threads: v.threads.iter().map(|t| format!("#{t}")).collect(),
         events_appended,
-        registered: generated_passkey.is_some(),
-        passkey: generated_passkey,
         next: NextMoves {
             pair: "npx slugsocial pair".to_string(),
             rank: "npx slugsocial rank".to_string(),
@@ -543,7 +391,6 @@ pub async fn post_check(
         ts: v.ts,
         id: uuid::Uuid::new_v4().to_string(),
         raw: v.raw_text.clone(),
-        voter_key_id: v.voter_key_id.clone(),
         actor: v.actor.clone(),
     });
 

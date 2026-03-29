@@ -1,4 +1,3 @@
-mod auth;
 mod debug;
 mod feed;
 mod forum;
@@ -10,8 +9,6 @@ mod search;
 mod stream;
 
 // Re-export all public items so `api::get_rank`, `api::post_ingest`, etc. still work.
-
-pub use auth::{validate_actor_format, verified_actor_uuid};
 
 pub use debug::{get_debug_query, DebugQuery};
 
@@ -52,7 +49,6 @@ mod tests {
             ts,
             id: format!("test-{ts}"),
             raw: raw.to_string(),
-            voter_key_id: "test".to_string(),
             actor: "test".to_string(),
         }));
     }

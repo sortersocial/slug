@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use serde::{Deserialize, Serialize};
 
 use crate::events::{
-    canonicalize_actor, canonicalize_item, canonicalize_tag, Event, Ingest,
+    canonicalize_actor, canonicalize_tag, Event, Ingest,
 };
 use crate::path_types::CanonicalItemUrl;
 
@@ -123,13 +123,6 @@ impl GroupState {
     }
 }
 
-/// X user profile provenance (displayed, not used for vote weighting).
-#[derive(Debug, Clone)]
-pub struct XProfile {
-    pub x_handle: String,
-    pub followers: u64,
-}
-
 /// Compact rank-history entry stored per item in the ledger.
 /// `caused_by` is resolved lazily at query time from `ingests_by_id`.
 #[derive(Debug, Clone)]
@@ -179,10 +172,6 @@ pub struct ReducerState {
     /// First-class thread state: bump time, subscriber count.
     pub threads: HashMap<String, ThreadState>,
 
-    /// Actor passkey hashes: actor -> hex-encoded SHA-256 of the registered passkey.
-    /// First registration wins; subsequent ActorKeyRegistration events for the same actor are ignored.
-    pub actor_keys: HashMap<String, String>,
-
     /// Last ingest timestamp (ms) per actor. Used by feed to default `since`.
     pub actor_last_post_ts: HashMap<String, i64>,
 
@@ -191,12 +180,6 @@ pub struct ReducerState {
 
     /// Per-item rank history, oldest first.
     pub rank_history: HashMap<CanonicalItemUrl, Vec<RankHistoryEntry>>,
-
-    /// X user profiles keyed by canonical actor string. Provenance only.
-    pub x_profiles: HashMap<String, XProfile>,
-
-    /// Seen tweet IDs for bot dedup (avoids re-ingesting the same mention).
-    pub seen_tweet_ids: HashSet<String>,
 }
 
 impl ReducerState {
@@ -475,18 +458,6 @@ impl ReducerState {
                 }
 
                 nav!(self.actor_last_post_ts, keypath(ing.actor.clone()), setval(ing.ts));
-            }
-            Event::ActorKeyRegistration { actor, key_hash, .. } => {
-                let actor = canonicalize_actor(&actor);
-                nav!(self.actor_keys, keypath(actor), or_insert(key_hash));
-            }
-            Event::XMention { actor, x_handle, followers, tweet_id, .. } => {
-                let actor = canonicalize_actor(&actor);
-                self.x_profiles.insert(actor, XProfile {
-                    x_handle,
-                    followers,
-                });
-                self.seen_tweet_ids.insert(tweet_id);
             }
         }
     }
