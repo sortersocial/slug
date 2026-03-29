@@ -257,19 +257,14 @@ fn ranked_children_public(
     parent: &str,
 ) -> Vec<CanonicalItemUrl> {
     // Reducer parent keys are derived from `item_parent_path`, which uses
-    // `item_path_segments` and never preserves a trailing `/`.
-    //
-    // In particular, `canonicalize_item("~/")` is `"https://slug.social/~/"`, but
-    // the parent key for ontology items like `"https://slug.social/~/a"` is
-    // `"https://slug.social/~"`.
-    //
-    // Without this normalization, the tree root (`/tree` => `"~/") would render empty.
-    // Trim trailing slash so "https://slug.social/~/" becomes "https://slug.social/~"
-    // which is what item_children uses as the root parent key.
-    let parent_str = parent.trim_end_matches('/');
-    let parent_can = CanonicalItemUrl::parse(parent_str)
-        .or_else(|| CanonicalItemUrl::parse("~/"))
-        .unwrap();
+    // item_children uses "https://slug.social/~" (no trailing slash) as the root
+    // parent key. Use ontology_root() for the root case, or parse the given parent.
+    let parent_can = if parent.trim_end_matches('/') == "https://slug.social/~" || parent == "https://slug.social/~/" {
+        CanonicalItemUrl::ontology_root()
+    } else {
+        CanonicalItemUrl::parse(parent.trim_end_matches('/'))
+            .unwrap_or_else(CanonicalItemUrl::ontology_root)
+    };
     let rankings: ChildrenRankings =
         crate::scope_rank::build_children_rankings(reduced, &parent_can);
     let mut out: Vec<CanonicalItemUrl> = Vec::new();
@@ -294,7 +289,7 @@ fn ranked_children_public(
     // direct children of parent but were never explicitly ingested as items
     // (so they don't appear in any ranking). Example: ~/languages exists only as
     // a parent of ~/languages/rust etc., never ranked at the root level.
-    let phantom_parent_prefix = format!("{}/", parent_str);
+    let phantom_parent_prefix = format!("{}/", parent_can.as_str());
     for key in reduced.item_children.keys() {
         let key_str = key.as_str();
         if !key_str.starts_with(&phantom_parent_prefix) {

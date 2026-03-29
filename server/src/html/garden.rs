@@ -32,7 +32,7 @@ fn item_href(item: &str) -> String {
 pub async fn garden_index(State(state): State<AppState>) -> impl IntoResponse {
     let child_rankings = {
         let reduced = state.reduced.read().await;
-        build_children_rankings(&reduced, &CanonicalItemUrl::parse("~/").unwrap())
+        build_children_rankings(&reduced, &CanonicalItemUrl::ontology_root())
     };
 
     let views = state.views.get_views("/~");

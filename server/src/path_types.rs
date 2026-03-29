@@ -54,6 +54,12 @@ impl CanonicalItemUrl {
             .unwrap_or(self.0.as_str())
     }
 
+    /// The ontology root key as stored in `item_children`: `"https://slug.social/~"`.
+    /// Use this (not `parse("~/")`) when looking up top-level children.
+    pub fn ontology_root() -> Self {
+        Self("https://slug.social/~".to_string())
+    }
+
     /// Returns the parent of this canonical item URL by stripping the last
     /// path segment, or `None` if there is no parent (already at root).
     ///
