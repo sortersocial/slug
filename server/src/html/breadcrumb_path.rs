@@ -25,11 +25,12 @@ impl OntologyPath {
     }
 
     pub(super) fn from_canonical(canonical: CanonicalItemUrl) -> Self {
-        // Use tilde_segments() so we get ["~", "a", "b"] rather than splitting
-        // the full https://slug.social/~/a/b URL (which would include "https:" etc.).
+        // tilde_segments() returns ["~", "a", "b"] but bc_path() renders "~" itself,
+        // so we skip the leading "~" segment here.
         let segments = canonical
             .tilde_segments()
             .into_iter()
+            .skip(1) // drop the leading "~"
             .map(|s| s.to_string())
             .collect();
         Self { canonical, segments }
@@ -40,7 +41,7 @@ impl OntologyPath {
     }
 
     pub(super) fn is_root(&self) -> bool {
-        self.segments.len() <= 1 // just ["~"] or empty
+        self.segments.is_empty()
     }
 
     /// At ontology root, allow mode toggle to forum (`/`).
