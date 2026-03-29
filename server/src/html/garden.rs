@@ -18,14 +18,18 @@ use super::{
     breadcrumb_path::OntologyPath,
 };
 
-/// Display path for an item. No namespace stripping: paths are first-class.
+/// Display path for an item: `~/languages/rust` form.
 fn item_display_path(item: &str) -> String {
-    canonicalize_item(item)
+    CanonicalItemUrl::parse(item)
+        .and_then(|c| c.tilde_tail().map(|t| format!("~/{}", t)))
+        .unwrap_or_else(|| canonicalize_item(item))
 }
 
 /// Canonical ontology URL for an item path.
 fn item_href(item: &str) -> String {
-    format!("/~/{}", item_display_path(item))
+    CanonicalItemUrl::parse(item)
+        .and_then(|c| c.tilde_tail().map(|t| format!("/~/{}", t)))
+        .unwrap_or_else(|| format!("/~/{}", canonicalize_item(item)))
 }
 
 /// Ontology index — root-level paths. Private (UUID) roots are excluded.
@@ -308,13 +312,13 @@ async fn render_scope_view(state: AppState, path: OntologyPath) -> axum::respons
 
     let views = state.views.get_views(&format!("/~/{}", path.as_str()));
     let page = layout(
-        &format!("~/{}", path.as_str()),
+        &item_display_path(&model.item),
         "view-ontology view-ontology-dark",
         html! {
             nav class="breadcrumb" { (bc_path(&path)) }
             section class="ont-item-shell" {
                 header class="ont-item-meta" {
-                    span class="ont-item-title" { "/" (item_display_path(&model.item)) }
+                    span class="ont-item-title" { (item_display_path(&model.item)) }
                     @if let Some(rank) = &model.sibling_rank {
                         span class="ont-rank-badge" {
                             (format!("#{} of {}", rank.position, rank.component_size))
