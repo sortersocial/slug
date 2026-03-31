@@ -2,9 +2,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use serde::{Deserialize, Serialize};
 
-use crate::events::{
-    canonicalize_actor, canonicalize_tag, Event, Ingest,
-};
+use crate::events::{canonicalize_agent, canonicalize_tag, canonicalize_username, Event, Ingest};
 use crate::path_types::CanonicalItemUrl;
 
 /// Parsed vote data (internal representation).
@@ -17,9 +15,12 @@ pub struct VoteData {
     pub ratio_left: i32,
     pub ratio_right: i32,
     pub body: String,
-    pub actor: String,
-    /// Thread tag where this vote was cast. Validation requires every ingest to declare a thread (#tag or quoted title); "untagged" only for replayed legacy events.
-    pub thread: String,
+    /// Human principal username (no leading '@').
+    pub principal: String,
+    /// Agent delegate identity (stored with single leading '@').
+    pub delegate: String,
+    /// Thread id where this vote was cast (public tag or private id/slug).
+    pub thread_id: String,
 }
 
 /// Single ranking group (one-ranking model). All votes contribute to this group.
@@ -92,7 +93,9 @@ impl GroupState {
     pub fn apply_vote(&mut self, mut vote: VoteData) {
         vote.a = CanonicalItemUrl::parse(vote.a.as_str()).unwrap_or(vote.a);
         vote.b = CanonicalItemUrl::parse(vote.b.as_str()).unwrap_or(vote.b);
-        vote.actor = canonicalize_actor(&vote.actor);
+        vote.principal = canonicalize_username(&vote.principal);
+        vote.delegate = canonicalize_agent(&vote.delegate);
+        vote.thread_id = canonicalize_tag(&vote.thread_id);
         if vote.ratio_left < 0 {
             vote.ratio_left = 0;
         }
@@ -277,7 +280,9 @@ impl ReducerState {
     pub fn apply_event(&mut self, event: Event) {
         match event {
             Event::Ingest(mut ing) => {
-                ing.actor = canonicalize_actor(&ing.actor);
+                ing.principal = canonicalize_username(&ing.principal);
+                ing.delegate = canonicalize_agent(&ing.delegate);
+                ing.thread_id = canonicalize_tag(&ing.thread_id);
 
                 self.ingests_by_id.insert(ing.id.clone(), ing.clone());
 
@@ -314,9 +319,9 @@ impl ReducerState {
                     HashMap::new()
                 };
 
-                let mut current_actor: Option<String> = Some(ing.actor.clone());
-                let mut canonical_thread: Option<String> = None;
-                let mut thread_subtitle: Option<String> = None;
+                let principal = ing.principal.clone();
+                let delegate = ing.delegate.clone();
+                let canonical_thread: String = ing.thread_id.clone();
 
                 // Single-thread semantics: the first thread declaration wins for the whole ingest.
                 // Historical events that declared multiple threads are replayed into one canonical thread.
@@ -325,16 +330,6 @@ impl ReducerState {
 
                 for stmt in doc.statements {
                     match stmt {
-                        crate::dsl::Stmt::Hashtag { name, subtitle } => {
-                            let t = canonicalize_tag(&name);
-                            if canonical_thread.is_none() {
-                                canonical_thread = Some(t);
-                                thread_subtitle = subtitle;
-                            }
-                        }
-                        crate::dsl::Stmt::Actor { name } => {
-                            current_actor = Some(canonicalize_actor(&name));
-                        }
                         crate::dsl::Stmt::Item { title, body } => {
                             let Some(item) = Self::normalize_item(&title) else {
                                 continue;
@@ -363,7 +358,6 @@ impl ReducerState {
                                 continue;
                             };
 
-                            let actor = current_actor.clone().unwrap_or_else(|| ing.actor.clone());
                             let vote = VoteData {
                                 ts: ing.ts,
                                 a: item_a.clone(),
@@ -371,8 +365,9 @@ impl ReducerState {
                                 ratio_left,
                                 ratio_right,
                                 body: explanation,
-                                actor,
-                                thread: canonical_thread.clone().unwrap_or_else(|| "untagged".to_string()), // legacy replay: pre-validation events may have no thread declaration
+                                principal: principal.clone(),
+                                delegate: delegate.clone(),
+                                thread_id: canonical_thread.clone(),
                             };
 
                             ingest_items.insert(item_a.clone());
@@ -400,33 +395,23 @@ impl ReducerState {
                 }
 
                 // Index item -> threads (connective tissue for garden body/pair/matchup).
-                if let Some(thread) = &canonical_thread {
-                    for item in ingest_items.iter() {
-                        nav!(self.item_threads, keypath(item.clone()), set_elem(thread.clone()));
-                    }
+                for item in ingest_items.iter() {
+                    nav!(self.item_threads, keypath(item.clone()), set_elem(canonical_thread.clone()));
                 }
 
                 // Bump thread state for the canonical thread.
-                if let Some(thread) = &canonical_thread {
-                    let ts = self.threads.entry(thread.clone()).or_default();
-                    // Set subtitle only if this is the first post to the thread (immutable thereafter).
-                    if ts.subtitle.is_none() && thread_subtitle.is_some() {
-                        ts.subtitle = thread_subtitle.clone();
-                    }
-                    nav!(ts.last_activity_ts, selected(ing.ts > ts.last_activity_ts, setval(ing.ts)));
-                }
+                let ts = self.threads.entry(canonical_thread.clone()).or_default();
+                nav!(ts.last_activity_ts, selected(ing.ts > ts.last_activity_ts, setval(ing.ts)));
 
                 // Index ingest by canonical thread.
-                if let Some(thread) = canonical_thread.clone() {
-                    nav!(self.ingests_by_thread, keypath(thread), push_front(ing.id.clone()));
-                }
+                nav!(self.ingests_by_thread, keypath(canonical_thread.clone()), push_front(ing.id.clone()));
 
                 nav!(self.ingests_ordered, push_back(ing.id.clone()));
 
                 // Snapshot ranks after votes and push history entries.
                 if !voted_items.is_empty() {
                     crate::ranking::compute_group_ranking(&mut self.ranking_group, 10000, 1e-8);
-                    let thread = canonical_thread.clone().unwrap_or_else(|| "untagged".to_string());
+                    let thread = canonical_thread.clone();
                     for item in &voted_items {
                         let after_scope  = Self::scope_rank_of(&self.ranking_group, item, &self.item_children);
                         let after_global = Self::global_rank_of(&self.ranking_group, item);
@@ -457,8 +442,9 @@ impl ReducerState {
                     }
                 }
 
-                nav!(self.actor_last_post_ts, keypath(ing.actor.clone()), setval(ing.ts));
+                nav!(self.actor_last_post_ts, keypath(ing.principal.clone()), setval(ing.ts));
             }
+            _ => {}
         }
     }
 }

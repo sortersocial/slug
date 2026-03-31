@@ -154,9 +154,9 @@ pub async fn get_recent_votes(
             a: v.a.as_str().to_string(),
             b: v.b.as_str().to_string(),
             ratio: format!("{}:{}", v.ratio_left, v.ratio_right),
-            actor: Some(format!("@{}", v.actor)),
+            actor: Some(format!("@{}", v.principal)),
             body: v.body.clone(),
-            thread: Some(format!("#{}", v.thread)),
+            thread: Some(v.thread_id.clone()),
         }).collect();
 
     Json(RecentVotesResponse { votes: out }).into_response()
@@ -200,9 +200,9 @@ pub async fn get_matchup(
                     a: v.a.as_str().to_string(),
                     b: v.b.as_str().to_string(),
                     ratio: format!("{}:{}", v.ratio_left, v.ratio_right),
-                    actor: Some(format!("@{}", v.actor)),
+                    actor: Some(format!("@{}", v.principal)),
                     body: v.body.clone(),
-                    thread: Some(format!("#{}", v.thread)),
+                    thread: Some(v.thread_id.clone()),
                 })
                 .collect()
         })

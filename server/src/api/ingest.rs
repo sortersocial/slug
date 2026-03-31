@@ -10,7 +10,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::{
     dsl,
-    events::{canonicalize_actor, canonicalize_tag, validate_actor_format, Event, Ingest},
+    events::{canonicalize_agent, canonicalize_tag, canonicalize_username, validate_agent_format, Event, Ingest},
     path_types::CanonicalItemUrl,
     reducer::ReducerState,
     state::AppState,
@@ -22,8 +22,6 @@ use super::helpers::{api_error, item_path_for_api, now_ms, resolve_item};
 pub struct ValidatedIngest {
     pub doc: dsl::Document,
     pub ts: i64,
-    pub actor: String,
-    pub threads: Vec<String>,
     pub raw_text: String,
 }
 
@@ -33,7 +31,6 @@ pub struct ValidatedIngest {
 pub fn validate_ingest_document(
     reduced: &ReducerState,
     text: &str,
-    require_actor_error: &str,
 ) -> Result<ValidatedIngest, (StatusCode, String, Option<String>)> {
     let doc = match dsl::parse_full(text) {
         Ok(d) => d,
@@ -47,29 +44,10 @@ pub fn validate_ingest_document(
     };
 
     let ts = now_ms();
-    let mut current_actor: Option<String> = None;
-    let mut threads_seen: Vec<String> = Vec::new();
     let mut defined_in_doc: HashSet<String> = HashSet::new();
 
     for s in &doc.statements {
         match s {
-            dsl::Stmt::Actor { name } => {
-                if let Err(msg) = validate_actor_format(name) {
-                    return Err((
-                        StatusCode::BAD_REQUEST,
-                        "invalid actor format".to_string(),
-                        Some(msg),
-                    ));
-                }
-                let a = canonicalize_actor(name);
-                current_actor = Some(a.clone());
-            }
-            dsl::Stmt::Hashtag { name, .. } => {
-                let t = canonicalize_tag(name);
-                if !threads_seen.contains(&t) {
-                    threads_seen.push(t);
-                }
-            }
             dsl::Stmt::Item { title, body } => {
                 let item = match resolve_item(title) {
                     Ok(v) => v,
@@ -155,42 +133,9 @@ pub fn validate_ingest_document(
         }
     }
 
-    let actor = current_actor.ok_or_else(|| {
-        (
-            StatusCode::BAD_REQUEST,
-            require_actor_error.to_string(),
-            Some("add `@yourname` at the start of your document".to_string()),
-        )
-    })?;
-
-    let threads: Vec<String> = threads_seen;
-    if threads.len() > 1 {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "ingest may declare only one thread".to_string(),
-            Some(format!(
-                "found multiple thread declarations: {}",
-                threads
-                    .iter()
-                    .map(|t| format!("#{t}"))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )),
-        ));
-    }
-    if threads.is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "ingest requires at least one #tag".to_string(),
-            Some("declare a thread with #tag (e.g. #sorting-hat) or a quoted title line (e.g. \"Sorting Hat\" { ... })".to_string()),
-        ));
-    }
-
     Ok(ValidatedIngest {
         doc,
         ts,
-        actor,
-        threads,
         raw_text: text.to_string(),
     })
 }
@@ -270,15 +215,19 @@ pub async fn post_ingest(
     let reduced_arc = state.reduced.clone();
     let event_log = state.event_log.clone();
     let reduced = reduced_arc.read().await;
-    let v = match validate_ingest_document(
-        &reduced,
-        &req.text,
-        "ingest requires @actor declaration",
-    ) {
+    let v = match validate_ingest_document(&reduced, &req.text) {
         Ok(x) => x,
         Err((status, msg, hint)) => return api_error(status, msg, hint).into_response(),
     };
     drop(reduced);
+
+    if let Err(msg) = validate_agent_format(&req.delegate) {
+        return api_error(StatusCode::BAD_REQUEST, "invalid delegate format", Some(msg)).into_response();
+    }
+    let delegate = canonicalize_agent(&req.delegate);
+    let thread_id = canonicalize_tag(&req.thread);
+    // Auth not wired yet; use placeholder principal until bearer-token auth is implemented.
+    let principal = canonicalize_username("placeholder");
 
     let mut events_appended: usize = 0;
 
@@ -314,7 +263,9 @@ pub async fn post_ingest(
         ts: v.ts,
         id: uuid::Uuid::new_v4().to_string(),
         raw: v.raw_text.clone(),
-        actor: v.actor.clone(),
+        principal: principal.clone(),
+        delegate: delegate.clone(),
+        thread_id: thread_id.clone(),
     });
 
     if let Err(err) = event_log.append(&ingest_event).await {
@@ -322,7 +273,6 @@ pub async fn post_ingest(
     }
     events_appended += 1;
 
-    let actor_for_stream = v.actor.clone();
     {
         let mut reduced = reduced_arc.write().await;
         reduced.apply_event(ingest_event);
@@ -343,27 +293,14 @@ pub async fn post_ingest(
         vec![]
     };
 
-    let _ = state.stream_tx.send(crate::state::StreamEvent {
-        ts: v.ts,
-        actor: actor_for_stream,
-        tags: v.threads.iter().map(|t| format!("#{t}")).collect(),
-        snippet: v.raw_text.chars().take(200).collect(),
-    });
-    let html = crate::html::thread_feed_html(&state).await;
-    let _ = state.html_tx.send(crate::state::HtmlFragment {
-        selector: "#thread-feed".to_string(),
-        html,
-    });
-
-    let primary_thread = v.threads.first().cloned().unwrap_or_else(|| "untagged".to_string());
     Json(IngestResponse {
         ok: true,
-        threads: v.threads.iter().map(|t| format!("#{t}")).collect(),
+        threads: vec![format!("#{}", thread_id)],
         events_appended,
         next: NextMoves {
             pair: "npx slugsocial pair".to_string(),
             rank: "npx slugsocial rank".to_string(),
-            web: format!("https://slug.social/t/{}", primary_thread),
+            web: format!("https://slug.social/t/{}", thread_id),
         },
         ranking_changes,
     }).into_response()
@@ -375,11 +312,7 @@ pub async fn post_check(
 ) -> impl IntoResponse {
     let reduced_arc = state.reduced.clone();
     let reduced = reduced_arc.read().await;
-    let v = match validate_ingest_document(
-        &reduced,
-        &req.text,
-        "check requires @actor declaration",
-    ) {
+    let v = match validate_ingest_document(&reduced, &req.text) {
         Ok(x) => x,
         Err((status, msg, hint)) => return api_error(status, msg, hint).into_response(),
     };
@@ -387,11 +320,20 @@ pub async fn post_check(
     // check is a true dry-run: no auth required, no registration, nothing persisted.
     drop(reduced);
 
+    if let Err(msg) = validate_agent_format(&req.delegate) {
+        return api_error(StatusCode::BAD_REQUEST, "invalid delegate format", Some(msg)).into_response();
+    }
+    let delegate = canonicalize_agent(&req.delegate);
+    let thread_id = canonicalize_tag(&req.thread);
+    let principal = canonicalize_username("placeholder");
+
     let event = Event::Ingest(Ingest {
         ts: v.ts,
         id: uuid::Uuid::new_v4().to_string(),
         raw: v.raw_text.clone(),
-        actor: v.actor.clone(),
+        principal,
+        delegate,
+        thread_id: thread_id.clone(),
     });
 
     let mut simulated = { reduced_arc.read().await.clone() };
@@ -446,16 +388,14 @@ pub async fn post_check(
         })
         .collect();
 
-    let primary_thread = v.threads.first().cloned().unwrap_or_else(|| "untagged".to_string());
-
     Json(CheckResponse {
         ok: true,
-        threads: v.threads.iter().map(|t| format!("#{t}")).collect(),
+        threads: vec![format!("#{}", thread_id)],
         rankings,
         next: vec![
             "npx slugsocial ingest <file.sorter>".to_string(),
             "npx slugsocial threads".to_string(),
-            format!("https://slug.social/t/{}", primary_thread),
+            format!("https://slug.social/t/{}", thread_id),
         ],
     }).into_response()
 }

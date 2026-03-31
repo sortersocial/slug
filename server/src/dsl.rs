@@ -211,22 +211,6 @@ fn is_item_name(s: &str) -> bool {
     true
 }
 
-fn is_actor_name(s: &str) -> bool {
-    // Actor token parser guardrail (NOT full validation).
-    //
-    // We purposely keep this permissive so `@...` lines become `Stmt::Actor`
-    // and can be validated with helpful error messages at ingest time
-    // (see `validate_actor_format` in the API).
-    //
-    // Rules:
-    // - non-empty, <= 256 chars
-    // - ASCII + no whitespace
-    if s.is_empty() || s.len() > 256 {
-        return false;
-    }
-    s.chars().all(|c| c.is_ascii() && !c.is_whitespace())
-}
-
 fn is_block_token(s: &str) -> bool {
     // "__BLOCK_" + 8 hex + "__"
     if !s.starts_with("__BLOCK_") || !s.ends_with("__") {
@@ -360,79 +344,6 @@ fn parse_comparison_at(s: &str, i: usize) -> Option<((i32, i32), usize)> {
     }
     let right: i32 = s[k..j].parse().ok()?;
     Some(((left, right), j))
-}
-
-fn slugify_title_to_tag(title: &str) -> String {
-    let mut out = String::new();
-    let mut last_dash = false;
-    for c in title.chars() {
-        let lc = c.to_ascii_lowercase();
-        if lc.is_ascii_alphanumeric() || lc == '_' {
-            out.push(lc);
-            last_dash = false;
-        } else if !last_dash {
-            out.push('-');
-            last_dash = true;
-        }
-    }
-    out.trim_matches('-').to_string()
-}
-
-fn parse_quoted_thread_statement(stripped: &str, masker: &BlockMasker) -> Result<Vec<Stmt>, DslError> {
-    // `"Thread Title" { body }` -> `Hashtag{slug}` + `Prose{body}`
-    let bytes = stripped.as_bytes();
-    if bytes.is_empty() || bytes[0] != b'"' {
-        return Err(DslError::Parse("not a DSL line".to_string()));
-    }
-
-    let mut j = 1usize;
-    let mut close_quote: Option<usize> = None;
-    while j < bytes.len() {
-        if bytes[j] == b'\\' {
-            j = (j + 2).min(bytes.len());
-            continue;
-        }
-        if bytes[j] == b'"' {
-            close_quote = Some(j);
-            break;
-        }
-        j += 1;
-    }
-    let Some(q_end) = close_quote else {
-        return Err(DslError::Parse("unterminated quoted thread title".to_string()));
-    };
-
-    let title_raw = &stripped[1..q_end];
-    let title = title_raw.replace("\\\"", "\"").replace("\\\\", "\\");
-    if title.trim().is_empty() {
-        return Err(DslError::Parse("empty quoted thread title".to_string()));
-    }
-
-    let mut k = skip_ws(stripped, q_end + 1);
-    let Some((tok, end)) = parse_block_token_at(stripped, k) else {
-        return Err(DslError::Parse(
-            "quoted thread title requires a trailing `{ ... }` body".to_string(),
-        ));
-    };
-    let body = masker.extract_body(&tok);
-    if body.trim().is_empty() {
-        return Err(DslError::Parse("empty thread body".to_string()));
-    }
-    k = end;
-    let tail = stripped[k..].trim();
-    if !tail.is_empty() {
-        return Err(DslError::Parse("extra tokens after quoted thread title".to_string()));
-    }
-
-    let tag = slugify_title_to_tag(&title);
-    if tag.is_empty() {
-        return Err(DslError::Parse("thread title slug is empty".to_string()));
-    }
-
-    Ok(vec![
-        Stmt::Hashtag { name: tag, subtitle: None },
-        Stmt::Prose { text: body },
-    ])
 }
 
 fn parse_item_statement(stripped: &str, masker: &BlockMasker) -> Result<Stmt, DslError> {
@@ -663,14 +574,9 @@ mod tests {
         let doc = parse_full(input).unwrap();
         assert_eq!(
             doc.statements,
-            vec![
-                Stmt::Prose {
-                    text: "hello".to_string()
-                },
-                Stmt::Prose {
-                    text: "#tag\nworld".to_string()
-                }
-            ]
+            vec![Stmt::Prose {
+                text: "hello\n#tag\nworld".to_string()
+            }]
         );
     }
 
@@ -733,7 +639,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn parse_rejects_leading_colon() {
         let inputs = [":beauty", ":x", ":"];
         for input in &inputs {
@@ -766,7 +671,6 @@ mod tests {
         assert!(err_msg.contains("missing vote explanation"), "error: {}", err_msg);
     }
 
-    #[test]
     fn parse_full_keeps_quoted_thread_title_statement_as_prose() {
         let input = "\"This is a title\" { This is the body of the post }\n";
         let doc = parse_full(input).unwrap();

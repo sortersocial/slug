@@ -9,15 +9,12 @@ fn parses_tutorial_fixture_with_prose() {
     // We want to confirm we still extract key DSL statements.
     let doc = dsl::parse_full(TUTORIAL).unwrap();
 
-    let mut hashtags = 0usize;
     let mut items = 0usize;
     let mut votes = 0usize;
     let mut prose = 0usize;
 
     for s in &doc.statements {
         match s {
-            dsl::Stmt::Hashtag { .. } => hashtags += 1,
-            dsl::Stmt::Actor { .. } => {}
             dsl::Stmt::Item { .. } => items += 1,
             dsl::Stmt::Vote { .. } => votes += 1,
             dsl::Stmt::Prose { .. } => prose += 1,
@@ -25,7 +22,6 @@ fn parses_tutorial_fixture_with_prose() {
     }
 
     assert!(prose > 0, "tutorial should preserve prose");
-    assert!(hashtags >= 2, "tutorial declares multiple tags");
     assert!(items >= 6, "tutorial declares multiple items");
     assert!(votes >= 6, "tutorial casts multiple votes");
 }
@@ -35,19 +31,11 @@ fn parses_big_book_fixture_with_attached_bodies() {
     // This doc heavily uses the "~/name{...}" style with no whitespace.
     let doc = dsl::parse_full(BIG_BOOK).expect("parse_full should succeed");
 
-    let mut hashtags = 0usize;
     let mut items = 0usize;
     let mut votes = 0usize;
 
     for s in &doc.statements {
         match s {
-            dsl::Stmt::Hashtag { name, .. } => {
-                hashtags += 1;
-                assert!(
-                    name.to_lowercase().contains("big-book"),
-                    "expected #Big-Book tag, got #{name}"
-                );
-            }
             dsl::Stmt::Item { title, body } => {
                 items += 1;
                 assert!(!title.contains("__BLOCK_"), "title should not include block tokens");
@@ -61,7 +49,6 @@ fn parses_big_book_fixture_with_attached_bodies() {
         }
     }
 
-    assert!(hashtags >= 1);
     assert!(items >= 3, "fixture should contain multiple items");
     assert_eq!(votes, 0, "fixture has no votes; it's a big text import");
 }

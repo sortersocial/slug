@@ -118,7 +118,7 @@ pub async fn get_search(
                 .unwrap_or_else(|| "#unknown".to_string());
             scored_posts.push((score, ingest.ts, slug_types::SearchPostHit {
                 thread,
-                actor: format!("@{}", ingest.actor),
+                actor: format!("@{}", ingest.principal),
                 snippet: snippet_around(&ingest.raw, &words, 160),
                 ts: ingest.ts,
             }));

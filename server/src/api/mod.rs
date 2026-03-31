@@ -6,7 +6,7 @@ mod helpers;
 mod ingest;
 mod rank;
 mod search;
-mod stream;
+// mod stream; // disabled while HTML/SSE views are offline
 
 // Re-export all public items so `api::get_rank`, `api::post_ingest`, etc. still work.
 
@@ -35,7 +35,7 @@ pub use rank::{
 
 pub use search::{get_search, SearchApiQuery};
 
-pub use stream::{get_html_stream, get_stream};
+// pub use stream::{get_html_stream, get_stream};
 
 #[cfg(test)]
 mod tests {
@@ -49,7 +49,9 @@ mod tests {
             ts,
             id: format!("test-{ts}"),
             raw: raw.to_string(),
-            actor: "test".to_string(),
+            principal: "test".to_string(),
+            delegate: "@00000000-0000-0000-0000-000000000000:test:local/test".to_string(),
+            thread_id: "t".to_string(),
         }));
     }
 
@@ -57,16 +59,15 @@ mod tests {
     fn validate_ingest_document_requires_actor() {
         let reduced = ReducerState::default();
         let text = "~/t/a {a}\n~/t/b {b}\n";
-        let err = validate_ingest_document(&reduced, text, "need actor").unwrap_err();
-        assert_eq!(err.0, StatusCode::BAD_REQUEST);
-        assert_eq!(err.1, "need actor");
+        let v = validate_ingest_document(&reduced, text).unwrap();
+        assert_eq!(v.raw_text.trim(), text.trim());
     }
 
     #[test]
     fn validate_ingest_document_parse_error() {
         let reduced = ReducerState::default();
         let text = "~/t/a { unclosed ";
-        let err = validate_ingest_document(&reduced, text, "need actor").unwrap_err();
+        let err = validate_ingest_document(&reduced, text).unwrap_err();
         assert_eq!(err.0, StatusCode::BAD_REQUEST);
         assert_eq!(err.1, "parse error");
     }
@@ -77,19 +78,17 @@ mod tests {
         apply_ingest(
             &mut reduced,
             1,
-            "@00000000-0000-0000-0000-000000000000:test:local/test\n#t\n~/t/a {a}\n~/t/b {b}\n~/t/a 2:1 ~/t/b {because}\n",
+            "~/t/a {a}\n~/t/b {b}\n~/t/a 2:1 ~/t/b {because}\n",
         );
-        let text = "@00000000-0000-0000-0000-000000000000:test:local/test\n#t\n~/t/a 1:1 ~/t/b {equal}\n";
-        let v = validate_ingest_document(&reduced, text, "need actor").unwrap();
-        assert_eq!(v.actor, "00000000-0000-0000-0000-000000000000:test:local/test");
-        assert_eq!(v.threads, vec!["t"]);
+        let text = "~/t/a 1:1 ~/t/b {equal}\n";
+        validate_ingest_document(&reduced, text).unwrap();
     }
 
     #[test]
     fn validate_ingest_document_rejects_vote_on_undefined_item() {
         let reduced = ReducerState::default();
-        let text = "@00000000-0000-0000-0000-000000000000:test:local/test\n#t\n~/t/a {a}\n~/t/b 1:1 ~/t/missing {why}\n";
-        let err = validate_ingest_document(&reduced, text, "need actor").unwrap_err();
+        let text = "~/t/a {a}\n~/t/b 1:1 ~/t/missing {why}\n";
+        let err = validate_ingest_document(&reduced, text).unwrap_err();
         assert_eq!(err.0, StatusCode::BAD_REQUEST);
         assert!(err.1.contains("undefined item"));
     }
@@ -97,34 +96,32 @@ mod tests {
     #[test]
     fn validate_ingest_document_requires_tag() {
         let reduced = ReducerState::default();
-        let text = "@00000000-0000-0000-0000-000000000000:test:local/test\n~/t/a {a}\n~/t/b {b}\n";
-        let err = validate_ingest_document(&reduced, text, "need actor").unwrap_err();
-        assert_eq!(err.0, StatusCode::BAD_REQUEST);
-        assert_eq!(err.1, "ingest requires at least one #tag");
+        // tags are no longer DSL routing metadata; validation no longer requires them.
+        let text = "~/t/a {a}\n~/t/b {b}\n";
+        validate_ingest_document(&reduced, text).unwrap();
     }
 
     #[test]
     fn validate_ingest_document_accepts_quoted_thread_title() {
         let reduced = ReducerState::default();
-        let text = "@00000000-0000-0000-0000-000000000000:test:local/test\n\"This is a title\" { This is the body of the post }\n~/t/a {a}\n";
-        let v = validate_ingest_document(&reduced, text, "need actor").unwrap();
-        assert_eq!(v.threads, vec!["this-is-a-title"]);
+        // quoted thread title is now prose; should still parse.
+        let text = "\"This is a title\" { This is the body of the post }\n~/t/a {a}\n";
+        validate_ingest_document(&reduced, text).unwrap();
     }
 
     #[test]
     fn validate_ingest_document_rejects_multiple_threads() {
         let reduced = ReducerState::default();
-        let text = "@00000000-0000-0000-0000-000000000000:test:local/test\n#one\n#two\n~/t/a {a}\n";
-        let err = validate_ingest_document(&reduced, text, "need actor").unwrap_err();
-        assert_eq!(err.0, StatusCode::BAD_REQUEST);
-        assert_eq!(err.1, "ingest may declare only one thread");
+        // multiple thread declarations are now prose; should still parse.
+        let text = "#one\n#two\n~/t/a {a}\n";
+        validate_ingest_document(&reduced, text).unwrap();
     }
 
     #[test]
     fn validate_ingest_document_rejects_item_without_body() {
         let reduced = ReducerState::default();
-        let text = "@00000000-0000-0000-0000-000000000000:test:local/test\n#t\n~/t/a\n";
-        let err = validate_ingest_document(&reduced, text, "need actor").unwrap_err();
+        let text = "~/t/a\n";
+        let err = validate_ingest_document(&reduced, text).unwrap_err();
         assert_eq!(err.0, StatusCode::BAD_REQUEST);
         assert!(err.1.contains("missing body"));
     }

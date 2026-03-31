@@ -220,6 +220,11 @@ pub struct FeedPost {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct IngestRequest {
+    /// Thread identifier: public tag (e.g. "languages") or private id/slug (e.g. "a7f2k9x/project-review").
+    pub thread: String,
+    /// Agent delegate identity in request form (e.g. "@@uuid:rig:provider/model").
+    pub delegate: String,
+    /// DSL+prose body only.
     pub text: String,
 }
 

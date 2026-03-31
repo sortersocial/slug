@@ -243,7 +243,7 @@ pub async fn get_rank_history(
                                 a: item_path_for_api(&a),
                                 b: item_path_for_api(&b),
                                 ratio: format!("{}:{}", ratio_left, ratio_right),
-                                actor: reduced.ingests_by_id.get(&e.post_id).map(|ing| ing.actor.clone()),
+                                actor: reduced.ingests_by_id.get(&e.post_id).map(|ing| format!("@{}", ing.principal)),
                                 body: explanation,
                                 thread: Some(format!("#{}", e.thread)),
                             })

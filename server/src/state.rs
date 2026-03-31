@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use tokio::sync::{broadcast, RwLock};
 
-use crate::{event_log::EventLog, reducer::ReducerState, views::ViewStore};
+use crate::{event_log::EventLog, reducer::ReducerState};
 
 /// An SSE event broadcast to all live stream subscribers when an ingest occurs.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -26,9 +26,6 @@ pub struct HtmlFragment {
 pub struct AppConfig {
     pub data_dir: String,
     pub event_log_path: String,
-    /// Override for views DB path. When None, uses `{data_dir}/views.json`.
-    /// Useful when multiple servers share the same data_dir (e.g. integration tests).
-    pub views_path: Option<String>,
 }
 
 #[derive(Clone)]
@@ -40,7 +37,6 @@ pub struct AppState {
     pub stream_tx: broadcast::Sender<StreamEvent>,
     /// Broadcast channel for web SSE HTML fragments (poem pattern). Capacity = 64.
     pub html_tx: broadcast::Sender<HtmlFragment>,
-    pub views: ViewStore,
 }
 
 impl AppState {
@@ -48,18 +44,12 @@ impl AppState {
         let event_log = EventLog::new(cfg.event_log_path.clone());
         let (stream_tx, _) = broadcast::channel(64);
         let (html_tx, _) = broadcast::channel(64);
-        let views_path = cfg
-            .views_path
-            .clone()
-            .unwrap_or_else(|| format!("{}/views.json", cfg.data_dir));
-        let views = ViewStore::new(&views_path);
         Self {
             cfg: Arc::new(cfg),
             event_log: Arc::new(event_log),
             reduced: Arc::new(RwLock::new(ReducerState::default())),
             stream_tx,
             html_tx,
-            views,
         }
     }
 }
