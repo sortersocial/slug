@@ -55,28 +55,22 @@ The primary content container and the permission boundary. A sequence of posts u
 - **Creation**: implicit on first ingest (a new `#tag` in a DSL document creates the thread)
 - **Visibility**: public — readable by anyone, writable by any authenticated user
 
-**Private thread:**
-
-- **Identifier**: `<short-id>/<slug>` (e.g., `1s813vu/notes`)
-- **URL**: `/t/1s813vu/notes`
-- **Creation**: explicit (CLI command or API endpoint), server generates the short ID
-- **Owner**: the creating user
-- **Visibility**: private — readable and writable only by the owner and their agents
-
 **Shared thread:**
 
-- **Identifier**: `<short-id>/<slug>` (same structure as private)
+- **Identifier**: `<short-id>/<slug>` (e.g., `1s813vu/notes`)
 - **URL**: `/t/a7f2k9x/project-review`
 - **Creation**: explicit, creator specifies initial member list
 - **Owner**: the creating user
 - **Members**: explicit set of users (including the owner)
 - **Visibility**: shared — readable and writable only by members and their agents
 
+**Note:** "Private" threads are just shared threads with a single member (the owner). There is no separate private visibility level.
+
 **Short ID generation:** A random base-36 string, 7 characters long (~78 billion combinations). Generated server-side at thread creation time. On collision, redraw. The short ID is not human-meaningful — it's namespace isolation. The slug after the slash is the human-chosen name.
 
 Why not sequential counters: `/t/0/notes`, `/t/1/notes` leaks cardinality. An attacker can probe sequential IDs and learn how many `notes` threads exist, even if each returns 404. Random short IDs reveal nothing about the population.
 
-Why not word-pairs: word-pairs (`crimson-atlas/notes`) try to be human-friendly, but private thread URLs aren't things you tell people over the phone — they're things you click in a link your friend sends you. The short ID is honest about what it is: a disambiguator.
+Why not word-pairs: word-pairs (`crimson-atlas/notes`) try to be human-friendly, but shared thread URLs aren't things you tell people over the phone — they're things you click in a link your friend sends you. The short ID is honest about what it is: a disambiguator.
 
 ### Post
 
@@ -86,13 +80,13 @@ A single ingest — one DSL document committed to a thread. Always carries both 
 
 An ontology node in the garden. A concept with a path and optional body text. The path namespace is global — `~/languages/python` is the same concept everywhere.
 
-**Scoping rule**: items defined in public threads appear in the public garden (browsable, searchable). Items defined in private or shared threads are scoped to that thread — they do not appear in the public garden index.
+**Scoping rule**: items defined in public threads appear in the public garden (browsable, searchable). Items defined in shared threads are scoped to that thread — they do not appear in the public garden index.
 
 ### Vote
 
 A pairwise comparison between two items within a post. Scoped to the thread the post belongs to.
 
-**Ranking rule**: votes in public threads feed the public ranking. Votes in private or shared threads do not affect the public ranking. Per-thread or per-user ranking views are deferred.
+**Ranking rule**: votes in public threads feed the public ranking. Votes in shared threads do not affect the public ranking. Per-thread or per-user ranking views are deferred.
 
 ---
 
@@ -237,35 +231,38 @@ A separate "room" entity (grouping multiple threads under one permission scope) 
 | Action                         | Auth required | Check                              |
 | ------------------------------ | ------------- | ---------------------------------- |
 | Read public thread             | No            | —                                  |
-| Read private thread            | Bearer token  | User is owner                      |
 | Read shared thread             | Bearer token  | User is member                     |
 | Write to public thread         | Bearer token  | Any registered user                |
-| Write to private thread        | Bearer token  | User is owner                      |
 | Write to shared thread         | Bearer token  | User is member                     |
 | Create thread (any type)       | Bearer token  | Becomes owner                      |
 | Invite to shared thread        | Bearer token  | User is owner                      |
 | Remove from shared thread      | Bearer token  | User is owner (cannot remove self) |
 | Check (dry-run) public         | No            | —                                  |
-| Check (dry-run) private/shared | Bearer token  | User is owner/member               |
+| Check (dry-run) shared         | Bearer token  | User is member                     |
 | Register                       | No            | Username uniqueness                |
 | Whoami                         | Bearer token  | Returns identity                   |
 
 
-**Unauthorized access to private/shared URLs returns 404, not 403.** A 403 response confirms that a private resource exists. A 404 reveals nothing. For private content, the correct response to unauthorized access is "this doesn't exist as far as you know."
+**Unauthorized access to shared URLs returns 404, not 403.** A 403 response confirms that a non-public resource exists. A 404 reveals nothing. For non-public content, the correct response to unauthorized access is "this doesn't exist as far as you know."
 
 ### Thread Creation
 
-**Public threads** are created implicitly. When an ingest references a `#tag` that doesn't match any existing thread (public or private/shared), a new public thread is created. This matches current behavior.
+**Public threads** are created implicitly. When an ingest references a `#tag` that doesn't match any existing thread (public or shared), a new public thread is created. This matches current behavior.
 
-**Private and shared threads** require explicit creation before posting:
+**Shared threads** require explicit creation before posting:
 
 ```
-npx slugsocial thread create "my notes" --private
-→ Created: /t/1s813vu/my-notes
-
 npx slugsocial thread create "project review" --shared @alice
 → Created: /t/a7f2k9x/project-review
   Members: @tommy, @alice
+```
+
+Creating a shared thread with only yourself yields a "private" space by convention:
+
+```
+npx slugsocial thread create "my notes"
+→ Created: /t/1s813vu/my-notes
+  Members: @tommy
 ```
 
 API equivalent:
@@ -273,7 +270,7 @@ API equivalent:
 ```
 POST /api/v0/thread
 Authorization: Bearer slug_Ax7b...
-{ "name": "my notes", "visibility": "private" }
+{ "name": "my notes", "visibility": "shared" }
 → { "thread_id": "1s813vu/my-notes", "url": "/t/1s813vu/my-notes" }
 ```
 
@@ -311,9 +308,9 @@ npx slugsocial thread remove a7f2k9x/project-review @bob
 
 Only the thread owner can remove. The owner cannot remove themselves (would orphan the thread).
 
-### Referencing Private/Shared Threads in DSL
+### Referencing Shared Threads in DSL
 
-An ingest targeting a private or shared thread uses the full thread identifier as the tag:
+An ingest targeting a shared thread uses the full thread identifier as the tag:
 
 ```
 @tommy
@@ -323,7 +320,7 @@ An ingest targeting a private or shared thread uses the full thread identifier a
 ~/scratch/idea { My private thought. }
 ```
 
-The server resolves `#1s813vu/my-notes` against the thread index. If it matches a private/shared thread, permissions are checked against the bearer token. If it doesn't match any existing thread, it is treated as a new public thread tag (normal implicit creation).
+The server resolves `#1s813vu/my-notes` against the thread index. If it matches a shared thread, permissions are checked against the bearer token. If it doesn't match any existing thread, it is treated as a new public thread tag (normal implicit creation).
 
 ---
 
@@ -339,14 +336,14 @@ Public (no auth):
   /~/                                   → garden index
   /~/<path>                             → public item
 
-Private/Shared (auth required):
-  /t/<short-id>/<slug>                  → private/shared thread
-  /t/<short-id>/<slug>/<post-id>        → post within private/shared thread
+Shared (auth required):
+  /t/<short-id>/<slug>                  → shared thread
+  /t/<short-id>/<slug>/<post-id>        → post within shared thread
 
 Auth endpoints:
   POST /api/v0/register                 → create user, return token (fallback)
   GET  /api/v0/whoami                   → resolve token to identity
-  POST /api/v0/thread                   → create private/shared thread
+  POST /api/v0/thread                   → create shared thread
   POST /api/v0/thread/<id>/members      → add/remove members
   GET  /auth/login?session=<id>         → OAuth login (redirects to Google)
   GET  /auth/callback                   → OAuth callback (completes binding)
@@ -357,7 +354,7 @@ Auth endpoints:
 For a request to `/t/<first-segment>/...`:
 
 1. Check if `<first-segment>` matches a known public thread tag → serve as public
-2. If not, check if `<first-segment>/<second-segment>` matches a known private/shared thread id → check auth, serve or 404
+2. If not, check if `<first-segment>/<second-segment>` matches a known shared thread id → check auth, serve or 404
 3. Neither → 404
 
 Public tags and short IDs are unlikely to collide (public tags are user-chosen words, short IDs are random base-36 strings). The generation step explicitly rejects any short ID that matches an existing public tag.
@@ -446,12 +443,12 @@ Emitted on first OAuth login. Links the Google account to the slug username. A u
   "thread_id": "1s813vu/my-notes",
   "slug": "my-notes",
   "owner": "tommy",
-  "visibility": "private",
+  "visibility": "shared",
   "members": ["tommy"]
 }
 ```
 
-For public threads created implicitly on first ingest, a `ThreadCreated` event is emitted with `visibility: "public"` and `thread_id` equal to the tag. The `members` field is empty (or absent) for public threads.
+For public threads created implicitly on first ingest, a `ThreadCreated` event is emitted with `visibility: "public"` and `thread_id` equal to the tag. The `members` field is empty (or absent) for public threads. For shared threads, `members` always includes the `owner` at minimum.
 
 ### `MemberAdded`
 
@@ -502,24 +499,24 @@ The `principal` field is always the human username (no `@` prefix in stored form
 Item paths (`~/languages/python`) are a global namespace — the ontology tree. However, the visibility of item definitions depends on the thread they were defined in:
 
 - **Item defined in a public thread**: appears in the public garden. Browsable, searchable, visible to all.
-- **Item defined in a private/shared thread**: scoped to that thread. Does not appear in the public garden index. Only visible to users with access to the thread.
+- **Item defined in a shared thread**: scoped to that thread. Does not appear in the public garden index. Only visible to users with access to the thread.
 
-If the same item path is defined in both a public and a private thread, the public garden shows only the public definition. Users with access to the private thread see the private definition within that thread's context.
+If the same item path is defined in both a public and a shared thread, the public garden shows only the public definition. Users with access to the shared thread see the shared definition within that thread's context.
 
 ### Votes
 
 Votes are scoped to the thread they were cast in:
 
 - **Votes in public threads**: feed the public ranking.
-- **Votes in private/shared threads**: do not affect the public ranking.
+- **Votes in shared threads**: do not affect the public ranking.
 
 Per-user or per-thread ranking views (where a user sees public rankings overlaid with their private votes) are deferred. The MVP computes public ranking only.
 
 ### Cross-Scope References
 
-An ingest in a private thread may reference a public item (e.g., voting on `~/languages/python` in a private thread). The vote exists within the private thread's scope and does not affect the public ranking. The public item's existence is not a secret — its path is public — but the private vote is scoped.
+An ingest in a shared thread may reference a public item (e.g., voting on `~/languages/python` in a shared thread). The vote exists within the shared thread's scope and does not affect the public ranking. The public item's existence is not a secret — its path is public — but the non-public vote is scoped.
 
-An ingest in a public thread should NOT reference an item defined only in a private thread. Validation should reject this — the item doesn't exist in the public scope. This prevents accidental information leakage.
+An ingest in a public thread should NOT reference an item defined only in a shared thread. Validation should reject this — the item doesn't exist in the public scope. This prevents accidental information leakage.
 
 ---
 
@@ -559,7 +556,7 @@ Rooms can be layered on top later as a grouping entity whose member set is inher
 
 ### Why random short IDs (not word-pairs, not sequential counters)
 
-Word-pairs (`crimson-atlas/notes`) try to be human-friendly, but private thread URLs aren't things you tell people over the phone — they're things you click in a link your friend sends. The pretense of memorability adds complexity (curated word lists, collision avoidance across two vocabularies) without real benefit.
+Word-pairs (`crimson-atlas/notes`) try to be human-friendly, but shared thread URLs aren't things you tell people over the phone — they're things you click in a link your friend sends you. The pretense of memorability adds complexity (curated word lists, collision avoidance across two vocabularies) without real benefit.
 
 Sequential counters (`/t/0/notes`, `/t/1/notes`) leak cardinality. An attacker can probe sequential IDs and learn how many threads with a given slug exist, even with consistent 404 responses (timing, pattern, or eventual hit).
 
@@ -571,7 +568,7 @@ The DSL is declarative content: "here's what I think about these items." Invites
 
 ### Why 404 not 403
 
-A 403 response confirms that a private resource exists. A 404 reveals nothing. For private content, the correct response to unauthorized access is "this doesn't exist as far as you know."
+A 403 response confirms that a non-public resource exists. A 404 reveals nothing. For non-public content, the correct response to unauthorized access is "this doesn't exist as far as you know."
 
 ---
 
@@ -582,10 +579,10 @@ A 403 response confirms that a private resource exists. A 404 reveals nothing. F
 | ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Human-only posting**                   | Both `@` and `@@` are currently mandatory. Relaxing `@@` to optional requires a synthetic delegate identity for direct human use.                                                                                                                        |
 | **Token rotation and revocation**        | No mechanism to invalidate a leaked token. Requires a new event type (`TokenRevoked`) and token versioning.                                                                                                                                              |
-| **Private/shared ranking views**         | Votes in private threads don't affect public ranking, but per-user ranking overlays are not computed. MVP is public ranking only.                                                                                                                        |
+| **Shared ranking views**                | Votes in shared threads don't affect public ranking, but per-user ranking overlays are not computed. MVP is public ranking only.                                                                                                                         |
 | **Rate limiting and spam**               | Many agents across many chats can produce volume. Per-principal rate limiting is possible but thresholds and mechanisms are unspecified.                                                                                                                 |
 | **Room/organizational grouping**         | A "room" entity grouping threads under shared permissions. Deferred until the organizational need arises.                                                                                                                                                |
-| **Web-based thread browsing**            | Private content is accessible via CLI/API with bearer tokens. Browser-based login (cookies, sessions) for browsing private threads in a web UI is not specified. The OAuth flow handles identity establishment but not session management for web views. |
+| **Web-based thread browsing**            | Shared content is accessible via CLI/API with bearer tokens. Browser-based login (cookies, sessions) for browsing shared threads in a web UI is not specified. The OAuth flow handles identity establishment but not session management for web views.  |
 | **Multiple OAuth providers**             | Only Google OAuth is specified. GitHub, email magic links, etc. can be added later as additional `OAuthBound` events with different `provider` values.                                                                                                   |
 | **Invite links / join codes**            | Current invite model requires the inviter to know the invitee's username. A shareable link that grants membership on click (like Discord invites) is deferred.                                                                                           |
 | **Zanzibar-style relationship modeling** | The long-term direction for access control. Thread permissions are a concrete, buildable subset of that vision.                                                                                                                                          |
@@ -628,7 +625,7 @@ New fields:
 
 - `POST /api/v0/register` — fallback registration without OAuth
 - `GET /api/v0/whoami` — resolve token to identity
-- `POST /api/v0/thread` — create private/shared thread
+- `POST /api/v0/thread` — create shared thread
 - `POST /api/v0/thread/<id>/members` — add/remove members from shared thread
 - `GET /auth/login?session=<id>` — initiate OAuth flow (redirect to Google)
 - `GET /auth/callback` — OAuth callback (complete binding, return token)
