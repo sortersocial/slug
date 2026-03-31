@@ -570,8 +570,7 @@ If title-like constructs remain in the DSL in the future, they should be treated
 
 ```text
 /t/<tag>                      -> public thread
-/t/<tag>/<post-id>            -> public post
-/t/<tag>/<post-id>/expand     -> public post fragment
+/t/<tag>p?=<post-id>            -> public post
 /~/                           -> public garden index
 /~/<path>                     -> public item
 ```
@@ -826,14 +825,14 @@ These remain global:
 
 These become scope-keyed:
 
-- `items_by_scope: HashMap<ScopeId, HashSet<CanonicalItemUrl>>`
-- `item_bodies_by_scope: HashMap<ScopeId, HashMap<CanonicalItemUrl, String>>`
-- `item_children_by_scope: HashMap<ScopeId, HashMap<CanonicalItemUrl, HashSet<CanonicalItemUrl>>>`
-- `item_votes_by_scope: HashMap<ScopeId, HashMap<CanonicalItemUrl, VecDeque<VoteData>>>`
-- `item_snippets_by_scope: HashMap<ScopeId, HashMap<CanonicalItemUrl, VecDeque<String>>>`
-- `item_threads_by_scope: HashMap<ScopeId, HashMap<CanonicalItemUrl, HashSet<String>>>`
-- `ranking_by_scope: HashMap<ScopeId, GroupState>`
-- `rank_history_by_scope: HashMap<ScopeId, HashMap<CanonicalItemUrl, Vec<RankHistoryEntry>>>`
+- `items_"": HashMap<ScopeId, HashSet<CanonicalItemUrl>>`
+- `item_bodies_"": HashMap<ScopeId, HashMap<CanonicalItemUrl, String>>`
+- `item_children_"": HashMap<ScopeId, HashMap<CanonicalItemUrl, HashSet<CanonicalItemUrl>>>`
+- `item_votes_"": HashMap<ScopeId, HashMap<CanonicalItemUrl, VecDeque<VoteData>>>`
+- `item_snippets_"": HashMap<ScopeId, HashMap<CanonicalItemUrl, VecDeque<String>>>`
+- `item_threads_"": HashMap<ScopeId, HashMap<CanonicalItemUrl, HashSet<String>>>`
+- `ranking_"": HashMap<ScopeId, GroupState>`
+- `rank_history_"": HashMap<ScopeId, HashMap<CanonicalItemUrl, Vec<RankHistoryEntry>>>`
 
 This keeps one replay loop and one reducer while allowing content to vary by private thread.
 
@@ -1085,14 +1084,14 @@ Add global indexes:
 
 Convert content indexes to scope-keyed maps:
 
-- `items_by_scope`
-- `item_bodies_by_scope`
-- `item_children_by_scope`
-- `item_votes_by_scope`
-- `item_snippets_by_scope`
-- `item_threads_by_scope`
-- `ranking_by_scope`
-- `rank_history_by_scope`
+- `items_""`
+- `item_bodies_""`
+- `item_children_""`
+- `item_votes_""`
+- `item_snippets_""`
+- `item_threads_""`
+- `ranking_""`
+- `rank_history_""`
 
 ### `server/src/lib.rs`
 
