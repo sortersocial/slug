@@ -228,6 +228,37 @@ pub struct IngestRequest {
     pub text: String,
 }
 
+/// Start a browser-based OAuth login flow for a CLI agent.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PendingSessionStartRequest {
+    /// Agent delegate identity in request form (e.g. "@@uuid:rig:provider/model").
+    pub agent: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PendingSessionStartResponse {
+    pub session: String,
+    pub login_url: String,
+    pub poll_url: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PendingSessionPollResponse {
+    pub ok: bool,
+    pub complete: bool,
+    pub agent: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct WhoamiResponse {
+    pub user: String,
+    pub agents_bound: usize,
+}
+
 /// One item's position within a ranking component.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RankPosition {

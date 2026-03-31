@@ -27,6 +27,7 @@ reqwest = { version = "0.12", features = ["json"] }
 slug-types = { path = "../types" }
 base64 = "0.22"
 postcard = { version = "1", features = ["use-std"] }
+urlencoding = "2"
 
 [dev-dependencies]
 tempfile = "3"

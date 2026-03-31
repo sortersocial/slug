@@ -1,4 +1,5 @@
 mod debug;
+mod auth;
 mod feed;
 mod forum;
 mod garden;
@@ -11,6 +12,16 @@ mod search;
 // Re-export all public items so `api::get_rank`, `api::post_ingest`, etc. still work.
 
 pub use debug::{get_debug_query, DebugQuery};
+
+pub use auth::{
+    get_pending_session,
+    get_whoami,
+    post_pending_session,
+    post_choose_username,
+    get_auth_login,
+    get_auth_callback,
+    get_choose_username,
+};
 
 pub use feed::{get_feed, FeedQuery};
 

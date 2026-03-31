@@ -4,6 +4,15 @@ use tokio::sync::{broadcast, RwLock};
 
 use crate::{event_log::EventLog, reducer::ReducerState};
 
+#[derive(Debug, Clone)]
+pub struct PendingSession {
+    pub agent: String,
+    pub created_ts: i64,
+    pub provider: Option<String>,
+    pub provider_id: Option<String>,
+    pub complete: Option<(String /*username*/, String /*bearer*/ )>,
+}
+
 /// An SSE event broadcast to all live stream subscribers when an ingest occurs.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct StreamEvent {
@@ -33,6 +42,7 @@ pub struct AppState {
     pub cfg: Arc<AppConfig>,
     pub event_log: Arc<EventLog>,
     pub reduced: Arc<RwLock<ReducerState>>,
+    pub pending_sessions: Arc<RwLock<std::collections::HashMap<String, PendingSession>>>,
     /// Broadcast channel for SSE live-streaming. Capacity = 64 events.
     pub stream_tx: broadcast::Sender<StreamEvent>,
     /// Broadcast channel for web SSE HTML fragments (poem pattern). Capacity = 64.
@@ -48,6 +58,7 @@ impl AppState {
             cfg: Arc::new(cfg),
             event_log: Arc::new(event_log),
             reduced: Arc::new(RwLock::new(ReducerState::default())),
+            pending_sessions: Arc::new(RwLock::new(std::collections::HashMap::new())),
             stream_tx,
             html_tx,
         }

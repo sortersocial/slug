@@ -133,7 +133,7 @@
 
         ;; 2.5 check endpoint — disconnected components not flattened
       (println "\nchecking (dry-run) returns discrete ranking groups…")
-      (bind check-result (common/run-cli cli-bin base-url ["check" "--json"] :input check-doc-disconnected))
+      (bind check-result (common/run-cli cli-bin base-url ["check" "--json" "--thread" "integration-test"] :input check-doc-disconnected))
       (assert! (zero? (:exit check-result)) "cli check exits 0")
       (bind check-resp   (json/parse-string (:out check-result) true))
       (assert! (:ok check-resp) "check response ok=true")
@@ -148,46 +148,13 @@
 
         ;; 3. ingest via CLI
       (println "\ningesting .sorter document via CLI…")
-      (bind ingest1-result (common/run-cli cli-bin base-url ["ingest" "--json"] :input sorter-doc))
+      (bind ingest1-result (common/run-cli cli-bin base-url ["ingest" "--json" "--thread" "integration-test"] :input sorter-doc))
       (assert! (zero? (:exit ingest1-result)) "cli ingest exits 0")
       (bind ingest1-resp   (json/parse-string (:out ingest1-result) true))
-      (bind actor1-passkey (:passkey ingest1-resp))
       (assert! (:ok ingest1-resp) "ingest response ok=true")
       (assert! (pos? (:events_appended ingest1-resp)) "events_appended > 0")
       (assert! (some #(= "#integration-test" %) (:threads ingest1-resp))
                "thread '#integration-test' in response")
-      (assert! (some? actor1-passkey) "first ingest returns a passkey")
-
-        ;; 3.5 private namespace tests
-      (println "\ntesting private diary namespaces…")
-      (bind actor1-uuid  "00000000-0000-0000-0000-000000000001")
-      (bind private-path (str actor1-uuid "/private-note"))
-      (bind private-doc  (str/join "\n" [actor-1 "" (str "~/" private-path " { secret diary content }")]))
-
-      (bind priv-result  (common/run-cli cli-bin base-url
-                                         ["ingest" "--json" "--passkey" actor1-passkey]
-                                         :input private-doc))
-      (assert! (zero? (:exit priv-result))
-               (str "private item ingest exits 0 (err: " (:err priv-result) ")"))
-
-      (bind tree-result  (common/run-cli cli-bin base-url ["garden" "tree" "--json"]))
-      (assert! (zero? (:exit tree-result)) "garden tree exits 0")
-      (bind tree-resp    (json/parse-string (:out tree-result) true))
-      (assert! (not (some #(str/includes? % actor1-uuid) (:paths tree-resp)))
-               "private item NOT visible in unauthenticated garden tree")
-
-      (bind body-unauth  (common/run-cli cli-bin base-url ["garden" "body" private-path "--json"]))
-      (assert! (not (zero? (:exit body-unauth)))
-               "garden body of private item fails without auth")
-
-      (bind body-auth    (common/run-cli cli-bin base-url
-                                         ["garden" "body" private-path "--json"
-                                          "--actor" actor-1 "--passkey" actor1-passkey]))
-      (assert! (zero? (:exit body-auth))
-               (str "garden body of private item succeeds with auth (err: " (:err body-auth) ")"))
-      (bind auth-resp    (json/parse-string (:out body-auth) true))
-      (assert! (str/includes? (or (:body auth-resp) "") "secret")
-               "private item body contains 'secret'")
 
         ;; 4. query rankings via CLI
       (println "\nquerying garden children via CLI…")
@@ -205,8 +172,8 @@
         ;; 5. verify JSONL written
       (assert! (fs/exists? event-log) "events.jsonl exists")
       (bind event-lines (->> (slurp event-log) str/split-lines (remove str/blank?)))
-      (assert! (= 3 (count event-lines))
-               (str "3 events in JSONL (ActorKeyRegistration + 2x Ingest, got " (count event-lines) ")"))
+      (assert! (= 1 (count event-lines))
+               (str "1 event in JSONL (1x Ingest, got " (count event-lines) ")"))
 
         ;; 6. query forum via CLI
       (println "\nquerying forum via CLI…")
@@ -222,18 +189,6 @@
       (bind body-resp   (json/parse-string (:out body-result) true))
       (assert! (str/includes? (or (:body body-resp) "") "ownership")
                "rust body contains 'ownership'")
-
-        ;; 8. feed: second actor ingests, actor-1 uses feed to see what happened
-      (println "\ntesting feed endpoint…")
-      (bind ingest2-result (common/run-cli cli-bin base-url ["ingest" "--json"] :input sorter-doc-2))
-      (assert! (zero? (:exit ingest2-result)) "second actor ingest exits 0")
-      (bind feed-result    (common/run-cli cli-bin base-url ["feed" actor-1 "--json"]))
-      (assert! (zero? (:exit feed-result)) "cli feed exits 0")
-      (bind feed-resp      (json/parse-string (:out feed-result) true))
-      (assert! (some? (:since feed-resp)) "feed since is set (actor has posted)")
-      (assert! (pos? (:total feed-resp))
-               (str "feed has >= 1 post (got " (:total feed-resp) ")"))
-      (assert! (not-empty (:posts feed-resp)) "feed posts non-empty")
 
         ;; 9. global rank endpoint
       (println "\ntesting global rank endpoint…")

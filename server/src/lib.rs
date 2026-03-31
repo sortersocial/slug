@@ -22,6 +22,13 @@ pub use reducer::ReducerState;
 pub fn create_app(state: AppState) -> Router {
     Router::new()
         .route("/healthz", axum::routing::get(|| async { "ok" }))
+        .route("/auth/login", axum::routing::get(api::get_auth_login))
+        .route("/auth/callback", axum::routing::get(api::get_auth_callback))
+        .route("/auth/choose-username", axum::routing::get(api::get_choose_username))
+        .route("/auth/choose-username", axum::routing::post(api::post_choose_username))
+        .route("/api/v0/pending-session", axum::routing::post(api::post_pending_session))
+        .route("/api/v0/pending-session/:id", axum::routing::get(api::get_pending_session))
+        .route("/api/v0/whoami", axum::routing::get(api::get_whoami))
         .route("/debug/query", axum::routing::get(api::get_debug_query))
         .route("/api/v0/paths", axum::routing::get(api::get_paths))
         .route("/api/v0/leaves", axum::routing::get(api::get_leaves))

@@ -150,6 +150,17 @@ enum Command {
         /// Optional path to a .sorter file. If omitted, reads from stdin.
         #[arg(value_name = "FILE")]
         file: Option<PathBuf>,
+        /// Thread identifier (public tag like "languages", without #).
+        #[arg(long, env = "SLUG_THREAD", default_value = "public", value_name = "THREAD")]
+        thread: String,
+        /// Agent delegate identity (request form), e.g. @@uuid:rig:provider/model
+        #[arg(
+            long,
+            env = "SLUG_DELEGATE",
+            default_value = "@@00000000-0000-0000-0000-000000000000:cli:local/dev",
+            value_name = "DELEGATE"
+        )]
+        delegate: String,
         /// Output as JSON for agent parsing
         #[arg(long)]
         json: bool,
@@ -160,6 +171,17 @@ enum Command {
         /// Optional path to a file. If omitted, reads from stdin.
         #[arg(value_name = "FILE")]
         file: Option<PathBuf>,
+        /// Thread identifier (public tag like "languages", without #).
+        #[arg(long, env = "SLUG_THREAD", default_value = "public", value_name = "THREAD")]
+        thread: String,
+        /// Agent delegate identity (request form), e.g. @@uuid:rig:provider/model
+        #[arg(
+            long,
+            env = "SLUG_DELEGATE",
+            default_value = "@@00000000-0000-0000-0000-000000000000:cli:local/dev",
+            value_name = "DELEGATE"
+        )]
+        delegate: String,
         /// Output as JSON for agent parsing
         #[arg(long)]
         json: bool,
@@ -877,7 +899,7 @@ async fn main() -> Result<()> {
             }
         }
 
-        Command::Ingest { file, json } => {
+        Command::Ingest { file, thread, delegate, json } => {
             let client = http_client()?;
 
             let mut text = String::new();
@@ -897,7 +919,7 @@ async fn main() -> Result<()> {
                 return Err(anyhow!("no input provided (empty)"));
             }
 
-            let req = IngestRequest { text };
+            let req = IngestRequest { thread, delegate, text };
             let url = format!("{base}/api/v0/ingest");
             let builder = client.post(url).json(&req);
             let resp: IngestResponse = expect_json(builder.send().await?).await?;
@@ -925,7 +947,7 @@ async fn main() -> Result<()> {
             }
         }
 
-        Command::Check { file, json } => {
+        Command::Check { file, thread, delegate, json } => {
             let client = http_client()?;
 
             let mut text = String::new();
@@ -945,7 +967,7 @@ async fn main() -> Result<()> {
                 return Err(anyhow!("no input provided (empty)"));
             }
 
-            let req = IngestRequest { text };
+            let req = IngestRequest { thread, delegate, text };
             let url = format!("{base}/api/v0/check");
             let builder = client.post(url).json(&req);
             let resp: CheckResponse = expect_json(builder.send().await?).await?;

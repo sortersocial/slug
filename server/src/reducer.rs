@@ -185,6 +185,13 @@ pub struct ContentState {
 pub struct ReducerState {
     pub content: HashMap<ScopeId, ContentState>,
 
+    /// (provider, provider_id) -> username
+    pub users_by_provider: HashMap<(String, String), String>,
+    /// token_id -> (username, salt, token_hash)
+    pub tokens_by_id: HashMap<String, (String, String, String)>,
+    /// agent delegate (canonical '@...') -> username
+    pub agent_bindings: HashMap<String, String>,
+
     pub ingests_by_id: HashMap<String, Ingest>,
     /// Thread -> recent ingest ids (most recent first).
     pub ingests_by_thread: HashMap<String, VecDeque<String>>,
@@ -311,6 +318,21 @@ impl ReducerState {
 
     pub fn apply_event(&mut self, event: Event) {
         match event {
+            Event::UserRegistered(ur) => {
+                let username = canonicalize_username(&ur.username);
+                self.users_by_provider
+                    .insert((ur.provider.to_lowercase(), ur.provider_id.clone()), username);
+            }
+            Event::TokenIssued(ti) => {
+                let username = canonicalize_username(&ti.username);
+                self.tokens_by_id
+                    .insert(ti.token_id.clone(), (username, ti.salt.clone(), ti.token_hash.clone()));
+            }
+            Event::AgentBound(ab) => {
+                let username = canonicalize_username(&ab.username);
+                let agent = canonicalize_agent(&ab.agent);
+                self.agent_bindings.insert(agent, username);
+            }
             Event::ThreadCreated(tc) => {
                 self.threads.entry(tc.thread_id.clone()).or_default().visibility = tc.visibility;
             }
@@ -502,6 +524,9 @@ impl Default for ReducerState {
         content.insert(ScopeId::Public, ContentState::default());
         Self {
             content,
+            users_by_provider: HashMap::new(),
+            tokens_by_id: HashMap::new(),
+            agent_bindings: HashMap::new(),
             ingests_by_id: HashMap::new(),
             ingests_by_thread: HashMap::new(),
             threads: HashMap::new(),
