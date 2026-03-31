@@ -40,7 +40,7 @@ fn reducer_and_ranking_linear_chain() {
     // Second ingest: define c + vote b > c.
     state.apply_event(ingest_event(2, "~/t/c {c}\n~/t/b 3:1 ~/t/c {because}\n"));
 
-    let mut group = state.ranking_group.clone();
+    let mut group = state.public().ranking_group.clone();
     let ranked = ranked_items(&mut group, 20000, 1e-9);
     assert_eq!(ranked.len(), 3);
     assert_eq!(ranked[0].item, "https://slug.social/~/t/a");
@@ -66,7 +66,7 @@ fn reducer_canonicalizes_identifiers() {
         "~/tag/item-a 2:1 ~/tag/item-b {because}\n",
     ));
 
-    assert_eq!(state.ranking_group.idx_to_item.len(), 2); // Should dedupe to 2 items
+    assert_eq!(state.public().ranking_group.idx_to_item.len(), 2); // Should dedupe to 2 items
 }
 
 #[test]
@@ -77,12 +77,13 @@ fn reducer_handles_item_and_body_from_ingest() {
         "~/t/test-item {Description here}\n",
     ));
 
-    assert!(state.items.contains("https://slug.social/~/t/test-item"));
+    let content = state.public();
+    assert!(content.items.contains("https://slug.social/~/t/test-item"));
     assert_eq!(
-        state.item_bodies.get("https://slug.social/~/t/test-item"),
+        content.item_bodies.get("https://slug.social/~/t/test-item"),
         Some(&"Description here".to_string())
     );
-    assert!(state
+    assert!(content
         .item_children
         .get("https://slug.social/~/t")
         .map(|c| c.contains("https://slug.social/~/t/test-item"))
@@ -100,12 +101,13 @@ fn reducer_indexes_item_threads_and_vote_thread() {
     ev.thread_id = "sorting-hat".to_string();
     state.apply_event(Event::Ingest(ev));
 
-    let threads_for_insertion = state.item_threads.get("https://slug.social/~/sorts/insertion").unwrap();
+    let content = state.public();
+    let threads_for_insertion = content.item_threads.get("https://slug.social/~/sorts/insertion").unwrap();
     assert!(threads_for_insertion.contains("sorting-hat"));
-    let threads_for_mergesort = state.item_threads.get("https://slug.social/~/sorts/mergesort").unwrap();
+    let threads_for_mergesort = content.item_threads.get("https://slug.social/~/sorts/mergesort").unwrap();
     assert!(threads_for_mergesort.contains("sorting-hat"));
 
-    let vote = state.item_votes.get("https://slug.social/~/sorts/insertion").unwrap().front().unwrap();
+    let vote = content.item_votes.get("https://slug.social/~/sorts/insertion").unwrap().front().unwrap();
     assert_eq!(vote.thread_id, "sorting-hat");
 }
 
@@ -118,7 +120,7 @@ fn reducer_aggregates_multiple_votes() {
         state.apply_event(ingest_event(ts, &vote_doc("t", "a", "b", 2, 1)));
     }
 
-    let group = &state.ranking_group;
+    let group = &state.public().ranking_group;
     let a_idx = group.item_to_idx["https://slug.social/~/t/a"];
     let b_idx = group.item_to_idx["https://slug.social/~/t/b"];
 
@@ -139,7 +141,7 @@ fn reducer_clamps_score_bounds() {
         "@00000000-0000-0000-0000-000000000000:test:local/test\n~/t/a 1:1000 ~/t/b {huge}\n",
     ));
 
-    assert_eq!(state.ranking_group.idx_to_item.len(), 2); // Should still work, scores clamped internally
+    assert_eq!(state.public().ranking_group.idx_to_item.len(), 2); // Should still work, scores clamped internally
 }
 
 // ============================================================================
@@ -163,7 +165,7 @@ fn ranking_cycle_is_nearly_equal() {
         "@00000000-0000-0000-0000-000000000000:test:local/test\n~/rps/paper 3:1 ~/rps/rock {because}\n",
     ));
 
-    let mut group = state.ranking_group.clone();
+    let mut group = state.public().ranking_group.clone();
     let ranked = ranked_items(&mut group, 50000, 1e-9);
     assert_eq!(ranked.len(), 3);
     let mean = ranked.iter().map(|r| r.score).sum::<f64>() / 3.0;
@@ -193,7 +195,7 @@ fn ranking_dominant_item_wins() {
         "@00000000-0000-0000-0000-000000000000:test:local/test\n~/t/champion {c}\n~/t/b {b}\n~/t/c {c}\n~/t/d {d}\n~/t/champion 10:1 ~/t/b {because}\n~/t/champion 10:1 ~/t/c {because}\n~/t/champion 10:1 ~/t/d {because}\n~/t/b 2:1 ~/t/c {because}\n~/t/c 2:1 ~/t/d {because}\n",
     ));
 
-    let mut group = state.ranking_group.clone();
+    let mut group = state.public().ranking_group.clone();
     let ranked = ranked_items(&mut group, 20000, 1e-9);
 
     assert_eq!(ranked[0].item, "https://slug.social/~/t/champion");
@@ -208,7 +210,7 @@ fn ranking_neutral_votes_produce_equal_scores() {
         "@00000000-0000-0000-0000-000000000000:test:local/test\n~/t/a {a}\n~/t/b {b}\n~/t/c {c}\n~/t/a 1:1 ~/t/b {neutral}\n~/t/b 1:1 ~/t/c {neutral}\n~/t/c 1:1 ~/t/a {neutral}\n",
     ));
 
-    let mut group = state.ranking_group.clone();
+    let mut group = state.public().ranking_group.clone();
     let ranked = ranked_items(&mut group, 20000, 1e-9);
 
     assert_eq!(ranked.len(), 3);
@@ -235,7 +237,7 @@ fn ranking_converges_with_many_iterations() {
         state.apply_event(ingest_event(i as i64 + 1, &raw));
     }
 
-    let group = state.ranking_group.clone();
+    let group = state.public().ranking_group.clone();
 
     let ranked_short = ranked_items(&mut group.clone(), 10, 1e-3);
     let ranked_long = ranked_items(&mut group.clone(), 50000, 1e-9);
@@ -339,7 +341,7 @@ async fn full_workflow_reducer_and_ranking() {
         "~/langs/rust {Systems language}\n~/langs/go {Simple concurrency}\n~/langs/rust 3:1 ~/langs/go {because}\n",
     ));
 
-    let mut group = state.ranking_group.clone();
+    let mut group = state.public().ranking_group.clone();
     let ranked = ranked_items(&mut group, 20000, 1e-9);
 
     assert_eq!(ranked.len(), 2);
@@ -358,27 +360,28 @@ fn reducer_materializes_ancestor_path_segments() {
     ));
 
     // The intermediate path "https://slug.social/~/ai-models/anthropic" should appear as a child of "https://slug.social/~/ai-models".
-    let ai_models_children = state.item_children.get("https://slug.social/~/ai-models").expect("ai-models should have children");
+    let content = state.public();
+    let ai_models_children = content.item_children.get("https://slug.social/~/ai-models").expect("ai-models should have children");
     assert!(
         ai_models_children.contains("https://slug.social/~/ai-models/anthropic"),
         "ai-models/anthropic should be a child of ai-models"
     );
 
     // The leaf items should still be children of "https://slug.social/~/ai-models/anthropic".
-    let anthropic_children = state.item_children.get("https://slug.social/~/ai-models/anthropic").expect("ai-models/anthropic should have children");
+    let anthropic_children = content.item_children.get("https://slug.social/~/ai-models/anthropic").expect("ai-models/anthropic should have children");
     assert!(anthropic_children.contains("https://slug.social/~/ai-models/anthropic/claude-opus"));
     assert!(anthropic_children.contains("https://slug.social/~/ai-models/anthropic/claude-sonnet"));
 
     // Root should contain "https://slug.social/~/ai-models".
-    let root_children = state.item_children.get("https://slug.social/~").expect("root should have children");
+    let root_children = content.item_children.get("https://slug.social/~").expect("root should have children");
     assert!(root_children.contains("https://slug.social/~/ai-models"));
 
     // The phantom intermediates should NOT be in the items set (they weren't explicitly created).
-    assert!(!state.items.contains("https://slug.social/~/ai-models"));
-    assert!(!state.items.contains("https://slug.social/~/ai-models/anthropic"));
+    assert!(!content.items.contains("https://slug.social/~/ai-models"));
+    assert!(!content.items.contains("https://slug.social/~/ai-models/anthropic"));
     // But the leaf items should be.
-    assert!(state.items.contains("https://slug.social/~/ai-models/anthropic/claude-opus"));
-    assert!(state.items.contains("https://slug.social/~/ai-models/anthropic/claude-sonnet"));
+    assert!(content.items.contains("https://slug.social/~/ai-models/anthropic/claude-opus"));
+    assert!(content.items.contains("https://slug.social/~/ai-models/anthropic/claude-sonnet"));
 }
 
 #[test]
@@ -425,8 +428,8 @@ fn ranking_repeated_votes_normalized() {
         "~/norm/a 3:1 ~/norm/b {vote3}\n",
     ));
 
-    let mut group_once = state_once.ranking_group.clone();
-    let mut group_many = state_many.ranking_group.clone();
+    let mut group_once = state_once.public().ranking_group.clone();
+    let mut group_many = state_many.public().ranking_group.clone();
     let ranked_once = ranked_items(&mut group_once, 20000, 1e-9);
     let ranked_many = ranked_items(&mut group_many, 20000, 1e-9);
 
@@ -452,8 +455,9 @@ fn reducer_malformed_ingest_is_skipped_no_panic() {
     // Completely invalid raw text that will fail dsl::parse_full
     state.apply_event(ingest_event(1, "this is {{ not valid DSL at all }{"));
     // State should remain empty — no panic, no items
-    assert!(state.items.is_empty());
-    assert!(state.ranking_group.idx_to_item.is_empty());
+    let content = state.public();
+    assert!(content.items.is_empty());
+    assert!(content.ranking_group.idx_to_item.is_empty());
 }
 
 #[test]
@@ -463,7 +467,7 @@ fn reducer_zero_zero_vote_ratio_normalizes_to_one_one() {
         1,
         "~/t/a {a}\n~/t/b {b}\n~/t/a 0:0 ~/t/b {zero}\n",
     ));
-    let group = &state.ranking_group;
+    let group = &state.public().ranking_group;
     let a_idx = group.item_to_idx["https://slug.social/~/t/a"];
     let b_idx = group.item_to_idx["https://slug.social/~/t/b"];
     // 0:0 should normalize to 1:1 — both directions should have weight
@@ -508,26 +512,27 @@ fn reducer_deep_path_ancestor_materialization_four_levels() {
     ));
     // Ancestor chain: parent() now walks purely within the ontology namespace.
     // The spurious "" → "https://slug.social" levels are gone; root is "https://slug.social/~".
-    let tilde_scope = state
+    let content = state.public();
+    let tilde_scope = content
         .item_children
         .get("https://slug.social/~")
         .expect("~/ scope should have children");
     assert!(tilde_scope.contains("https://slug.social/~/a"));
 
-    let a_children = state.item_children.get("https://slug.social/~/a").expect("a should have children");
+    let a_children = content.item_children.get("https://slug.social/~/a").expect("a should have children");
     assert!(a_children.contains("https://slug.social/~/a/b"));
 
-    let ab_children = state.item_children.get("https://slug.social/~/a/b").expect("a/b should have children");
+    let ab_children = content.item_children.get("https://slug.social/~/a/b").expect("a/b should have children");
     assert!(ab_children.contains("https://slug.social/~/a/b/c"));
 
-    let abc_children = state.item_children.get("https://slug.social/~/a/b/c").expect("a/b/c should have children");
+    let abc_children = content.item_children.get("https://slug.social/~/a/b/c").expect("a/b/c should have children");
     assert!(abc_children.contains("https://slug.social/~/a/b/c/d"));
 
     // Only the leaf should be in items set
-    assert!(state.items.contains("https://slug.social/~/a/b/c/d"));
-    assert!(!state.items.contains("https://slug.social/~/a"));
-    assert!(!state.items.contains("https://slug.social/~/a/b"));
-    assert!(!state.items.contains("https://slug.social/~/a/b/c"));
+    assert!(content.items.contains("https://slug.social/~/a/b/c/d"));
+    assert!(!content.items.contains("https://slug.social/~/a"));
+    assert!(!content.items.contains("https://slug.social/~/a/b"));
+    assert!(!content.items.contains("https://slug.social/~/a/b/c"));
 }
 
 // ============================================================================
@@ -563,7 +568,7 @@ fn ranking_convergence_tolerance_triggers_early_exit() {
         1,
         "~/t/a {a}\n~/t/b {b}\n~/t/a 3:1 ~/t/b {because}\n",
     ));
-    let mut group = state.ranking_group.clone();
+    let mut group = state.public().ranking_group.clone();
     // Very tight tolerance but huge max_iters — should still converge fast
     let ranked = ranked_items(&mut group, 1_000_000, 1e-15);
     assert_eq!(ranked.len(), 2);
@@ -581,14 +586,14 @@ fn test_item_body_overwrite() {
         1,
         "~/t/x {first}\n",
     ));
-    assert_eq!(state.item_bodies.get("https://slug.social/~/t/x"), Some(&"first".to_string()));
+    assert_eq!(state.public().item_bodies.get("https://slug.social/~/t/x"), Some(&"first".to_string()));
 
     state.apply_event(ingest_event(
         2,
         "~/t/x {second}\n",
     ));
     assert_eq!(
-        state.item_bodies.get("https://slug.social/~/t/x"),
+        state.public().item_bodies.get("https://slug.social/~/t/x"),
         Some(&"second".to_string()),
         "last writer should win for item bodies"
     );
@@ -601,9 +606,10 @@ fn test_empty_body_not_stored() {
         1,
         "~/t/blank {   }\n",
     ));
-    assert!(state.items.contains("https://slug.social/~/t/blank"), "item should exist");
+    let content = state.public();
+    assert!(content.items.contains("https://slug.social/~/t/blank"), "item should exist");
     assert!(
-        !state.item_bodies.contains_key("https://slug.social/~/t/blank"),
+        !content.item_bodies.contains_key("https://slug.social/~/t/blank"),
         "whitespace-only body should not be stored"
     );
 }
@@ -619,7 +625,8 @@ fn test_duplicate_items_across_ingests() {
         2,
         "~/t/dup {second}\n",
     ));
-    let count = state.items.iter().filter(|i| *i == "https://slug.social/~/t/dup").count();
+    let content = state.public();
+    let count = content.items.iter().filter(|i| *i == "https://slug.social/~/t/dup").count();
     assert_eq!(count, 1, "items set should deduplicate across ingests");
 }
 
@@ -687,7 +694,8 @@ fn test_thread_id_is_used_for_votes_and_indexes() {
     ev.thread_id = "first".to_string();
     state.apply_event(Event::Ingest(ev));
 
-    let vote = state
+    let content = state.public();
+    let vote = content
         .item_votes
         .get("https://slug.social/~/t/a")
         .unwrap()
@@ -696,6 +704,7 @@ fn test_thread_id_is_used_for_votes_and_indexes() {
     assert_eq!(vote.thread_id, "first");
     assert!(state.ingests_by_thread.contains_key("first"));
     assert!(state
+        .public()
         .item_threads
         .get("https://slug.social/~/t/a")
         .is_some_and(|threads| threads.contains("first")));
@@ -709,11 +718,11 @@ fn test_rank_history_created_for_voted_items() {
         "~/t/a {a}\n~/t/b {b}\n~/t/a 3:1 ~/t/b {reason}\n",
     ));
     assert!(
-        state.rank_history.contains_key("https://slug.social/~/t/a"),
+        state.public().rank_history.contains_key("https://slug.social/~/t/a"),
         "rank_history should have entry for voted item a"
     );
     assert!(
-        state.rank_history.contains_key("https://slug.social/~/t/b"),
+        state.public().rank_history.contains_key("https://slug.social/~/t/b"),
         "rank_history should have entry for voted item b"
     );
 }
@@ -726,7 +735,7 @@ fn test_rank_history_not_created_for_unvoted_items() {
         "~/t/c {just a definition}\n",
     ));
     assert!(
-        !state.rank_history.contains_key("https://slug.social/~/t/c"),
+        !state.public().rank_history.contains_key("https://slug.social/~/t/c"),
         "rank_history should NOT have entry for item with no votes"
     );
 }
@@ -738,7 +747,7 @@ fn test_rank_history_first_entry_delta_zero() {
         1,
         "~/t/a {a}\n~/t/b {b}\n~/t/a 3:1 ~/t/b {reason}\n",
     ));
-    let history_a = state.rank_history.get("https://slug.social/~/t/a").unwrap();
+    let history_a = state.public().rank_history.get("https://slug.social/~/t/a").unwrap();
     assert_eq!(history_a.len(), 1);
     assert_eq!(
         history_a[0].scope_rank_delta, 0,

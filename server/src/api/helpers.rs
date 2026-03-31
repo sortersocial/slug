@@ -137,7 +137,7 @@ pub fn is_pair_voted(group: &crate::reducer::GroupState, a: &str, b: &str) -> bo
 
 /// Compute graph connectivity stats for a set of items within the ranking group.
 pub fn compute_connectivity_stats(reduced: &ReducerState, pool: &[String]) -> ConnectivityStats {
-    let group = &reduced.ranking_group;
+    let group = &reduced.public().ranking_group;
     let n = pool.len();
 
     // Map pool items to global indices (items not yet in the group get no index)

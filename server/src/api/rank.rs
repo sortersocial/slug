@@ -46,6 +46,7 @@ pub struct RankQuery {
 pub async fn get_rank(State(state): State<AppState>, Query(q): Query<RankQuery>) -> impl IntoResponse {
     let reduced_arc = state.reduced.clone();
     let reduced = reduced_arc.read().await;
+    let content = reduced.public();
 
     let specs = parse_parent_specs(q.parent.as_ref());
     let is_global = q.parent.as_deref().map(|p| p.trim() == "~").unwrap_or(false);
@@ -55,7 +56,7 @@ pub async fn get_rank(State(state): State<AppState>, Query(q): Query<RankQuery>)
     if !is_global && !specs.is_empty() {
         let none_exist = specs.iter().all(|spec| {
             let Some(canon) = CanonicalItemUrl::parse(spec) else { return true };
-            !reduced.items.contains(&canon) && !reduced.item_children.contains_key(&canon)
+            !content.items.contains(&canon) && !content.item_children.contains_key(&canon)
         });
         if none_exist {
             return api_error(
@@ -67,16 +68,16 @@ pub async fn get_rank(State(state): State<AppState>, Query(q): Query<RankQuery>)
     }
 
     let rankings = if is_global {
-        let all_items: Vec<CanonicalItemUrl> = reduced.items.iter().cloned().collect();
-        crate::scope_rank::build_rankings_for_item_set(&reduced, &all_items)
+        let all_items: Vec<CanonicalItemUrl> = content.items.iter().cloned().collect();
+        crate::scope_rank::build_rankings_for_item_set(content, &all_items)
     } else if specs.is_empty() {
-        crate::scope_rank::build_children_rankings(&reduced, &CanonicalItemUrl::ontology_root())
+        crate::scope_rank::build_children_rankings(content, &CanonicalItemUrl::ontology_root())
     } else if depth > 1 {
-        let items = crate::scope_rank::resolve_scope_recursive(&reduced, &specs, depth);
-        crate::scope_rank::build_rankings_for_item_set(&reduced, &items)
+        let items = crate::scope_rank::resolve_scope_recursive(content, &specs, depth);
+        crate::scope_rank::build_rankings_for_item_set(content, &items)
     } else {
-        let items = crate::scope_rank::resolve_scope(&reduced, &specs);
-        crate::scope_rank::build_rankings_for_item_set(&reduced, &items)
+        let items = crate::scope_rank::resolve_scope(content, &specs);
+        crate::scope_rank::build_rankings_for_item_set(content, &items)
     };
 
     let want_percent = q.percent.unwrap_or(false);
@@ -153,18 +154,19 @@ pub async fn get_global_rank(
 
     let reduced_arc = state.reduced.clone();
     // Write lock needed to update cached_scores when dirty.
-    let reduced = reduced_arc.write().await;
+    let mut reduced = reduced_arc.write().await;
+    let content = reduced.content.get_mut(&crate::reducer::ScopeId::Public).expect("public scope missing");
 
     // Find connected components in global graph; rank within each; largest component first.
-    let n = reduced.ranking_group.idx_to_item.len();
+    let n = content.ranking_group.idx_to_item.len();
     let (mut comps, _) = connected_components_from_voted_pairs(
-        n, reduced.ranking_group.voted_pairs.iter().copied(),
+        n, content.ranking_group.voted_pairs.iter().copied(),
     );
     comps.sort_by(|a, b| b.len().cmp(&a.len()));
 
     let mut ranked: Vec<RankRow> = Vec::new();
     for comp in &comps {
-        let items = ranked_items_subset(&reduced.ranking_group, comp, 10000, 1e-8);
+        let items = ranked_items_subset(&content.ranking_group, comp, 10000, 1e-8);
         let top = items.first().map(|r| r.score).unwrap_or(1.0);
         let bot = items.last().map(|r| r.score).unwrap_or(0.0);
         let range = (top - bot).max(1e-12);
@@ -177,10 +179,10 @@ pub async fn get_global_rank(
     let ranked_total = ranked.len();
 
     // Items that exist but have never been voted on.
-    let mut unranked: Vec<String> = reduced
+    let mut unranked: Vec<String> = content
         .items
         .iter()
-        .filter(|it| !reduced.ranking_group.item_to_idx.contains_key(*it))
+        .filter(|it| !content.ranking_group.item_to_idx.contains_key(*it))
         .map(|it| it.as_str().to_string())
         .collect();
     unranked.sort();
@@ -222,11 +224,12 @@ pub async fn get_rank_history(
 ) -> impl IntoResponse {
     let reduced_arc = state.reduced.clone();
     let reduced = reduced_arc.read().await;
+    let content = reduced.public();
 
     let item_str = crate::events::canonicalize_item(&q.item);
     let item = CanonicalItemUrl(item_str.clone());
 
-    let entries = reduced.rank_history.get(&item).cloned().unwrap_or_default();
+    let entries = content.rank_history.get(&item).cloned().unwrap_or_default();
 
     // Resolve caused_by at query time: look up the ingest and filter relevant votes.
     let history: Vec<slug_types::RankHistoryRow> = entries.iter().map(|e| {
@@ -301,11 +304,12 @@ pub async fn get_pair(State(state): State<AppState>, Query(q): Query<PairQuery>)
 
     let pool: Vec<String> = {
         let reduced = reduced_arc.read().await;
+        let content = reduced.public();
         let specs = parse_parent_specs(q.parent.as_ref());
         let raw_pool: Vec<CanonicalItemUrl> = if specs.is_empty() {
-            reduced.ranking_group.idx_to_item.clone()
+            content.ranking_group.idx_to_item.clone()
         } else {
-            crate::scope_rank::resolve_scope(&reduced, &specs)
+            crate::scope_rank::resolve_scope(content, &specs)
         };
         raw_pool.into_iter().map(|it| it.0).collect()
     };
@@ -325,15 +329,16 @@ pub async fn get_pair(State(state): State<AppState>, Query(q): Query<PairQuery>)
         };
         let (left_body, right_body, threads, connectivity) = {
             let reduced = reduced_arc.read().await;
+            let content = reduced.public();
             let left_key = CanonicalItemUrl(left.clone());
             let right_key = CanonicalItemUrl(right.clone());
-            let lb = reduced.item_bodies.get(&left_key).cloned();
-            let rb = reduced.item_bodies.get(&right_key).cloned();
-            let th: Vec<String> = reduced
+            let lb = content.item_bodies.get(&left_key).cloned();
+            let rb = content.item_bodies.get(&right_key).cloned();
+            let th: Vec<String> = content
                 .item_threads
                 .get(&left_key)
                 .into_iter()
-                .chain(reduced.item_threads.get(&right_key))
+                .chain(content.item_threads.get(&right_key))
                 .flat_map(|s| s.iter().cloned())
                 .collect::<std::collections::HashSet<_>>()
                 .into_iter()
@@ -354,7 +359,11 @@ pub async fn get_pair(State(state): State<AppState>, Query(q): Query<PairQuery>)
 
     let selected: Option<(String, String)> = {
         let mut reduced = reduced_arc.write().await;
-        let group = &mut reduced.ranking_group;
+        let group = &mut reduced
+            .content
+            .get_mut(&crate::reducer::ScopeId::Public)
+            .expect("public scope missing")
+            .ranking_group;
         if group.idx_to_item.is_empty() {
             pick_random_distinct(&pool)
         } else {
@@ -415,15 +424,16 @@ pub async fn get_pair(State(state): State<AppState>, Query(q): Query<PairQuery>)
 
     let (left_body, right_body, threads, connectivity) = {
         let reduced = reduced_arc.read().await;
+        let content = reduced.public();
         let left_key = CanonicalItemUrl(left.clone());
         let right_key = CanonicalItemUrl(right.clone());
-        let lb = reduced.item_bodies.get(&left_key).cloned();
-        let rb = reduced.item_bodies.get(&right_key).cloned();
-        let th: Vec<String> = reduced
+        let lb = content.item_bodies.get(&left_key).cloned();
+        let rb = content.item_bodies.get(&right_key).cloned();
+        let th: Vec<String> = content
             .item_threads
             .get(&left_key)
             .into_iter()
-            .chain(reduced.item_threads.get(&right_key))
+            .chain(content.item_threads.get(&right_key))
             .flat_map(|s| s.iter().cloned())
             .collect::<HashSet<_>>()
             .into_iter()

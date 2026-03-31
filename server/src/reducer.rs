@@ -5,6 +5,12 @@ use serde::{Deserialize, Serialize};
 use crate::events::{canonicalize_agent, canonicalize_tag, canonicalize_username, Event, Ingest};
 use crate::path_types::CanonicalItemUrl;
 
+#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ScopeId {
+    Public,
+    Thread(String),
+}
+
 /// Parsed vote data (internal representation).
 // Note: NOT a wire-format struct — this is internal only. `a` and `b` are CanonicalItemUrl.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -142,35 +148,46 @@ pub struct RankHistoryEntry {
     pub post_id: String,
 }
 
-/// First-class thread state.
-#[derive(Debug, Clone, Default)]
+/// First-class thread metadata.
+#[derive(Debug, Clone)]
 pub struct ThreadState {
     pub last_activity_ts: i64,
-    pub subtitle: Option<String>,
+    pub visibility: crate::events::ThreadVisibility,
 }
 
-#[derive(Debug, Default, Clone)]
-pub struct ReducerState {
-    /// Single ranking group (one-ranking model).
-    pub ranking_group: GroupState,
+impl Default for ThreadState {
+    fn default() -> Self {
+        Self {
+            last_activity_ts: 0,
+            visibility: crate::events::ThreadVisibility::Public,
+        }
+    }
+}
 
+#[derive(Debug, Clone, Default)]
+pub struct ContentState {
+    pub ranking_group: GroupState,
     pub items: HashSet<CanonicalItemUrl>,
     pub item_bodies: HashMap<CanonicalItemUrl, String>,
     /// Parent canonical URL -> direct children.
     pub item_children: HashMap<CanonicalItemUrl, HashSet<CanonicalItemUrl>>,
+    /// Per-item vote history (most recent first).
+    pub item_votes: HashMap<CanonicalItemUrl, VecDeque<VoteData>>,
+    /// Per-item ingest references (most recent first).
+    pub item_snippets: HashMap<CanonicalItemUrl, VecDeque<String>>,
+    /// Item path -> threads that mention or vote on this item.
+    pub item_threads: HashMap<CanonicalItemUrl, HashSet<String>>,
+    /// Per-item rank history, oldest first.
+    pub rank_history: HashMap<CanonicalItemUrl, Vec<RankHistoryEntry>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ReducerState {
+    pub content: HashMap<ScopeId, ContentState>,
 
     pub ingests_by_id: HashMap<String, Ingest>,
     /// Thread -> recent ingest ids (most recent first).
     pub ingests_by_thread: HashMap<String, VecDeque<String>>,
-
-    /// Per-item vote history (most recent first).
-    pub item_votes: HashMap<CanonicalItemUrl, VecDeque<VoteData>>,
-
-    /// Per-item ingest references (most recent first).
-    pub item_snippets: HashMap<CanonicalItemUrl, VecDeque<String>>,
-
-    /// Item path -> thread tags that mention or vote on this item. Connective tissue for garden body/pair/matchup.
-    pub item_threads: HashMap<CanonicalItemUrl, HashSet<String>>,
 
     /// First-class thread state: bump time, subscriber count.
     pub threads: HashMap<String, ThreadState>,
@@ -181,20 +198,31 @@ pub struct ReducerState {
     /// All ingest IDs in chronological order (oldest first). Used by the feed endpoint.
     pub ingests_ordered: Vec<String>,
 
-    /// Per-item rank history, oldest first.
-    pub rank_history: HashMap<CanonicalItemUrl, Vec<RankHistoryEntry>>,
 }
 
 impl ReducerState {
+    pub fn content_for_scope(&self, scope: &ScopeId) -> Option<&ContentState> {
+        self.content.get(scope)
+    }
+
+    pub fn content_for_scope_mut(&mut self, scope: ScopeId) -> &mut ContentState {
+        self.content.entry(scope).or_default()
+    }
+
+    pub fn public(&self) -> &ContentState {
+        self.content.get(&ScopeId::Public).expect("public scope missing")
+    }
+
     /// Register parent→child edges for the full ancestor chain.
     /// For `a/b/c/d` this creates: `a/b/c→d`, `a/b→a/b/c`, `a→a/b`, `""→a`.
     /// Stops early when an intermediate is already registered (its ancestors must be too).
     /// @e2bdefa9-a6fa-4725-b0a2-c0b09d95bb20:claudecode:anthropic/claude-opus-4
-    fn add_child_edge(&mut self, item: &CanonicalItemUrl) {
+    fn add_child_edge(content: &mut ContentState, item: &CanonicalItemUrl) {
         let mut child = item.clone();
         loop {
             let Some(parent) = child.parent() else { break };
-            let is_new = self.item_children
+            let is_new = content
+                .item_children
                 .entry(parent.clone())
                 .or_default()
                 .insert(child);
@@ -210,7 +238,11 @@ impl ReducerState {
 
     /// 1-indexed rank of `item` within its connected component in the parent scope.
     /// 0 if the item has no votes connecting it to siblings (unranked).
-    fn scope_rank_of(group: &GroupState, item: &CanonicalItemUrl, item_children: &HashMap<CanonicalItemUrl, HashSet<CanonicalItemUrl>>) -> usize {
+    fn scope_rank_of(
+        group: &GroupState,
+        item: &CanonicalItemUrl,
+        item_children: &HashMap<CanonicalItemUrl, HashSet<CanonicalItemUrl>>,
+    ) -> usize {
         let scope = match item.parent() {
             Some(p) => p,
             None => return 0,
@@ -279,12 +311,25 @@ impl ReducerState {
 
     pub fn apply_event(&mut self, event: Event) {
         match event {
+            Event::ThreadCreated(tc) => {
+                self.threads.entry(tc.thread_id.clone()).or_default().visibility = tc.visibility;
+            }
             Event::Ingest(mut ing) => {
                 ing.principal = canonicalize_username(&ing.principal);
                 ing.delegate = canonicalize_agent(&ing.delegate);
                 ing.thread_id = canonicalize_tag(&ing.thread_id);
 
                 self.ingests_by_id.insert(ing.id.clone(), ing.clone());
+
+                let visibility = self
+                    .threads
+                    .entry(ing.thread_id.clone())
+                    .or_default()
+                    .visibility;
+                let scope = match visibility {
+                    crate::events::ThreadVisibility::Public => ScopeId::Public,
+                    crate::events::ThreadVisibility::Private => ScopeId::Thread(ing.thread_id.clone()),
+                };
 
                 let doc = match crate::dsl::parse_full(&ing.raw) {
                     Ok(d) => d,
@@ -306,97 +351,133 @@ impl ReducerState {
                     .collect::<std::collections::HashSet<_>>()
                     .into_iter().collect();
 
-                // Snapshot ranks before votes are applied (force-compute if stale).
-                let before: HashMap<CanonicalItemUrl, (usize, usize)> = if !voted_items.is_empty() {
-                    crate::ranking::compute_group_ranking(&mut self.ranking_group, 10000, 1e-8);
-                    voted_items.iter()
-                        .map(|it| (it.clone(), (
-                            Self::scope_rank_of(&self.ranking_group, it, &self.item_children),
-                            Self::global_rank_of(&self.ranking_group, it),
-                        )))
-                        .collect()
-                } else {
-                    HashMap::new()
-                };
-
                 let principal = ing.principal.clone();
                 let delegate = ing.delegate.clone();
                 let canonical_thread: String = ing.thread_id.clone();
 
-                // Single-thread semantics: the first thread declaration wins for the whole ingest.
-                // Historical events that declared multiple threads are replayed into one canonical thread.
-                // Items referenced in this ingest (for snippet indexing).
-                let mut ingest_items: HashSet<CanonicalItemUrl> = HashSet::new();
+                {
+                    let content = self.content_for_scope_mut(scope);
 
-                for stmt in doc.statements {
-                    match stmt {
-                        crate::dsl::Stmt::Item { title, body } => {
-                            let Some(item) = Self::normalize_item(&title) else {
-                                continue;
-                            };
-                            nav!(self.items, set_elem(item.clone()));
-                            ingest_items.insert(item.clone());
-                            self.add_child_edge(&item);
+                    // Snapshot ranks before votes are applied (force-compute if stale).
+                    let before: HashMap<CanonicalItemUrl, (usize, usize)> = if !voted_items.is_empty() {
+                        crate::ranking::compute_group_ranking(&mut content.ranking_group, 10000, 1e-8);
+                        voted_items.iter()
+                            .map(|it| (it.clone(), (
+                                Self::scope_rank_of(&content.ranking_group, it, &content.item_children),
+                                Self::global_rank_of(&content.ranking_group, it),
+                            )))
+                            .collect()
+                    } else {
+                        HashMap::new()
+                    };
 
-                            if let Some(body_text) = body {
-                                if !body_text.trim().is_empty() {
-                                    nav!(self.item_bodies, keypath(item.clone()), setval(body_text));
+                    // Items referenced in this ingest (for snippet indexing).
+                    let mut ingest_items: HashSet<CanonicalItemUrl> = HashSet::new();
+
+                    for stmt in doc.statements {
+                        match stmt {
+                            crate::dsl::Stmt::Item { title, body } => {
+                                let Some(item) = Self::normalize_item(&title) else {
+                                    continue;
+                                };
+                                nav!(content.items, set_elem(item.clone()));
+                                ingest_items.insert(item.clone());
+                                Self::add_child_edge(content, &item);
+
+                                if let Some(body_text) = body {
+                                    if !body_text.trim().is_empty() {
+                                        nav!(content.item_bodies, keypath(item.clone()), setval(body_text));
+                                    }
                                 }
                             }
-                        }
-                        crate::dsl::Stmt::Vote {
-                            item1,
-                            item2,
-                            ratio_left,
-                            ratio_right,
-                            explanation,
-                        } => {
-                            let Some(item_a) = Self::normalize_item(&item1) else {
-                                continue;
-                            };
-                            let Some(item_b) = Self::normalize_item(&item2) else {
-                                continue;
-                            };
-
-                            let vote = VoteData {
-                                ts: ing.ts,
-                                a: item_a.clone(),
-                                b: item_b.clone(),
+                            crate::dsl::Stmt::Vote {
+                                item1,
+                                item2,
                                 ratio_left,
                                 ratio_right,
-                                body: explanation,
-                                principal: principal.clone(),
-                                delegate: delegate.clone(),
-                                thread_id: canonical_thread.clone(),
-                            };
+                                explanation,
+                            } => {
+                                let Some(item_a) = Self::normalize_item(&item1) else {
+                                    continue;
+                                };
+                                let Some(item_b) = Self::normalize_item(&item2) else {
+                                    continue;
+                                };
 
-                            ingest_items.insert(item_a.clone());
-                            ingest_items.insert(item_b.clone());
+                                let vote = VoteData {
+                                    ts: ing.ts,
+                                    a: item_a.clone(),
+                                    b: item_b.clone(),
+                                    ratio_left,
+                                    ratio_right,
+                                    body: explanation,
+                                    principal: principal.clone(),
+                                    delegate: delegate.clone(),
+                                    thread_id: canonical_thread.clone(),
+                                };
 
-                            nav!(self.items, set_elem(item_a.clone()));
-                            nav!(self.items, set_elem(item_b.clone()));
-                            self.add_child_edge(&item_a);
-                            self.add_child_edge(&item_b);
+                                ingest_items.insert(item_a.clone());
+                                ingest_items.insert(item_b.clone());
 
-                            self.ranking_group.apply_vote(vote.clone());
+                                nav!(content.items, set_elem(item_a.clone()));
+                                nav!(content.items, set_elem(item_b.clone()));
+                                Self::add_child_edge(content, &item_a);
+                                Self::add_child_edge(content, &item_b);
 
-                            // Index vote by item.
-                            for it in [&item_a, &item_b] {
-                                nav!(self.item_votes, keypath(it.clone()), push_front(vote.clone()));
+                                content.ranking_group.apply_vote(vote.clone());
+
+                                // Index vote by item.
+                                for it in [&item_a, &item_b] {
+                                    nav!(content.item_votes, keypath(it.clone()), push_front(vote.clone()));
+                                }
                             }
+                            crate::dsl::Stmt::Prose { .. } => {}
                         }
-                        crate::dsl::Stmt::Prose { .. } => {}
                     }
-                }
 
-                // Index snippets by item for this ingest.
-                for item in ingest_items.iter() {
-                    nav!(self.item_snippets, keypath(item.clone()), push_front(ing.id.clone()));
-                }
+                    // Index snippets by item for this ingest.
+                    for item in ingest_items.iter() {
+                        nav!(content.item_snippets, keypath(item.clone()), push_front(ing.id.clone()));
+                    }
 
-                // Index item -> threads (connective tissue for garden body/pair/matchup).
-                for item in ingest_items.iter() {
-                    nav!(self.item_threads, keypath(item.clone()), set_elem(canonical_thread.clone()));
+                    // Index item -> threads (connective tissue for garden body/pair/matchup).
+                    for item in ingest_items.iter() {
+                        nav!(content.item_threads, keypath(item.clone()), set_elem(canonical_thread.clone()));
+                    }
+
+                    // Snapshot ranks after votes and push history entries.
+                    if !voted_items.is_empty() {
+                        crate::ranking::compute_group_ranking(&mut content.ranking_group, 10000, 1e-8);
+                        let thread = canonical_thread.clone();
+                        for item in &voted_items {
+                            let after_scope  = Self::scope_rank_of(&content.ranking_group, item, &content.item_children);
+                            let after_global = Self::global_rank_of(&content.ranking_group, item);
+                            let score = content.ranking_group.item_to_idx.get(item)
+                                .and_then(|&i| content.ranking_group.cached_scores.get(i))
+                                .copied().unwrap_or(0.0);
+                            let (before_scope, before_global) = before.get(item).copied().unwrap_or((0, 0));
+                            let prev = content.rank_history.get(item).and_then(|v| v.last());
+                            let scope_delta  = if prev.is_none() { 0 } else { after_scope as i32 - before_scope as i32 };
+                            let global_delta = if prev.is_none() { 0 } else { after_global as i32 - before_global as i32 };
+                            let scope_total = item.parent()
+                                .and_then(|p| content.item_children.get(&p))
+                                .map(|s| s.len())
+                                .unwrap_or(0);
+                            let global_total = content.ranking_group.idx_to_item.len();
+                            content.rank_history.entry(item.clone()).or_default().push(RankHistoryEntry {
+                                ts: ing.ts,
+                                scope_rank: after_scope,
+                                scope_rank_delta: scope_delta,
+                                scope_total,
+                                global_rank: after_global,
+                                global_rank_delta: global_delta,
+                                global_total,
+                                score,
+                                thread: thread.clone(),
+                                post_id: ing.id.clone(),
+                            });
+                        }
+                    }
                 }
 
                 // Bump thread state for the canonical thread.
@@ -408,43 +489,24 @@ impl ReducerState {
 
                 nav!(self.ingests_ordered, push_back(ing.id.clone()));
 
-                // Snapshot ranks after votes and push history entries.
-                if !voted_items.is_empty() {
-                    crate::ranking::compute_group_ranking(&mut self.ranking_group, 10000, 1e-8);
-                    let thread = canonical_thread.clone();
-                    for item in &voted_items {
-                        let after_scope  = Self::scope_rank_of(&self.ranking_group, item, &self.item_children);
-                        let after_global = Self::global_rank_of(&self.ranking_group, item);
-                        let score = self.ranking_group.item_to_idx.get(item)
-                            .and_then(|&i| self.ranking_group.cached_scores.get(i))
-                            .copied().unwrap_or(0.0);
-                        let (before_scope, before_global) = before.get(item).copied().unwrap_or((0, 0));
-                        let prev = self.rank_history.get(item).and_then(|v| v.last());
-                        let scope_delta  = if prev.is_none() { 0 } else { after_scope as i32 - before_scope as i32 };
-                        let global_delta = if prev.is_none() { 0 } else { after_global as i32 - before_global as i32 };
-                        let scope_total = item.parent()
-                            .and_then(|p| self.item_children.get(&p))
-                            .map(|s| s.len())
-                            .unwrap_or(0);
-                        let global_total = self.ranking_group.idx_to_item.len();
-                        self.rank_history.entry(item.clone()).or_default().push(RankHistoryEntry {
-                            ts: ing.ts,
-                            scope_rank: after_scope,
-                            scope_rank_delta: scope_delta,
-                            scope_total,
-                            global_rank: after_global,
-                            global_rank_delta: global_delta,
-                            global_total,
-                            score,
-                            thread: thread.clone(),
-                            post_id: ing.id.clone(),
-                        });
-                    }
-                }
-
                 nav!(self.actor_last_post_ts, keypath(ing.principal.clone()), setval(ing.ts));
             }
             _ => {}
+        }
+    }
+}
+
+impl Default for ReducerState {
+    fn default() -> Self {
+        let mut content = HashMap::new();
+        content.insert(ScopeId::Public, ContentState::default());
+        Self {
+            content,
+            ingests_by_id: HashMap::new(),
+            ingests_by_thread: HashMap::new(),
+            threads: HashMap::new(),
+            actor_last_post_ts: HashMap::new(),
+            ingests_ordered: Vec::new(),
         }
     }
 }

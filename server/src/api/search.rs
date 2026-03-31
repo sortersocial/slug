@@ -67,13 +67,14 @@ pub async fn get_search(
     }
 
     let reduced = state.reduced.read().await;
+    let content = reduced.public();
 
     let mut scored_items: Vec<(u32, slug_types::SearchItemHit)> = Vec::new();
-    for item in &reduced.items {
+    for item in &content.items {
         let mut score: u32 = 0;
         if text_contains_all(item.as_str(), &words) { score += 10; }
         else if text_contains_any(item.as_str(), &words) > 0 { score += 5; }
-        if let Some(body) = reduced.item_bodies.get(item) {
+        if let Some(body) = content.item_bodies.get(item) {
             if text_contains_all(body, &words) { score += 6; }
             else {
                 let any = text_contains_any(body, &words);
@@ -83,7 +84,7 @@ pub async fn get_search(
         if score > 0 {
             scored_items.push((score, slug_types::SearchItemHit {
                 path: item_path_for_api(item.as_str()),
-                body: reduced.item_bodies.get(item).map(|b| snippet_around(b, &words, 120)),
+                body: content.item_bodies.get(item).map(|b| snippet_around(b, &words, 120)),
             }));
         }
     }

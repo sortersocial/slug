@@ -32,6 +32,7 @@ pub fn validate_ingest_document(
     reduced: &ReducerState,
     text: &str,
 ) -> Result<ValidatedIngest, (StatusCode, String, Option<String>)> {
+    let content = reduced.public();
     let doc = match dsl::parse_full(text) {
         Ok(d) => d,
         Err(e) => {
@@ -96,7 +97,7 @@ pub fn validate_ingest_document(
                     .into_iter()
                     .filter(|it| {
                         let key = CanonicalItemUrl((*it).clone());
-                        !defined_in_doc.contains(*it) && !reduced.items.contains(&key)
+                        !defined_in_doc.contains(*it) && !content.items.contains(&key)
                     })
                     .map(|it| item_path_for_api(it))
                     .collect();
@@ -114,7 +115,7 @@ pub fn validate_ingest_document(
                     .into_iter()
                     .filter(|it| {
                         let key = CanonicalItemUrl((*it).clone());
-                        !defined_in_doc.contains(*it) && !reduced.item_bodies.contains_key(&key)
+                        !defined_in_doc.contains(*it) && !content.item_bodies.contains_key(&key)
                     })
                     .map(|it| item_path_for_api(it))
                     .collect();
@@ -251,9 +252,10 @@ pub async fn post_ingest(
     let pre_rankings: HashMap<CanonicalItemUrl, crate::scope_rank::ChildrenRankings> =
         if !voted_parent_scopes.is_empty() {
             let reduced = reduced_arc.read().await;
+            let content = reduced.public();
             voted_parent_scopes
                 .iter()
-                .map(|p| (p.clone(), crate::scope_rank::build_children_rankings(&reduced, p)))
+                .map(|p| (p.clone(), crate::scope_rank::build_children_rankings(content, p)))
                 .collect()
         } else {
             HashMap::new()
@@ -281,11 +283,12 @@ pub async fn post_ingest(
     // Snapshot rankings after the event and compute per-scope deltas.
     let ranking_changes: Vec<ScopeRankChanges> = if !voted_parent_scopes.is_empty() {
         let reduced = reduced_arc.read().await;
+        let content = reduced.public();
         voted_parent_scopes
             .iter()
             .filter_map(|p| {
                 let before = pre_rankings.get(p)?;
-                let after = crate::scope_rank::build_children_rankings(&reduced, p);
+                let after = crate::scope_rank::build_children_rankings(content, p);
                 compute_scope_rank_changes(p.as_str(), before, &after)
             })
             .collect()
@@ -359,7 +362,7 @@ pub async fn post_check(
     let rankings: Vec<slug_types::CheckScopeRanking> = voted_parents
         .iter()
         .map(|parent| {
-            let scoped = crate::scope_rank::build_children_rankings(&simulated, parent);
+            let scoped = crate::scope_rank::build_children_rankings(simulated.public(), parent);
             let components: Vec<RankComponent> = scoped
                 .component_rankings
                 .into_iter()
