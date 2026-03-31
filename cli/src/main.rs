@@ -921,7 +921,13 @@ async fn main() -> Result<()> {
 
             let req = IngestRequest { thread, delegate, text };
             let url = format!("{base}/api/v0/ingest");
-            let builder = client.post(url).json(&req);
+            let mut builder = client.post(url).json(&req);
+            if let Ok(t) = std::env::var("SLUG_BEARER_TOKEN") {
+                let t = t.trim();
+                if !t.is_empty() {
+                    builder = builder.header("Authorization", format!("Bearer {t}"));
+                }
+            }
             let resp: IngestResponse = expect_json(builder.send().await?).await?;
             if resp.ok {
                 if json {

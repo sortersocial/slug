@@ -37,6 +37,15 @@ fn parse_bearer(headers: &HeaderMap) -> Result<String, (StatusCode, String)> {
     Ok(rest.trim().to_string())
 }
 
+/// Resolve canonical username from `Authorization: Bearer slug_…` using durable token state.
+pub fn verify_bearer_principal(
+    headers: &axum::http::HeaderMap,
+    reduced: &crate::reducer::ReducerState,
+) -> Result<String, (StatusCode, String)> {
+    let bearer = parse_bearer(headers)?;
+    verify_token(reduced, &bearer)
+}
+
 fn verify_token(reduced: &crate::reducer::ReducerState, bearer: &str) -> Result<String, (StatusCode, String)> {
     // slug_<token_id>_<secret>
     let Some(rest) = bearer.strip_prefix("slug_") else {
@@ -210,7 +219,7 @@ pub async fn get_auth_callback(Query(q): Query<AuthCallbackQuery>, State(state):
                 reduced.apply_event(ev);
             }
             s.complete = Some((canon_user, bearer));
-            return Redirect::temporary(&format!("{}/auth/choose-username?session={}", public_url, q.state)).into_response();
+            return Redirect::temporary(&format!("{public_url}/auth/complete")).into_response();
         }
     }
 
@@ -373,6 +382,14 @@ pub async fn get_pending_session(
         token,
     })
     .into_response()
+}
+
+pub async fn get_auth_complete() -> impl IntoResponse {
+    (
+        StatusCode::OK,
+        "login complete — you can close this tab and return to the CLI\n",
+    )
+        .into_response()
 }
 
 pub async fn get_whoami(State(state): State<AppState>, headers: HeaderMap) -> impl IntoResponse {

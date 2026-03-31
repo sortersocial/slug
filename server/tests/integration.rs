@@ -1,10 +1,42 @@
+use sha2::{Digest, Sha256};
 use slugsocial_server::{
     event_log::EventLog,
+    events::{Event, TokenIssued},
     state::{AppConfig, AppState},
 };
 use tempfile::TempDir;
 use tokio::net::TcpListener;
 use std::net::SocketAddr;
+
+fn sha256_hex(s: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(s.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+/// Fixed bearer for integration tests (`TokenIssued` seeded into reducer in `create_test_server`).
+fn test_bearer() -> String {
+    let token_id = "testtok";
+    let secret = "secret";
+    format!("slug_{token_id}_{secret}")
+}
+
+async fn seed_test_token(state: &AppState) {
+    let token_id = "testtok";
+    let secret = "secret";
+    let salt = "salt";
+    let token_hash = sha256_hex(&format!("{salt}:{secret}"));
+    let ev = Event::TokenIssued(TokenIssued {
+        ts: 0,
+        username: "testuser".to_string(),
+        token_id: token_id.to_string(),
+        token_hash,
+        salt: salt.to_string(),
+        issued_via: "test".to_string(),
+    });
+    let mut r = state.reduced.write().await;
+    r.apply_event(ev);
+}
 
 async fn create_test_server() -> (SocketAddr, TempDir, EventLog, tokio::task::JoinHandle<()>) {
     let tmp = TempDir::new().unwrap();
@@ -17,6 +49,7 @@ async fn create_test_server() -> (SocketAddr, TempDir, EventLog, tokio::task::Jo
     };
 
     let state = AppState::new(cfg);
+    seed_test_token(&state).await;
     let app = slugsocial_server::create_app(state);
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -90,7 +123,8 @@ async fn test_vote_endpoint() {
     });
 
     let response = client
-        .post(&format!("http://{}/api/v0/ingest", addr))
+        .post(format!("http://{}/api/v0/ingest", addr))
+        .header("Authorization", format!("Bearer {}", test_bearer()))
         .json(&ingest_payload)
         .send()
         .await
@@ -114,7 +148,8 @@ async fn test_rank_endpoint() {
         "text": "~/rust {systems}\n~/go {concurrency}\n~/rust 3:1 ~/go {because i prefer rust for systems work}\n",
     });
     client
-        .post(&format!("http://{}/api/v0/ingest", addr))
+        .post(format!("http://{}/api/v0/ingest", addr))
+        .header("Authorization", format!("Bearer {}", test_bearer()))
         .json(&ingest_payload)
         .send()
         .await
@@ -190,7 +225,8 @@ async fn test_garden_item_pair_matchup_include_threads() {
         "text": "~/sorts/insertion { O(n^2) }\n~/sorts/mergesort { O(n log n) }\n~/sorts/insertion 3:1 ~/sorts/mergesort { simpler for small n }\n",
     });
     let ingest_resp = client
-        .post(&format!("http://{}/api/v0/ingest", addr))
+        .post(format!("http://{}/api/v0/ingest", addr))
+        .header("Authorization", format!("Bearer {}", test_bearer()))
         .json(&ingest_payload)
         .send()
         .await
@@ -269,12 +305,15 @@ async fn test_rank_history() {
     let (addr, _tmp, _log, _handle) = create_test_server().await;
     let client = reqwest::Client::new();
 
+    let bearer = test_bearer();
     let ingest = |payload: serde_json::Value| {
         let client = client.clone();
         let addr = addr;
+        let bearer = bearer.clone();
         async move {
             client
-                .post(&format!("http://{}/api/v0/ingest", addr))
+                .post(format!("http://{}/api/v0/ingest", addr))
+                .header("Authorization", format!("Bearer {bearer}"))
                 .json(&payload)
                 .send()
                 .await
@@ -370,7 +409,8 @@ async fn pair_returns_connectivity_stats() {
         "text": "~/conn/a { item a }\n~/conn/b { item b }\n~/conn/c { item c }\n~/conn/d { item d }\n~/conn/a 3:1 ~/conn/b { a is better }\n",
     });
     let resp = client
-        .post(&format!("http://{}/api/v0/ingest", addr))
+        .post(format!("http://{}/api/v0/ingest", addr))
+        .header("Authorization", format!("Bearer {}", test_bearer()))
         .json(&doc)
         .send()
         .await
@@ -403,7 +443,8 @@ async fn pair_returns_connectivity_stats() {
         "text": "~/conn/c 2:1 ~/conn/a { c beats a }\n",
     });
     let resp2 = client
-        .post(&format!("http://{}/api/v0/ingest", addr))
+        .post(format!("http://{}/api/v0/ingest", addr))
+        .header("Authorization", format!("Bearer {}", test_bearer()))
         .json(&doc2)
         .send()
         .await

@@ -93,9 +93,10 @@
 ;; ---------------------------------------------------------------------------
 
 (defn run-cli
-  "Run the slugsocial CLI binary with args, return {:exit :out :err}."
-  [binary base-url args & {:keys [input]}]
+  "Run the slugsocial CLI binary with args, return {:exit :out :err}.
+   Optional `extra-env` map merged into process env (e.g. SLUG_BEARER_TOKEN)."
+  [binary base-url args & {:keys [input extra-env]}]
   @(p/process (into [binary] args)
               (cond-> {:out :string :err :string
-                       :env (merge base-env {"SLUG_SERVER" base-url})}
+                       :env (merge base-env {"SLUG_SERVER" base-url} extra-env)}
                 input (assoc :in input))))

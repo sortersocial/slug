@@ -20,6 +20,7 @@ pub use auth::{
     post_choose_username,
     get_auth_login,
     get_auth_callback,
+    get_auth_complete,
     get_choose_username,
 };
 

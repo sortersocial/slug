@@ -1,6 +1,6 @@
 use axum::{
     extract::State,
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::IntoResponse,
     Json,
 };
@@ -10,11 +10,14 @@ use std::collections::{HashMap, HashSet};
 
 use crate::{
     dsl,
-    events::{canonicalize_agent, canonicalize_tag, canonicalize_username, validate_agent_format, Event, Ingest},
+    events::{
+        canonicalize_agent, canonicalize_tag, canonicalize_username, validate_agent_format, AgentBound, Event, Ingest,
+    },
     path_types::CanonicalItemUrl,
     reducer::ReducerState,
     state::AppState,
 };
+use super::auth::verify_bearer_principal;
 use super::helpers::{api_error, item_path_for_api, now_ms, resolve_item};
 
 /// Result of validating an ingest document. Shared by post_ingest and post_check.
@@ -211,6 +214,7 @@ fn compute_scope_rank_changes(
 
 pub async fn post_ingest(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(req): Json<IngestRequest>,
 ) -> impl IntoResponse {
     let reduced_arc = state.reduced.clone();
@@ -220,17 +224,54 @@ pub async fn post_ingest(
         Ok(x) => x,
         Err((status, msg, hint)) => return api_error(status, msg, hint).into_response(),
     };
-    drop(reduced);
 
     if let Err(msg) = validate_agent_format(&req.delegate) {
+        drop(reduced);
         return api_error(StatusCode::BAD_REQUEST, "invalid delegate format", Some(msg)).into_response();
     }
     let delegate = canonicalize_agent(&req.delegate);
     let thread_id = canonicalize_tag(&req.thread);
-    // Auth not wired yet; use placeholder principal until bearer-token auth is implemented.
-    let principal = canonicalize_username("placeholder");
+
+    let principal = match verify_bearer_principal(&headers, &reduced) {
+        Ok(u) => u,
+        Err((st, msg)) => {
+            drop(reduced);
+            return api_error(st, msg, None).into_response();
+        }
+    };
+
+    match reduced.agent_bindings.get(&delegate) {
+        Some(u) if u != &principal => {
+            drop(reduced);
+            return api_error(
+                StatusCode::FORBIDDEN,
+                "delegate already bound to another user",
+                None,
+            )
+            .into_response();
+        }
+        _ => {}
+    }
+    let need_agent_bind = reduced.agent_bindings.get(&delegate).is_none();
+    drop(reduced);
 
     let mut events_appended: usize = 0;
+
+    if need_agent_bind {
+        let ab = Event::AgentBound(AgentBound {
+            ts: now_ms(),
+            agent: delegate.clone(),
+            username: principal.clone(),
+        });
+        if let Err(err) = event_log.append(&ab).await {
+            return api_error(StatusCode::INTERNAL_SERVER_ERROR, format!("{err}"), None);
+        }
+        events_appended += 1;
+        {
+            let mut reduced = reduced_arc.write().await;
+            reduced.apply_event(ab);
+        }
+    }
 
     // Collect parent scopes for all voted items so we can compute ranking deltas.
     let voted_parent_scopes: Vec<CanonicalItemUrl> = {

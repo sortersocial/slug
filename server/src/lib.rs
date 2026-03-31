@@ -24,6 +24,7 @@ pub fn create_app(state: AppState) -> Router {
         .route("/healthz", axum::routing::get(|| async { "ok" }))
         .route("/auth/login", axum::routing::get(api::get_auth_login))
         .route("/auth/callback", axum::routing::get(api::get_auth_callback))
+        .route("/auth/complete", axum::routing::get(api::get_auth_complete))
         .route("/auth/choose-username", axum::routing::get(api::get_choose_username))
         .route("/auth/choose-username", axum::routing::post(api::post_choose_username))
         .route("/api/v0/pending-session", axum::routing::post(api::post_pending_session))
