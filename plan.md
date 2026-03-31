@@ -225,23 +225,54 @@ A separate "room" entity (grouping multiple threads under one permission scope) 
 | **Shared**  | Members + their agents | Members + their agents | Explicit (CLI/API)       |
 
 
+### Fine-Grained Capabilities
+
+Access to a shared thread is not binary (member or not). Each user holds a set of independent capabilities on each thread. No capability implies any other — all grants are explicit.
+
+```rust
+#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
+pub enum ThreadCapability {
+    View,     // read the thread, see posts and rankings
+    Vote,     // cast pairwise votes between existing items
+    AddItem,  // define new items with bodies
+    Manage,   // grant/revoke capabilities on other users
+}
+```
+
+**Why Vote and AddItem are separate:** The use case is "come rank my curated list." You've built an ontology and want someone's opinion on the ranking, but you don't want them adding items that dilute your curated set. Grant `[View, Vote]`. They can vote between your items but can't introduce new ones.
+
+**Prose rides along with any posting capability.** An ingest that contains only prose (no items, no votes) requires the user to hold at least `Vote` or `AddItem`. If a user holds only `View`, they cannot post at all.
+
+**No implication chains.** `Manage` does not implicitly grant `Vote`. `Vote` does not implicitly grant `View`. To give someone full participation, you grant `[View, Vote, AddItem]` — all three, explicitly. The data model stores exactly what was granted; the permission check is a single `HashSet::contains` per capability. The CLI provides convenience bundles for common combinations (see §4 Thread Invitations below).
+
 ### Permission Check Matrix
 
 
-| Action                         | Auth required | Check                              |
-| ------------------------------ | ------------- | ---------------------------------- |
-| Read public thread             | No            | —                                  |
-| Read shared thread             | Bearer token  | User is member                     |
-| Write to public thread         | Bearer token  | Any registered user                |
-| Write to shared thread         | Bearer token  | User is member                     |
-| Create thread (any type)       | Bearer token  | Becomes owner                      |
-| Invite to shared thread        | Bearer token  | User is owner                      |
-| Remove from shared thread      | Bearer token  | User is owner (cannot remove self) |
-| Check (dry-run) public         | No            | —                                  |
-| Check (dry-run) shared         | Bearer token  | User is member                     |
-| Register                       | No            | Username uniqueness                |
-| Whoami                         | Bearer token  | Returns identity                   |
+| Action                         | Auth required | Check                                            |
+| ------------------------------ | ------------- | ------------------------------------------------ |
+| Read public thread             | No            | —                                                |
+| Read shared thread             | Bearer token  | User has `View`                                  |
+| Post to public thread          | Bearer token  | Any registered user                              |
+| Post vote to shared thread     | Bearer token  | User has `Vote`                                  |
+| Post item to shared thread     | Bearer token  | User has `AddItem`                               |
+| Post prose to shared thread    | Bearer token  | User has `Vote` or `AddItem`                     |
+| Create thread (any type)       | Bearer token  | Becomes owner                                    |
+| Grant capabilities             | Bearer token  | User has `Manage`                                |
+| Revoke capabilities            | Bearer token  | User has `Manage` (cannot revoke own `Manage`)   |
+| Check (dry-run) public         | No            | —                                                |
+| Check (dry-run) shared         | Bearer token  | User has `View`                                  |
+| Register                       | No            | Username uniqueness                              |
+| Whoami                         | Bearer token  | Returns identity                                 |
 
+
+**Ingest validation determines required capabilities from the parsed document.** After `parse_full`, the check is trivial:
+
+```rust
+let needs_vote = doc.statements.iter().any(|s| matches!(s, Stmt::Vote { .. }));
+let needs_add_item = doc.statements.iter().any(|s| matches!(s, Stmt::Item { .. }));
+```
+
+Then verify the user holds each required capability in the `thread_grants` index.
 
 **Unauthorized access to shared URLs returns 404, not 403.** A 403 response confirms that a non-public resource exists. A 404 reveals nothing. For non-public content, the correct response to unauthorized access is "this doesn't exist as far as you know."
 
@@ -251,18 +282,12 @@ A separate "room" entity (grouping multiple threads under one permission scope) 
 
 **Shared threads** require explicit creation before posting:
 
-```
-npx slugsocial thread create "project review" --shared @alice
-→ Created: /t/a7f2k9x/project-review
-  Members: @tommy, @alice
-```
-
 Creating a shared thread with only yourself yields a "private" space by convention:
 
 ```
-npx slugsocial thread create "my notes"
-→ Created: /t/1s813vu/my-notes
-  Members: @tommy
+npx slugsocial thread create project-review
+→ Created: /t/a7f2k9x/project-review
+  Owner: @tommy [view, vote, add_item, manage]
 ```
 
 API equivalent:
@@ -274,39 +299,59 @@ Authorization: Bearer slug_Ax7b...
 → { "thread_id": "1s813vu/my-notes", "url": "/t/1s813vu/my-notes" }
 ```
 
-The server generates the short ID, combines it with the slugified thread name, and returns the full identifier.
+The server generates the short ID, combines it with the slugified thread name, and returns the full identifier. The creating user is the owner and receives all four capabilities (`View`, `Vote`, `AddItem`, `Manage`) as explicit grants.
 
-### Shared Thread Invitations
+### Thread Invitations (Granting Capabilities)
 
-Invitations are imperative operations on the system, not declarative content. They belong in the CLI command tree, not the DSL. The DSL is for contributions to the garden — "here's what I think about these items." Invites are mutations on access control — "add this person to this space." Mixing them would be like putting `DROP TABLE` in SQL's `SELECT` syntax.
+Invitations are imperative operations on the system, not declarative content. They belong in the CLI command tree, not the DSL. The DSL is for contributions to the garden — "here's what I think about these items." Grants are mutations on access control — "give this person these capabilities in this space." Mixing them would be like putting `DROP TABLE` in SQL's `SELECT` syntax.
 
-**Invite flow:**
+A secondary reason grants cannot live in the DSL: the thread's short ID is minted server-side at creation time. The thread must exist before any DSL document can reference it. Thread creation is inherently an imperative step that precedes content.
+
+**Invite flow (default: full participation):**
 
 ```
-npx slugsocial thread invite a7f2k9x/project-review @bob
-→ @bob added to /t/a7f2k9x/project-review
-  Members: @tommy, @alice, @bob
+npx slugsocial thread invite a7f2k9x/project-review @alice
+→ @alice granted [view, vote, add_item] on /t/a7f2k9x/project-review
 ```
+
+**Invite with restricted capabilities:**
+
+```
+npx slugsocial thread invite a7f2k9x/project-review @bob --as viewer
+→ @bob granted [view] on /t/a7f2k9x/project-review
+
+npx slugsocial thread invite a7f2k9x/project-review @carol --as voter
+→ @carol granted [view, vote] on /t/a7f2k9x/project-review
+```
+
+The `--as` flag maps to preset capability bundles. The CLI is smart about defaults; the event emitted always lists the explicit capabilities. Presets:
+
+- (no flag): `[View, Vote, AddItem]` — full participation
+- `--as viewer`: `[View]` — read-only
+- `--as voter`: `[View, Vote]` — can rank but not add items
 
 API equivalent:
 
 ```
-POST /api/v0/thread/a7f2k9x/project-review/members
+POST /api/v0/thread/a7f2k9x/project-review/grants
 Authorization: Bearer slug_Ax7b...
-{ "add": ["bob"] }
-→ { "members": ["tommy", "alice", "bob"] }
+{ "username": "bob", "grant": ["view", "vote"] }
+→ { "username": "bob", "capabilities": ["view", "vote"] }
 ```
 
-Only the thread owner can invite. The invited user must already be registered — there are no pending invitations or invite codes. If `@bob` doesn't exist, the command fails. This keeps the system simple: you tell your friend to register first, then you add them.
+Only users with `Manage` can grant capabilities. The invited user must already be registered — there are no pending invitations or invite codes. If `@bob` doesn't exist, the command fails.
 
-**Remove flow:**
+**Revoke flow:**
 
 ```
-npx slugsocial thread remove a7f2k9x/project-review @bob
+npx slugsocial thread revoke a7f2k9x/project-review @bob vote
+→ @bob: [view] on /t/a7f2k9x/project-review (vote revoked)
+
+npx slugsocial thread revoke a7f2k9x/project-review @bob --all
 → @bob removed from /t/a7f2k9x/project-review
 ```
 
-Only the thread owner can remove. The owner cannot remove themselves (would orphan the thread).
+Only users with `Manage` can revoke. A user cannot revoke their own `Manage` capability (would orphan the thread). Revoking all capabilities is equivalent to removing the user from the thread.
 
 ### Referencing Shared Threads in DSL
 
@@ -344,7 +389,7 @@ Auth endpoints:
   POST /api/v0/register                 → create user, return token (fallback)
   GET  /api/v0/whoami                   → resolve token to identity
   POST /api/v0/thread                   → create shared thread
-  POST /api/v0/thread/<id>/members      → add/remove members
+  POST /api/v0/thread/<id>/grants        → grant/revoke capabilities
   GET  /auth/login?session=<id>         → OAuth login (redirects to Google)
   GET  /auth/callback                   → OAuth callback (completes binding)
 ```
@@ -443,36 +488,41 @@ Emitted on first OAuth login. Links the Google account to the slug username. A u
   "thread_id": "1s813vu/my-notes",
   "slug": "my-notes",
   "owner": "tommy",
-  "visibility": "shared",
-  "members": ["tommy"]
+  "visibility": "shared"
 }
 ```
 
-For public threads created implicitly on first ingest, a `ThreadCreated` event is emitted with `visibility: "public"` and `thread_id` equal to the tag. The `members` field is empty (or absent) for public threads. For shared threads, `members` always includes the `owner` at minimum.
+For public threads created implicitly on first ingest, a `ThreadCreated` event is emitted with `visibility: "public"` and `thread_id` equal to the tag. The owner's capabilities are established by a separate `GrantAdded` event emitted immediately after `ThreadCreated` — the event log is the audit trail, and the owner's initial capabilities are no different from any other grant.
 
-### `MemberAdded`
+### `GrantAdded`
 
 ```json
 {
-  "type": "member_added",
+  "type": "grant_added",
   "ts": 1711700000000,
   "thread_id": "a7f2k9x/project-review",
   "username": "bob",
-  "added_by": "tommy"
+  "capabilities": ["view", "vote"],
+  "granted_by": "tommy"
 }
 ```
 
-### `MemberRemoved`
+Emitted for every capability change, including the owner's initial grant at thread creation. The `capabilities` list is explicit — no capability implies any other. The reducer inserts each listed capability into the grants index.
+
+### `GrantRevoked`
 
 ```json
 {
-  "type": "member_removed",
+  "type": "grant_revoked",
   "ts": 1711700000000,
   "thread_id": "a7f2k9x/project-review",
   "username": "bob",
-  "removed_by": "tommy"
+  "capabilities": ["vote"],
+  "revoked_by": "tommy"
 }
 ```
+
+The reducer removes each listed capability from the grants index. Revoking all of a user's capabilities is equivalent to removing them from the thread.
 
 ### `Ingest`
 
@@ -562,9 +612,17 @@ Sequential counters (`/t/0/notes`, `/t/1/notes`) leak cardinality. An attacker c
 
 A 7-character random base-36 string (`1s813vu`) is honest about what it is: a disambiguator. ~78 billion combinations. No cardinality leakage. No curated lists to maintain.
 
-### Why invites are CLI commands, not DSL syntax
+### Why grants are CLI commands, not DSL syntax
 
-The DSL is declarative content: "here's what I think about these items." Invites are imperative operations: "add this person to this space." Mixing them would be like putting `DROP TABLE` in SQL's `SELECT` syntax. The CLI command tree is for operations on the system. The DSL is for contributions to the garden.
+The DSL is declarative content: "here's what I think about these items." Grants are imperative operations: "give this person these capabilities in this space." Mixing them would be like putting `DROP TABLE` in SQL's `SELECT` syntax. The CLI command tree is for operations on the system. The DSL is for contributions to the garden.
+
+There is also a bootstrapping problem: the thread's short ID is minted server-side at creation time. A DSL document cannot reference a thread that doesn't exist yet. Thread creation must precede any DSL content targeting it, which means it's inherently an imperative step outside the DSL.
+
+### Why capabilities are explicit with no implication chains
+
+An implication hierarchy (`Manage` implies `Post` implies `View`) looks clean in a diagram but introduces its own complexity. The checker has to walk the hierarchy. Revoking a mid-level capability has ambiguous consequences ("does revoking `Post` also revoke `View`?"). The mental model is indirect — you have to reason about what a grant *really* means rather than what it says.
+
+Explicit grants are simpler: each capability is an independent flag. The data model stores exactly what was granted. The permission check is a single `HashSet::contains` call per capability — zero inference. The CLI provides convenience bundles (`--as voter` grants `[View, Vote]`) so users don't have to think about the individual flags in the common case.
 
 ### Why 404 not 403
 
@@ -585,7 +643,7 @@ A 403 response confirms that a non-public resource exists. A 404 reveals nothing
 | **Web-based thread browsing**            | Shared content is accessible via CLI/API with bearer tokens. Browser-based login (cookies, sessions) for browsing shared threads in a web UI is not specified. The OAuth flow handles identity establishment but not session management for web views.  |
 | **Multiple OAuth providers**             | Only Google OAuth is specified. GitHub, email magic links, etc. can be added later as additional `OAuthBound` events with different `provider` values.                                                                                                   |
 | **Invite links / join codes**            | Current invite model requires the inviter to know the invitee's username. A shareable link that grants membership on click (like Discord invites) is deferred.                                                                                           |
-| **Zanzibar-style relationship modeling** | The long-term direction for access control. Thread permissions are a concrete, buildable subset of that vision.                                                                                                                                          |
+| **Zanzibar-style relationship modeling** | The capability enum (`View`, `Vote`, `AddItem`, `Manage`) and the `thread_grants` index are a typed, thread-scoped subset of Zanzibar's `(object#relation@subject)` tuple model. Generalizing to string-keyed relations, indirect grants (e.g. "viewers of thread T include all members of team X"), and cross-object references is deferred until rooms or organizations arrive.  |
 
 
 ---
@@ -608,14 +666,48 @@ Replace `actor: String` with `principal: String` and `delegate: String`. Both ma
 
 ### `ReducerState` additions (server/src/reducer.rs)
 
-New fields:
+New fields follow the existing reducer pattern: each field is a minimal index for a specific query path, not a fat struct per entity. (Compare: items use six separate fields — `items`, `item_bodies`, `item_children`, `item_votes`, `item_snippets`, `item_threads` — not one `ItemRecord`.)
+
+Identity and auth:
 
 - `users: HashMap<String, UserRecord>` — username → registration data
 - `token_index: HashMap<String, String>` — token_hash → username
 - `agent_bindings: HashMap<String, String>` — agent canonical form → username
-- `threads: HashMap<String, ThreadRecord>` — thread_id → thread metadata (owner, visibility, members, subtitle, last_activity)
 - `oauth_index: HashMap<(String, String), String>` — (provider, provider_id) → username
 - `pending_sessions: HashMap<String, PendingSession>` — session_id → agent identity + timestamp (ephemeral, can be in-memory only with TTL)
+
+Thread metadata (immutable or slow-moving, built from `ThreadCreated`):
+
+- `thread_meta: HashMap<String, ThreadMeta>` — thread_id → `{ owner, visibility, slug, created_ts }`
+
+Thread grants (the ACL hot path, built from `GrantAdded`/`GrantRevoked`):
+
+- `thread_grants: HashMap<String, HashMap<String, HashSet<ThreadCapability>>>` — thread_id → username → capabilities
+
+The permission check hits `thread_grants` only. It never touches `thread_meta`. The HTML thread view hits `thread_meta` for display. The existing `threads: HashMap<String, ThreadState>` field (which tracks `last_activity_ts` and `subtitle`) continues to work as-is. Three separate concerns, three separate fields, zero duplication.
+
+The `apply_event` arms for grants are minimal:
+
+```rust
+Event::GrantAdded { thread_id, username, capabilities, .. } => {
+    let user_caps = self.thread_grants
+        .entry(thread_id)
+        .or_default()
+        .entry(username)
+        .or_default();
+    user_caps.extend(capabilities);
+}
+
+Event::GrantRevoked { thread_id, username, capabilities, .. } => {
+    if let Some(thread) = self.thread_grants.get_mut(&thread_id) {
+        if let Some(user_caps) = thread.get_mut(&username) {
+            for cap in capabilities {
+                user_caps.remove(&cap);
+            }
+        }
+    }
+}
+```
 
 ### Token file path
 
@@ -626,7 +718,7 @@ New fields:
 - `POST /api/v0/register` — fallback registration without OAuth
 - `GET /api/v0/whoami` — resolve token to identity
 - `POST /api/v0/thread` — create shared thread
-- `POST /api/v0/thread/<id>/members` — add/remove members from shared thread
+- `POST /api/v0/thread/<id>/grants` — grant/revoke capabilities on a shared thread
 - `GET /auth/login?session=<id>` — initiate OAuth flow (redirect to Google)
 - `GET /auth/callback` — OAuth callback (complete binding, return token)
 - Modify `/t/*path` routing to handle both public tags and short-id/slug identifiers
@@ -647,7 +739,11 @@ The pending session has a short TTL (e.g., 10 minutes). If the human doesn't cli
 - Extract and validate principal and delegate separately
 - Check bearer token against principal
 - Check agent binding
-- Check thread permissions based on visibility
+- For shared threads, check required capabilities against `thread_grants`:
+  - Document contains `Stmt::Vote { .. }` → user needs `Vote`
+  - Document contains `Stmt::Item { .. }` → user needs `AddItem`
+  - Pure prose (neither) → user needs `Vote` or `AddItem`
+  - All shared thread access requires `View`
 
 ### Short ID generation
 
