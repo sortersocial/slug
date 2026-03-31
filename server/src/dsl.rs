@@ -11,9 +11,6 @@ pub struct Document {
 /// A single statement in the DSL (or prose when using `parse_full`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Stmt {
-    Hashtag { name: String, subtitle: Option<String> },
-    /// Actor signature. Canonical validation is enforced at ingest time.
-    Actor { name: String },
     Item { title: String, body: Option<String> },
     Vote {
         item1: String,
@@ -518,56 +515,11 @@ fn parse_line(masked_line: &str, masker: &BlockMasker) -> Result<Vec<Stmt>, DslE
     }
     let first = stripped.chars().next().unwrap();
     match first {
-        '#' => {
-            let rest = stripped[1..].trim();
-            let bytes = rest.as_bytes();
-            let mut j = 0;
-            while j < bytes.len() && !is_ws_byte(bytes[j]) && !bytes[j..].starts_with(b"__BLOCK_") {
-                j += 1;
-            }
-            let tag = &rest[..j];
-            if !is_item_name(tag) {
-                return Err(DslError::Parse(format!("invalid hashtag name: {tag}")));
-            }
-
-            let k = skip_ws(rest, j);
-            let subtitle = if let Some((tok, end)) = parse_block_token_at(rest, k) {
-                let sub = masker.extract_body(&tok);
-                if sub.is_empty() {
-                    return Err(DslError::Parse("subtitle cannot be empty".to_string()));
-                }
-                if sub.len() > 100 {
-                    return Err(DslError::Parse("subtitle exceeds 100 character limit".to_string()));
-                }
-                let tail = rest[end..].trim();
-                if !tail.is_empty() {
-                    return Err(DslError::Parse("extra tokens after hashtag subtitle".to_string()));
-                }
-                Some(sub)
-            } else {
-                let tail = rest[k..].trim();
-                if !tail.is_empty() {
-                    return Err(DslError::Parse("extra tokens after hashtag".to_string()));
-                }
-                None
-            };
-
-            Ok(vec![Stmt::Hashtag { name: tag.to_string(), subtitle }])
-        }
+        '#' => Err(DslError::Parse("not a DSL line".to_string())),
         ':' => Err(DslError::Parse(
             "leading ':' is not supported".to_string(),
         )),
-        '@' => {
-            // Actor signature (`@name`). Email addresses are not part of the DSL.
-            let tok = stripped.trim();
-            let name = tok.trim_start_matches('@').trim();
-            if !is_actor_name(name) {
-                return Err(DslError::Parse(format!("invalid actor: {tok}")));
-            }
-            Ok(vec![Stmt::Actor {
-                name: name.to_string(),
-            }])
-        }
+        '@' => Err(DslError::Parse("not a DSL line".to_string())),
         '/' => Err(DslError::Parse(
             "item paths must use `~/` (e.g. `~/languages/python`), not a leading `/`"
                 .to_string(),
@@ -586,7 +538,7 @@ fn parse_line(masked_line: &str, masker: &BlockMasker) -> Result<Vec<Stmt>, DslE
             // Reserved / future use in Python filter; treat as parse error for now.
             Err(DslError::Parse("unsupported DSL command: !".to_string()))
         }
-        '"' => parse_quoted_thread_statement(stripped, masker),
+        '"' => Err(DslError::Parse("not a DSL line".to_string())),
         _ => Err(DslError::Parse("not a DSL line".to_string())),
     }
 }
@@ -610,9 +562,9 @@ pub fn parse_full(text: &str) -> Result<Document, DslError> {
     for line in masked.split('\n') {
         let stripped = line.trim_start();
         if !stripped.is_empty()
-            && ("#:/@!~".contains(stripped.chars().next().unwrap())
+            && (":/!~".contains(stripped.chars().next().unwrap())
                 || (stripped.starts_with("https://") || stripped.starts_with("http://"))
-                || (stripped.starts_with('"') && stripped.contains("__BLOCK_")))
+            )
         {
             // Flush prose buffer first
             flush_prose(&mut prose_buffer, &mut statements, &masker);
@@ -715,12 +667,8 @@ mod tests {
                 Stmt::Prose {
                     text: "hello".to_string()
                 },
-                Stmt::Hashtag {
-                    name: "tag".to_string(),
-                    subtitle: None
-                },
                 Stmt::Prose {
-                    text: "world".to_string()
+                    text: "#tag\nworld".to_string()
                 }
             ]
         );
@@ -785,17 +733,6 @@ mod tests {
     }
 
     #[test]
-    fn parse_actor_allows_colons_for_full_identity_formats() {
-        let doc = parse_full(
-            "@00000000-0000-0000-0000-000000000000:test:local/test\n#t\n~/a {x}\n",
-        )
-        .unwrap();
-        assert!(doc.statements.iter().any(|s| matches!(
-            s,
-            Stmt::Actor { name } if name == "00000000-0000-0000-0000-000000000000:test:local/test"
-        )));
-    }
-
     #[test]
     fn parse_rejects_leading_colon() {
         let inputs = [":beauty", ":x", ":"];
@@ -822,7 +759,7 @@ mod tests {
 
     #[test]
     fn parse_full_rejects_vote_without_explanation() {
-        let input = "@test\n#test\n~/a {item a}\n~/b {item b}\n~/a 2:1 ~/b\n";
+        let input = "~/a {item a}\n~/b {item b}\n~/a 2:1 ~/b\n";
         let result = parse_full(input);
         assert!(result.is_err(), "vote without explanation should fail");
         let err_msg = result.unwrap_err().to_string();
@@ -830,17 +767,15 @@ mod tests {
     }
 
     #[test]
-    fn parse_full_supports_quoted_thread_title_statement() {
-        let input = "@a\n\"This is a title\" { This is the body of the post }\n";
+    fn parse_full_keeps_quoted_thread_title_statement_as_prose() {
+        let input = "\"This is a title\" { This is the body of the post }\n";
         let doc = parse_full(input).unwrap();
-        assert!(doc.statements.iter().any(|s| matches!(
-            s,
-            Stmt::Hashtag { name, .. } if name == "this-is-a-title"
-        )));
-        assert!(doc.statements.iter().any(|s| matches!(
-            s,
-            Stmt::Prose { text } if text == "This is the body of the post"
-        )));
+        assert_eq!(
+            doc.statements,
+            vec![Stmt::Prose {
+                text: "\"This is a title\" { This is the body of the post }\n".trim_end_matches('\n').to_string()
+            }]
+        );
     }
 
     #[test]
