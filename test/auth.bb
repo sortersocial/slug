@@ -106,13 +106,15 @@
   (println "\n━━━ auth v3 integration check ━━━\n")
   (reset! counts {:pass 0 :fail 0})
 
-  (println "building server binary…")
+  (println "building server + CLI binaries…")
   (common/letlocals
-   (bind build @(p/process [(common/cargo-bin) "build" "--release" "-p" "slugsocial-server"]
+   (bind build @(p/process [(common/cargo-bin) "build" "--release" "-p" "slugsocial-server" "-p" "slugsocial"]
                            {:inherit true :env common/base-env}))
    (assert! (zero? (:exit build)) "cargo build succeeds")
    (bind server-bin "target/release/slugsocial-server")
+   (bind cli-bin "target/release/slugsocial")
    (assert! (fs/exists? server-bin) "server binary exists")
+   (assert! (fs/exists? cli-bin) "cli binary exists")
 
    (bind tmp-dir (str (fs/create-temp-dir {:prefix "slug-auth-"})))
    (bind slug-port (common/pick-port))
@@ -173,6 +175,41 @@
              (assert! (= 200 (:status who)) "whoami returns 200")
              (let [who-json (json/parse-string (:body who) true)]
               (assert! (= "@bbuser" (:user who-json)) "whoami user is @bbuser"))))))
+
+     (println "\nCLI: identity start → OAuth → identity poll → whoami…")
+     (let [cli-home (str tmp-dir "/cli-home")
+           cli-env (merge common/base-env {"HOME" cli-home "SLUG_SERVER" base-url})]
+       (let [start-proc @(p/process [cli-bin "identity" "start" "--rig" "bb" "--model" "local/test" "--json"]
+                                    {:out :string :err :string :env cli-env})]
+         (assert! (zero? (:exit start-proc))
+                  (str "identity start exits 0 (stderr: " (:err start-proc) ")"))
+         (let [start-cli (json/parse-string (:out start-proc) true)]
+           (assert! (= "present_oauth_url_to_user" (:phase start-cli)) "identity start --json phase")
+           (assert! (clojure.string/starts-with? (:session start-cli) "p_") "CLI start session id")
+           (let [login-get (http-get (:login_url start-cli))]
+             (assert! (= 200 (:status login-get)) "CLI login_url redirect chain succeeds"))
+           (let [choose (http-post-form (str base-url "/auth/choose-username")
+                                        {:session (:session start-cli) :username "cliuser"})]
+             (assert! (= 200 (:status choose)) "choose-username for cliuser"))
+           (let [poll-proc @(p/process [cli-bin "identity" "poll" (:session start-cli)
+                                        "--poll-interval-ms" "100" "--max-wait-secs" "30" "--json"]
+                                       {:out :string :err :string :env cli-env})]
+             (assert! (zero? (:exit poll-proc))
+                      (str "identity poll exits 0 (stderr: " (:err poll-proc) ")"))
+             (let [poll-cli (json/parse-string (:out poll-proc) true)]
+               (assert! (= "complete" (:phase poll-cli)) "identity poll --json phase")
+               (assert! (= "@cliuser" (:user poll-cli)) "CLI poll user")
+               (assert! (clojure.string/starts-with? (:token poll-cli) "slug_") "CLI poll token")
+               (let [token-path (str cli-home "/.config/slugsocial/token")]
+                 (assert! (fs/exists? token-path) "token written under isolated HOME")
+                 (assert! (= (clojure.string/trim (slurp token-path)) (:token poll-cli))
+                          "token file matches poll JSON"))
+               (let [who-proc @(p/process [cli-bin "whoami" "--json"]
+                                           {:out :string :err :string :env cli-env})]
+                 (assert! (zero? (:exit who-proc))
+                          (str "whoami exits 0 (stderr: " (:err who-proc) ")"))
+                 (let [who-cli (json/parse-string (:out who-proc) true)]
+                   (assert! (= "@cliuser" (:user who-cli)) "CLI whoami uses saved token"))))))))
 
      (finally
        (when-some [s @!server] (common/kill-server s))
