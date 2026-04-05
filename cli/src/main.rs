@@ -1136,11 +1136,6 @@ async fn main() -> Result<()> {
                     format!("{base}{}", start.poll_url)
                 };
 
-                let poll_cli_hint = format!(
-                    "After the human finishes in the browser, run:\n  slugsocial identity poll {}",
-                    start.session
-                );
-
                 if json {
                     println!(
                         "{}",

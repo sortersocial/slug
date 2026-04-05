@@ -13,7 +13,7 @@ use tokio::sync::RwLock;
 use crate::{
     api::helpers::{api_error, now_ms, sha256_hex},
     events::{
-        canonicalize_agent, canonicalize_username, validate_agent_format, validate_username,
+        canonicalize_username, validate_agent_format, validate_username,
         Event, TokenIssued, UserRegistered,
     },
     html::{auth_complete_page, choose_username_page},

@@ -74,7 +74,9 @@
              (some-> v (java.net.URLDecoder/decode "UTF-8"))]))))
 
 (defn- start-mock-google [port]
-  (let [handler
+  (let [google-users ["google-user-1" "google-user-2"]
+        !call-count (atom 0)
+        handler
         (fn [req]
           (cond
             (and (= :get (:request-method req))
@@ -93,9 +95,11 @@
 
             (and (= :get (:request-method req))
                  (= "/userinfo" (:uri req)))
-            {:status 200
-             :headers {"Content-Type" "application/json"}
-             :body (json/generate-string {:sub "google-user-1"})}
+            (let [n   (swap! !call-count inc)
+                  sub (nth google-users (mod (dec n) (count google-users)))]
+              {:status 200
+               :headers {"Content-Type" "application/json"}
+               :body (json/generate-string {:sub sub})})
 
             :else
             {:status 404 :body "not found"}))
@@ -174,7 +178,7 @@
                                :headers {"Authorization" (str "Bearer " (:token poll-json))})]
              (assert! (= 200 (:status who)) "whoami returns 200")
              (let [who-json (json/parse-string (:body who) true)]
-              (assert! (= "@bbuser" (:user who-json)) "whoami user is @bbuser"))))))
+               (assert! (= "@bbuser" (:user who-json)) "whoami user is @bbuser"))))))
 
      (println "\nCLI: identity start → OAuth → identity poll → whoami…")
      (let [cli-home (str tmp-dir "/cli-home")
@@ -205,7 +209,7 @@
                  (assert! (= (clojure.string/trim (slurp token-path)) (:token poll-cli))
                           "token file matches poll JSON"))
                (let [who-proc @(p/process [cli-bin "whoami" "--json"]
-                                           {:out :string :err :string :env cli-env})]
+                                          {:out :string :err :string :env cli-env})]
                  (assert! (zero? (:exit who-proc))
                           (str "whoami exits 0 (stderr: " (:err who-proc) ")"))
                  (let [who-cli (json/parse-string (:out who-proc) true)]
