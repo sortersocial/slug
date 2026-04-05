@@ -15,7 +15,7 @@ mod search;
 mod tree;
 use breadcrumb_path::OntologyPath;
 
-pub use auth::{auth_complete_page, choose_username_page};
+pub use auth::{auth_complete_page, auth_signed_in_fragment, choose_username_error_fragment, choose_username_page};
 pub use editor::{editor_check, editor_page};
 pub use forum::{index, thread_feed_html, thread_post_expand, thread_post_view, thread_view};
 pub use garden::{garden_index, ontology_path};
@@ -114,6 +114,8 @@ script { (maud::PreEscaped(r#"
                         });
 
                         // Poem: intercept POST forms, send via fetch, await SSE for DOM update.
+                        // If the response body is non-empty HTML, morph the form's innerHTML with it
+                        // (used for inline feedback without a page reload, e.g. auth forms).
                         document.addEventListener('submit', async (e) => {
                             const f = e.target;
                             if (!f || f.tagName !== 'FORM') return;
@@ -121,14 +123,19 @@ script { (maud::PreEscaped(r#"
                             e.preventDefault();
                             const btn = f.querySelector('button[type="submit"], input[type="submit"]');
                             if (btn) { btn.disabled = true; btn.textContent = '…'; }
-                            await fetch(f.action, {
+                            const resp = await fetch(f.action, {
                                 method: 'POST',
                                 body: new URLSearchParams(new FormData(f)),
                                 headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
                                 credentials: 'same-origin',
                             });
-                            if (btn) { btn.disabled = false; btn.textContent = 'submit'; }
-                            f.reset();
+                            const html = await resp.text();
+                            if (html && html.trim()) {
+                                Idiomorph.morph(f, html, {morphStyle: 'innerHTML'});
+                            } else {
+                                if (btn) { btn.disabled = false; btn.textContent = 'submit'; }
+                                f.reset();
+                            }
                         });
 
                         // Search: debounced fetch + idiomorph.

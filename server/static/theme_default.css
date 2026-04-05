@@ -250,6 +250,11 @@ p.auth-error {
   font-size: 12px;
   margin: 4px 0 0;
 }
+p.auth-success {
+  color: var(--signal);
+  font-size: 13px;
+  margin: 4px 0 0;
+}
 
 /* ----------------------------------------------------------------
    BUTTONS — raised, press on :active

@@ -32,6 +32,7 @@ input[type="text"] {
 input[type="text"]:focus { border-color: #00ff41; }
 p.auth-hint { color: #555; font-family: monospace; font-size: 0.75rem; margin: 0; }
 p.auth-error { color: #ff4444; font-family: monospace; font-size: 0.8rem; margin: 0; }
+p.auth-success { color: #00ff41; font-family: monospace; font-size: 0.8rem; margin: 0; }
 
 /* Ingest form (poem pattern) */
 .ingest-form-wrap { margin-top: 1.5rem; }

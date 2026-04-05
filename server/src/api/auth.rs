@@ -16,7 +16,7 @@ use crate::{
         canonicalize_username, validate_agent_format, validate_username,
         Event, TokenIssued, UserRegistered,
     },
-    html::{auth_complete_page, choose_username_page},
+    html::{auth_complete_page, auth_signed_in_fragment, choose_username_error_fragment, choose_username_page},
     state::{AppState, PendingSession},
 };
 
@@ -274,8 +274,6 @@ pub async fn post_choose_username(
         return api_error(StatusCode::BAD_REQUEST, "invalid agent format", Some(msg)).into_response();
     }
 
-    let public_url = std::env::var("SLUG_PUBLIC_URL").unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
-
     let reduced_arc = state.reduced.clone();
     let reduced = reduced_arc.read().await;
     let provider_key = (provider.to_lowercase(), provider_id.clone());
@@ -284,11 +282,7 @@ pub async fn post_choose_username(
     }
     if reduced.users_by_provider.values().any(|u| u == &canonicalize_username(&form.username)) {
         drop(reduced);
-        return Redirect::to(&format!(
-            "{public_url}/auth/choose-username?session={}&error={}",
-            urlencoding::encode(&form.session),
-            urlencoding::encode("that username is taken — try another"),
-        )).into_response();
+        return choose_username_error_fragment(&form.session, "that username is taken — try another").into_response();
     }
     drop(reduced);
 
@@ -324,7 +318,7 @@ pub async fn post_choose_username(
         s.complete = Some((canon_user.clone(), bearer.clone()));
     }
 
-    Redirect::to(&format!("{public_url}/auth/complete")).into_response()
+    auth_signed_in_fragment().into_response()
 }
 
 pub async fn post_pending_session(
