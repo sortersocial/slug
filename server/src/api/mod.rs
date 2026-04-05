@@ -7,6 +7,7 @@ mod helpers;
 mod ingest;
 mod rank;
 mod search;
+mod thread;
 // mod stream; // disabled while HTML/SSE views are offline
 
 // Re-export all public items so `api::get_rank`, `api::post_ingest`, etc. still work.
@@ -47,6 +48,8 @@ pub use rank::{
 
 pub use search::{get_search, SearchApiQuery};
 
+pub use thread::{post_create_thread, post_thread_grants};
+
 // pub use stream::{get_html_stream, get_stream};
 
 #[cfg(test)]
@@ -71,7 +74,7 @@ mod tests {
     fn validate_ingest_document_requires_actor() {
         let reduced = ReducerState::default();
         let text = "~/t/a {a}\n~/t/b {b}\n";
-        let v = validate_ingest_document(&reduced, text).unwrap();
+        let v = validate_ingest_document(&reduced, text, &crate::reducer::ScopeId::Public).unwrap();
         assert_eq!(v.raw_text.trim(), text.trim());
     }
 
@@ -79,7 +82,7 @@ mod tests {
     fn validate_ingest_document_parse_error() {
         let reduced = ReducerState::default();
         let text = "~/t/a { unclosed ";
-        let err = validate_ingest_document(&reduced, text).unwrap_err();
+        let err = validate_ingest_document(&reduced, text, &crate::reducer::ScopeId::Public).unwrap_err();
         assert_eq!(err.0, StatusCode::BAD_REQUEST);
         assert_eq!(err.1, "parse error");
     }
@@ -93,14 +96,14 @@ mod tests {
             "~/t/a {a}\n~/t/b {b}\n~/t/a 2:1 ~/t/b {because}\n",
         );
         let text = "~/t/a 1:1 ~/t/b {equal}\n";
-        validate_ingest_document(&reduced, text).unwrap();
+        validate_ingest_document(&reduced, text, &crate::reducer::ScopeId::Public).unwrap();
     }
 
     #[test]
     fn validate_ingest_document_rejects_vote_on_undefined_item() {
         let reduced = ReducerState::default();
         let text = "~/t/a {a}\n~/t/b 1:1 ~/t/missing {why}\n";
-        let err = validate_ingest_document(&reduced, text).unwrap_err();
+        let err = validate_ingest_document(&reduced, text, &crate::reducer::ScopeId::Public).unwrap_err();
         assert_eq!(err.0, StatusCode::BAD_REQUEST);
         assert!(err.1.contains("undefined item"));
     }
@@ -110,7 +113,7 @@ mod tests {
         let reduced = ReducerState::default();
         // tags are no longer DSL routing metadata; validation no longer requires them.
         let text = "~/t/a {a}\n~/t/b {b}\n";
-        validate_ingest_document(&reduced, text).unwrap();
+        validate_ingest_document(&reduced, text, &crate::reducer::ScopeId::Public).unwrap();
     }
 
     #[test]
@@ -118,7 +121,7 @@ mod tests {
         let reduced = ReducerState::default();
         // quoted thread title is now prose; should still parse.
         let text = "\"This is a title\" { This is the body of the post }\n~/t/a {a}\n";
-        validate_ingest_document(&reduced, text).unwrap();
+        validate_ingest_document(&reduced, text, &crate::reducer::ScopeId::Public).unwrap();
     }
 
     #[test]
@@ -126,14 +129,14 @@ mod tests {
         let reduced = ReducerState::default();
         // multiple thread declarations are now prose; should still parse.
         let text = "#one\n#two\n~/t/a {a}\n";
-        validate_ingest_document(&reduced, text).unwrap();
+        validate_ingest_document(&reduced, text, &crate::reducer::ScopeId::Public).unwrap();
     }
 
     #[test]
     fn validate_ingest_document_rejects_item_without_body() {
         let reduced = ReducerState::default();
         let text = "~/t/a\n";
-        let err = validate_ingest_document(&reduced, text).unwrap_err();
+        let err = validate_ingest_document(&reduced, text, &crate::reducer::ScopeId::Public).unwrap_err();
         assert_eq!(err.0, StatusCode::BAD_REQUEST);
         assert!(err.1.contains("missing body"));
     }

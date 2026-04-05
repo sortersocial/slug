@@ -11,10 +11,11 @@ use std::collections::{HashMap, HashSet};
 use crate::{
     dsl,
     events::{
-        canonicalize_agent, canonicalize_tag, canonicalize_username, validate_agent_format, AgentBound, Event, Ingest,
+        canonicalize_agent, canonicalize_tag, canonicalize_username, validate_agent_format,
+        AgentBound, Event, Ingest, ThreadCapability, ThreadVisibility,
     },
     path_types::CanonicalItemUrl,
-    reducer::ReducerState,
+    reducer::{ReducerState, ScopeId},
     state::AppState,
 };
 use super::auth::verify_bearer_principal;
@@ -31,11 +32,27 @@ pub struct ValidatedIngest {
 /// Parse and validate an ingest document against current reduced state.
 /// Returns a validated struct for commit (ingest) or dry-run (check).
 /// Error is (StatusCode, error message, optional hint).
+///
+/// Item existence is checked in `scope` first, then falls back to public.
 pub fn validate_ingest_document(
     reduced: &ReducerState,
     text: &str,
+    scope: &ScopeId,
 ) -> Result<ValidatedIngest, (StatusCode, String, Option<String>)> {
-    let content = reduced.public();
+    let public_content = reduced.public();
+    // For a private scope, also check items defined there.
+    let scoped_content = match scope {
+        ScopeId::Public => None,
+        _ => reduced.content_for_scope(scope),
+    };
+    let item_exists = |key: &CanonicalItemUrl| {
+        scoped_content.map(|c| c.items.contains(key)).unwrap_or(false)
+            || public_content.items.contains(key)
+    };
+    let body_exists = |key: &CanonicalItemUrl| {
+        scoped_content.map(|c| c.item_bodies.contains_key(key)).unwrap_or(false)
+            || public_content.item_bodies.contains_key(key)
+    };
     let doc = match dsl::parse_full(text) {
         Ok(d) => d,
         Err(e) => {
@@ -100,7 +117,7 @@ pub fn validate_ingest_document(
                     .into_iter()
                     .filter(|it| {
                         let key = CanonicalItemUrl((*it).clone());
-                        !defined_in_doc.contains(*it) && !content.items.contains(&key)
+                        !defined_in_doc.contains(*it) && !item_exists(&key)
                     })
                     .map(|it| item_path_for_api(it))
                     .collect();
@@ -118,7 +135,7 @@ pub fn validate_ingest_document(
                     .into_iter()
                     .filter(|it| {
                         let key = CanonicalItemUrl((*it).clone());
-                        !defined_in_doc.contains(*it) && !content.item_bodies.contains_key(&key)
+                        !defined_in_doc.contains(*it) && !body_exists(&key)
                     })
                     .map(|it| item_path_for_api(it))
                     .collect();
@@ -220,10 +237,6 @@ pub async fn post_ingest(
     let reduced_arc = state.reduced.clone();
     let event_log = state.event_log.clone();
     let reduced = reduced_arc.read().await;
-    let v = match validate_ingest_document(&reduced, &req.text) {
-        Ok(x) => x,
-        Err((status, msg, hint)) => return api_error(status, msg, hint).into_response(),
-    };
 
     if let Err(msg) = validate_agent_format(&req.delegate) {
         drop(reduced);
@@ -239,6 +252,43 @@ pub async fn post_ingest(
             return api_error(st, msg, None).into_response();
         }
     };
+
+    // Determine thread visibility and scope for item lookups and cap enforcement.
+    let visibility = reduced.threads.get(&thread_id)
+        .map(|t| t.visibility)
+        .unwrap_or(ThreadVisibility::Public);
+    let scope = match visibility {
+        ThreadVisibility::Public => ScopeId::Public,
+        ThreadVisibility::Private => ScopeId::Thread(thread_id.clone()),
+    };
+
+    let v = match validate_ingest_document(&reduced, &req.text, &scope) {
+        Ok(x) => x,
+        Err((status, msg, hint)) => {
+            drop(reduced);
+            return api_error(status, msg, hint).into_response();
+        }
+    };
+
+    // Enforce capabilities for private threads.
+    if matches!(visibility, ThreadVisibility::Private) {
+        let mut required: HashSet<ThreadCapability> = HashSet::new();
+        required.insert(ThreadCapability::View);
+        for stmt in &v.doc.statements {
+            match stmt {
+                dsl::Stmt::Vote { .. }  => { required.insert(ThreadCapability::Vote); }
+                dsl::Stmt::Item { .. }  => { required.insert(ThreadCapability::AddItem); }
+                dsl::Stmt::Prose { .. } => { required.insert(ThreadCapability::Post); }
+            }
+        }
+        let missing: Vec<_> = required.iter()
+            .filter(|cap| !reduced.user_has_cap(&thread_id, &principal, **cap))
+            .collect();
+        if !missing.is_empty() {
+            drop(reduced);
+            return api_error(StatusCode::FORBIDDEN, "insufficient capabilities for this thread", None).into_response();
+        }
+    }
 
     match reduced.agent_bindings.get(&delegate) {
         Some(u) if u != &principal => {
@@ -356,12 +406,11 @@ pub async fn post_check(
 ) -> impl IntoResponse {
     let reduced_arc = state.reduced.clone();
     let reduced = reduced_arc.read().await;
-    let v = match validate_ingest_document(&reduced, &req.text) {
+    // check is auth-free; always validates against public scope.
+    let v = match validate_ingest_document(&reduced, &req.text, &ScopeId::Public) {
         Ok(x) => x,
         Err((status, msg, hint)) => return api_error(status, msg, hint).into_response(),
     };
-
-    // check is a true dry-run: no auth required, no registration, nothing persisted.
     drop(reduced);
 
     if let Err(msg) = validate_agent_format(&req.delegate) {

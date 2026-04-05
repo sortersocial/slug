@@ -214,6 +214,15 @@ impl ReducerState {
         self.content.get(scope)
     }
 
+    /// Check whether `username` has `cap` in `thread_id`.
+    pub fn user_has_cap(&self, thread_id: &str, username: &str, cap: ThreadCapability) -> bool {
+        self.grants
+            .get(thread_id)
+            .and_then(|t| t.get(username))
+            .map(|caps| caps.contains(&cap))
+            .unwrap_or(false)
+    }
+
     pub fn content_for_scope_mut(&mut self, scope: ScopeId) -> &mut ContentState {
         self.content.entry(scope).or_default()
     }
