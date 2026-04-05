@@ -671,17 +671,6 @@ mod tests {
         assert!(err_msg.contains("missing vote explanation"), "error: {}", err_msg);
     }
 
-    fn parse_full_keeps_quoted_thread_title_statement_as_prose() {
-        let input = "\"This is a title\" { This is the body of the post }\n";
-        let doc = parse_full(input).unwrap();
-        assert_eq!(
-            doc.statements,
-            vec![Stmt::Prose {
-                text: "\"This is a title\" { This is the body of the post }\n".trim_end_matches('\n').to_string()
-            }]
-        );
-    }
-
     #[test]
     fn parse_full_keeps_regular_quoted_prose() {
         let input = "She said \"hello\" and left.";
