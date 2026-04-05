@@ -8,7 +8,8 @@ use serde::Deserialize;
 use slug_types::*;
 
 use crate::{
-    events::canonicalize_tag,
+    canonical_path::canonicalize_tag,
+    identity::parse_username,
     state::AppState,
 };
 
@@ -46,7 +47,7 @@ pub struct ThreadDetailQuery {
     pub since: Option<i64>,
     /// Only posts strictly before this Unix ms timestamp.
     pub before: Option<i64>,
-    /// Filter to posts whose actor starts with this prefix (UUID prefix or full actor string).
+    /// Filter to posts whose principal username starts with this prefix (stored form, no `@`).
     pub actor: Option<String>,
     /// Return the single post with this ingest ID.
     pub post_id: Option<String>,
@@ -56,6 +57,13 @@ pub struct ThreadDetailQuery {
 pub async fn get_thread(State(state): State<AppState>, Query(q): Query<ThreadDetailQuery>) -> impl IntoResponse {
     let reduced_arc = state.reduced.clone();
     let tag = canonicalize_tag(&q.tag);
+    let actor_prefix = match q.actor.as_deref().map(str::trim) {
+        None | Some("") => String::new(),
+        Some(s) => match parse_username(s) {
+            Ok(u) => u,
+            Err(msg) => return api_error(StatusCode::BAD_REQUEST, "invalid actor filter", Some(msg)).into_response(),
+        },
+    };
     let reduced = reduced_arc.read().await;
 
     // Single post lookup by ingest ID -- return full body untruncated.
@@ -72,7 +80,7 @@ pub async fn get_thread(State(state): State<AppState>, Query(q): Query<ThreadDet
                     id: ing.id.clone(),
                     index: idx,
                     ts: ing.ts,
-                    actor: format!("@{}", ing.principal),
+                    actor: ing.principal.clone(),
                     body: ing.raw.clone(),
                     truncated: false,
                 }],
@@ -92,7 +100,6 @@ pub async fn get_thread(State(state): State<AppState>, Query(q): Query<ThreadDet
         .map(|q| q.iter().rev().cloned().collect())
         .unwrap_or_default();
 
-    let actor_prefix = q.actor.as_deref().unwrap_or("").to_lowercase();
     let filtered: Vec<(usize, _)> = all_ids
         .into_iter()
         .enumerate()
@@ -119,7 +126,7 @@ pub async fn get_thread(State(state): State<AppState>, Query(q): Query<ThreadDet
                 id: ing.id.clone(),
                 index: idx,
                 ts: ing.ts,
-                actor: format!("@{}", ing.principal),
+                actor: ing.principal.clone(),
                 body,
                 truncated,
             }

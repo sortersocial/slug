@@ -2,7 +2,8 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use serde::{Deserialize, Serialize};
 
-use crate::events::{canonicalize_agent, canonicalize_tag, canonicalize_username, Event, Ingest, ThreadCapability};
+use crate::canonical_path::canonicalize_tag;
+use crate::events::{Event, Ingest, ThreadCapability};
 use crate::path_types::CanonicalItemUrl;
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
@@ -21,10 +22,10 @@ pub struct VoteData {
     pub ratio_left: i32,
     pub ratio_right: i32,
     pub body: String,
-    /// Human principal username (no leading '@').
+    /// Human principal username (no `@` in stored events).
     pub principal: String,
-    /// Agent delegate identity (stored with single leading '@').
-    pub delegate: String,
+    /// AI delegate id, if any (no `@` in stored events).
+    pub delegate: Option<String>,
     /// Thread id where this vote was cast (public tag or private id/slug).
     pub thread_id: String,
 }
@@ -99,8 +100,6 @@ impl GroupState {
     pub fn apply_vote(&mut self, mut vote: VoteData) {
         vote.a = CanonicalItemUrl::parse(vote.a.as_str()).unwrap_or(vote.a);
         vote.b = CanonicalItemUrl::parse(vote.b.as_str()).unwrap_or(vote.b);
-        vote.principal = canonicalize_username(&vote.principal);
-        vote.delegate = canonicalize_agent(&vote.delegate);
         vote.thread_id = canonicalize_tag(&vote.thread_id);
         if vote.ratio_left < 0 {
             vote.ratio_left = 0;
@@ -189,7 +188,7 @@ pub struct ReducerState {
     pub users_by_provider: HashMap<(String, String), String>,
     /// token_id -> (username, salt, token_hash)
     pub tokens_by_id: HashMap<String, (String, String, String)>,
-    /// agent delegate (canonical '@...') -> username
+    /// agent id (naked `uuid:rig:model`) -> username
     pub agent_bindings: HashMap<String, String>,
 
     pub ingests_by_id: HashMap<String, Ingest>,
@@ -330,26 +329,27 @@ impl ReducerState {
     pub fn apply_event(&mut self, event: Event) {
         match event {
             Event::UserRegistered(ur) => {
-                let username = canonicalize_username(&ur.username);
-                self.users_by_provider
-                    .insert((ur.provider.to_lowercase(), ur.provider_id.clone()), username);
+                self.users_by_provider.insert(
+                    (ur.provider.to_lowercase(), ur.provider_id.clone()),
+                    ur.username,
+                );
             }
             Event::TokenIssued(ti) => {
-                let username = canonicalize_username(&ti.username);
-                self.tokens_by_id
-                    .insert(ti.token_id.clone(), (username, ti.salt.clone(), ti.token_hash.clone()));
+                self.tokens_by_id.insert(
+                    ti.token_id.clone(),
+                    (ti.username, ti.salt.clone(), ti.token_hash.clone()),
+                );
             }
             Event::AgentBound(ab) => {
-                let username = canonicalize_username(&ab.username);
-                let agent = canonicalize_agent(&ab.agent);
-                self.agent_bindings.insert(agent, username);
+                if ab.agent.is_empty() {
+                    return;
+                }
+                self.agent_bindings.insert(ab.agent, ab.username);
             }
             Event::ThreadCreated(tc) => {
                 self.threads.entry(tc.thread_id.clone()).or_default().visibility = tc.visibility;
             }
             Event::Ingest(mut ing) => {
-                ing.principal = canonicalize_username(&ing.principal);
-                ing.delegate = canonicalize_agent(&ing.delegate);
                 ing.thread_id = canonicalize_tag(&ing.thread_id);
 
                 self.ingests_by_id.insert(ing.id.clone(), ing.clone());
@@ -528,7 +528,7 @@ impl ReducerState {
                 let caps = self.grants
                     .entry(ga.thread_id)
                     .or_default()
-                    .entry(canonicalize_username(&ga.username))
+                    .entry(ga.username)
                     .or_default();
                 for cap in ga.capabilities {
                     caps.insert(cap);
@@ -536,7 +536,7 @@ impl ReducerState {
             }
             Event::GrantRevoked(gr) => {
                 if let Some(thread_grants) = self.grants.get_mut(&gr.thread_id) {
-                    let username = canonicalize_username(&gr.username);
+                    let username = gr.username;
                     if let Some(caps) = thread_grants.get_mut(&username) {
                         for cap in &gr.capabilities {
                             caps.remove(cap);

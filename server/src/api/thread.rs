@@ -8,9 +8,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     api::helpers::{api_error, now_ms},
-    events::{
-        canonicalize_username, Event, GrantAdded, ThreadCapability, ThreadCreated, ThreadVisibility,
-    },
+    events::{Event, GrantAdded, ThreadCapability, ThreadCreated, ThreadVisibility},
+    identity::parse_username,
     state::AppState,
 };
 use super::auth::verify_bearer_principal;
@@ -150,10 +149,10 @@ pub async fn post_thread_grants(
         return api_error(StatusCode::FORBIDDEN, "requires Manage capability", None).into_response();
     }
 
-    let target = canonicalize_username(&req.username);
-    if target.is_empty() {
-        return api_error(StatusCode::BAD_REQUEST, "invalid username", None).into_response();
-    }
+    let target = match parse_username(&req.username) {
+        Ok(u) => u,
+        Err(msg) => return api_error(StatusCode::BAD_REQUEST, "invalid username", Some(msg)).into_response(),
+    };
     if !reduced.users_by_provider.values().any(|u| u == &target) {
         return api_error(StatusCode::NOT_FOUND, format!("user @{target} not found"), None).into_response();
     }

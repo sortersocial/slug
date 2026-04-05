@@ -1,11 +1,12 @@
 use axum::{
     extract::{Query, State},
+    http::StatusCode,
     response::IntoResponse,
     Json,
 };
 use serde::Deserialize;
 
-use crate::{events::canonicalize_username, state::AppState};
+use crate::{api::helpers::api_error, identity::parse_username, state::AppState};
 
 // ============================================================================
 // Feed -- global reverse-chronological ingest stream since a cutoff
@@ -32,7 +33,12 @@ pub async fn get_feed(
 
     let reduced_arc = state.reduced.clone();
     let reduced = reduced_arc.read().await;
-    let actor = canonicalize_username(&q.actor);
+    let actor = match parse_username(&q.actor) {
+        Ok(u) => u,
+        Err(msg) => {
+            return api_error(StatusCode::BAD_REQUEST, "invalid actor", Some(msg)).into_response();
+        }
+    };
     let since = q.since.or_else(|| reduced.actor_last_post_ts.get(&actor).copied());
     let cutoff = since.unwrap_or(0);
     let limit = q.limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT);
@@ -65,7 +71,7 @@ pub async fn get_feed(
         .collect();
 
     Json(slug_types::FeedResponse {
-        actor: format!("@{}", actor),
+        actor,
         since,
         posts,
         total,

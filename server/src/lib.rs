@@ -1,10 +1,12 @@
 #[macro_use]
 pub mod paths;
 pub mod api;
+pub mod canonical_path;
 pub mod dsl;
 pub mod html;
 pub mod event_log;
 pub mod events;
+pub mod identity;
 pub mod middleware;
 pub mod path_types;
 pub mod ranking;

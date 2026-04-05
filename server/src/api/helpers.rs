@@ -8,7 +8,7 @@ use slug_types::*;
 use std::collections::HashMap;
 
 use crate::{
-    events::canonicalize_item,
+    canonical_path::canonicalize_item,
     path_types::CanonicalItemUrl,
     ranking::connected_components_from_voted_pairs,
     reducer::ReducerState,

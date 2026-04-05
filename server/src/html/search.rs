@@ -11,7 +11,7 @@ use crate::{
     timeago,
 };
 
-use super::{actor_label, bc_segment, cli_panel, layout, now_ms};
+use super::{authorship_address, bc_segment, cli_panel, layout, now_ms};
 
 /// Escape HTML special chars for safe injection.
 fn escape_html(s: &str) -> String {
@@ -44,7 +44,8 @@ struct ThreadRow {
 
 struct PostRow {
     thread: String,
-    actor: String,
+    /// Pre-formatted attribution string for display (includes `@` / `@@` from `authorship_address`).
+    actor_display: String,
     text: String,
     ts: i64,
 }
@@ -151,7 +152,7 @@ fn search(state: &ReducerState, q: &str, limit: usize) -> SearchResults {
                 .unwrap_or_else(|| "unknown".to_string());
             scored_posts.push((score, PostRow {
                 thread,
-                actor: ingest.principal.clone(),
+                actor_display: authorship_address(&ingest.principal, &ingest.delegate),
                 text: ingest.raw.clone(),
                 ts: ingest.ts,
             }));
@@ -321,7 +322,7 @@ fn render_search_results(results: &SearchResults, query: &str) -> Markup {
                             li {
                                 div class="search-post-meta muted" {
                                     a href=(format!("/t/{}", r.thread)) { "#" (r.thread) }
-                                    " · " (actor_label(&r.actor))
+                                    " · " (r.actor_display)
                                     " · " (timeago::timeago(now, r.ts))
                                 }
                                 div class="search-snippet" {

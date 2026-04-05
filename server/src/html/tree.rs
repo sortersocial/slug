@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 use crate::{
-    events::canonicalize_item,
+    canonical_path::canonicalize_item,
     path_types::{CanonicalItemUrl, RelativePath},
     scope_rank::ChildrenRankings,
     state::AppState,
@@ -702,7 +702,8 @@ pub async fn tree_select(
 mod tests {
     use super::*;
 
-    use crate::events::{canonicalize_item, Event, Ingest};
+    use crate::canonical_path::canonicalize_item;
+    use crate::events::{Event, Ingest};
     use crate::reducer::ReducerState;
 
     fn ingest(raw: &str) -> Event {
@@ -711,7 +712,7 @@ mod tests {
             id: "test-ingest".to_string(),
             raw: raw.to_string(),
             principal: "tester".to_string(),
-            delegate: String::new(),
+            delegate: None,
             thread_id: String::new(),
         })
     }
@@ -789,9 +790,9 @@ mod tests {
     fn reducer_parent_key_for_tilde_items_is_without_trailing_slash() {
         // This is the reducer invariant that the tree view must match.
         let item = canonicalize_item("~/alphabet/a");
-        assert_eq!(crate::events::item_parent_path(&item).unwrap(), "https://slug.social/~/alphabet");
+        assert_eq!(crate::canonical_path::item_parent_path(&item).unwrap(), "https://slug.social/~/alphabet");
         let item2 = canonicalize_item("~/a");
-        assert_eq!(crate::events::item_parent_path(&item2).unwrap(), "https://slug.social/~");
+        assert_eq!(crate::canonical_path::item_parent_path(&item2).unwrap(), "https://slug.social/~");
     }
 
     #[test]

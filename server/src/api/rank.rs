@@ -226,7 +226,7 @@ pub async fn get_rank_history(
     let reduced = reduced_arc.read().await;
     let content = reduced.public();
 
-    let item_str = crate::events::canonicalize_item(&q.item);
+    let item_str = crate::canonical_path::canonicalize_item(&q.item);
     let item = CanonicalItemUrl(item_str.clone());
 
     let entries = content.rank_history.get(&item).cloned().unwrap_or_default();
@@ -238,15 +238,15 @@ pub async fn get_rank_history(
             .map(|doc| {
                 doc.statements.into_iter().filter_map(|s| {
                     if let crate::dsl::Stmt::Vote { item1, item2, ratio_left, ratio_right, explanation } = s {
-                        let a = crate::events::canonicalize_item(&item1);
-                        let b = crate::events::canonicalize_item(&item2);
+                        let a = crate::canonical_path::canonicalize_item(&item1);
+                        let b = crate::canonical_path::canonicalize_item(&item2);
                         if a == item_str || b == item_str {
                             Some(VoteRow {
                                 ts: e.ts,
                                 a: item_path_for_api(&a),
                                 b: item_path_for_api(&b),
                                 ratio: format!("{}:{}", ratio_left, ratio_right),
-                                actor: reduced.ingests_by_id.get(&e.post_id).map(|ing| format!("@{}", ing.principal)),
+                                actor: reduced.ingests_by_id.get(&e.post_id).map(|ing| ing.principal.clone()),
                                 body: explanation,
                                 thread: Some(format!("#{}", e.thread)),
                             })

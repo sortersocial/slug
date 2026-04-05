@@ -87,7 +87,7 @@ async fn test_ingest_actor_with_colons_is_detected_and_validated() {
     // Old archive style: agent includes colons but UUID is only a prefix (invalid).
     // We should detect the agent line, then fail with "invalid agent format".
     let ingest_payload = serde_json::json!({
-        "delegate": "@@aec1e31c:claudecode:anthropic/claude-sonnet-4.5",
+        "delegate": "aec1e31c:claudecode:anthropic/claude-sonnet-4.5",
         "thread": "t",
         "text": "~/x {x}\n",
     });
@@ -108,6 +108,26 @@ async fn test_ingest_actor_with_colons_is_detected_and_validated() {
         hint.to_lowercase().contains("uuid"),
         "hint should mention uuid, got: {hint}"
     );
+
+    let at_payload = serde_json::json!({
+        "delegate": "@00000000-0000-0000-0000-000000000000:test:local/test",
+        "thread": "t",
+        "text": "~/x {x}\n",
+    });
+    let at_resp = client
+        .post(&format!("http://{}/api/v0/ingest", addr))
+        .header("Authorization", format!("Bearer {}", test_bearer()))
+        .json(&at_payload)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(at_resp.status(), reqwest::StatusCode::BAD_REQUEST);
+    let at_body: serde_json::Value = at_resp.json().await.unwrap();
+    let at_hint = at_body["hint"].as_str().unwrap_or_default();
+    assert!(
+        at_hint.contains('@'),
+        "hint should reject '@' in delegate, got: {at_hint}"
+    );
 }
 
 #[tokio::test]
@@ -117,7 +137,7 @@ async fn test_vote_endpoint() {
 
     // /api/v0/vote was removed; all votes are submitted via ingest.
     let ingest_payload = serde_json::json!({
-        "delegate": "@@00000000-0000-0000-0000-000000000000:test:local/test",
+        "delegate": "00000000-0000-0000-0000-000000000000:test:local/test",
         "thread": "cli",
         "text": "~/clap {cli parser}\n~/argh {cli parser}\n~/clap 3:1 ~/argh {because clap is more full-featured}\n",
     });
@@ -143,7 +163,7 @@ async fn test_rank_endpoint() {
 
     // Ingest items + vote (vote endpoint removed).
     let ingest_payload = serde_json::json!({
-        "delegate": "@@00000000-0000-0000-0000-000000000000:test:local/test",
+        "delegate": "00000000-0000-0000-0000-000000000000:test:local/test",
         "thread": "langs",
         "text": "~/rust {systems}\n~/go {concurrency}\n~/rust 3:1 ~/go {because i prefer rust for systems work}\n",
     });
@@ -180,7 +200,7 @@ async fn test_check_endpoint_does_not_commit() {
     let client = reqwest::Client::new();
 
     let check_payload = serde_json::json!({
-        "delegate": "@@00000000-0000-0000-0000-000000000000:test:local/test",
+        "delegate": "00000000-0000-0000-0000-000000000000:test:local/test",
         "thread": "t",
         "text": "~/a {x}\n~/b {y}\n~/a 2:1 ~/b {because}\n",
     });
@@ -220,7 +240,7 @@ async fn test_garden_item_pair_matchup_include_threads() {
 
     // Ingest with thread_id metadata so item_threads and vote.thread_id are populated.
     let ingest_payload = serde_json::json!({
-        "delegate": "@@00000000-0000-0000-0000-000000000000:test:local/test",
+        "delegate": "00000000-0000-0000-0000-000000000000:test:local/test",
         "thread": "sorting-hat",
         "text": "~/sorts/insertion { O(n^2) }\n~/sorts/mergesort { O(n log n) }\n~/sorts/insertion 3:1 ~/sorts/mergesort { simpler for small n }\n",
     });
@@ -324,7 +344,7 @@ async fn test_rank_history() {
     // First ingest: rust vs python — two votes on rust in one doc (the multi-vote case).
     ingest(
         serde_json::json!({
-            "delegate": "@@00000000-0000-0000-0000-000000000001:rig:test/model",
+            "delegate": "00000000-0000-0000-0000-000000000001:rig:test/model",
             "thread": "hist-test",
             "text": "~/hist/rust { systems }\n~/hist/python { scripting }\n~/hist/go { concurrency }\n~/hist/rust 3:1 ~/hist/python { ownership over gc }\n~/hist/rust 2:1 ~/hist/go { performance over simplicity }\n",
         }),
@@ -354,7 +374,7 @@ async fn test_rank_history() {
     // Second ingest: python beats go — rust not directly touched, so python gets a new entry.
     ingest(
         serde_json::json!({
-            "delegate": "@@00000000-0000-0000-0000-000000000002:rig:test/model",
+            "delegate": "00000000-0000-0000-0000-000000000002:rig:test/model",
             "thread": "hist-test",
             "text": "~/hist/python 3:1 ~/hist/go { dynamic typing is worth it }\n",
         }),
@@ -404,7 +424,7 @@ async fn pair_returns_connectivity_stats() {
 
     // Ingest 4 items with 1 vote (a vs b), leaving c and d as isolates.
     let doc = serde_json::json!({
-        "delegate": "@@00000000-0000-0000-0000-000000000001:testrig:test/model",
+        "delegate": "00000000-0000-0000-0000-000000000001:testrig:test/model",
         "thread": "connectivity-test",
         "text": "~/conn/a { item a }\n~/conn/b { item b }\n~/conn/c { item c }\n~/conn/d { item d }\n~/conn/a 3:1 ~/conn/b { a is better }\n",
     });
@@ -438,7 +458,7 @@ async fn pair_returns_connectivity_stats() {
 
     // Add a vote connecting c to a — should reduce components.
     let doc2 = serde_json::json!({
-        "delegate": "@@00000000-0000-0000-0000-000000000001:testrig:test/model",
+        "delegate": "00000000-0000-0000-0000-000000000001:testrig:test/model",
         "thread": "connectivity-test",
         "text": "~/conn/c 2:1 ~/conn/a { c beats a }\n",
     });

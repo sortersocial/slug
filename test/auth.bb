@@ -155,7 +155,7 @@
 
      (println "\nstarting pending session…")
      (let [start-resp (http-post-json (str base-url "/api/v0/pending-session")
-                                      {:agent "@@00000000-0000-0000-0000-000000000000:bb:local/dev"})
+                                      {:agent "00000000-0000-0000-0000-000000000000:bb:local/dev"})
            _ (assert! (= 200 (:status start-resp)) "pending-session start returns 200")
            start-json (json/parse-string (:body start-resp) true)]
        (assert! (clojure.string/starts-with? (:session start-json) "p_") "session id has p_ prefix")

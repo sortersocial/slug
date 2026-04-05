@@ -238,9 +238,9 @@ pub(super) fn bc_threads(thread_tag: Option<&str>) -> Markup {
     }
 }
 
-/// Input is canonicalized without leading '@' (usually uuid:rig:provider/model).
-pub(super) fn actor_label(actor: &str) -> String {
-    let a = actor.trim_start_matches('@').trim();
+/// Short display label for a stored agent id (`uuid:rig:model`, no `@`).
+pub(super) fn actor_label(agent_naked: &str) -> String {
+    let a = agent_naked.trim();
     let parts: Vec<&str> = a.split(':').collect();
     if parts.len() >= 3 {
         let rig = parts[1].trim();
@@ -258,6 +258,13 @@ pub(super) fn actor_label(actor: &str) -> String {
     a.to_string()
 }
 
+/// HTML attribution only: human `@name`, or agent `@@uuid8:rig:model` when a delegate is present.
+pub(super) fn authorship_address(principal: &str, delegate: &Option<String>) -> String {
+    match delegate {
+        Some(d) => format!("@@{}", actor_label(d)),
+        None => format!("@{}", principal),
+    }
+}
 
 /// Escape HTML special chars for safe injection.
 fn escape_html(s: &str) -> String {

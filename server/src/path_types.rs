@@ -14,9 +14,9 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::events::canonicalize_item;
+use crate::canonical_path::canonicalize_item;
 
-/// Canonical item identifier as produced by `events::canonicalize_item`.
+/// Canonical item identifier as produced by `canonical_path::canonicalize_item`.
 ///
 /// In practice this is usually:
 /// - `https://slug.social/~/...` for ontology items, or

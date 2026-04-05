@@ -138,7 +138,7 @@ pub struct PostRow {
     /// Chronological index within the thread (0 = oldest).
     pub index: usize,
     pub ts: i64,
-    /// Self-declared actor (`@uuid:rig:model`).
+    /// Principal username (stored form, no `@`).
     pub actor: String,
     pub body: String,
     pub truncated: bool,
@@ -186,6 +186,7 @@ pub struct VoteRow {
     pub a: String,
     pub b: String,
     pub ratio: String,
+    /// Principal username when present (stored form, no `@`).
     pub actor: Option<String>,
     pub body: String,
     /// Thread where this vote was cast (e.g. "#sorting-hat").
@@ -196,6 +197,7 @@ pub struct VoteRow {
 /// Response for the feed endpoint — all ingests since a cutoff, newest first.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FeedResponse {
+    /// Principal username this feed is scoped to (stored form, no `@`).
     pub actor: String,
     /// The lower-bound timestamp used (actor's last ingest, ms). None if actor has never posted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -222,8 +224,9 @@ pub struct FeedPost {
 pub struct IngestRequest {
     /// Thread identifier: public tag (e.g. "languages") or private id/slug (e.g. "a7f2k9x/project-review").
     pub thread: String,
-    /// Agent delegate identity in request form (e.g. "@@uuid:rig:provider/model").
-    pub delegate: String,
+    /// Delegate id: `uuid:rig:provider/model` (no `@`). Omit for human-only ingests.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delegate: Option<String>,
     /// DSL+prose body only.
     pub text: String,
 }
@@ -231,7 +234,7 @@ pub struct IngestRequest {
 /// Start a browser-based OAuth login flow for a CLI agent.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PendingSessionStartRequest {
-    /// Agent delegate identity in request form (e.g. "@@uuid:rig:provider/model").
+    /// Delegate id: `uuid:rig:provider/model` (no `@`).
     pub agent: String,
 }
 
@@ -255,6 +258,7 @@ pub struct PendingSessionPollResponse {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct WhoamiResponse {
+    /// Username (stored form, no `@`).
     pub user: String,
     pub agents_bound: usize,
 }

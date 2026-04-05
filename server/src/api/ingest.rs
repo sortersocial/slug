@@ -9,11 +9,10 @@ use slug_types::*;
 use std::collections::{HashMap, HashSet};
 
 use crate::{
+    canonical_path::canonicalize_tag,
     dsl,
-    events::{
-        canonicalize_agent, canonicalize_tag, canonicalize_username, validate_agent_format,
-        AgentBound, Event, Ingest, ThreadCapability, ThreadVisibility,
-    },
+    events::{AgentBound, Event, Ingest, ThreadCapability, ThreadVisibility},
+    identity::parse_agent,
     path_types::CanonicalItemUrl,
     reducer::{ReducerState, ScopeId},
     state::AppState,
@@ -238,11 +237,18 @@ pub async fn post_ingest(
     let event_log = state.event_log.clone();
     let reduced = reduced_arc.read().await;
 
-    if let Err(msg) = validate_agent_format(&req.delegate) {
-        drop(reduced);
-        return api_error(StatusCode::BAD_REQUEST, "invalid delegate format", Some(msg)).into_response();
-    }
-    let delegate = canonicalize_agent(&req.delegate);
+    let delegate: Option<String> = match &req.delegate {
+        None => None,
+        Some(s) if s.trim().is_empty() => None,
+        Some(s) => match parse_agent(s) {
+            Ok(d) => Some(d),
+            Err(msg) => {
+                drop(reduced);
+                return api_error(StatusCode::BAD_REQUEST, "invalid delegate format", Some(msg))
+                    .into_response();
+            }
+        },
+    };
     let thread_id = canonicalize_tag(&req.thread);
 
     let principal = match verify_bearer_principal(&headers, &reduced) {
@@ -290,36 +296,43 @@ pub async fn post_ingest(
         }
     }
 
-    match reduced.agent_bindings.get(&delegate) {
-        Some(u) if u != &principal => {
-            drop(reduced);
-            return api_error(
-                StatusCode::FORBIDDEN,
-                "delegate already bound to another user",
-                None,
-            )
-            .into_response();
+    if let Some(ref d) = delegate {
+        match reduced.agent_bindings.get(d) {
+            Some(u) if u != &principal => {
+                drop(reduced);
+                return api_error(
+                    StatusCode::FORBIDDEN,
+                    "delegate already bound to another user",
+                    None,
+                )
+                .into_response();
+            }
+            _ => {}
         }
-        _ => {}
     }
-    let need_agent_bind = reduced.agent_bindings.get(&delegate).is_none();
+    let need_agent_bind = delegate
+        .as_ref()
+        .map(|d| reduced.agent_bindings.get(d).is_none())
+        .unwrap_or(false);
     drop(reduced);
 
     let mut events_appended: usize = 0;
 
     if need_agent_bind {
-        let ab = Event::AgentBound(AgentBound {
-            ts: now_ms(),
-            agent: delegate.clone(),
-            username: principal.clone(),
-        });
-        if let Err(err) = event_log.append(&ab).await {
-            return api_error(StatusCode::INTERNAL_SERVER_ERROR, format!("{err}"), None);
-        }
-        events_appended += 1;
-        {
-            let mut reduced = reduced_arc.write().await;
-            reduced.apply_event(ab);
+        if let Some(agent_id) = delegate.clone() {
+            let ab = Event::AgentBound(AgentBound {
+                ts: now_ms(),
+                agent: agent_id,
+                username: principal.clone(),
+            });
+            if let Err(err) = event_log.append(&ab).await {
+                return api_error(StatusCode::INTERNAL_SERVER_ERROR, format!("{err}"), None);
+            }
+            events_appended += 1;
+            {
+                let mut reduced = reduced_arc.write().await;
+                reduced.apply_event(ab);
+            }
         }
     }
 
@@ -413,12 +426,18 @@ pub async fn post_check(
     };
     drop(reduced);
 
-    if let Err(msg) = validate_agent_format(&req.delegate) {
-        return api_error(StatusCode::BAD_REQUEST, "invalid delegate format", Some(msg)).into_response();
-    }
-    let delegate = canonicalize_agent(&req.delegate);
+    let delegate: Option<String> = match &req.delegate {
+        None => None,
+        Some(s) if s.trim().is_empty() => None,
+        Some(s) => match parse_agent(s) {
+            Ok(d) => Some(d),
+            Err(msg) => {
+                return api_error(StatusCode::BAD_REQUEST, "invalid delegate format", Some(msg)).into_response();
+            }
+        },
+    };
     let thread_id = canonicalize_tag(&req.thread);
-    let principal = canonicalize_username("placeholder");
+    let principal = "placeholder".to_string();
 
     let event = Event::Ingest(Ingest {
         ts: v.ts,

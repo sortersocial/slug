@@ -7,14 +7,14 @@ use serde::Deserialize;
 use maud::{html, Markup};
 
 use crate::{
-    events::canonicalize_tag,
+    canonical_path::canonicalize_tag,
     reducer::ReducerState,
     state::AppState,
     timeago,
 };
 
 use super::{
-    actor_label, bc_threads, cli_panel, layout, now_ms,
+    authorship_address, bc_threads, cli_panel, layout, now_ms,
     recency_class, render_linkified_with_embeds,
 };
 
@@ -260,7 +260,7 @@ pub async fn thread_post_view(
                 @let ago = timeago::timeago(now, ing.ts);
                 div class="ingest-entry" data-ingest-id=(ing.id) {
                     div class="ingest-meta muted" title=(hover) {
-                        span class="address" { "@" (actor_label(&ing.delegate)) }
+                        span class="address" { (authorship_address(&ing.principal, &ing.delegate)) }
                         " · "
                         (ago)
                     }

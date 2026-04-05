@@ -9,7 +9,7 @@ use slug_types::*;
 use std::collections::HashSet;
 
 use crate::{
-    events::canonicalize_item,
+    canonical_path::canonicalize_item,
     path_types::CanonicalItemUrl,
     state::AppState,
 };
@@ -160,7 +160,7 @@ pub async fn get_recent_votes(
             a: v.a.as_str().to_string(),
             b: v.b.as_str().to_string(),
             ratio: format!("{}:{}", v.ratio_left, v.ratio_right),
-            actor: Some(format!("@{}", v.principal)),
+            actor: Some(v.principal.clone()),
             body: v.body.clone(),
             thread: Some(v.thread_id.clone()),
         }).collect();
@@ -207,7 +207,7 @@ pub async fn get_matchup(
                     a: v.a.as_str().to_string(),
                     b: v.b.as_str().to_string(),
                     ratio: format!("{}:{}", v.ratio_left, v.ratio_right),
-                    actor: Some(format!("@{}", v.principal)),
+                    actor: Some(v.principal.clone()),
                     body: v.body.clone(),
                     thread: Some(v.thread_id.clone()),
                 })

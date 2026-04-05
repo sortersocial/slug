@@ -265,7 +265,7 @@ mod tests {
             ratio_right: r,
             body: "because".to_string(),
             principal: "test".to_string(),
-            delegate: "@00000000-0000-0000-0000-000000000000:test:local/test".to_string(),
+            delegate: Some("00000000-0000-0000-0000-000000000000:test:local/test".to_string()),
             thread_id: "untagged".to_string(),
         }
     }

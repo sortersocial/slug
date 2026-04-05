@@ -187,11 +187,11 @@
      ;; Register two users. The mock google cycles through google-user-alice then google-user-bob.
      (println "\nregistering alice…")
      (let [alice-token (register-user base-url
-                                      "@@00000000-0000-0000-0000-000000000001:test:local/dev"
+                                      "00000000-0000-0000-0000-000000000001:test:local/dev"
                                       "alice")
            _ (println "registering bob…")
            bob-token   (register-user base-url
-                                      "@@00000000-0000-0000-0000-000000000002:test:local/dev"
+                                      "00000000-0000-0000-0000-000000000002:test:local/dev"
                                       "bob")
 
            ;; Alice creates a private thread.
@@ -206,14 +206,14 @@
        ;; Alice (owner) can post prose to her own private thread.
        (println "\nalice posts prose to her private thread…")
        (assert! (= 200 (:status (ingest! base-url alice-token thread-id
-                                         "@@00000000-0000-0000-0000-000000000001:test:local/dev"
+                                         "00000000-0000-0000-0000-000000000001:test:local/dev"
                                          "Hello from alice.")))
                 "alice prose post succeeds")
 
        ;; Bob has no grants at all — should get 403.
        (println "\nbob (no grants) tries to post prose…")
        (assert! (= 403 (:status (ingest! base-url bob-token thread-id
-                                         "@@00000000-0000-0000-0000-000000000002:test:local/dev"
+                                         "00000000-0000-0000-0000-000000000002:test:local/dev"
                                          "Hello from bob, unauthorized.")))
                 "bob without grants gets 403")
 
@@ -226,7 +226,7 @@
 
        (println "\nbob (View only) tries to post prose…")
        (assert! (= 403 (:status (ingest! base-url bob-token thread-id
-                                         "@@00000000-0000-0000-0000-000000000002:test:local/dev"
+                                         "00000000-0000-0000-0000-000000000002:test:local/dev"
                                          "Hello from bob, view only.")))
                 "bob with View but no Post gets 403")
 
@@ -239,21 +239,21 @@
 
        (println "\nbob (View + Post) posts prose…")
        (assert! (= 200 (:status (ingest! base-url bob-token thread-id
-                                         "@@00000000-0000-0000-0000-000000000002:test:local/dev"
+                                         "00000000-0000-0000-0000-000000000002:test:local/dev"
                                          "Hello from bob, now authorised.")))
                 "bob with View + Post succeeds for prose")
 
        ;; Alice defines two items and votes on them in the private thread.
        (println "\nalice posts items + vote to private thread…")
        (assert! (= 200 (:status (ingest! base-url alice-token thread-id
-                                         "@@00000000-0000-0000-0000-000000000001:test:local/dev"
+                                         "00000000-0000-0000-0000-000000000001:test:local/dev"
                                          "~/fruits/apple { A crisp red apple. }\n~/fruits/banana { A yellow banana. }\n~/fruits/apple > ~/fruits/banana { apples are better }")))
                 "alice vote in private thread succeeds")
 
        ;; Bob (View + Post, no Vote) tries to vote — should be 403.
        (println "\nbob (no Vote) tries to vote…")
        (assert! (= 403 (:status (ingest! base-url bob-token thread-id
-                                         "@@00000000-0000-0000-0000-000000000002:test:local/dev"
+                                         "00000000-0000-0000-0000-000000000002:test:local/dev"
                                          "~/fruits/apple > ~/fruits/banana { bob's take }")))
                 "bob without Vote gets 403")
 
@@ -266,7 +266,7 @@
 
        (println "\nbob (View + Post + Vote) votes…")
        (assert! (= 200 (:status (ingest! base-url bob-token thread-id
-                                         "@@00000000-0000-0000-0000-000000000002:test:local/dev"
+                                         "00000000-0000-0000-0000-000000000002:test:local/dev"
                                          "~/fruits/apple > ~/fruits/banana { bob's take }")))
                 "bob with Vote succeeds"))
 

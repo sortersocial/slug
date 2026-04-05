@@ -12,10 +12,8 @@ use tokio::sync::RwLock;
 
 use crate::{
     api::helpers::{api_error, now_ms, sha256_hex},
-    events::{
-        canonicalize_username, validate_agent_format, validate_username,
-        Event, TokenIssued, UserRegistered,
-    },
+    events::{Event, TokenIssued, UserRegistered},
+    identity::{parse_agent, parse_username},
     html::{auth_complete_page, auth_signed_in_fragment, choose_username_error_fragment, choose_username_page},
     state::{AppState, PendingSession},
 };
@@ -77,9 +75,9 @@ fn verify_token(reduced: &crate::reducer::ReducerState, bearer: &str) -> Result<
     Ok(username)
 }
 
-fn issue_token_for_user(username: &str) -> (String, TokenIssued, String) {
-    // Returns: (bearer, event, canonical_username)
-    let canonical_user = canonicalize_username(username);
+/// `stored_username` must already be in persisted shape (lowercase slug, no `@`).
+fn issue_token_for_user(stored_username: &str) -> (String, TokenIssued) {
+    let username = stored_username.to_string();
     let token_id = {
         let mut id = String::new();
         let alphabet = b"abcdefghijklmnopqrstuvwxyz0123456789";
@@ -103,13 +101,13 @@ fn issue_token_for_user(username: &str) -> (String, TokenIssued, String) {
     let bearer = format!("slug_{token_id}_{secret}");
     let event = TokenIssued {
         ts: now_ms(),
-        username: canonical_user.clone(),
+        username: username.clone(),
         token_id,
         token_hash,
         salt,
         issued_via: "oauth".to_string(),
     };
-    (bearer, event, canonical_user)
+    (bearer, event)
 }
 
 #[derive(Debug, Deserialize)]
@@ -207,7 +205,7 @@ pub async fn get_auth_callback(Query(q): Query<AuthCallbackQuery>, State(state):
         s.provider = Some("google".to_string());
         s.provider_id = Some(sub.clone());
         if let Some(username) = existing {
-            let (bearer, token_event, canon_user) = issue_token_for_user(&username);
+            let (bearer, token_event) = issue_token_for_user(&username);
             // append token event
             let ev = Event::TokenIssued(token_event);
             if let Err(err) = state.event_log.append(&ev).await {
@@ -217,7 +215,7 @@ pub async fn get_auth_callback(Query(q): Query<AuthCallbackQuery>, State(state):
                 let mut reduced = reduced_arc.write().await;
                 reduced.apply_event(ev);
             }
-            s.complete = Some((canon_user, bearer));
+            s.complete = Some((username, bearer));
             return Redirect::temporary(&format!("{public_url}/auth/complete")).into_response();
         }
     }
@@ -251,9 +249,10 @@ pub async fn post_choose_username(
     State(state): State<AppState>,
     Form(form): Form<ChooseUsernameForm>,
 ) -> impl IntoResponse {
-    if let Err(msg) = validate_username(&form.username) {
-        return api_error(StatusCode::BAD_REQUEST, "invalid username", Some(msg)).into_response();
-    }
+    let canon_user = match parse_username(&form.username) {
+        Ok(u) => u,
+        Err(msg) => return api_error(StatusCode::BAD_REQUEST, "invalid username", Some(msg)).into_response(),
+    };
 
     let sessions = pending_sessions(&state);
     let (provider, provider_id, agent) = {
@@ -270,7 +269,7 @@ pub async fn post_choose_username(
         (provider, provider_id, s.agent.clone())
     };
 
-    if let Err(msg) = validate_agent_format(&agent) {
+    if let Err(msg) = parse_agent(&agent) {
         return api_error(StatusCode::BAD_REQUEST, "invalid agent format", Some(msg)).into_response();
     }
 
@@ -280,7 +279,7 @@ pub async fn post_choose_username(
     if reduced.users_by_provider.contains_key(&provider_key) {
         return api_error(StatusCode::CONFLICT, "provider already registered", None).into_response();
     }
-    if reduced.users_by_provider.values().any(|u| u == &canonicalize_username(&form.username)) {
+    if reduced.users_by_provider.values().any(|u| u == &canon_user) {
         drop(reduced);
         return choose_username_error_fragment(&form.session, "that username is taken — try another").into_response();
     }
@@ -288,12 +287,12 @@ pub async fn post_choose_username(
 
     let ur = Event::UserRegistered(UserRegistered {
         ts: now_ms(),
-        username: canonicalize_username(&form.username),
+        username: canon_user.clone(),
         provider: provider.to_lowercase(),
         provider_id: provider_id.clone(),
     });
 
-    let (bearer, ti, canon_user) = issue_token_for_user(&form.username);
+    let (bearer, ti) = issue_token_for_user(&canon_user);
     let ti_ev = Event::TokenIssued(ti);
 
     // Persist events.
@@ -325,15 +324,18 @@ pub async fn post_pending_session(
     State(state): State<AppState>,
     Json(req): Json<PendingSessionStartRequest>,
 ) -> impl IntoResponse {
-    if let Err(msg) = validate_agent_format(&req.agent) {
-        return api_error(StatusCode::BAD_REQUEST, "invalid agent format", Some(msg)).into_response();
-    }
+    let agent_naked = match parse_agent(&req.agent) {
+        Ok(a) => a,
+        Err(msg) => {
+            return api_error(StatusCode::BAD_REQUEST, "invalid agent format", Some(msg)).into_response();
+        }
+    };
     let session = format!("p_{}", uuid::Uuid::new_v4().simple());
     let public_url = std::env::var("SLUG_PUBLIC_URL").unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
     let login_url = format!("{public_url}/auth/login?session={}", urlencoding::encode(&session));
     let poll_url = format!("/api/v0/pending-session/{}", session);
     let s = PendingSession {
-        agent: req.agent.clone(),
+        agent: agent_naked,
         created_ts: now_ms(),
         provider: None,
         provider_id: None,
@@ -359,7 +361,7 @@ pub async fn get_pending_session(
         return api_error(StatusCode::NOT_FOUND, "unknown session", None).into_response();
     };
     let (complete, user, token) = match &s.complete {
-        Some((u, t)) => (true, Some(format!("@{}", u)), Some(t.clone())),
+        Some((u, t)) => (true, Some(u.clone()), Some(t.clone())),
         None => (false, None, None),
     };
     Json(PendingSessionPollResponse {
@@ -388,7 +390,7 @@ pub async fn get_whoami(State(state): State<AppState>, headers: HeaderMap) -> im
     };
     let agents_bound = reduced.agent_bindings.values().filter(|u| *u == &username).count();
     Json(WhoamiResponse {
-        user: format!("@{}", username),
+        user: username,
         agents_bound,
     })
     .into_response()

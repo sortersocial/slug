@@ -85,11 +85,11 @@
         stop-fn (http/run-server handler {:port port})]
     {:stop-fn stop-fn :port port}))
 
-(def ^:private default-agent "@@00000000-0000-0000-0000-000000000000:cli:local/dev")
+(def ^:private default-agent "00000000-0000-0000-0000-000000000000:cli:local/dev")
 
 (defn fetch-bearer-token!
   "Simulate browser OAuth + username choice; returns `slug_…` bearer token.
-   Agent must match CLI default `SLUG_DELEGATE` for ingest binding."
+   Ingest `--delegate` must match this agent string for `AgentBound` on first write."
   [base-url & {:keys [username agent] :or {username "intuser" agent default-agent}}]
   (let [start-resp (http-post-json (str base-url "/api/v0/pending-session")
                                    {:agent agent})]

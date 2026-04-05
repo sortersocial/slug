@@ -65,7 +65,7 @@ mod tests {
             id: format!("test-{ts}"),
             raw: raw.to_string(),
             principal: "test".to_string(),
-            delegate: "@00000000-0000-0000-0000-000000000000:test:local/test".to_string(),
+            delegate: Some("00000000-0000-0000-0000-000000000000:test:local/test".to_string()),
             thread_id: "t".to_string(),
         }));
     }

@@ -33,7 +33,7 @@ pub async fn editor_page() -> impl IntoResponse {
             p class="muted" { "write DSL, see what happens. nothing is saved." }
             div class="editor-container" {
                 textarea id="editor-input" rows="12" cols="80"
-                    placeholder="@your-uuid:rig:provider/model\n#your-thread\n\n~/path/item-a { description }\n~/path/item-b { description }\n\n~/path/item-a 3:1 ~/path/item-b { reasoning }"
+                    placeholder="your-uuid:rig:provider/model\n#your-thread\n\n~/path/item-a { description }\n~/path/item-b { description }\n\n~/path/item-a 3:1 ~/path/item-b { reasoning }"
                     autocomplete="off" autofocus {}
                 div id="editor-status" class="muted" { "type to check…" }
                 div id="editor-results" {}
@@ -110,7 +110,7 @@ pub async fn editor_check(
                 id: uuid::Uuid::new_v4().to_string(),
                 raw: form.text.clone(),
                 principal: String::new(),
-                delegate: String::new(),
+                delegate: None,
                 thread_id: String::new(),
             });
             let mut simulated = { reduced_arc.read().await.clone() };

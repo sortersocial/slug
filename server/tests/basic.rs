@@ -1,6 +1,7 @@
 use slugsocial_server::{
     event_log::EventLog,
-    events::{canonicalize_item, canonicalize_tag, Event, Ingest},
+    canonical_path::{canonicalize_item, canonicalize_tag},
+    events::{Event, Ingest},
     ranking::ranked_items,
     reducer::{GroupState, ReducerState},
 };
@@ -15,7 +16,7 @@ fn ingest_event(ts: i64, raw: &str) -> Event {
         id: format!("test-{ts}"),
         raw: raw.to_string(),
         principal: "test".to_string(),
-        delegate: "@@00000000-0000-0000-0000-000000000000:test:local/test".to_string(),
+        delegate: Some("00000000-0000-0000-0000-000000000000:test:local/test".to_string()),
         thread_id: "t".to_string(),
     })
 }
@@ -491,7 +492,7 @@ fn reducer_negative_ratio_clamped_to_zero() {
         ratio_right: -3,
         body: "negative".to_string(),
         principal: "test".to_string(),
-        delegate: "@@00000000-0000-0000-0000-000000000000:test:local/test".to_string(),
+        delegate: Some("00000000-0000-0000-0000-000000000000:test:local/test".to_string()),
         thread_id: "t".to_string(),
     });
     assert_eq!(group.idx_to_item.len(), 2);

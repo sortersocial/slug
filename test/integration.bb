@@ -166,7 +166,7 @@
 
         ;; 3. ingest via CLI (bearer required)
       (println "\ningesting .sorter document via CLI…")
-      (bind ingest1-result (common/run-cli cli-bin base-url ["ingest" "--json" "--thread" "integration-test"] :input sorter-doc :extra-env token-env))
+      (bind ingest1-result (common/run-cli cli-bin base-url ["ingest" "--json" "--thread" "integration-test" "--delegate" "00000000-0000-0000-0000-000000000000:cli:local/dev"] :input sorter-doc :extra-env token-env))
       (assert! (zero? (:exit ingest1-result)) "cli ingest exits 0")
       (bind ingest1-resp   (json/parse-string (:out ingest1-result) true))
       (assert! (:ok ingest1-resp) "ingest response ok=true")
@@ -237,7 +237,7 @@
                                         "#integration-test"
                                         "~/languages/rust 4:1 ~/languages/python { type safety }"
                                         "~/languages/rust 3:1 ~/languages/go { zero-cost abstractions }"]))
-      (bind hist-ingest      (common/run-cli cli-bin base-url ["ingest" "--json" "--thread" "integration-test"] :input two-vote-doc :extra-env token-env))
+      (bind hist-ingest      (common/run-cli cli-bin base-url ["ingest" "--json" "--thread" "integration-test" "--delegate" "00000000-0000-0000-0000-000000000000:cli:local/dev"] :input two-vote-doc :extra-env token-env))
       (assert! (zero? (:exit hist-ingest))
                (str "two-vote ingest exits 0 (err: " (:err hist-ingest) ")"))
 

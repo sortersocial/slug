@@ -5,7 +5,7 @@ use axum::{
 use maud::html;
 
 use crate::{
-    events::canonicalize_item,
+    canonical_path::canonicalize_item,
     path_types::CanonicalItemUrl,
     ranking::{connected_components_from_voted_pairs, ranked_items_subset},
     scope_rank::{build_children_rankings, ChildrenRankings},
@@ -14,7 +14,7 @@ use crate::{
 };
 
 use super::{
-    actor_label, bc_path, cli_panel, layout, now_ms, ratio_pct, render_linkified_with_embeds,
+    authorship_address, bc_path, cli_panel, layout, now_ms, ratio_pct, render_linkified_with_embeds,
     breadcrumb_path::OntologyPath,
 };
 
@@ -204,8 +204,8 @@ fn build_rank_history(
             .map(|doc| {
                 doc.statements.into_iter().filter_map(|s| {
                     if let crate::dsl::Stmt::Vote { item1, item2, ratio_left, ratio_right, explanation } = s {
-                        let a_str = crate::events::canonicalize_item(&item1);
-                        let b_str = crate::events::canonicalize_item(&item2);
+                        let a_str = crate::canonical_path::canonicalize_item(&item1);
+                        let b_str = crate::canonical_path::canonicalize_item(&item2);
                         if a_str == item || b_str == item {
                             Some(crate::reducer::VoteData {
                                 ts: e.ts,
@@ -216,9 +216,7 @@ fn build_rank_history(
                                 principal: reduced.ingests_by_id.get(&e.post_id)
                                     .map(|ing| ing.principal.clone())
                                     .unwrap_or_default(),
-                                delegate: reduced.ingests_by_id.get(&e.post_id)
-                                    .map(|ing| ing.delegate.clone())
-                                    .unwrap_or_default(),
+                                delegate: reduced.ingests_by_id.get(&e.post_id).and_then(|ing| ing.delegate.clone()),
                                 thread_id: e.thread.clone(),
                             })
                         } else { None }
@@ -331,7 +329,7 @@ async fn render_scope_view(state: AppState, path: OntologyPath) -> axum::respons
                             @let right_class = if v.b.as_str() == model.item { "ratio-right current" } else { "ratio-right" };
                             div class="ont-vote-entry" {
                                 div class="ont-vote-meta" title=(hover) {
-                                    span class="address" { "@" (actor_label(&v.delegate)) }
+                                    span class="address" { (authorship_address(&v.principal, &v.delegate)) }
                                     " · "
                                     (ago)
                                 }
@@ -482,7 +480,7 @@ mod tests {
             id: format!("ing-{ts}"),
             raw: raw.to_string(),
             principal: "testuser".to_string(),
-            delegate: "@00000000-0000-0000-0000-000000000000:test:local/test".to_string(),
+            delegate: Some("00000000-0000-0000-0000-000000000000:test:local/test".to_string()),
             thread_id: String::new(),
         }));
     }
