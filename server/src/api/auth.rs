@@ -16,6 +16,7 @@ use crate::{
         canonicalize_agent, canonicalize_username, validate_agent_format, validate_username,
         Event, TokenIssued, UserRegistered,
     },
+    html::{auth_complete_page, choose_username_page},
     state::{AppState, PendingSession},
 };
 
@@ -239,12 +240,7 @@ pub async fn get_choose_username(Query(q): Query<ChooseUsernameQuery>, State(sta
         return api_error(StatusCode::NOT_FOUND, "unknown session", None).into_response();
     }
     drop(sessions_read);
-    // TODO: replace with choose_username_page() once html module is re-enabled
-    (StatusCode::OK, format!(
-        "choose username\n\nPOST /auth/choose-username\nsession={}\n{}",
-        q.session,
-        q.error.as_deref().map(|e| format!("error: {e}\n")).unwrap_or_default()
-    )).into_response()
+    choose_username_page(&q.session, q.error.as_deref()).into_response()
 }
 
 #[derive(Debug, Deserialize)]
@@ -385,8 +381,7 @@ pub async fn get_pending_session(
 }
 
 pub async fn get_auth_complete() -> impl IntoResponse {
-    // TODO: replace with auth_complete_page() once html module is re-enabled
-    (StatusCode::OK, "login complete — return to your terminal, your agent is polling\n")
+    auth_complete_page()
 }
 
 pub async fn get_whoami(State(state): State<AppState>, headers: HeaderMap) -> impl IntoResponse {

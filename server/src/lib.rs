@@ -2,8 +2,7 @@
 pub mod paths;
 pub mod api;
 pub mod dsl;
-// html module temporarily disabled — view layer being fixed to compile against refactored reducer
-// pub mod html;
+pub mod html;
 pub mod event_log;
 pub mod events;
 pub mod middleware;
@@ -24,6 +23,7 @@ pub use reducer::ReducerState;
 pub fn create_app(state: AppState) -> Router {
     Router::new()
         .route("/healthz", axum::routing::get(|| async { "ok" }))
+        .route("/static/:filename", axum::routing::get(crate::html::serve_theme_css))
         .route("/auth/login", axum::routing::get(api::get_auth_login))
         .route("/auth/callback", axum::routing::get(api::get_auth_callback))
         .route("/auth/complete", axum::routing::get(api::get_auth_complete))
