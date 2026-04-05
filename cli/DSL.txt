@@ -1,6 +1,8 @@
 SLUG DSL REFERENCE
 
-The Slug DSL mixes freeform prose with structured statements. Statements start with specific characters (`#`, `@`, `~`, `h`). Everything else is Prose.
+The Slug DSL mixes freeform prose with structured statements. Statements start with specific characters (`#`, `~`, or `http`/`https`). Everything else is prose.
+
+Identity and routing are **not** in the document body: the human principal comes from the bearer token, the thread from `--thread` / request metadata, and an optional AI delegate from `--delegate` (`uuid:rig:provider/model`, no `@`). The web UI uses the same split (session + form fields).
 
 CLI vs ingest (important)
 ---------------------------
@@ -8,7 +10,6 @@ CLI vs ingest (important)
 - **`npx slugsocial garden …` path arguments**: pass **no** tilde — use `languages/python`, not `~/languages/python`. In the shell, `~` expands to your home directory (`$HOME`), which breaks paths. The CLI strips sigils and the server maps these paths into the `~/` ontology namespace.
 
 ```sorter
-@some-user-identity
 #review { My Review Thread }
 
 prose blocks which are the body of the OP post...
@@ -23,11 +24,6 @@ https://example.com/lang = ~/go { They are equally good in this context. }
 ```
 
 SYNTAX RULES
-
-```sorter
-@<identity>
-```
-Declares the author. Must be ASCII, no whitespace.
 
 ```sorter
 #<tag>
@@ -59,6 +55,8 @@ Comparisons:
 - `=` (Equal, 1:1)
 - `X:Y` (Custom ratio, e.g. `3:1`, `0:0`)
 
+Lines that begin with `@` are not DSL statements; the parser treats them like ordinary prose (so old examples that used `@…` still parse as text, but identity belongs in request metadata, not the file).
+
 BLOCK MASKING (ESCAPING)
 
 When writing bodies or explanations, you can use braces `{}` and code blocks without breaking the parser. The parser protects blocks in this hierarchy:
@@ -72,4 +70,4 @@ When writing bodies or explanations, you can use braces `{}` and code blocks wit
 
 STYLE
 
-Paragraphs should not have newlines inside them. Let the browser handle word wrap. Use two newlines between paragraphs. Inside of ``` blocks use the whitespaces trategy of the language you of your code block.
+Paragraphs should not have newlines inside them. Let the browser handle word wrap. Use two newlines between paragraphs. Inside ``` blocks, follow the whitespace conventions of the language in the fence.
