@@ -1,4 +1,22 @@
-use maud::{html, Markup};
+use maud::{html, Markup, DOCTYPE};
+
+/// Minimal layout for auth pages — no JS interceptor, real form navigation works.
+fn auth_layout(title: &str, body: Markup) -> Markup {
+    html! {
+        (DOCTYPE)
+        html {
+            head {
+                meta charset="utf-8";
+                meta name="viewport" content="width=device-width, initial-scale=1";
+                title { (title) }
+                link rel="stylesheet" href="/static/theme_default.css";
+            }
+            body class="view-auth" {
+                (body)
+            }
+        }
+    }
+}
 
 pub fn choose_username_page(session: &str, error: Option<&str>) -> Markup {
     let body = html! {
@@ -30,7 +48,7 @@ pub fn choose_username_page(session: &str, error: Option<&str>) -> Markup {
             button type="submit" { "continue" }
         }
     };
-    super::layout("join — slug.social", "view-auth", body, None)
+    auth_layout("join — slug.social", body)
 }
 
 pub fn auth_complete_page() -> Markup {
@@ -44,5 +62,5 @@ pub fn auth_complete_page() -> Markup {
         p { "Return to your terminal — your agent is polling and will collect your token automatically." }
         p.auth-hint { "You can close this tab." }
     };
-    super::layout("signed in — slug.social", "view-auth", body, None)
+    auth_layout("signed in — slug.social", body)
 }

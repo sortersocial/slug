@@ -24,6 +24,15 @@ fn pending_sessions(state: &AppState) -> Arc<RwLock<HashMap<String, PendingSessi
     state.pending_sessions.clone()
 }
 
+/// Decode the `sub` claim from a JWT payload without verifying the signature.
+/// Safe here because the token was received directly from Google's token endpoint over TLS.
+fn extract_jwt_sub(jwt: &str) -> Option<String> {
+    let payload_b64 = jwt.split('.').nth(1)?;
+    let decoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(payload_b64).ok()?;
+    let v: serde_json::Value = serde_json::from_slice(&decoded).ok()?;
+    v.get("sub")?.as_str().map(|s| s.to_string())
+}
+
 fn parse_bearer(headers: &HeaderMap) -> Result<String, (StatusCode, String)> {
     let Some(value) = headers.get(axum::http::header::AUTHORIZATION) else {
         return Err((StatusCode::UNAUTHORIZED, "missing Authorization header".to_string()));
@@ -148,17 +157,15 @@ pub async fn get_auth_callback(Query(q): Query<AuthCallbackQuery>, State(state):
 
     let token_url = std::env::var("SLUG_GOOGLE_TOKEN_URL")
         .unwrap_or_else(|_| "https://oauth2.googleapis.com/token".to_string());
-    let userinfo_url = std::env::var("SLUG_GOOGLE_USERINFO_URL")
-        .unwrap_or_else(|_| "https://openidconnect.googleapis.com/v1/userinfo".to_string());
     let client_id = std::env::var("SLUG_GOOGLE_CLIENT_ID").unwrap_or_else(|_| "dev".to_string());
     let client_secret = std::env::var("SLUG_GOOGLE_CLIENT_SECRET").unwrap_or_else(|_| "dev".to_string());
     let public_url = std::env::var("SLUG_PUBLIC_URL").unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
     let redirect_uri = format!("{public_url}/auth/callback");
 
-    // Exchange code for access token.
+    // Exchange code for id_token + access_token.
     #[derive(Deserialize)]
     struct TokenResp {
-        access_token: String,
+        id_token: String,
     }
     let client = reqwest::Client::new();
     let tr: TokenResp = match client
@@ -180,28 +187,17 @@ pub async fn get_auth_callback(Query(q): Query<AuthCallbackQuery>, State(state):
         Err(err) => return api_error(StatusCode::BAD_GATEWAY, "oauth token exchange failed", Some(format!("{err}"))).into_response(),
     };
 
-    // Fetch userinfo.
-    #[derive(Deserialize)]
-    struct UserInfoResp {
-        sub: String,
-    }
-    let ui: UserInfoResp = match client
-        .get(userinfo_url)
-        .bearer_auth(tr.access_token)
-        .send()
-        .await
-    {
-        Ok(resp) => match resp.json().await {
-            Ok(v) => v,
-            Err(err) => return api_error(StatusCode::BAD_GATEWAY, "oauth userinfo failed", Some(format!("{err}"))).into_response(),
-        },
-        Err(err) => return api_error(StatusCode::BAD_GATEWAY, "oauth userinfo failed", Some(format!("{err}"))).into_response(),
+    // Extract sub from the id_token JWT payload (base64-decode middle segment).
+    // The token arrived directly from Google over TLS — no need for an extra userinfo roundtrip.
+    let sub = match extract_jwt_sub(&tr.id_token) {
+        Some(s) => s,
+        None => return api_error(StatusCode::BAD_GATEWAY, "oauth: could not extract sub from id_token", None).into_response(),
     };
 
     // If user exists, issue token and complete session. Otherwise redirect to choose-username.
     let reduced_arc = state.reduced.clone();
     let reduced = reduced_arc.read().await;
-    let provider_key = ("google".to_string(), ui.sub.clone());
+    let provider_key = ("google".to_string(), sub.clone());
     let existing = reduced.users_by_provider.get(&provider_key).cloned();
     drop(reduced);
 
@@ -209,7 +205,7 @@ pub async fn get_auth_callback(Query(q): Query<AuthCallbackQuery>, State(state):
         let mut sessions_write = sessions.write().await;
         let s = sessions_write.get_mut(&q.state).expect("session checked above");
         s.provider = Some("google".to_string());
-        s.provider_id = Some(ui.sub.clone());
+        s.provider_id = Some(sub.clone());
         if let Some(username) = existing {
             let (bearer, token_event, canon_user) = issue_token_for_user(&username);
             // append token event

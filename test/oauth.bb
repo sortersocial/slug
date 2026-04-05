@@ -51,6 +51,17 @@
             [(keyword (java.net.URLDecoder/decode k "UTF-8"))
              (some-> v (java.net.URLDecoder/decode "UTF-8"))]))))
 
+(defn- b64url [s]
+  (-> (java.util.Base64/getUrlEncoder)
+      (.withoutPadding)
+      (.encodeToString (.getBytes s "UTF-8"))))
+
+(defn- make-id-token [sub]
+  (str (b64url "{\"alg\":\"RS256\",\"typ\":\"JWT\"}")
+       "."
+       (b64url (json/generate-string {:sub sub}))
+       ".fakesig"))
+
 (defn start-mock-google [port]
   (let [handler
         (fn [req]
@@ -67,13 +78,7 @@
                  (= "/token" (:uri req)))
             {:status 200
              :headers {"Content-Type" "application/json"}
-             :body (json/generate-string {:access_token "mock_access_token"})}
-
-            (and (= :get (:request-method req))
-                 (= "/userinfo" (:uri req)))
-            {:status 200
-             :headers {"Content-Type" "application/json"}
-             :body (json/generate-string {:sub "google-user-1"})}
+             :body (json/generate-string {:id_token (make-id-token "google-user-1")})}
 
             :else
             {:status 404 :body "not found"}))

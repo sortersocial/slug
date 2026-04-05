@@ -128,7 +128,6 @@
                             "SLUG_PUBLIC_URL" base-url
                             "SLUG_GOOGLE_AUTH_URL" (str google-url "/o/oauth2/v2/auth")
                             "SLUG_GOOGLE_TOKEN_URL" (str google-url "/token")
-                            "SLUG_GOOGLE_USERINFO_URL" (str google-url "/userinfo")
                             "SLUG_GOOGLE_CLIENT_ID" "mock"
                             "SLUG_GOOGLE_CLIENT_SECRET" "mock"}))
 

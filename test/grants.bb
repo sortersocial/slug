@@ -80,7 +80,18 @@
             [(keyword (java.net.URLDecoder/decode k "UTF-8"))
              (some-> v (java.net.URLDecoder/decode "UTF-8"))]))))
 
-;; Stateful mock: each userinfo call returns the next user in the list.
+(defn- b64url [s]
+  (-> (java.util.Base64/getUrlEncoder)
+      (.withoutPadding)
+      (.encodeToString (.getBytes s "UTF-8"))))
+
+(defn- make-id-token [sub]
+  (str (b64url "{\"alg\":\"RS256\",\"typ\":\"JWT\"}")
+       "."
+       (b64url (json/generate-string {:sub sub}))
+       ".fakesig"))
+
+;; Stateful mock: each /token call returns the next user in the list.
 ;; This lets us register two distinct users in one test run.
 (defn- start-mock-google [port]
   (let [google-users ["google-user-alice" "google-user-bob"]
@@ -98,17 +109,11 @@
 
             (and (= :post (:request-method req))
                  (= "/token" (:uri req)))
-            {:status 200
-             :headers {"Content-Type" "application/json"}
-             :body (json/generate-string {:access_token "mock_access_token"})}
-
-            (and (= :get (:request-method req))
-                 (= "/userinfo" (:uri req)))
             (let [n   (swap! !call-count inc)
                   sub (nth google-users (mod (dec n) (count google-users)))]
               {:status 200
                :headers {"Content-Type" "application/json"}
-               :body (json/generate-string {:sub sub})})
+               :body (json/generate-string {:id_token (make-id-token sub)})})
 
             :else
             {:status 404 :body "not found"}))
@@ -169,7 +174,6 @@
                             "SLUG_PUBLIC_URL" base-url
                             "SLUG_GOOGLE_AUTH_URL" (str google-url "/o/oauth2/v2/auth")
                             "SLUG_GOOGLE_TOKEN_URL" (str google-url "/token")
-                            "SLUG_GOOGLE_USERINFO_URL" (str google-url "/userinfo")
                             "SLUG_GOOGLE_CLIENT_ID" "mock"
                             "SLUG_GOOGLE_CLIENT_SECRET" "mock"}))
    (try
