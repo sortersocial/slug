@@ -80,12 +80,13 @@ fn search(state: &ReducerState, q: &str, limit: usize) -> SearchResults {
         return SearchResults { items: vec![], threads: vec![], posts: vec![] };
     }
 
+    let public = state.public();
     let mut scored_items: Vec<(u32, ItemRow)> = Vec::new();
     let mut scored_threads: Vec<(u32, ThreadRow)> = Vec::new();
     let mut scored_posts: Vec<(u32, PostRow)> = Vec::new();
 
     // Search items (paths + bodies)
-    for item in &state.items {
+    for item in &public.items {
         let mut score: u32 = 0;
         let path_lower = item.as_str().to_lowercase();
         if contains_all(&path_lower, &words) {
@@ -93,7 +94,7 @@ fn search(state: &ReducerState, q: &str, limit: usize) -> SearchResults {
         } else if contains_any(&path_lower, &words) > 0 {
             score += 5;
         }
-        if let Some(body) = state.item_bodies.get(item) {
+        if let Some(body) = public.item_bodies.get(item) {
             if contains_all(body, &words) {
                 score += 6;
             } else {
@@ -106,7 +107,7 @@ fn search(state: &ReducerState, q: &str, limit: usize) -> SearchResults {
         if score > 0 {
             scored_items.push((score, ItemRow {
                 path: item.as_str().to_string(),
-                body: state.item_bodies.get(item).cloned(),
+                body: public.item_bodies.get(item).cloned(),
             }));
         }
     }
@@ -123,7 +124,7 @@ fn search(state: &ReducerState, q: &str, limit: usize) -> SearchResults {
             let post_count = state.ingests_by_thread.get(tag).map(|q| q.len()).unwrap_or(0);
             scored_threads.push((score, ThreadRow {
                 tag: tag.clone(),
-                subtitle: thread_state.subtitle.clone(),
+                subtitle: None,
                 post_count,
                 last_activity: thread_state.last_activity_ts,
             }));
@@ -150,7 +151,7 @@ fn search(state: &ReducerState, q: &str, limit: usize) -> SearchResults {
                 .unwrap_or_else(|| "unknown".to_string());
             scored_posts.push((score, PostRow {
                 thread,
-                actor: ingest.actor.clone(),
+                actor: ingest.principal.clone(),
                 text: ingest.raw.clone(),
                 ts: ingest.ts,
             }));

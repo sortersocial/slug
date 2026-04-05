@@ -36,10 +36,9 @@ fn item_href(item: &str) -> String {
 pub async fn garden_index(State(state): State<AppState>) -> impl IntoResponse {
     let child_rankings = {
         let reduced = state.reduced.read().await;
-        build_children_rankings(&reduced, &CanonicalItemUrl::ontology_root())
+        build_children_rankings(reduced.public(), &CanonicalItemUrl::ontology_root())
     };
 
-    let views = state.views.get_views("/~");
     let page = layout(
         "~/",
         "view-ontology view-ontology-dark",
@@ -82,7 +81,7 @@ pub async fn garden_index(State(state): State<AppState>) -> impl IntoResponse {
             }
             (cli_panel("npx slugsocial garden tree"))
         },
-        Some(views),
+        None,
     );
     Html(page.into_string())
 }
@@ -131,9 +130,10 @@ fn build_sibling_rank(
     reduced: &crate::reducer::ReducerState,
     item: &CanonicalItemUrl,
 ) -> Option<SiblingRank> {
-    let group = &reduced.ranking_group;
+    let public = reduced.public();
+    let group = &public.ranking_group;
     let parent = item.parent()?;
-    let siblings: Vec<CanonicalItemUrl> = reduced
+    let siblings: Vec<CanonicalItemUrl> = public
         .item_children
         .get(&parent)
         .map(|s| s.iter().cloned().collect())
@@ -190,8 +190,9 @@ fn build_rank_history(
     reduced: &crate::reducer::ReducerState,
     item: &str,
 ) -> Vec<RankHistoryEntryView> {
+    let public = reduced.public();
     let item_key = CanonicalItemUrl(item.to_string());
-    let entries = match reduced.rank_history.get(&item_key) {
+    let entries = match public.rank_history.get(&item_key) {
         None => return vec![],
         Some(e) => e,
     };
@@ -212,10 +213,13 @@ fn build_rank_history(
                                 b: CanonicalItemUrl(b_str),
                                 ratio_left, ratio_right,
                                 body: explanation,
-                                actor: reduced.ingests_by_id.get(&e.post_id)
-                                    .map(|ing| ing.actor.clone())
+                                principal: reduced.ingests_by_id.get(&e.post_id)
+                                    .map(|ing| ing.principal.clone())
                                     .unwrap_or_default(),
-                                thread: e.thread.clone(),
+                                delegate: reduced.ingests_by_id.get(&e.post_id)
+                                    .map(|ing| ing.delegate.clone())
+                                    .unwrap_or_default(),
+                                thread_id: e.thread.clone(),
                             })
                         } else { None }
                     } else { None }
@@ -247,10 +251,11 @@ fn build_item_page_view_model(
     item: &str,
     vote_limit: usize,
 ) -> ItemPageViewModel {
+    let public = reduced.public();
     let item_key = CanonicalItemUrl::parse(item)
         .unwrap_or_else(|| CanonicalItemUrl::parse("~/").unwrap());
-    let child_rankings = build_children_rankings(reduced, &item_key);
-    let touching_votes: Vec<crate::reducer::VoteData> = reduced
+    let child_rankings = build_children_rankings(public, &item_key);
+    let touching_votes: Vec<crate::reducer::VoteData> = public
         .item_votes
         .get(&item_key)
         .map(|q| q.iter().take(vote_limit).cloned().collect())
@@ -258,7 +263,7 @@ fn build_item_page_view_model(
 
     let rank_history = build_rank_history(reduced, item_key.as_str());
 
-    let mut threads: Vec<String> = reduced
+    let mut threads: Vec<String> = public
         .item_threads
         .get(&item_key)
         .map(|s| s.iter().cloned().collect())
@@ -267,7 +272,7 @@ fn build_item_page_view_model(
 
     ItemPageViewModel {
         item: item_key.as_str().to_string(),
-        body: reduced.item_bodies.get(&item_key).cloned(),
+        body: public.item_bodies.get(&item_key).cloned(),
         sibling_rank: build_sibling_rank(reduced, &item_key),
         child_rankings,
         touching_votes,
@@ -282,7 +287,6 @@ async fn render_scope_view(state: AppState, path: OntologyPath) -> axum::respons
         build_item_page_view_model(&reduced, path.as_str(), 50)
     };
 
-    let views = state.views.get_views(&format!("/~/{}", path.as_str()));
     let page = layout(
         &item_display_path(&model.item),
         "view-ontology view-ontology-dark",
@@ -327,7 +331,7 @@ async fn render_scope_view(state: AppState, path: OntologyPath) -> axum::respons
                             @let right_class = if v.b.as_str() == model.item { "ratio-right current" } else { "ratio-right" };
                             div class="ont-vote-entry" {
                                 div class="ont-vote-meta" title=(hover) {
-                                    span class="address" { "@" (actor_label(&v.actor)) }
+                                    span class="address" { "@" (actor_label(&v.delegate)) }
                                     " · "
                                     (ago)
                                 }
@@ -458,7 +462,7 @@ async fn render_scope_view(state: AppState, path: OntologyPath) -> axum::respons
             }
             (cli_panel(&format!("npx slugsocial garden body {}", item_display_path(&model.item))))
         },
-        Some(views),
+        None,
     );
 
     Html(page.into_string()).into_response()
@@ -477,7 +481,9 @@ mod tests {
             ts,
             id: format!("ing-{ts}"),
             raw: raw.to_string(),
-            actor: "00000000-0000-0000-0000-000000000000:test:local/test".to_string(),
+            principal: "testuser".to_string(),
+            delegate: "@00000000-0000-0000-0000-000000000000:test:local/test".to_string(),
+            thread_id: String::new(),
         }));
     }
 

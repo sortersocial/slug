@@ -36,7 +36,7 @@ fn collect_thread_rows(reduced: &ReducerState, now: i64) -> Vec<ThreadRow> {
             let ingests = reduced.ingests_by_thread.get(tag).map(|q| q.len()).unwrap_or(0);
             ThreadRow {
                 tag: tag.clone(),
-                subtitle: thread.subtitle.clone(),
+                subtitle: None,
                 last_ts: thread.last_activity_ts,
                 ingests,
             }
@@ -100,7 +100,6 @@ pub async fn index(State(state): State<AppState>) -> impl IntoResponse {
     // Bump order: most recently active first.
     rows.sort_by(|a, b| b.last_ts.cmp(&a.last_ts));
 
-    let views = state.views.get_views("/");
     let page = layout(
         "slug.social",
         "view-thread",
@@ -111,7 +110,7 @@ pub async fn index(State(state): State<AppState>) -> impl IntoResponse {
             (render_thread_feed(&rows, now))
             (cli_panel("npx slugsocial forum"))
         },
-        Some(views),
+        None,
     );
     Html(page.into_string())
 }
@@ -185,15 +184,13 @@ pub async fn thread_view(
             .iter()
             .filter_map(|id| reduced.ingests_by_id.get(id).cloned())
             .collect::<Vec<_>>();
-        let subtitle = reduced.threads.get(&tag).and_then(|t| t.subtitle.clone());
+        let subtitle: Option<String> = None;
         (ingests, subtitle)
     };
 
     let now = now_ms();
     let paginator_top = render_thread_paginator(&tag, offset, total, true);
     let paginator_bot = render_thread_paginator(&tag, offset, total, false);
-
-    let views = state.views.get_views(&format!("/t/{tag}"));
     let page = layout(
         &format!("#{tag}"),
         "view-thread",
@@ -231,7 +228,7 @@ pub async fn thread_view(
             }
             (cli_panel(&format!("npx slugsocial forum {tag}")))
         },
-        Some(views),
+        None,
     );
     Html(page.into_string()).into_response()
 }
@@ -249,11 +246,9 @@ pub async fn thread_post_view(
         let ing = reduced.ingests_by_thread.get(&tag)
             .and_then(|q| q.iter().rev().nth(index))
             .and_then(|id| reduced.ingests_by_id.get(id).cloned());
-        let subtitle = reduced.threads.get(&tag).and_then(|t| t.subtitle.clone());
+        let subtitle: Option<String> = None;
         (ing, subtitle)
     };
-
-    let views = state.views.get_views(&format!("/t/{tag}/{index}"));
     let page = layout(
         &format!("#{tag} / post #{index}"),
         "view-thread",
@@ -265,7 +260,7 @@ pub async fn thread_post_view(
                 @let ago = timeago::timeago(now, ing.ts);
                 div class="ingest-entry" data-ingest-id=(ing.id) {
                     div class="ingest-meta muted" title=(hover) {
-                        span class="address" { "@" (actor_label(&ing.actor)) }
+                        span class="address" { "@" (actor_label(&ing.delegate)) }
                         " · "
                         (ago)
                     }
@@ -275,7 +270,7 @@ pub async fn thread_post_view(
                 p class="muted" { "post not found" }
             }
         },
-        Some(views),
+        None,
     );
     Html(page.into_string()).into_response()
 }
