@@ -104,8 +104,8 @@
 
             (and (= :get (:request-method req))
                  (= "/userinfo" (:uri req)))
-            (let [idx (mod (swap! !call-count inc) (count google-users))
-                  sub (nth google-users (dec idx))]
+            (let [n   (swap! !call-count inc)
+                  sub (nth google-users (mod (dec n) (count google-users)))]
               {:status 200
                :headers {"Content-Type" "application/json"}
                :body (json/generate-string {:sub sub})})
@@ -180,90 +180,89 @@
 
      ;; Register two users. The mock google cycles through google-user-alice then google-user-bob.
      (println "\nregistering alice…")
-     (bind alice-token (register-user base-url
+     (let [alice-token (register-user base-url
                                       "@@00000000-0000-0000-0000-000000000001:test:local/dev"
-                                      "alice"))
-     (println "registering bob…")
-     (bind bob-token   (register-user base-url
+                                      "alice")
+           _ (println "registering bob…")
+           bob-token   (register-user base-url
                                       "@@00000000-0000-0000-0000-000000000002:test:local/dev"
-                                      "bob"))
+                                      "bob")
 
-     ;; Alice creates a private thread.
-     (println "\nalice creates private thread…")
-     (bind create-resp (http-post-json (str base-url "/api/v0/thread")
+           ;; Alice creates a private thread.
+           _ (println "\nalice creates private thread…")
+           create-resp (http-post-json (str base-url "/api/v0/thread")
                                        {:slug "secret-project" :visibility "private"}
-                                       :headers (bearer alice-token)))
-     (assert! (= 200 (:status create-resp)) "thread create returns 200")
-     (bind create-json (json/parse-string (:body create-resp) true))
-     (bind thread-id (:thread_id create-json))
-     (assert! (some? thread-id) "thread_id present in response")
+                                       :headers (bearer alice-token))
+           _ (assert! (= 200 (:status create-resp)) "thread create returns 200")
+           thread-id   (-> create-resp :body (json/parse-string true) :thread_id)
+           _ (assert! (some? thread-id) "thread_id present in response")]
 
-     ;; Alice (owner) can post prose to her own private thread.
-     (println "\nalice posts prose to her private thread…")
-     (bind alice-prose (ingest! base-url alice-token thread-id
-                                "@@00000000-0000-0000-0000-000000000001:test:local/dev"
-                                "Hello from alice."))
-     (assert! (= 200 (:status alice-prose)) "alice prose post succeeds")
+       ;; Alice (owner) can post prose to her own private thread.
+       (println "\nalice posts prose to her private thread…")
+       (assert! (= 200 (:status (ingest! base-url alice-token thread-id
+                                         "@@00000000-0000-0000-0000-000000000001:test:local/dev"
+                                         "Hello from alice.")))
+                "alice prose post succeeds")
 
-     ;; Bob has no grants at all — should get 403.
-     (println "\nbob (no grants) tries to post prose…")
-     (bind bob-no-grant (ingest! base-url bob-token thread-id
-                                 "@@00000000-0000-0000-0000-000000000002:test:local/dev"
-                                 "Hello from bob, unauthorized."))
-     (assert! (= 403 (:status bob-no-grant)) "bob without grants gets 403")
+       ;; Bob has no grants at all — should get 403.
+       (println "\nbob (no grants) tries to post prose…")
+       (assert! (= 403 (:status (ingest! base-url bob-token thread-id
+                                         "@@00000000-0000-0000-0000-000000000002:test:local/dev"
+                                         "Hello from bob, unauthorized.")))
+                "bob without grants gets 403")
 
-     ;; Alice grants bob View only — still not enough to post prose.
-     (println "\nalice grants bob View only…")
-     (bind grant-view (http-post-json (str base-url "/api/v0/thread/" thread-id "/grants")
-                                      {:username "bob" :capabilities ["view"]}
-                                      :headers (bearer alice-token)))
-     (assert! (= 200 (:status grant-view)) "grant View returns 200")
+       ;; Alice grants bob View only — still not enough to post prose.
+       (println "\nalice grants bob View only…")
+       (assert! (= 200 (:status (http-post-json (str base-url "/api/v0/thread/" thread-id "/grants")
+                                                {:username "bob" :capabilities ["view"]}
+                                                :headers (bearer alice-token))))
+                "grant View returns 200")
 
-     (println "\nbob (View only) tries to post prose…")
-     (bind bob-view-only (ingest! base-url bob-token thread-id
-                                  "@@00000000-0000-0000-0000-000000000002:test:local/dev"
-                                  "Hello from bob, view only."))
-     (assert! (= 403 (:status bob-view-only)) "bob with View but no Post gets 403")
+       (println "\nbob (View only) tries to post prose…")
+       (assert! (= 403 (:status (ingest! base-url bob-token thread-id
+                                         "@@00000000-0000-0000-0000-000000000002:test:local/dev"
+                                         "Hello from bob, view only.")))
+                "bob with View but no Post gets 403")
 
-     ;; Alice grants bob Post — now prose should work.
-     (println "\nalice grants bob Post…")
-     (bind grant-post (http-post-json (str base-url "/api/v0/thread/" thread-id "/grants")
-                                      {:username "bob" :capabilities ["post"]}
-                                      :headers (bearer alice-token)))
-     (assert! (= 200 (:status grant-post)) "grant Post returns 200")
+       ;; Alice grants bob Post — now prose should work.
+       (println "\nalice grants bob Post…")
+       (assert! (= 200 (:status (http-post-json (str base-url "/api/v0/thread/" thread-id "/grants")
+                                                {:username "bob" :capabilities ["post"]}
+                                                :headers (bearer alice-token))))
+                "grant Post returns 200")
 
-     (println "\nbob (View + Post) posts prose…")
-     (bind bob-prose (ingest! base-url bob-token thread-id
-                              "@@00000000-0000-0000-0000-000000000002:test:local/dev"
-                              "Hello from bob, now authorised."))
-     (assert! (= 200 (:status bob-prose)) "bob with View + Post succeeds for prose")
+       (println "\nbob (View + Post) posts prose…")
+       (assert! (= 200 (:status (ingest! base-url bob-token thread-id
+                                         "@@00000000-0000-0000-0000-000000000002:test:local/dev"
+                                         "Hello from bob, now authorised.")))
+                "bob with View + Post succeeds for prose")
 
-     ;; Alice defines two items and votes on them in the private thread.
-     (println "\nalice posts items + vote to private thread…")
-     (bind alice-vote (ingest! base-url alice-token thread-id
-                               "@@00000000-0000-0000-0000-000000000001:test:local/dev"
-                               "~/fruits/apple { A crisp red apple. }\n~/fruits/banana { A yellow banana. }\n~/fruits/apple > ~/fruits/banana { apples are better }"))
-     (assert! (= 200 (:status alice-vote)) "alice vote in private thread succeeds")
+       ;; Alice defines two items and votes on them in the private thread.
+       (println "\nalice posts items + vote to private thread…")
+       (assert! (= 200 (:status (ingest! base-url alice-token thread-id
+                                         "@@00000000-0000-0000-0000-000000000001:test:local/dev"
+                                         "~/fruits/apple { A crisp red apple. }\n~/fruits/banana { A yellow banana. }\n~/fruits/apple > ~/fruits/banana { apples are better }")))
+                "alice vote in private thread succeeds")
 
-     ;; Bob (View + Post, no Vote) tries to vote — should be 403.
-     (println "\nbob (no Vote) tries to vote…")
-     (bind bob-no-vote (ingest! base-url bob-token thread-id
-                                "@@00000000-0000-0000-0000-000000000002:test:local/dev"
-                                "~/fruits/apple > ~/fruits/banana { bob's take }"))
-     (assert! (= 403 (:status bob-no-vote)) "bob without Vote gets 403")
+       ;; Bob (View + Post, no Vote) tries to vote — should be 403.
+       (println "\nbob (no Vote) tries to vote…")
+       (assert! (= 403 (:status (ingest! base-url bob-token thread-id
+                                         "@@00000000-0000-0000-0000-000000000002:test:local/dev"
+                                         "~/fruits/apple > ~/fruits/banana { bob's take }")))
+                "bob without Vote gets 403")
 
-     ;; Alice grants bob Vote — now voting should work.
-     (println "\nalice grants bob Vote…")
-     (bind grant-vote (http-post-json (str base-url "/api/v0/thread/" thread-id "/grants")
-                                      {:username "bob" :capabilities ["vote"]}
-                                      :headers (bearer alice-token)))
-     (assert! (= 200 (:status grant-vote)) "grant Vote returns 200")
+       ;; Alice grants bob Vote — now voting should work.
+       (println "\nalice grants bob Vote…")
+       (assert! (= 200 (:status (http-post-json (str base-url "/api/v0/thread/" thread-id "/grants")
+                                                {:username "bob" :capabilities ["vote"]}
+                                                :headers (bearer alice-token))))
+                "grant Vote returns 200")
 
-     (println "\nbob (View + Post + Vote) votes…")
-     (bind bob-vote (ingest! base-url bob-token thread-id
-                             "@@00000000-0000-0000-0000-000000000002:test:local/dev"
-                             "~/fruits/apple > ~/fruits/banana { bob's take }"))
-     (assert! (= 200 (:status bob-vote)) "bob with Vote succeeds")
+       (println "\nbob (View + Post + Vote) votes…")
+       (assert! (= 200 (:status (ingest! base-url bob-token thread-id
+                                         "@@00000000-0000-0000-0000-000000000002:test:local/dev"
+                                         "~/fruits/apple > ~/fruits/banana { bob's take }")))
+                "bob with Vote succeeds"))
 
      (finally
        (when-some [s @!server] (common/kill-server s))

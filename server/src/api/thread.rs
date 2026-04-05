@@ -132,11 +132,12 @@ fn parse_capability(s: &str) -> Result<ThreadCapability, String> {
 }
 
 pub async fn post_thread_grants(
-    Path(thread_id): Path<String>,
+    Path((short_id, slug)): Path<(String, String)>,
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(req): Json<AddGrantRequest>,
 ) -> impl IntoResponse {
+    let thread_id = format!("{short_id}/{slug}");
     let reduced_arc = state.reduced.clone();
     let reduced = reduced_arc.read().await;
 
