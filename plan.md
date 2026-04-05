@@ -280,7 +280,7 @@ For an ingest request:
 7. verify delegate binding
 8. append event(s)
 
-The key point is that parsing still happens before final authz because the parsed content determines whether the request needs `Vote`, `AddItem`, or only posting prose. But identity and thread routing no longer live inside the DSL.
+The key point is that parsing still happens before final authz because the parsed content determines whether the request needs `Vote`, `AddItem`, `Post`, or some combination. But identity and thread routing no longer live inside the DSL.
 
 ---
 
@@ -309,6 +309,7 @@ Private threads use explicit capabilities:
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
 pub enum ThreadCapability {
     View,
+    Post,
     Vote,
     AddItem,
     Manage,
@@ -318,11 +319,10 @@ pub enum ThreadCapability {
 No capability implies any other.
 
 - `View` means can read the private thread and its scoped ontology/rankings
+- `Post` means can post prose to that thread
 - `Vote` means can submit votes in that thread
 - `AddItem` means can define item bodies in that thread
 - `Manage` means can grant and revoke capabilities for other users
-
-Prose-only posts require at least `Vote` or `AddItem`.
 
 ### Permission Matrix
 
@@ -333,7 +333,7 @@ Prose-only posts require at least `Vote` or `AddItem`.
 | Post to public thread       | bearer token  | authenticated user                     |
 | Post vote to private thread | bearer token  | `View` and `Vote`                      |
 | Post item to private thread | bearer token  | `View` and `AddItem`                   |
-| Post prose to private thread| bearer token  | `View` and (`Vote` or `AddItem`)       |
+| Post prose to private thread| bearer token  | `View` and `Post`                      |
 | Create private thread       | bearer token  | authenticated user                     |
 | Grant or revoke             | bearer token  | `Manage`                               |
 | Check dry-run on public     | no            | —                                      |
@@ -382,12 +382,13 @@ npx slugsocial thread invite a7f2k9x/project-review @alice
 
 Default preset:
 
-- `[View, Vote, AddItem]`
+- `[View, Post, Vote, AddItem]`
 
 Other presets:
 
 - `viewer` -> `[View]`
-- `voter` -> `[View, Vote]`
+- `poster` -> `[View, Post]`
+- `voter` -> `[View, Post, Vote]`
 
 Example:
 

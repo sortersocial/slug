@@ -27,14 +27,16 @@ pub struct PathsQuery {}
 pub async fn get_paths(State(state): State<AppState>, Query(_q): Query<PathsQuery>) -> impl IntoResponse {
     let reduced_arc = state.reduced.clone();
     let reduced = reduced_arc.read().await;
+    let content = reduced.public();
 
     let out: Vec<PathSummary> = reduced
+        .public()
         .item_children
-        .get("")
+        .get(&CanonicalItemUrl::ontology_root())
         .map(|roots| {
             let mut v: Vec<PathSummary> = roots.iter()
                 .map(|path| {
-                let children = reduced.item_children.get(path.as_str()).map(|s| s.len()).unwrap_or(0);
+                let children = content.item_children.get(path.as_str()).map(|s| s.len()).unwrap_or(0);
                 PathSummary {
                     path: format!("~/{}", path),
                     children,
@@ -56,8 +58,9 @@ pub struct LeavesQuery {}
 pub async fn get_leaves(State(state): State<AppState>, Query(_q): Query<LeavesQuery>) -> impl IntoResponse {
     let reduced_arc = state.reduced.clone();
     let reduced = reduced_arc.read().await;
-    let parents: HashSet<&str> = reduced.item_children.keys().map(|s| s.as_str()).collect();
-    let mut paths: Vec<String> = reduced
+    let content = reduced.public();
+    let parents: HashSet<&str> = content.item_children.keys().map(|s| s.as_str()).collect();
+    let mut paths: Vec<String> = content
         .items
         .iter()
         .filter(|p| !parents.contains(p.as_str()))
@@ -80,8 +83,9 @@ pub async fn get_item(State(state): State<AppState>, Query(q): Query<ItemQuery>)
     let item_str = canonicalize_item(&q.item);
     let item = CanonicalItemUrl(item_str.clone());
     let reduced = reduced_arc.read().await;
+    let content = reduced.public();
 
-    if !reduced.items.contains(&item) {
+    if !content.items.contains(&item) {
         return api_error(
             StatusCode::NOT_FOUND,
             "item not found",
@@ -92,7 +96,7 @@ pub async fn get_item(State(state): State<AppState>, Query(q): Query<ItemQuery>)
     const MAX_ITEM_BODY: usize = 10_000;
     let want_full = q.full.unwrap_or(false);
 
-    let (body, truncated, body_len) = match reduced.item_bodies.get(&item) {
+    let (body, truncated, body_len) = match content.item_bodies.get(&item) {
         None => (None, false, 0),
         Some(raw) => {
             let char_len = raw.chars().count();
@@ -106,6 +110,7 @@ pub async fn get_item(State(state): State<AppState>, Query(q): Query<ItemQuery>)
     };
 
     let threads: Vec<String> = reduced
+        .public()
         .item_threads
         .get(&item)
         .map(|s| s.iter().cloned().collect())
@@ -137,7 +142,8 @@ pub async fn get_recent_votes(
     let limit = q.limit.unwrap_or(25).clamp(1, 200);
 
     let reduced = reduced_arc.read().await;
-    let group = &reduced.ranking_group;
+    let content = reduced.public();
+    let group = &content.ranking_group;
 
     let iter = group.recent_votes.iter();
     let iter: Box<dyn Iterator<Item = _>> = if let Some(parent) = &q.parent {
@@ -154,9 +160,9 @@ pub async fn get_recent_votes(
             a: v.a.as_str().to_string(),
             b: v.b.as_str().to_string(),
             ratio: format!("{}:{}", v.ratio_left, v.ratio_right),
-            actor: Some(format!("@{}", v.actor)),
+            actor: Some(format!("@{}", v.principal)),
             body: v.body.clone(),
-            thread: Some(format!("#{}", v.thread)),
+            thread: Some(v.thread_id.clone()),
         }).collect();
 
     Json(RecentVotesResponse { votes: out }).into_response()
@@ -180,8 +186,9 @@ pub async fn get_matchup(
     let limit = q.limit.unwrap_or(50).clamp(1, 200);
 
     let reduced = reduced_arc.read().await;
+    let content = reduced.public();
 
-    if !reduced.items.contains(&item) {
+    if !content.items.contains(&item) {
         return api_error(
             StatusCode::NOT_FOUND,
             "item not found",
@@ -189,7 +196,7 @@ pub async fn get_matchup(
         );
     }
 
-    let votes: Vec<VoteRow> = reduced
+    let votes: Vec<VoteRow> = content
         .item_votes
         .get(&item)
         .map(|q| {
@@ -200,9 +207,9 @@ pub async fn get_matchup(
                     a: v.a.as_str().to_string(),
                     b: v.b.as_str().to_string(),
                     ratio: format!("{}:{}", v.ratio_left, v.ratio_right),
-                    actor: Some(format!("@{}", v.actor)),
+                    actor: Some(format!("@{}", v.principal)),
                     body: v.body.clone(),
-                    thread: Some(format!("#{}", v.thread)),
+                    thread: Some(v.thread_id.clone()),
                 })
                 .collect()
         })

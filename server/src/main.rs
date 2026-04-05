@@ -29,7 +29,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cfg = AppConfig {
         data_dir: data_dir.clone(),
         event_log_path: event_log_path.clone(),
-        views_path: None,
     };
 
     let state = AppState::new(cfg);

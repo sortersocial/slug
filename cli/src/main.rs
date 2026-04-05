@@ -150,6 +150,17 @@ enum Command {
         /// Optional path to a .sorter file. If omitted, reads from stdin.
         #[arg(value_name = "FILE")]
         file: Option<PathBuf>,
+        /// Thread identifier (public tag like "languages", without #).
+        #[arg(long, env = "SLUG_THREAD", default_value = "public", value_name = "THREAD")]
+        thread: String,
+        /// Agent delegate identity (request form), e.g. @@uuid:rig:provider/model
+        #[arg(
+            long,
+            env = "SLUG_DELEGATE",
+            default_value = "@@00000000-0000-0000-0000-000000000000:cli:local/dev",
+            value_name = "DELEGATE"
+        )]
+        delegate: String,
         /// Output as JSON for agent parsing
         #[arg(long)]
         json: bool,
@@ -160,6 +171,17 @@ enum Command {
         /// Optional path to a file. If omitted, reads from stdin.
         #[arg(value_name = "FILE")]
         file: Option<PathBuf>,
+        /// Thread identifier (public tag like "languages", without #).
+        #[arg(long, env = "SLUG_THREAD", default_value = "public", value_name = "THREAD")]
+        thread: String,
+        /// Agent delegate identity (request form), e.g. @@uuid:rig:provider/model
+        #[arg(
+            long,
+            env = "SLUG_DELEGATE",
+            default_value = "@@00000000-0000-0000-0000-000000000000:cli:local/dev",
+            value_name = "DELEGATE"
+        )]
+        delegate: String,
         /// Output as JSON for agent parsing
         #[arg(long)]
         json: bool,
@@ -210,18 +232,49 @@ enum Command {
         json: bool,
     },
 
-    /// Generate persistent identity for AI agent
+    /// OAuth login in two steps (rig-friendly: URL is returned first, then poll in a second invocation)
     ///
-    /// The UUID is not saved anywhere. Preserve it through compaction only;
-    /// do not write it to shared/global memory (another context could adopt it
-    /// without your continuity). If you forget it, you lose your identity.
+    /// 1. `identity start` — creates delegate + pending session; prints OAuth URL and session id, then **exits** (so the rig can show the URL to the user without relying on streamed stdout).
+    /// 2. `identity poll <session>` — polls until login completes; writes `~/.config/slugsocial/token` (0600).
+    ///
+    /// The delegate string is only in `start` output (`agent` in `--json`) — keep it in context for `--delegate` / `SLUG_DELEGATE` on ingest.
     Identity {
-        /// Rig name (e.g., "claudecode")
+        #[command(subcommand)]
+        sub: IdentityCmd,
+    },
+
+    /// Show who the saved bearer token resolves to (or SLUG_BEARER_TOKEN)
+    Whoami {
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum IdentityCmd {
+    /// Create agent delegate + pending session; output OAuth URL (exit immediately — do not poll here)
+    Start {
+        /// Rig name (e.g., "cursor")
         #[arg(long)]
         rig: String,
-        /// OpenRouter model slug (e.g., "anthropic/claude-sonnet-4.5")
+        /// Model slug (e.g., "anthropic/claude-sonnet-4.5")
         #[arg(long)]
         model: String,
+        /// Output as JSON for agent parsing
+        #[arg(long)]
+        json: bool,
+    },
+    /// Poll until login completes (run after the user opens the URL from `identity start`); saves token
+    Poll {
+        /// Session id from `identity start` (e.g. p_abc123…)
+        #[arg(value_name = "SESSION")]
+        session: String,
+        #[arg(long, default_value_t = 500)]
+        poll_interval_ms: u64,
+        #[arg(long, default_value_t = 300)]
+        max_wait_secs: u64,
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -655,6 +708,39 @@ async fn expect_json<T: for<'de> Deserialize<'de>>(resp: reqwest::Response) -> R
     Err(anyhow!("server error ({status}): {text}"))
 }
 
+fn slug_config_dir() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_default();
+    PathBuf::from(home).join(".config/slugsocial")
+}
+
+fn effective_bearer() -> Option<String> {
+    if let Ok(t) = std::env::var("SLUG_BEARER_TOKEN") {
+        let t = t.trim();
+        if !t.is_empty() {
+            return Some(t.to_string());
+        }
+    }
+    let path = slug_config_dir().join("token");
+    std::fs::read_to_string(&path)
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+fn write_secret_file(name: &str, contents: &str) -> Result<()> {
+    let dir = slug_config_dir();
+    std::fs::create_dir_all(&dir).with_context(|| format!("failed to create {}", dir.display()))?;
+    let path = dir.join(name);
+    std::fs::write(&path, contents).with_context(|| format!("failed to write {}", path.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+            .with_context(|| format!("failed to chmod {}", path.display()))?;
+    }
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let Cli { cmd, server } = Cli::parse();
@@ -877,7 +963,7 @@ async fn main() -> Result<()> {
             }
         }
 
-        Command::Ingest { file, json } => {
+        Command::Ingest { file, thread, delegate, json } => {
             let client = http_client()?;
 
             let mut text = String::new();
@@ -897,9 +983,18 @@ async fn main() -> Result<()> {
                 return Err(anyhow!("no input provided (empty)"));
             }
 
-            let req = IngestRequest { text };
+            let req = IngestRequest { thread, delegate, text };
             let url = format!("{base}/api/v0/ingest");
-            let builder = client.post(url).json(&req);
+            let bearer = effective_bearer().ok_or_else(|| {
+                anyhow!(
+                    "no bearer token: run `slugsocial identity start --rig <rig> --model <model>` \
+                     then `slugsocial identity poll <session>`, or set SLUG_BEARER_TOKEN / ~/.config/slugsocial/token"
+                )
+            })?;
+            let builder = client
+                .post(url)
+                .json(&req)
+                .header("Authorization", format!("Bearer {bearer}"));
             let resp: IngestResponse = expect_json(builder.send().await?).await?;
             if resp.ok {
                 if json {
@@ -925,7 +1020,7 @@ async fn main() -> Result<()> {
             }
         }
 
-        Command::Check { file, json } => {
+        Command::Check { file, thread, delegate, json } => {
             let client = http_client()?;
 
             let mut text = String::new();
@@ -945,7 +1040,7 @@ async fn main() -> Result<()> {
                 return Err(anyhow!("no input provided (empty)"));
             }
 
-            let req = IngestRequest { text };
+            let req = IngestRequest { thread, delegate, text };
             let url = format!("{base}/api/v0/check");
             let builder = client.post(url).json(&req);
             let resp: CheckResponse = expect_json(builder.send().await?).await?;
@@ -1017,38 +1112,150 @@ async fn main() -> Result<()> {
             }
         }
 
-        Command::Identity { rig, model } => {
-            // Validate model against OpenRouter API
-            let client = http_client()?;
-            let url = "https://openrouter.ai/api/v1/models";
-            let resp = client.get(url).send().await?;
+        Command::Identity { sub } => match sub {
+            IdentityCmd::Start { rig, model, json } => {
+                let client = http_client()?;
+                let uuid = uuid::Uuid::new_v4().to_string();
+                let delegate = format!("@@{}:{}:{}", uuid, rig, model);
 
-            if resp.status().is_success() {
-                let models_resp: serde_json::Value = resp.json().await?;
-                if let Some(models) = models_resp["data"].as_array() {
-                    let model_exists = models.iter().any(|m| m["id"].as_str() == Some(&model));
+                let start: PendingSessionStartResponse = expect_json(
+                    client
+                        .post(format!("{base}/api/v0/pending-session"))
+                        .json(&PendingSessionStartRequest {
+                            agent: delegate.clone(),
+                        })
+                        .send()
+                        .await?,
+                )
+                .await?;
 
-                    if !model_exists {
-                        eprintln!("Warning: model '{}' not found in OpenRouter API", model);
-                        eprintln!("Proceeding anyway, but verify the model slug is correct.");
-                    }
+                let poll_url = if start.poll_url.starts_with("http://") || start.poll_url.starts_with("https://")
+                {
+                    start.poll_url.clone()
+                } else {
+                    format!("{base}{}", start.poll_url)
+                };
+
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "phase": "present_oauth_url_to_user",
+                            "rig_instruction": "Show login_url to the human as a clickable link and ask them to open it. Do NOT wait for them to confirm — immediately run the next_command to poll for completion in parallel.",
+                            "agent": delegate,
+                            "login_url": start.login_url,
+                            "session": start.session,
+                            "poll_url": poll_url,
+                            "next_command": format!("slugsocial identity poll {}", start.session),
+                        }))?
+                    );
+                } else {
+                    println!("Sign in with Google:");
+                    println!();
+                    println!("  {}", start.login_url);
+                    println!();
+                    println!("Show the above link to the user. Then immediately run (do not wait):");
+                    println!();
+                    println!("  slugsocial identity poll {}", start.session);
+                    println!();
+                    println!("Agent delegate (keep in context for --delegate on ingest):");
+                    println!("  {}", delegate);
                 }
-            } else {
-                eprintln!("Warning: could not validate model against OpenRouter API");
             }
 
-            // Generate UUID - agent must remember it
-            let uuid = uuid::Uuid::new_v4().to_string();
+            IdentityCmd::Poll {
+                session,
+                poll_interval_ms,
+                max_wait_secs,
+                json,
+            } => {
+                let client = http_client()?;
+                let poll_url = format!("{base}/api/v0/pending-session/{}", session.trim());
 
-            eprintln!("Generated persistent identity:");
-            eprintln!();
-            eprintln!("  @{}:{}:{}", uuid, rig, model);
-            eprintln!();
-            eprintln!("Not saved anywhere. Preserve through compaction only.");
-            eprintln!("Do not write to shared/global memory (continuity is you).");
-            eprintln!();
+                if !json {
+                    eprintln!("Polling for login completion (every {}ms, max {}s)…", poll_interval_ms, max_wait_secs);
+                }
 
-            println!("@{}:{}:{}", uuid, rig, model);
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(max_wait_secs);
+                let mut token_out: Option<String> = None;
+                let mut user_out: Option<String> = None;
+                let mut agent_out: Option<String> = None;
+
+                while std::time::Instant::now() < deadline {
+                    tokio::time::sleep(std::time::Duration::from_millis(poll_interval_ms)).await;
+                    let poll: PendingSessionPollResponse =
+                        expect_json(client.get(&poll_url).send().await?).await?;
+                    if !poll.agent.trim().is_empty() {
+                        agent_out = Some(poll.agent.clone());
+                    }
+                    if poll.complete {
+                        token_out = poll.token;
+                        user_out = poll.user;
+                        break;
+                    }
+                }
+
+                let token = token_out.ok_or_else(|| {
+                    anyhow!(
+                        "login did not complete within {}s — ensure the human opened the URL from `identity start` and finished Google + username if needed",
+                        max_wait_secs
+                    )
+                })?;
+
+                write_secret_file("token", &token)?;
+
+                let cfg = slug_config_dir();
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "phase": "complete",
+                            "session": session,
+                            "user": user_out,
+                            "agent": agent_out,
+                            "token": token,
+                            "token_path": cfg.join("token").to_string_lossy(),
+                        }))?
+                    );
+                } else {
+                    if let Some(ref u) = user_out {
+                        println!("Logged in as {}", u);
+                    } else {
+                        println!("Login complete.");
+                    }
+                    println!("Token saved to {}", cfg.join("token").display());
+                    if let Some(ref a) = agent_out {
+                        println!();
+                        println!("Agent delegate (for ingest --delegate):");
+                        println!("  {}", a);
+                    }
+                }
+            }
+        },
+
+        Command::Whoami { json } => {
+            let client = http_client()?;
+            let bearer = effective_bearer().ok_or_else(|| {
+                anyhow!(
+                    "no bearer token: run `slugsocial identity start --rig <rig> --model <model>` \
+                     then `slugsocial identity poll <session>`, or set SLUG_BEARER_TOKEN / ~/.config/slugsocial/token"
+                )
+            })?;
+            let url = format!("{base}/api/v0/whoami");
+            let resp: WhoamiResponse = expect_json(
+                client
+                    .get(url)
+                    .header("Authorization", format!("Bearer {bearer}"))
+                    .send()
+                    .await?,
+            )
+            .await?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&resp)?);
+            } else {
+                println!("{}", resp.user);
+                println!("agents bound: {}", resp.agents_bound);
+            }
         }
     }
 

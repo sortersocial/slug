@@ -15,6 +15,24 @@ body {
 .age-week   a { color: #ff8c00; }   /* orange:       < 1w  */
 .age-old    a { color: #666; }      /* dim:          >= 1w */
 
+/* Auth form */
+form.auth-form { margin-top: 1.5rem; display: flex; flex-direction: column; gap: 0.6rem; width: fit-content; min-width: 220px; }
+form.auth-form label { font-size: 0.8rem; color: #555; }
+input[type="text"] {
+  background: #0a0a0a;
+  border: 1px solid #333;
+  color: #00ff41;
+  font-family: monospace;
+  font-size: 0.9rem;
+  padding: 0.3rem 0.5rem;
+  width: 100%;
+  box-sizing: border-box;
+  outline: none;
+}
+input[type="text"]:focus { border-color: #00ff41; }
+p.auth-hint { color: #555; font-family: monospace; font-size: 0.75rem; margin: 0; }
+p.auth-error { color: #ff4444; font-family: monospace; font-size: 0.8rem; margin: 0; }
+
 /* Ingest form (poem pattern) */
 .ingest-form-wrap { margin-top: 1.5rem; }
 .ingest-form-wrap summary { cursor: pointer; color: #555; }

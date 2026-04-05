@@ -1,6 +1,6 @@
 use axum::{
     extract::State,
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::IntoResponse,
     Json,
 };
@@ -10,11 +10,15 @@ use std::collections::{HashMap, HashSet};
 
 use crate::{
     dsl,
-    events::{canonicalize_actor, canonicalize_tag, validate_actor_format, Event, Ingest},
+    events::{
+        canonicalize_agent, canonicalize_tag, canonicalize_username, validate_agent_format,
+        AgentBound, Event, Ingest, ThreadCapability, ThreadVisibility,
+    },
     path_types::CanonicalItemUrl,
-    reducer::ReducerState,
+    reducer::{ReducerState, ScopeId},
     state::AppState,
 };
+use super::auth::verify_bearer_principal;
 use super::helpers::{api_error, item_path_for_api, now_ms, resolve_item};
 
 /// Result of validating an ingest document. Shared by post_ingest and post_check.
@@ -22,19 +26,33 @@ use super::helpers::{api_error, item_path_for_api, now_ms, resolve_item};
 pub struct ValidatedIngest {
     pub doc: dsl::Document,
     pub ts: i64,
-    pub actor: String,
-    pub threads: Vec<String>,
     pub raw_text: String,
 }
 
 /// Parse and validate an ingest document against current reduced state.
 /// Returns a validated struct for commit (ingest) or dry-run (check).
 /// Error is (StatusCode, error message, optional hint).
+///
+/// Item existence is checked in `scope` first, then falls back to public.
 pub fn validate_ingest_document(
     reduced: &ReducerState,
     text: &str,
-    require_actor_error: &str,
+    scope: &ScopeId,
 ) -> Result<ValidatedIngest, (StatusCode, String, Option<String>)> {
+    let public_content = reduced.public();
+    // For a private scope, also check items defined there.
+    let scoped_content = match scope {
+        ScopeId::Public => None,
+        _ => reduced.content_for_scope(scope),
+    };
+    let item_exists = |key: &CanonicalItemUrl| {
+        scoped_content.map(|c| c.items.contains(key)).unwrap_or(false)
+            || public_content.items.contains(key)
+    };
+    let body_exists = |key: &CanonicalItemUrl| {
+        scoped_content.map(|c| c.item_bodies.contains_key(key)).unwrap_or(false)
+            || public_content.item_bodies.contains_key(key)
+    };
     let doc = match dsl::parse_full(text) {
         Ok(d) => d,
         Err(e) => {
@@ -47,29 +65,10 @@ pub fn validate_ingest_document(
     };
 
     let ts = now_ms();
-    let mut current_actor: Option<String> = None;
-    let mut threads_seen: Vec<String> = Vec::new();
     let mut defined_in_doc: HashSet<String> = HashSet::new();
 
     for s in &doc.statements {
         match s {
-            dsl::Stmt::Actor { name } => {
-                if let Err(msg) = validate_actor_format(name) {
-                    return Err((
-                        StatusCode::BAD_REQUEST,
-                        "invalid actor format".to_string(),
-                        Some(msg),
-                    ));
-                }
-                let a = canonicalize_actor(name);
-                current_actor = Some(a.clone());
-            }
-            dsl::Stmt::Hashtag { name, .. } => {
-                let t = canonicalize_tag(name);
-                if !threads_seen.contains(&t) {
-                    threads_seen.push(t);
-                }
-            }
             dsl::Stmt::Item { title, body } => {
                 let item = match resolve_item(title) {
                     Ok(v) => v,
@@ -118,7 +117,7 @@ pub fn validate_ingest_document(
                     .into_iter()
                     .filter(|it| {
                         let key = CanonicalItemUrl((*it).clone());
-                        !defined_in_doc.contains(*it) && !reduced.items.contains(&key)
+                        !defined_in_doc.contains(*it) && !item_exists(&key)
                     })
                     .map(|it| item_path_for_api(it))
                     .collect();
@@ -136,7 +135,7 @@ pub fn validate_ingest_document(
                     .into_iter()
                     .filter(|it| {
                         let key = CanonicalItemUrl((*it).clone());
-                        !defined_in_doc.contains(*it) && !reduced.item_bodies.contains_key(&key)
+                        !defined_in_doc.contains(*it) && !body_exists(&key)
                     })
                     .map(|it| item_path_for_api(it))
                     .collect();
@@ -155,42 +154,9 @@ pub fn validate_ingest_document(
         }
     }
 
-    let actor = current_actor.ok_or_else(|| {
-        (
-            StatusCode::BAD_REQUEST,
-            require_actor_error.to_string(),
-            Some("add `@yourname` at the start of your document".to_string()),
-        )
-    })?;
-
-    let threads: Vec<String> = threads_seen;
-    if threads.len() > 1 {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "ingest may declare only one thread".to_string(),
-            Some(format!(
-                "found multiple thread declarations: {}",
-                threads
-                    .iter()
-                    .map(|t| format!("#{t}"))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )),
-        ));
-    }
-    if threads.is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "ingest requires at least one #tag".to_string(),
-            Some("declare a thread with #tag (e.g. #sorting-hat) or a quoted title line (e.g. \"Sorting Hat\" { ... })".to_string()),
-        ));
-    }
-
     Ok(ValidatedIngest {
         doc,
         ts,
-        actor,
-        threads,
         raw_text: text.to_string(),
     })
 }
@@ -265,22 +231,97 @@ fn compute_scope_rank_changes(
 
 pub async fn post_ingest(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(req): Json<IngestRequest>,
 ) -> impl IntoResponse {
     let reduced_arc = state.reduced.clone();
     let event_log = state.event_log.clone();
     let reduced = reduced_arc.read().await;
-    let v = match validate_ingest_document(
-        &reduced,
-        &req.text,
-        "ingest requires @actor declaration",
-    ) {
-        Ok(x) => x,
-        Err((status, msg, hint)) => return api_error(status, msg, hint).into_response(),
+
+    if let Err(msg) = validate_agent_format(&req.delegate) {
+        drop(reduced);
+        return api_error(StatusCode::BAD_REQUEST, "invalid delegate format", Some(msg)).into_response();
+    }
+    let delegate = canonicalize_agent(&req.delegate);
+    let thread_id = canonicalize_tag(&req.thread);
+
+    let principal = match verify_bearer_principal(&headers, &reduced) {
+        Ok(u) => u,
+        Err((st, msg)) => {
+            drop(reduced);
+            return api_error(st, msg, None).into_response();
+        }
     };
+
+    // Determine thread visibility and scope for item lookups and cap enforcement.
+    let visibility = reduced.threads.get(&thread_id)
+        .map(|t| t.visibility)
+        .unwrap_or(ThreadVisibility::Public);
+    let scope = match visibility {
+        ThreadVisibility::Public => ScopeId::Public,
+        ThreadVisibility::Private => ScopeId::Thread(thread_id.clone()),
+    };
+
+    let v = match validate_ingest_document(&reduced, &req.text, &scope) {
+        Ok(x) => x,
+        Err((status, msg, hint)) => {
+            drop(reduced);
+            return api_error(status, msg, hint).into_response();
+        }
+    };
+
+    // Enforce capabilities for private threads.
+    if matches!(visibility, ThreadVisibility::Private) {
+        let mut required: HashSet<ThreadCapability> = HashSet::new();
+        required.insert(ThreadCapability::View);
+        for stmt in &v.doc.statements {
+            match stmt {
+                dsl::Stmt::Vote { .. }  => { required.insert(ThreadCapability::Vote); }
+                dsl::Stmt::Item { .. }  => { required.insert(ThreadCapability::AddItem); }
+                dsl::Stmt::Prose { .. } => { required.insert(ThreadCapability::Post); }
+            }
+        }
+        let missing: Vec<_> = required.iter()
+            .filter(|cap| !reduced.user_has_cap(&thread_id, &principal, **cap))
+            .collect();
+        if !missing.is_empty() {
+            drop(reduced);
+            return api_error(StatusCode::FORBIDDEN, "insufficient capabilities for this thread", None).into_response();
+        }
+    }
+
+    match reduced.agent_bindings.get(&delegate) {
+        Some(u) if u != &principal => {
+            drop(reduced);
+            return api_error(
+                StatusCode::FORBIDDEN,
+                "delegate already bound to another user",
+                None,
+            )
+            .into_response();
+        }
+        _ => {}
+    }
+    let need_agent_bind = reduced.agent_bindings.get(&delegate).is_none();
     drop(reduced);
 
     let mut events_appended: usize = 0;
+
+    if need_agent_bind {
+        let ab = Event::AgentBound(AgentBound {
+            ts: now_ms(),
+            agent: delegate.clone(),
+            username: principal.clone(),
+        });
+        if let Err(err) = event_log.append(&ab).await {
+            return api_error(StatusCode::INTERNAL_SERVER_ERROR, format!("{err}"), None);
+        }
+        events_appended += 1;
+        {
+            let mut reduced = reduced_arc.write().await;
+            reduced.apply_event(ab);
+        }
+    }
 
     // Collect parent scopes for all voted items so we can compute ranking deltas.
     let voted_parent_scopes: Vec<CanonicalItemUrl> = {
@@ -302,9 +343,10 @@ pub async fn post_ingest(
     let pre_rankings: HashMap<CanonicalItemUrl, crate::scope_rank::ChildrenRankings> =
         if !voted_parent_scopes.is_empty() {
             let reduced = reduced_arc.read().await;
+            let content = reduced.public();
             voted_parent_scopes
                 .iter()
-                .map(|p| (p.clone(), crate::scope_rank::build_children_rankings(&reduced, p)))
+                .map(|p| (p.clone(), crate::scope_rank::build_children_rankings(content, p)))
                 .collect()
         } else {
             HashMap::new()
@@ -314,7 +356,9 @@ pub async fn post_ingest(
         ts: v.ts,
         id: uuid::Uuid::new_v4().to_string(),
         raw: v.raw_text.clone(),
-        actor: v.actor.clone(),
+        principal: principal.clone(),
+        delegate: delegate.clone(),
+        thread_id: thread_id.clone(),
     });
 
     if let Err(err) = event_log.append(&ingest_event).await {
@@ -322,7 +366,6 @@ pub async fn post_ingest(
     }
     events_appended += 1;
 
-    let actor_for_stream = v.actor.clone();
     {
         let mut reduced = reduced_arc.write().await;
         reduced.apply_event(ingest_event);
@@ -331,11 +374,12 @@ pub async fn post_ingest(
     // Snapshot rankings after the event and compute per-scope deltas.
     let ranking_changes: Vec<ScopeRankChanges> = if !voted_parent_scopes.is_empty() {
         let reduced = reduced_arc.read().await;
+        let content = reduced.public();
         voted_parent_scopes
             .iter()
             .filter_map(|p| {
                 let before = pre_rankings.get(p)?;
-                let after = crate::scope_rank::build_children_rankings(&reduced, p);
+                let after = crate::scope_rank::build_children_rankings(content, p);
                 compute_scope_rank_changes(p.as_str(), before, &after)
             })
             .collect()
@@ -343,27 +387,14 @@ pub async fn post_ingest(
         vec![]
     };
 
-    let _ = state.stream_tx.send(crate::state::StreamEvent {
-        ts: v.ts,
-        actor: actor_for_stream,
-        tags: v.threads.iter().map(|t| format!("#{t}")).collect(),
-        snippet: v.raw_text.chars().take(200).collect(),
-    });
-    let html = crate::html::thread_feed_html(&state).await;
-    let _ = state.html_tx.send(crate::state::HtmlFragment {
-        selector: "#thread-feed".to_string(),
-        html,
-    });
-
-    let primary_thread = v.threads.first().cloned().unwrap_or_else(|| "untagged".to_string());
     Json(IngestResponse {
         ok: true,
-        threads: v.threads.iter().map(|t| format!("#{t}")).collect(),
+        threads: vec![format!("#{}", thread_id)],
         events_appended,
         next: NextMoves {
             pair: "npx slugsocial pair".to_string(),
             rank: "npx slugsocial rank".to_string(),
-            web: format!("https://slug.social/t/{}", primary_thread),
+            web: format!("https://slug.social/t/{}", thread_id),
         },
         ranking_changes,
     }).into_response()
@@ -375,23 +406,27 @@ pub async fn post_check(
 ) -> impl IntoResponse {
     let reduced_arc = state.reduced.clone();
     let reduced = reduced_arc.read().await;
-    let v = match validate_ingest_document(
-        &reduced,
-        &req.text,
-        "check requires @actor declaration",
-    ) {
+    // check is auth-free; always validates against public scope.
+    let v = match validate_ingest_document(&reduced, &req.text, &ScopeId::Public) {
         Ok(x) => x,
         Err((status, msg, hint)) => return api_error(status, msg, hint).into_response(),
     };
-
-    // check is a true dry-run: no auth required, no registration, nothing persisted.
     drop(reduced);
+
+    if let Err(msg) = validate_agent_format(&req.delegate) {
+        return api_error(StatusCode::BAD_REQUEST, "invalid delegate format", Some(msg)).into_response();
+    }
+    let delegate = canonicalize_agent(&req.delegate);
+    let thread_id = canonicalize_tag(&req.thread);
+    let principal = canonicalize_username("placeholder");
 
     let event = Event::Ingest(Ingest {
         ts: v.ts,
         id: uuid::Uuid::new_v4().to_string(),
         raw: v.raw_text.clone(),
-        actor: v.actor.clone(),
+        principal,
+        delegate,
+        thread_id: thread_id.clone(),
     });
 
     let mut simulated = { reduced_arc.read().await.clone() };
@@ -417,7 +452,7 @@ pub async fn post_check(
     let rankings: Vec<slug_types::CheckScopeRanking> = voted_parents
         .iter()
         .map(|parent| {
-            let scoped = crate::scope_rank::build_children_rankings(&simulated, parent);
+            let scoped = crate::scope_rank::build_children_rankings(simulated.public(), parent);
             let components: Vec<RankComponent> = scoped
                 .component_rankings
                 .into_iter()
@@ -446,16 +481,14 @@ pub async fn post_check(
         })
         .collect();
 
-    let primary_thread = v.threads.first().cloned().unwrap_or_else(|| "untagged".to_string());
-
     Json(CheckResponse {
         ok: true,
-        threads: v.threads.iter().map(|t| format!("#{t}")).collect(),
+        threads: vec![format!("#{}", thread_id)],
         rankings,
         next: vec![
             "npx slugsocial ingest <file.sorter>".to_string(),
             "npx slugsocial threads".to_string(),
-            format!("https://slug.social/t/{}", primary_thread),
+            format!("https://slug.social/t/{}", thread_id),
         ],
     }).into_response()
 }

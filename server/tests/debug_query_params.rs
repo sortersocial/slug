@@ -15,7 +15,6 @@ async fn debug_query_parses_repeated_open_array_and_decodes() {
     let state = AppState::new(AppConfig {
         data_dir,
         event_log_path,
-        views_path: Some(format!("{}/views.json", tmp.path().to_string_lossy())),
     });
 
     let app = slugsocial_server::create_app(state);

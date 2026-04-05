@@ -9,6 +9,7 @@ use serde::Deserialize;
 
 use crate::{
     api::{validate_ingest_document, resolve_item},
+    reducer::ScopeId,
     state::AppState,
 };
 
@@ -82,7 +83,7 @@ pub async fn editor_check(
     Form(form): Form<EditorCheckForm>,
 ) -> impl IntoResponse {
     let reduced = state.reduced.read().await;
-    let result = validate_ingest_document(&reduced, &form.text, "add @actor at the top");
+    let result = validate_ingest_document(&reduced, &form.text, &ScopeId::Public);
 
     let (status_html, results_html) = match result {
         Err((_code, msg, hint)) => {
@@ -108,7 +109,9 @@ pub async fn editor_check(
                 ts: crate::api::now_ms(),
                 id: uuid::Uuid::new_v4().to_string(),
                 raw: form.text.clone(),
-                actor: v.actor.clone(),
+                principal: String::new(),
+                delegate: String::new(),
+                thread_id: String::new(),
             });
             let mut simulated = { reduced_arc.read().await.clone() };
             simulated.apply_event(event);
@@ -132,17 +135,13 @@ pub async fn editor_check(
             let status = html! {
                 span class="editor-ok" {
                     "valid"
-                    @if !v.threads.is_empty() {
-                        " · " (v.threads.iter().map(|t| format!("#{t}")).collect::<Vec<_>>().join(", "))
-                    }
-                    " · " (v.actor)
                 }
             };
 
             let results = html! {
                 div id="editor-results" {
                     @for parent in &voted_parents {
-                        @let scoped = crate::scope_rank::build_children_rankings(&simulated, parent);
+                        @let scoped = crate::scope_rank::build_children_rankings(simulated.public(), parent);
                         @let label = format!("/{}", parent.tilde_tail().unwrap_or(parent.as_str()));
                         h3 { "ranking: " (label) }
                         @for comp in &scoped.component_rankings {

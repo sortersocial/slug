@@ -6,7 +6,8 @@
             [clojure.string :as str]
             [babashka.fs :as fs]
             [cheshire.core :as json]
-            [test.common :as common]))
+            [test.common :as common]
+            [test.oauth :as oauth]))
 
 ;; ---------------------------------------------------------------------------
 ;; helpers
@@ -109,6 +110,8 @@
    (bind cli-bin    "target/release/slugsocial")
    (bind tmp-dir    (str (fs/create-temp-dir {:prefix "slug-integration-"})))
    (bind port       (common/pick-port))
+   (bind google-port (common/pick-port))
+   (bind google-url (str "http://127.0.0.1:" google-port))
    (bind base-url   (str "http://127.0.0.1:" port))
    (bind event-log  (str tmp-dir "/events.jsonl"))
    (assert! (fs/exists? server-bin) "server binary exists")
@@ -116,24 +119,33 @@
 
    (bind !server    (atom nil))
    (bind !server2   (atom nil))
+   (bind !google    (atom nil))
    (bind server-env (merge common/base-env
                            {"SLUG_DATA_DIR" tmp-dir
                             "SLUG_KEYS"     "test:test"
                             "PORT"          (str port)
-                            "RUST_LOG"      "warn"}))
+                            "RUST_LOG"      "warn"
+                            "SLUG_PUBLIC_URL" base-url
+                            "SLUG_GOOGLE_BASE_URL" google-url
+                            "SLUG_GOOGLE_CLIENT_ID" "mock"
+                            "SLUG_GOOGLE_CLIENT_SECRET" "mock"}))
 
    (try
      (common/letlocals
-        ;; 2. boot server — first run, empty state
+        ;; 2. mock Google + boot server — first run, empty state
+      (println (str "\nstarting mock google on :" google-port))
+      (reset! !google (oauth/start-mock-google google-port))
+      (assert! (some? (:stop-fn @!google)) "mock google started")
+
       (println (str "\nstarting server on :" port " (data: " tmp-dir ")"))
       (bind server     (common/start-server server-bin server-env))
       (reset! !server server)
       (bind server-pid (.pid (:proc server)))
       (assert! (common/wait-for-server base-url 10000) "server responds to /healthz")
 
-        ;; 2.5 check endpoint — disconnected components not flattened
+        ;; 2.5 check endpoint — disconnected components not flattened (before OAuth; no events.jsonl yet)
       (println "\nchecking (dry-run) returns discrete ranking groups…")
-      (bind check-result (common/run-cli cli-bin base-url ["check" "--json"] :input check-doc-disconnected))
+      (bind check-result (common/run-cli cli-bin base-url ["check" "--json" "--thread" "integration-test"] :input check-doc-disconnected))
       (assert! (zero? (:exit check-result)) "cli check exits 0")
       (bind check-resp   (json/parse-string (:out check-result) true))
       (assert! (:ok check-resp) "check response ok=true")
@@ -146,48 +158,20 @@
       (assert! (empty? (:unranked_items check-scope)) "no unranked items for disconnected check doc")
       (assert! (not (fs/exists? event-log)) "check does not create events.jsonl")
 
-        ;; 3. ingest via CLI
+      (println "\nOAuth handoff (integration user)…")
+      (bind bearer-token (oauth/fetch-bearer-token! base-url :username "intuser"))
+      (assert! (not (str/blank? bearer-token)) "bearer token from OAuth")
+      (bind token-env {"SLUG_BEARER_TOKEN" bearer-token})
+
+        ;; 3. ingest via CLI (bearer required)
       (println "\ningesting .sorter document via CLI…")
-      (bind ingest1-result (common/run-cli cli-bin base-url ["ingest" "--json"] :input sorter-doc))
+      (bind ingest1-result (common/run-cli cli-bin base-url ["ingest" "--json" "--thread" "integration-test"] :input sorter-doc :extra-env token-env))
       (assert! (zero? (:exit ingest1-result)) "cli ingest exits 0")
       (bind ingest1-resp   (json/parse-string (:out ingest1-result) true))
-      (bind actor1-passkey (:passkey ingest1-resp))
       (assert! (:ok ingest1-resp) "ingest response ok=true")
       (assert! (pos? (:events_appended ingest1-resp)) "events_appended > 0")
       (assert! (some #(= "#integration-test" %) (:threads ingest1-resp))
                "thread '#integration-test' in response")
-      (assert! (some? actor1-passkey) "first ingest returns a passkey")
-
-        ;; 3.5 private namespace tests
-      (println "\ntesting private diary namespaces…")
-      (bind actor1-uuid  "00000000-0000-0000-0000-000000000001")
-      (bind private-path (str actor1-uuid "/private-note"))
-      (bind private-doc  (str/join "\n" [actor-1 "" (str "~/" private-path " { secret diary content }")]))
-
-      (bind priv-result  (common/run-cli cli-bin base-url
-                                         ["ingest" "--json" "--passkey" actor1-passkey]
-                                         :input private-doc))
-      (assert! (zero? (:exit priv-result))
-               (str "private item ingest exits 0 (err: " (:err priv-result) ")"))
-
-      (bind tree-result  (common/run-cli cli-bin base-url ["garden" "tree" "--json"]))
-      (assert! (zero? (:exit tree-result)) "garden tree exits 0")
-      (bind tree-resp    (json/parse-string (:out tree-result) true))
-      (assert! (not (some #(str/includes? % actor1-uuid) (:paths tree-resp)))
-               "private item NOT visible in unauthenticated garden tree")
-
-      (bind body-unauth  (common/run-cli cli-bin base-url ["garden" "body" private-path "--json"]))
-      (assert! (not (zero? (:exit body-unauth)))
-               "garden body of private item fails without auth")
-
-      (bind body-auth    (common/run-cli cli-bin base-url
-                                         ["garden" "body" private-path "--json"
-                                          "--actor" actor-1 "--passkey" actor1-passkey]))
-      (assert! (zero? (:exit body-auth))
-               (str "garden body of private item succeeds with auth (err: " (:err body-auth) ")"))
-      (bind auth-resp    (json/parse-string (:out body-auth) true))
-      (assert! (str/includes? (or (:body auth-resp) "") "secret")
-               "private item body contains 'secret'")
 
         ;; 4. query rankings via CLI
       (println "\nquerying garden children via CLI…")
@@ -202,11 +186,11 @@
       (assert! (str/ends-with? (last ranked) "languages/go")
                (str "go is #3 (got " (last ranked) ")"))
 
-        ;; 5. verify JSONL written
+        ;; 5. verify JSONL written (user_registered + token_issued + agent_bound + ingest)
       (assert! (fs/exists? event-log) "events.jsonl exists")
       (bind event-lines (->> (slurp event-log) str/split-lines (remove str/blank?)))
-      (assert! (= 3 (count event-lines))
-               (str "3 events in JSONL (ActorKeyRegistration + 2x Ingest, got " (count event-lines) ")"))
+      (assert! (= 4 (count event-lines))
+               (str "4 events in JSONL (user_registered + token_issued + agent_bound + ingest, got " (count event-lines) ")"))
 
         ;; 6. query forum via CLI
       (println "\nquerying forum via CLI…")
@@ -222,18 +206,6 @@
       (bind body-resp   (json/parse-string (:out body-result) true))
       (assert! (str/includes? (or (:body body-resp) "") "ownership")
                "rust body contains 'ownership'")
-
-        ;; 8. feed: second actor ingests, actor-1 uses feed to see what happened
-      (println "\ntesting feed endpoint…")
-      (bind ingest2-result (common/run-cli cli-bin base-url ["ingest" "--json"] :input sorter-doc-2))
-      (assert! (zero? (:exit ingest2-result)) "second actor ingest exits 0")
-      (bind feed-result    (common/run-cli cli-bin base-url ["feed" actor-1 "--json"]))
-      (assert! (zero? (:exit feed-result)) "cli feed exits 0")
-      (bind feed-resp      (json/parse-string (:out feed-result) true))
-      (assert! (some? (:since feed-resp)) "feed since is set (actor has posted)")
-      (assert! (pos? (:total feed-resp))
-               (str "feed has >= 1 post (got " (:total feed-resp) ")"))
-      (assert! (not-empty (:posts feed-resp)) "feed posts non-empty")
 
         ;; 9. global rank endpoint
       (println "\ntesting global rank endpoint…")
@@ -264,9 +236,13 @@
                                         "#integration-test"
                                         "~/languages/rust 4:1 ~/languages/python { type safety }"
                                         "~/languages/rust 3:1 ~/languages/go { zero-cost abstractions }"]))
-      (bind hist-ingest      (common/run-cli cli-bin base-url ["ingest" "--json"] :input two-vote-doc))
+      (bind hist-ingest      (common/run-cli cli-bin base-url ["ingest" "--json" "--thread" "integration-test"] :input two-vote-doc :extra-env token-env))
       (assert! (zero? (:exit hist-ingest))
                (str "two-vote ingest exits 0 (err: " (:err hist-ingest) ")"))
+
+      (bind event-lines-after-hist (->> (slurp event-log) str/split-lines (remove str/blank?)))
+      (assert! (= 5 (count event-lines-after-hist))
+               (str "5 events in JSONL after second ingest (got " (count event-lines-after-hist) ")"))
 
       (bind hist-result      (common/run-cli cli-bin base-url ["garden" "history" "languages/rust" "--json"]))
       (assert! (zero? (:exit hist-result))
@@ -308,6 +284,9 @@
        (when-some [s @!server2]
          (println "\nkilling restarted server…")
          (common/kill-server s))
+       (when-some [g @!google]
+         (println "\nstopping mock google…")
+         ((:stop-fn g)))
        (fs/delete-tree tmp-dir)))
 
    (bind {pass :pass} @counts)

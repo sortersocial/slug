@@ -266,7 +266,7 @@ fn ranked_children_public(
             .unwrap_or_else(CanonicalItemUrl::ontology_root)
     };
     let rankings: ChildrenRankings =
-        crate::scope_rank::build_children_rankings(reduced, &parent_can);
+        crate::scope_rank::build_children_rankings(reduced.public(), &parent_can);
     let mut out: Vec<CanonicalItemUrl> = Vec::new();
     let mut seen: std::collections::HashSet<CanonicalItemUrl> = std::collections::HashSet::new();
 
@@ -286,7 +286,7 @@ fn ranked_children_public(
     // (so they don't appear in any ranking). Example: ~/languages exists only as
     // a parent of ~/languages/rust etc., never ranked at the root level.
     let phantom_parent_prefix = format!("{}/", parent_can.as_str());
-    for key in reduced.item_children.keys() {
+    for key in reduced.public().item_children.keys() {
         let key_str = key.as_str();
         if !key_str.starts_with(&phantom_parent_prefix) {
             continue;
@@ -336,6 +336,7 @@ fn render_tree_node(
 
     let label = path.last_segment().to_string();
     let has_children = reduced
+        .public()
         .item_children
         .get(path_str)
         .map(|s| !s.is_empty())
@@ -414,7 +415,7 @@ fn render_detail_pane(
         };
     };
     let sel_str = sel.as_str();
-    let body = reduced.item_bodies.get(sel).cloned();
+    let body = reduced.public().item_bodies.get(sel).cloned();
     html! {
         div id="detail-pane" {
             h3 { "selected" }
@@ -709,7 +710,9 @@ mod tests {
             ts: 1,
             id: "test-ingest".to_string(),
             raw: raw.to_string(),
-            actor: "tester".to_string(),
+            principal: "tester".to_string(),
+            delegate: String::new(),
+            thread_id: String::new(),
         })
     }
 

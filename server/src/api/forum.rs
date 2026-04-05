@@ -72,7 +72,7 @@ pub async fn get_thread(State(state): State<AppState>, Query(q): Query<ThreadDet
                     id: ing.id.clone(),
                     index: idx,
                     ts: ing.ts,
-                    actor: ing.actor.clone(),
+                    actor: format!("@{}", ing.principal),
                     body: ing.raw.clone(),
                     truncated: false,
                 }],
@@ -99,7 +99,7 @@ pub async fn get_thread(State(state): State<AppState>, Query(q): Query<ThreadDet
         .filter_map(|(idx, id)| reduced.ingests_by_id.get(&id).map(|ing| (idx, ing.clone())))
         .filter(|(_, ing)| q.since.map_or(true, |s| ing.ts >= s))
         .filter(|(_, ing)| q.before.map_or(true, |b| ing.ts < b))
-        .filter(|(_, ing)| actor_prefix.is_empty() || ing.actor.to_lowercase().starts_with(&actor_prefix))
+        .filter(|(_, ing)| actor_prefix.is_empty() || ing.principal.to_lowercase().starts_with(&actor_prefix))
         .collect();
 
     let total = filtered.len();
@@ -119,7 +119,7 @@ pub async fn get_thread(State(state): State<AppState>, Query(q): Query<ThreadDet
                 id: ing.id.clone(),
                 index: idx,
                 ts: ing.ts,
-                actor: ing.actor.clone(),
+                actor: format!("@{}", ing.principal),
                 body,
                 truncated,
             }
