@@ -145,7 +145,9 @@ pub async fn get_auth_callback(Query(q): Query<AuthCallbackQuery>, State(state):
         }
     }
 
-    let google_base = std::env::var("SLUG_GOOGLE_BASE_URL").unwrap_or_else(|_| "https://oauth2.googleapis.com".to_string());
+    // SLUG_GOOGLE_BASE_URL overrides both endpoints (used by tests with a local mock).
+    // In production, token and userinfo live on different Google hosts.
+    let google_base_override = std::env::var("SLUG_GOOGLE_BASE_URL").ok();
     let client_id = std::env::var("SLUG_GOOGLE_CLIENT_ID").unwrap_or_else(|_| "dev".to_string());
     let client_secret = std::env::var("SLUG_GOOGLE_CLIENT_SECRET").unwrap_or_else(|_| "dev".to_string());
     let public_url = std::env::var("SLUG_PUBLIC_URL").unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
@@ -156,7 +158,10 @@ pub async fn get_auth_callback(Query(q): Query<AuthCallbackQuery>, State(state):
     struct TokenResp {
         access_token: String,
     }
-    let token_url = format!("{google_base}/token");
+    let token_url = match &google_base_override {
+        Some(base) => format!("{base}/token"),
+        None => "https://oauth2.googleapis.com/token".to_string(),
+    };
     let client = reqwest::Client::new();
     let tr: TokenResp = match client
         .post(token_url)
@@ -182,7 +187,10 @@ pub async fn get_auth_callback(Query(q): Query<AuthCallbackQuery>, State(state):
     struct UserInfoResp {
         sub: String,
     }
-    let userinfo_url = format!("{google_base}/userinfo");
+    let userinfo_url = match &google_base_override {
+        Some(base) => format!("{base}/userinfo"),
+        None => "https://openidconnect.googleapis.com/v1/userinfo".to_string(),
+    };
     let ui: UserInfoResp = match client
         .get(userinfo_url)
         .bearer_auth(tr.access_token)
