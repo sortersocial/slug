@@ -156,6 +156,7 @@ pub enum ThreadVisibility {
 #[serde(rename_all = "snake_case")]
 pub enum ThreadCapability {
     View,
+    Post,
     Vote,
     AddItem,
     Manage,

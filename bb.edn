@@ -47,12 +47,14 @@
                                            "RUST_LOG"      "info"})})))}
 
   test
-  {:doc "Full test suite: integration + auth"
+  {:doc "Full test suite: integration + auth + grants"
    :requires ([test.integration :as integration]
-              [test.auth :as auth])
+              [test.auth :as auth]
+              [test.grants :as grants])
    :task (do
            (integration/integration)
-           (auth/auth-test))}
+           (auth/auth-test)
+           (grants/grants-test))}
 
   perf
   {:doc "Performance test: concurrent HTTP requests to detect blocking I/O"

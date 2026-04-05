@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use serde::{Deserialize, Serialize};
 
-use crate::events::{canonicalize_agent, canonicalize_tag, canonicalize_username, Event, Ingest};
+use crate::events::{canonicalize_agent, canonicalize_tag, canonicalize_username, Event, Ingest, ThreadCapability};
 use crate::path_types::CanonicalItemUrl;
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
@@ -205,6 +205,8 @@ pub struct ReducerState {
     /// All ingest IDs in chronological order (oldest first). Used by the feed endpoint.
     pub ingests_ordered: Vec<String>,
 
+    /// thread_id -> username -> set of capabilities
+    pub grants: HashMap<String, HashMap<String, HashSet<ThreadCapability>>>,
 }
 
 impl ReducerState {
@@ -513,7 +515,32 @@ impl ReducerState {
 
                 nav!(self.actor_last_post_ts, keypath(ing.principal.clone()), setval(ing.ts));
             }
-            _ => {}
+            Event::GrantAdded(ga) => {
+                let caps = self.grants
+                    .entry(ga.thread_id)
+                    .or_default()
+                    .entry(canonicalize_username(&ga.username))
+                    .or_default();
+                for cap in ga.capabilities {
+                    caps.insert(cap);
+                }
+            }
+            Event::GrantRevoked(gr) => {
+                if let Some(thread_grants) = self.grants.get_mut(&gr.thread_id) {
+                    let username = canonicalize_username(&gr.username);
+                    if let Some(caps) = thread_grants.get_mut(&username) {
+                        for cap in &gr.capabilities {
+                            caps.remove(cap);
+                        }
+                        if caps.is_empty() {
+                            thread_grants.remove(&username);
+                        }
+                    }
+                    if thread_grants.is_empty() {
+                        self.grants.remove(&gr.thread_id);
+                    }
+                }
+            }
         }
     }
 }
@@ -532,6 +559,7 @@ impl Default for ReducerState {
             threads: HashMap::new(),
             actor_last_post_ts: HashMap::new(),
             ingests_ordered: Vec::new(),
+            grants: HashMap::new(),
         }
     }
 }
