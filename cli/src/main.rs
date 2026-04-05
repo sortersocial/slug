@@ -1146,7 +1146,7 @@ async fn main() -> Result<()> {
                         "{}",
                         serde_json::to_string_pretty(&serde_json::json!({
                             "phase": "present_oauth_url_to_user",
-                            "rig_instruction": "Show login_url to the human. When they have finished signing in (and username choice if first-time), run identity poll with the session id.",
+                            "rig_instruction": "Show login_url to the human as a clickable link and ask them to open it. Do NOT wait for them to confirm — immediately run the next_command to poll for completion in parallel.",
                             "agent": delegate,
                             "login_url": start.login_url,
                             "session": start.session,
@@ -1155,14 +1155,15 @@ async fn main() -> Result<()> {
                         }))?
                     );
                 } else {
-                    println!("{}", poll_cli_hint);
+                    println!("Sign in with Google:");
                     println!();
-                    println!("Present this URL to the human (Google sign-in):");
                     println!("  {}", start.login_url);
                     println!();
-                    println!("Session: {}", start.session);
+                    println!("Show the above link to the user. Then immediately run (do not wait):");
                     println!();
-                    println!("Agent delegate (keep in context for ingest --delegate):");
+                    println!("  slugsocial identity poll {}", start.session);
+                    println!();
+                    println!("Agent delegate (keep in context for --delegate on ingest):");
                     println!("  {}", delegate);
                 }
             }

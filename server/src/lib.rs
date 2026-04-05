@@ -2,6 +2,8 @@
 pub mod paths;
 pub mod api;
 pub mod dsl;
+// html module temporarily disabled — view layer being fixed to compile against refactored reducer
+// pub mod html;
 pub mod event_log;
 pub mod events;
 pub mod middleware;

@@ -207,6 +207,51 @@ form.ingest-form textarea:focus {
 }
 
 /* ----------------------------------------------------------------
+   AUTH FORM — choose username, complete page
+   ---------------------------------------------------------------- */
+form.auth-form {
+  background: var(--g2);
+  border: var(--bv-lg) solid;
+  border-color: var(--hi) var(--lo) var(--lo) var(--hi);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 12px;
+  padding: 12px;
+  width: fit-content;
+  min-width: 240px;
+}
+form.auth-form label {
+  color: var(--ui);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+input[type="text"] {
+  background: var(--g1);
+  border: var(--bv) solid;
+  border-color: var(--lo) var(--hi) var(--hi) var(--lo);
+  color: var(--signal);
+  font-size: 14px;
+  padding: 4px 8px;
+  width: 100%;
+  outline: none;
+}
+input[type="text"]:focus {
+  border-color: var(--lo) #666 #666 var(--lo);
+}
+p.auth-hint {
+  color: var(--meta);
+  font-size: 11px;
+  margin: 2px 0 0;
+}
+p.auth-error {
+  color: #cc5555;
+  font-size: 12px;
+  margin: 4px 0 0;
+}
+
+/* ----------------------------------------------------------------
    BUTTONS — raised, press on :active
    ---------------------------------------------------------------- */
 button[type="submit"] {

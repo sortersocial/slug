@@ -229,6 +229,7 @@ pub async fn get_auth_callback(Query(q): Query<AuthCallbackQuery>, State(state):
 #[derive(Debug, Deserialize)]
 pub struct ChooseUsernameQuery {
     pub session: String,
+    pub error: Option<String>,
 }
 
 pub async fn get_choose_username(Query(q): Query<ChooseUsernameQuery>, State(state): State<AppState>) -> impl IntoResponse {
@@ -237,15 +238,13 @@ pub async fn get_choose_username(Query(q): Query<ChooseUsernameQuery>, State(sta
     if !sessions_read.contains_key(&q.session) {
         return api_error(StatusCode::NOT_FOUND, "unknown session", None).into_response();
     }
-    // Keep HTML minimal for now.
-    (
-        StatusCode::OK,
-        format!(
-            "choose username\n\nPOST /auth/choose-username with form fields: session, username\nsession={}",
-            q.session
-        ),
-    )
-        .into_response()
+    drop(sessions_read);
+    // TODO: replace with choose_username_page() once html module is re-enabled
+    (StatusCode::OK, format!(
+        "choose username\n\nPOST /auth/choose-username\nsession={}\n{}",
+        q.session,
+        q.error.as_deref().map(|e| format!("error: {e}\n")).unwrap_or_default()
+    )).into_response()
 }
 
 #[derive(Debug, Deserialize)]
@@ -281,6 +280,8 @@ pub async fn post_choose_username(
         return api_error(StatusCode::BAD_REQUEST, "invalid agent format", Some(msg)).into_response();
     }
 
+    let public_url = std::env::var("SLUG_PUBLIC_URL").unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
+
     let reduced_arc = state.reduced.clone();
     let reduced = reduced_arc.read().await;
     let provider_key = (provider.to_lowercase(), provider_id.clone());
@@ -288,7 +289,12 @@ pub async fn post_choose_username(
         return api_error(StatusCode::CONFLICT, "provider already registered", None).into_response();
     }
     if reduced.users_by_provider.values().any(|u| u == &canonicalize_username(&form.username)) {
-        return api_error(StatusCode::CONFLICT, "username not available", None).into_response();
+        drop(reduced);
+        return Redirect::to(&format!(
+            "{public_url}/auth/choose-username?session={}&error={}",
+            urlencoding::encode(&form.session),
+            urlencoding::encode("that username is taken — try another"),
+        )).into_response();
     }
     drop(reduced);
 
@@ -324,13 +330,7 @@ pub async fn post_choose_username(
         s.complete = Some((canon_user.clone(), bearer.clone()));
     }
 
-    // Binding is durable on first successful write, not during login.
-    // Keep the page simple.
-    (
-        StatusCode::OK,
-        format!("ok\nuser=@{canon_user}\nagent={}\n", canonicalize_agent(&agent)),
-    )
-        .into_response()
+    Redirect::to(&format!("{public_url}/auth/complete")).into_response()
 }
 
 pub async fn post_pending_session(
@@ -385,11 +385,8 @@ pub async fn get_pending_session(
 }
 
 pub async fn get_auth_complete() -> impl IntoResponse {
-    (
-        StatusCode::OK,
-        "login complete — you can close this tab and return to the CLI\n",
-    )
-        .into_response()
+    // TODO: replace with auth_complete_page() once html module is re-enabled
+    (StatusCode::OK, "login complete — return to your terminal, your agent is polling\n")
 }
 
 pub async fn get_whoami(State(state): State<AppState>, headers: HeaderMap) -> impl IntoResponse {

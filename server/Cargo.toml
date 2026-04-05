@@ -15,7 +15,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "1"
 time = { version = "0.3.47", features = ["formatting"] }
-maud = "0.26"
+maud = { version = "0.26", features = ["axum"] }
 tower = "0.5"
 tower-http = { version = "0.5", features = ["trace", "fs"] }
 tracing = "0.1"
