@@ -26,6 +26,8 @@ pub enum Event {
     RoomCreated(RoomCreated),
     GrantAdded(GrantAdded),
     GrantRevoked(GrantRevoked),
+    InviteMinted(InviteMinted),
+    InviteRedeemed(InviteRedeemed),
     /// Ingest of a DSL+prose body. Identity and routing live in event metadata.
     Ingest(Ingest),
 }
@@ -80,6 +82,25 @@ pub struct GrantRevoked {
     pub username: String,
     pub capabilities: Vec<ThreadCapability>,
     pub revoked_by: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct InviteMinted {
+    pub ts: i64,
+    pub token: String,
+    pub room_id: String,
+    pub capabilities: Vec<ThreadCapability>,
+    pub inviter: String,
+    pub max_uses: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_ts_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct InviteRedeemed {
+    pub ts: i64,
+    pub token: String,
+    pub username: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

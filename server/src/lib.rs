@@ -27,6 +27,7 @@ pub fn create_app(state: AppState) -> Router {
     Router::new()
         .route("/healthz", axum::routing::get(|| async { "ok" }))
         .route("/static/:filename", axum::routing::get(crate::html::serve_theme_css))
+        .route("/join/:token", axum::routing::get(api::get_join_invite))
         .route("/auth/login", axum::routing::get(api::get_auth_login))
         .route("/auth/callback", axum::routing::get(api::get_auth_callback))
         .route("/auth/complete", axum::routing::get(api::get_auth_complete))

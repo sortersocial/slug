@@ -4,6 +4,7 @@ mod rpc;
 mod validate;
 
 pub use auth::{
+    get_join_invite,
     get_pending_session,
     get_whoami,
     post_pending_session,

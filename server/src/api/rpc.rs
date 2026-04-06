@@ -13,12 +13,14 @@ use slug_types::*;
 use crate::{
     canonical_path::{canonicalize_item, canonicalize_tag},
     dsl,
-    events::{AgentBound, Event, GrantAdded, Ingest, RoomCreated, ThreadCapability, ThreadVisibility},
+    events::{
+        AgentBound, Event, GrantAdded, Ingest, RoomCreated, ThreadCapability, ThreadVisibility,
+    },
     identity::{parse_agent, parse_username},
     path_types::CanonicalItemUrl,
     ranking::{connected_components_from_voted_pairs, ranked_items_subset},
     reducer::{scope_from_room_wire, ReducerState, ScopeId},
-    state::AppState,
+    state::{AppState, InviteState},
 };
 
 use super::auth::verify_bearer_principal;
@@ -140,6 +142,27 @@ fn gen_short_id() -> String {
     const ALPHABET: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyz";
     let mut rng = rand::thread_rng();
     (0..7).map(|_| ALPHABET[rng.gen_range(0..ALPHABET.len())] as char).collect()
+}
+
+fn gen_invite_token() -> String {
+    use rand::Rng;
+    const ALPHABET: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyz";
+    let mut rng = rand::thread_rng();
+    let tail: String = (0..16).map(|_| ALPHABET[rng.gen_range(0..ALPHABET.len())] as char).collect();
+    format!("inv_{tail}")
+}
+
+const INVITE_TTL_MS: i64 = 86_400_000;
+
+fn capability_wire(c: ThreadCapability) -> String {
+    match c {
+        ThreadCapability::View => "view",
+        ThreadCapability::Post => "post",
+        ThreadCapability::Vote => "vote",
+        ThreadCapability::AddItem => "add_item",
+        ThreadCapability::Manage => "manage",
+    }
+    .to_string()
 }
 
 fn build_rank_response_for_content(
@@ -512,7 +535,7 @@ fn rpc_forum_thread_detail(
             None => Err(("post not found".into(), None)),
             Some((idx, ing)) => Ok(ThreadDetailResponse {
                 thread: format!("#{}", tag),
-                posts: vec![PostRow {
+                items: vec![ThreadItem::Post {
                     id: ing.id.clone(),
                     index: idx,
                     ts: ing.ts,
@@ -543,7 +566,7 @@ fn rpc_forum_thread_detail(
 
     let total = filtered.len();
     const MAX_BODY: usize = 2000;
-    let posts: Vec<PostRow> = filtered
+    let items: Vec<ThreadItem> = filtered
         .into_iter()
         .skip(offset)
         .take(limit)
@@ -553,7 +576,7 @@ fn rpc_forum_thread_detail(
             } else {
                 (ing.raw.clone(), false)
             };
-            PostRow {
+            ThreadItem::Post {
                 id: ing.id.clone(),
                 index: idx,
                 ts: ing.ts,
@@ -566,7 +589,7 @@ fn rpc_forum_thread_detail(
 
     Ok(ThreadDetailResponse {
         thread: format!("#{}", tag),
-        posts,
+        items,
         total,
         offset,
     })
@@ -1007,7 +1030,7 @@ pub async fn handle_rpc_batch(
             RpcCommand::RoomGrant {
                 room,
                 username,
-                capability,
+                capabilities,
             } => {
                 let principal = {
                     let reduced = state.reduced.read().await;
@@ -1022,6 +1045,8 @@ pub async fn handle_rpc_batch(
                         };
                         if !can_manage {
                             line_err("requires Manage capability", None)
+                        } else if capabilities.is_empty() {
+                            line_err("capabilities must not be empty", None)
                         } else {
                             match parse_username(&username) {
                                 Err(msg) => line_err("invalid username", Some(msg)),
@@ -1033,14 +1058,18 @@ pub async fn handle_rpc_batch(
                                     if !user_exists {
                                         line_err(format!("user @{target} not found"), None)
                                     } else {
-                                        match parse_capability(&capability) {
+                                        let caps: Result<Vec<ThreadCapability>, String> = capabilities
+                                            .iter()
+                                            .map(|c| parse_capability(c.trim()))
+                                            .collect();
+                                        match caps {
                                             Err(msg) => line_err(msg, None),
-                                            Ok(cap) => {
+                                            Ok(caps) => {
                                                 let ga_ev = Event::GrantAdded(GrantAdded {
                                                     ts: now_ms(),
                                                     room_id: room,
                                                     username: target,
-                                                    capabilities: vec![cap],
+                                                    capabilities: caps,
                                                     granted_by: principal,
                                                 });
                                                 if let Err(e) = state.event_log.append(&ga_ev).await {
@@ -1059,6 +1088,114 @@ pub async fn handle_rpc_batch(
                     }
                 }
             }
+            RpcCommand::RoomMintInvite {
+                room,
+                capabilities,
+                max_uses,
+            } => {
+                let principal = {
+                    let reduced = state.reduced.read().await;
+                    verify_bearer_principal(&headers, &*reduced)
+                };
+                match principal {
+                    Err((_, m)) => line_err(m, None),
+                    Ok(principal) => {
+                        let can_manage = {
+                            let reduced = state.reduced.read().await;
+                            reduced.user_has_cap(&room, &principal, ThreadCapability::Manage)
+                        };
+                        if !can_manage {
+                            line_err("requires Manage capability", None)
+                        } else if capabilities.is_empty() {
+                            line_err("capabilities must not be empty", None)
+                        } else {
+                            match capabilities
+                                .iter()
+                                .map(|c| parse_capability(c.trim()))
+                                .collect::<Result<Vec<ThreadCapability>, String>>()
+                            {
+                                Err(msg) => line_err(msg, None),
+                                Ok(caps) => {
+                                    let max_uses = max_uses.max(1).min(100_000);
+                                    let now = now_ms();
+                                    let expires_at_ms = now + INVITE_TTL_MS;
+                                    let token = loop {
+                                        let t = gen_invite_token();
+                                        let taken = {
+                                            let invites = state.invites.read().await;
+                                            invites.contains_key(&t)
+                                        };
+                                        if !taken {
+                                            break t;
+                                        }
+                                    };
+                                    let inv = InviteState {
+                                        room_id: room.clone(),
+                                        capabilities: caps,
+                                        expires_at_ms,
+                                        max_uses,
+                                        current_uses: 0,
+                                        inviter: principal,
+                                    };
+                                    state.invites.write().await.insert(token.clone(), inv);
+                                    let public_url = std::env::var("SLUG_PUBLIC_URL")
+                                        .unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
+                                    let invite_url = format!("{public_url}/join/{token}");
+                                    line_ok(RpcResult::RoomInviteMinted {
+                                        invite_url,
+                                        expires_at_ms: Some(expires_at_ms),
+                                        max_uses,
+                                    })
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            RpcCommand::RoomAudit { room } => {
+                let principal = {
+                    let reduced = state.reduced.read().await;
+                    verify_bearer_principal(&headers, &*reduced)
+                };
+                match principal {
+                    Err((_, m)) => line_err(m, None),
+                    Ok(principal) => {
+                        let reduced = state.reduced.read().await;
+                        if !reduced.rooms.contains_key(&room) {
+                            line_err("unknown room", None)
+                        } else {
+                            let can_audit = reduced.user_has_cap(&room, &principal, ThreadCapability::View)
+                                || reduced.user_has_cap(&room, &principal, ThreadCapability::Manage);
+                            if !can_audit {
+                                line_err("requires View or Manage capability", None)
+                            } else {
+                                let grants: Vec<RoomAuditEntry> = reduced
+                                    .grants
+                                    .get(&room)
+                                    .map(|m| {
+                                        let mut v: Vec<RoomAuditEntry> = m
+                                            .iter()
+                                            .map(|(username, caps)| {
+                                                let mut c: Vec<String> =
+                                                    caps.iter().copied().map(capability_wire).collect();
+                                                c.sort();
+                                                RoomAuditEntry {
+                                                    username: username.clone(),
+                                                    capabilities: c,
+                                                }
+                                            })
+                                            .collect();
+                                        v.sort_by(|a, b| a.username.cmp(&b.username));
+                                        v
+                                    })
+                                    .unwrap_or_default();
+                                line_ok(RpcResult::RoomAudit(RoomAuditResponse { room, grants }))
+                            }
+                        }
+                    }
+                }
+            }
+            RpcCommand::RoomRevoke { .. } => line_err("RoomRevoke is not implemented yet", None),
             RpcCommand::GetGlobalRank {
                 room,
                 limit,

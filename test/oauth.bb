@@ -21,6 +21,21 @@
           resp (.send (http-client) req (java.net.http.HttpResponse$BodyHandlers/ofString))]
       {:status (.statusCode resp) :body (.body resp) :headers (.map (.headers resp))})))
 
+(defn http-get-no-redirect
+  "GET without following redirects; returns `:location` from the first `Location` header when present."
+  [url & {:keys [headers]}]
+  (let [client (-> (java.net.http.HttpClient/newBuilder)
+                   (.followRedirects java.net.http.HttpClient$Redirect/NEVER)
+                   (.connectTimeout connect-timeout)
+                   (.build))
+        b (java.net.http.HttpRequest/newBuilder (java.net.URI/create url))]
+    (doseq [[k v] (or headers {})]
+      (.header b k v))
+    (let [req (-> b (.timeout request-timeout) (.GET) (.build))
+          resp (.send client req (java.net.http.HttpResponse$BodyHandlers/ofString))
+          loc (first (get (.map (.headers resp)) "location"))]
+      {:status (.statusCode resp) :body (.body resp) :location loc})))
+
 (defn http-post-json [url data & {:keys [headers]}]
   (let [body (json/generate-string data)
         b (java.net.http.HttpRequest/newBuilder (java.net.URI/create url))]
@@ -49,6 +64,35 @@
                   (.build))
           resp (.send (http-client) req (java.net.http.HttpResponse$BodyHandlers/ofString))]
       {:status (.statusCode resp) :body (.body resp) :headers (.map (.headers resp))})))
+
+(defn complete-pending-session!
+  "Finish OAuth for an existing pending session id (e.g. created by `GET /join/inv_…`). Returns bearer token."
+  [base-url session-id username & {:keys [assert!]}]
+  (let [check! (fn [pred msg resp]
+                 (if assert!
+                   (assert! pred msg)
+                   (when-not pred
+                     (throw (ex-info msg {:resp resp})))))]
+    (let [enc (java.net.URLEncoder/encode session-id "UTF-8")
+          login-url (str base-url "/auth/login?session=" enc)
+          login-get (http-get login-url)]
+      (check! (= 200 (:status login-get))
+              (str "oauth redirect chain for session " session-id)
+              login-get)
+      (let [choose (http-post-form (str base-url "/auth/choose-username")
+                                   {:session session-id :username username})]
+        (check! (= 200 (:status choose))
+                (str "choose-username for " username " returns 200")
+                choose)
+        (let [poll (http-get (str base-url "/api/v0/pending-session/" session-id))]
+          (check! (= 200 (:status poll))
+                  (str "pending-session poll returns 200")
+                  poll)
+          (let [poll-json (json/parse-string (:body poll) true)]
+            (check! (:complete poll-json)
+                    (str "pending session complete for " username)
+                    poll)
+            (:token poll-json)))))))
 
 (defn parse-query [s]
   (into {}

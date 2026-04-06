@@ -12,11 +12,60 @@ use tokio::sync::RwLock;
 
 use crate::{
     api::helpers::{api_error, now_ms, sha256_hex},
-    events::{Event, TokenIssued, UserRegistered},
+    events::{Event, GrantAdded, TokenIssued, UserRegistered},
     identity::{parse_agent, parse_username},
     html::{auth_complete_page, auth_signed_in_fragment, choose_username_error_fragment, choose_username_page},
     state::{AppState, PendingSession},
 };
+
+/// Delegate id for browser users who land via `/join/inv_…` (no CLI agent).
+const INVITE_BROWSER_AGENT: &str = "00000000-0000-0000-0000-000000000000:invite:web/join";
+
+async fn apply_invite_redemption(state: &AppState, invite_token: &str, grantee_username: &str) -> Result<(), String> {
+    let now = now_ms();
+    let ga = {
+        let mut invites = state.invites.write().await;
+        let Some(inv) = invites.get_mut(invite_token) else {
+            return Err("invite not found".into());
+        };
+        if now > inv.expires_at_ms {
+            invites.remove(invite_token);
+            return Err("invite expired".into());
+        }
+        if inv.current_uses >= inv.max_uses {
+            return Err("invite exhausted".into());
+        }
+        inv.current_uses += 1;
+        Event::GrantAdded(GrantAdded {
+            ts: now,
+            room_id: inv.room_id.clone(),
+            username: grantee_username.to_string(),
+            capabilities: inv.capabilities.clone(),
+            granted_by: inv.inviter.clone(),
+        })
+    };
+
+    match state.event_log.append(&ga).await {
+        Ok(()) => {
+            let mut reduced = state.reduced.write().await;
+            reduced.apply_event(ga);
+            let mut invites = state.invites.write().await;
+            if let Some(inv) = invites.get(invite_token) {
+                if inv.current_uses >= inv.max_uses {
+                    invites.remove(invite_token);
+                }
+            }
+            Ok(())
+        }
+        Err(e) => {
+            let mut invites = state.invites.write().await;
+            if let Some(inv) = invites.get_mut(invite_token) {
+                inv.current_uses = inv.current_uses.saturating_sub(1);
+            }
+            Err(format!("{e}"))
+        }
+    }
+}
 
 fn pending_sessions(state: &AppState) -> Arc<RwLock<HashMap<String, PendingSession>>> {
     state.pending_sessions.clone()
@@ -115,6 +164,42 @@ pub struct AuthLoginQuery {
     pub session: String,
 }
 
+pub async fn get_join_invite(Path(token): Path<String>, State(state): State<AppState>) -> impl IntoResponse {
+    let token = token.trim().to_string();
+    if token.is_empty() {
+        return api_error(StatusCode::NOT_FOUND, "invite invalid or expired", None).into_response();
+    }
+    let now = now_ms();
+    let valid = {
+        let invites = state.invites.read().await;
+        match invites.get(&token) {
+            None => false,
+            Some(inv) => now <= inv.expires_at_ms && inv.current_uses < inv.max_uses,
+        }
+    };
+    if !valid {
+        return api_error(StatusCode::NOT_FOUND, "invite invalid or expired", None).into_response();
+    }
+
+    let session = format!("p_{}", uuid::Uuid::new_v4().simple());
+    let s = PendingSession {
+        agent: INVITE_BROWSER_AGENT.to_string(),
+        created_ts: now_ms(),
+        provider: None,
+        provider_id: None,
+        redeem_invite: Some(token),
+        complete: None,
+    };
+    state.pending_sessions.write().await.insert(session.clone(), s);
+
+    let public_url = std::env::var("SLUG_PUBLIC_URL").unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
+    Redirect::temporary(&format!(
+        "{public_url}/auth/login?session={}",
+        urlencoding::encode(&session)
+    ))
+    .into_response()
+}
+
 pub async fn get_auth_login(Query(q): Query<AuthLoginQuery>, State(state): State<AppState>) -> impl IntoResponse {
     // Redirect to Google auth endpoint.
     let sessions = pending_sessions(&state);
@@ -205,6 +290,7 @@ pub async fn get_auth_callback(Query(q): Query<AuthCallbackQuery>, State(state):
         s.provider = Some("google".to_string());
         s.provider_id = Some(sub.clone());
         if let Some(username) = existing {
+            let invite_tok = s.redeem_invite.clone();
             let (bearer, token_event) = issue_token_for_user(&username);
             // append token event
             let ev = Event::TokenIssued(token_event);
@@ -214,6 +300,11 @@ pub async fn get_auth_callback(Query(q): Query<AuthCallbackQuery>, State(state):
             {
                 let mut reduced = reduced_arc.write().await;
                 reduced.apply_event(ev);
+            }
+            if let Some(tok) = invite_tok {
+                if let Err(e) = apply_invite_redemption(&state, &tok, &username).await {
+                    tracing::warn!(error = %e, "invite redemption skipped after oauth");
+                }
             }
             s.complete = Some((username, bearer));
             return Redirect::temporary(&format!("{public_url}/auth/complete")).into_response();
@@ -310,6 +401,16 @@ pub async fn post_choose_username(
         reduced.apply_event(ti_ev.clone());
     }
 
+    // Redeem invite (if any) before marking the session complete.
+    if let Some(tok) = {
+        let sessions_read = sessions.read().await;
+        sessions_read.get(&form.session).and_then(|s| s.redeem_invite.clone())
+    } {
+        if let Err(e) = apply_invite_redemption(&state, &tok, &canon_user).await {
+            tracing::warn!(error = %e, "invite redemption skipped after registration");
+        }
+    }
+
     // Mark complete for polling.
     {
         let mut sessions_write = sessions.write().await;
@@ -339,6 +440,7 @@ pub async fn post_pending_session(
         created_ts: now_ms(),
         provider: None,
         provider_id: None,
+        redeem_invite: None,
         complete: None,
     };
     let sessions = pending_sessions(&state);

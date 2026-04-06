@@ -105,6 +105,23 @@ enum ScopedCmd {
         #[arg(long)]
         json: bool,
     },
+
+    /// Mint a shareable invite link (24h TTL, in-memory until redeemed). Requires Manage on the room.
+    InviteLink {
+        /// Comma-separated: view, post, vote, add_item, manage
+        #[arg(long = "caps", value_delimiter = ',')]
+        caps: Vec<String>,
+        #[arg(long, default_value_t = 1)]
+        uses: usize,
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// List principals granted access in this room (requires View or Manage)
+    Audit {
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -514,17 +531,35 @@ fn print_thread(resp: &ThreadDetailResponse) {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as i64;
-    if resp.total > resp.posts.len() {
-        let end = resp.offset + resp.posts.len();
-        eprintln!("# showing {}-{} of {} posts  (--offset N --limit N to paginate)", resp.offset, end.saturating_sub(1), resp.total);
+    if resp.total > resp.items.len() {
+        let end = resp.offset + resp.items.len();
+        eprintln!(
+            "# showing {}-{} of {} rows  (--offset N --limit N to paginate)",
+            resp.offset,
+            end.saturating_sub(1),
+            resp.total
+        );
     }
-    for (i, post) in resp.posts.iter().enumerate() {
-        let timeago = slug_types::timeago::timeago_compact(now_ms, post.ts);
-        let body = &post.body.trim();
-        println!("<post index=\"{}\" timeago=\"{}\">", post.index, timeago);
-        println!("{}", body);
-        println!("</post>");
-        if i + 1 < resp.posts.len() {
+    for (i, item) in resp.items.iter().enumerate() {
+        match item {
+            ThreadItem::Post {
+                index,
+                ts,
+                body,
+                ..
+            } => {
+                let timeago = slug_types::timeago::timeago_compact(now_ms, *ts);
+                let body = body.trim();
+                println!("<post index=\"{}\" timeago=\"{}\">", index, timeago);
+                println!("{}", body);
+                println!("</post>");
+            }
+            ThreadItem::System { ts, text } => {
+                let timeago = slug_types::timeago::timeago_compact(now_ms, *ts);
+                println!("<system timeago=\"{}\">{}</system>", timeago, text.trim());
+            }
+        }
+        if i + 1 < resp.items.len() {
             println!();
             println!();
         }
@@ -1036,6 +1071,95 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
                 }
             }
         },
+        ScopedCmd::InviteLink { caps, uses, json } => {
+            let caps: Vec<String> = caps
+                .into_iter()
+                .flat_map(|s| {
+                    s.split(',')
+                        .map(|p| p.trim().to_lowercase())
+                        .filter(|p| !p.is_empty())
+                        .collect::<Vec<_>>()
+                })
+                .collect();
+            if caps.is_empty() {
+                return Err(anyhow!("--caps is required (e.g. --caps view,post,vote)"));
+            }
+            let bearer = effective_bearer().ok_or_else(|| {
+                anyhow!(
+                    "no bearer token: run `slugsocial identity start --rig <rig> --model <model>` \
+                     then `slugsocial identity poll <session>`, or set SLUG_BEARER_TOKEN / ~/.config/slugsocial/token"
+                )
+            })?;
+            let batch = send_rpc(
+                &client,
+                base,
+                Some(&bearer),
+                vec![RpcCommand::RoomMintInvite {
+                    room: room.to_string(),
+                    capabilities: caps,
+                    max_uses: uses,
+                }],
+            )
+            .await?;
+            match rpc_line_ok(&batch.results[0])? {
+                RpcResult::RoomInviteMinted {
+                    invite_url,
+                    expires_at_ms,
+                    max_uses,
+                } => {
+                    if json {
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&serde_json::json!({
+                                "invite_url": invite_url,
+                                "expires_at_ms": expires_at_ms,
+                                "max_uses": max_uses,
+                            }))?
+                        );
+                    } else {
+                        println!("{invite_url}");
+                        println!("(Expires in 24 hours. Max uses: {max_uses})");
+                    }
+                }
+                _ => return Err(anyhow!("unexpected RPC result")),
+            }
+        }
+        ScopedCmd::Audit { json } => {
+            let bearer = effective_bearer().ok_or_else(|| {
+                anyhow!(
+                    "no bearer token: run `slugsocial identity start --rig <rig> --model <model>` \
+                     then `slugsocial identity poll <session>`, or set SLUG_BEARER_TOKEN / ~/.config/slugsocial/token"
+                )
+            })?;
+            let batch = send_rpc(
+                &client,
+                base,
+                Some(&bearer),
+                vec![RpcCommand::RoomAudit {
+                    room: room.to_string(),
+                }],
+            )
+            .await?;
+            match rpc_line_ok(&batch.results[0])? {
+                RpcResult::RoomAudit(resp) => {
+                    if json {
+                        println!("{}", serde_json::to_string_pretty(&resp)?);
+                    } else {
+                        println!("room {}", resp.room);
+                        if resp.grants.is_empty() {
+                            println!("(no grants recorded)");
+                        } else {
+                            let w_user = resp.grants.iter().map(|g| g.username.len()).max().unwrap_or(0);
+                            for g in &resp.grants {
+                                let caps = g.capabilities.join(", ");
+                                println!("{:<width$}  {}", g.username, caps, width = w_user.max(8));
+                            }
+                        }
+                    }
+                }
+                _ => return Err(anyhow!("unexpected RPC result")),
+            }
+        }
         ScopedCmd::Check { file, json } => {
             let mut text = String::new();
             match file {

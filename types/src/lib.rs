@@ -123,11 +123,30 @@ pub struct PathDetailResponse {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ThreadDetailResponse {
     pub thread: String,
-    pub posts: Vec<PostRow>,
-    /// Total posts in this thread.
+    /// Chronological page: prose posts and room system lines, oldest first within the window.
+    pub items: Vec<ThreadItem>,
+    /// Total rows (posts + system lines) in this thread after filters.
     pub total: usize,
-    /// Chronological offset of the first post in this page.
+    /// Offset into the merged chronological list.
     pub offset: usize,
+}
+
+/// One row in a thread timeline: a normal post or a room system line.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ThreadItem {
+    Post {
+        id: String,
+        index: usize,
+        ts: i64,
+        actor: String,
+        body: String,
+        truncated: bool,
+    },
+    System {
+        ts: i64,
+        text: String,
+    },
 }
 
 /// One post in a thread. Full body, no snippet.
@@ -224,6 +243,23 @@ pub struct FeedPost {
 // RPC batch API (`POST /api/v0/rpc`)
 // ---------------------------------------------------------------------------
 
+fn default_invite_max_uses() -> usize {
+    1
+}
+
+/// One principal's capabilities in a private room (from [`RpcCommand::RoomAudit`]).
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RoomAuditEntry {
+    pub username: String,
+    pub capabilities: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RoomAuditResponse {
+    pub room: String,
+    pub grants: Vec<RoomAuditEntry>,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct RpcBatch(pub Vec<RpcCommand>);
@@ -289,7 +325,24 @@ pub enum RpcCommand {
     RoomGrant {
         room: String,
         username: String,
+        /// Capability names: `view`, `post`, `vote`, `add_item`, `manage`.
+        capabilities: Vec<String>,
+    },
+    RoomRevoke {
+        room: String,
+        username: String,
         capability: String,
+    },
+    /// Mint a shareable invite link (24h TTL, stored in memory only until redeemed or expiry).
+    RoomMintInvite {
+        room: String,
+        capabilities: Vec<String>,
+        #[serde(default = "default_invite_max_uses")]
+        max_uses: usize,
+    },
+    /// List principals granted access in a room (requires View or Manage).
+    RoomAudit {
+        room: String,
     },
     GetGlobalRank {
         room: String,
@@ -361,6 +414,13 @@ pub enum RpcResult {
     RoomCreated {
         room_id: String,
     },
+    RoomInviteMinted {
+        invite_url: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        expires_at_ms: Option<i64>,
+        max_uses: usize,
+    },
+    RoomAudit(RoomAuditResponse),
     GrantOk {},
     GlobalRank(GlobalRankResponse),
     Pair(PairResponse),

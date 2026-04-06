@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use serde::{Deserialize, Serialize};
 
 use crate::canonical_path::canonicalize_tag;
-use crate::events::{Event, Ingest, ThreadCapability};
+use crate::events::{Event, Ingest, ThreadCapability, ThreadVisibility};
 use crate::path_types::CanonicalItemUrl;
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
@@ -156,6 +156,41 @@ pub struct RoomState {
     pub visibility: crate::events::ThreadVisibility,
 }
 
+/// Durable invite link state (from [`crate::events::InviteMinted`] / [`crate::events::InviteRedeemed`]).
+#[derive(Debug, Clone)]
+pub struct ActiveInviteState {
+    pub room_id: String,
+    pub capabilities: HashSet<ThreadCapability>,
+    pub inviter: String,
+    pub uses_remaining: u32,
+    pub expires_ts_ms: Option<i64>,
+}
+
+#[derive(Clone, Debug)]
+pub enum RoomTimelineKind {
+    RoomCreated {
+        owner: String,
+        slug: String,
+        visibility: ThreadVisibility,
+    },
+    GrantAdded {
+        username: String,
+        granted_by: String,
+        capabilities: Vec<ThreadCapability>,
+    },
+    GrantRevoked {
+        username: String,
+        revoked_by: String,
+        capabilities: Vec<ThreadCapability>,
+    },
+}
+
+#[derive(Clone, Debug)]
+pub struct RoomTimelineEntry {
+    pub ts: i64,
+    pub kind: RoomTimelineKind,
+}
+
 #[derive(Debug, Clone)]
 pub struct ForumThreadState {
     pub last_activity_ts: i64,
@@ -210,6 +245,10 @@ pub struct ReducerState {
     pub ingests_ordered: Vec<String>,
     /// room_id → username → capabilities
     pub grants: HashMap<String, HashMap<String, HashSet<ThreadCapability>>>,
+    /// room_id → chronological room admin lines (for thread UI).
+    pub room_timeline: HashMap<String, Vec<RoomTimelineEntry>>,
+    /// Invite token → active invite (absent when fully consumed or never minted).
+    pub invites: HashMap<String, ActiveInviteState>,
 }
 
 impl ReducerState {
@@ -223,6 +262,20 @@ impl ReducerState {
             .and_then(|t| t.get(username))
             .map(|caps| caps.contains(&cap))
             .unwrap_or(false)
+    }
+
+    /// Invite link is present, not expired, and has uses left.
+    pub fn invite_token_active(&self, token: &str, now_ms: i64) -> Option<&ActiveInviteState> {
+        let inv = self.invites.get(token)?;
+        if inv.uses_remaining == 0 {
+            return None;
+        }
+        if let Some(exp) = inv.expires_ts_ms {
+            if now_ms > exp {
+                return None;
+            }
+        }
+        Some(inv)
     }
 
     pub fn content_for_scope_mut(&mut self, scope: ScopeId) -> &mut ContentState {
@@ -356,6 +409,17 @@ impl ReducerState {
                         visibility: rc.visibility,
                     },
                 );
+                self.room_timeline
+                    .entry(rc.room_id.clone())
+                    .or_default()
+                    .push(RoomTimelineEntry {
+                        ts: rc.ts,
+                        kind: RoomTimelineKind::RoomCreated {
+                            owner: rc.owner.clone(),
+                            slug: rc.slug.clone(),
+                            visibility: rc.visibility,
+                        },
+                    });
             }
             Event::Ingest(mut ing) => {
                 ing.thread_tag = canonicalize_tag(&ing.thread_tag);
@@ -525,18 +589,31 @@ impl ReducerState {
                 nav!(self.actor_last_post_ts, keypath(ing.principal.clone()), setval(ing.ts));
             }
             Event::GrantAdded(ga) => {
+                let room_id = ga.room_id.clone();
                 let caps = self.grants
                     .entry(ga.room_id)
                     .or_default()
-                    .entry(ga.username)
+                    .entry(ga.username.clone())
                     .or_default();
-                for cap in ga.capabilities {
+                for cap in ga.capabilities.iter().copied() {
                     caps.insert(cap);
                 }
+                self.room_timeline
+                    .entry(room_id)
+                    .or_default()
+                    .push(RoomTimelineEntry {
+                        ts: ga.ts,
+                        kind: RoomTimelineKind::GrantAdded {
+                            username: ga.username.clone(),
+                            granted_by: ga.granted_by.clone(),
+                            capabilities: ga.capabilities.clone(),
+                        },
+                    });
             }
             Event::GrantRevoked(gr) => {
+                let room_id = gr.room_id.clone();
                 if let Some(room_grants) = self.grants.get_mut(&gr.room_id) {
-                    let username = gr.username;
+                    let username = gr.username.clone();
                     if let Some(caps) = room_grants.get_mut(&username) {
                         for cap in &gr.capabilities {
                             caps.remove(cap);
@@ -547,6 +624,37 @@ impl ReducerState {
                     }
                     if room_grants.is_empty() {
                         self.grants.remove(&gr.room_id);
+                    }
+                }
+                self.room_timeline
+                    .entry(room_id)
+                    .or_default()
+                    .push(RoomTimelineEntry {
+                        ts: gr.ts,
+                        kind: RoomTimelineKind::GrantRevoked {
+                            username: gr.username.clone(),
+                            revoked_by: gr.revoked_by.clone(),
+                            capabilities: gr.capabilities.clone(),
+                        },
+                    });
+            }
+            Event::InviteMinted(im) => {
+                self.invites.insert(
+                    im.token.clone(),
+                    ActiveInviteState {
+                        room_id: im.room_id.clone(),
+                        capabilities: im.capabilities.iter().copied().collect(),
+                        inviter: im.inviter.clone(),
+                        uses_remaining: im.max_uses,
+                        expires_ts_ms: im.expires_ts_ms,
+                    },
+                );
+            }
+            Event::InviteRedeemed(ir) => {
+                if let Some(inv) = self.invites.get_mut(&ir.token) {
+                    inv.uses_remaining = inv.uses_remaining.saturating_sub(1);
+                    if inv.uses_remaining == 0 {
+                        self.invites.remove(&ir.token);
                     }
                 }
             }
@@ -570,6 +678,8 @@ impl Default for ReducerState {
             actor_last_post_ts: HashMap::new(),
             ingests_ordered: Vec::new(),
             grants: HashMap::new(),
+            room_timeline: HashMap::new(),
+            invites: HashMap::new(),
         }
     }
 }

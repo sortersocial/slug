@@ -105,7 +105,7 @@
        ;; Alice grants bob View only.
        (println "\nalice grants bob View only…")
        (assert! (rpc-line-ok? (:parsed (rpc-batch! base-url alice-token
-                                                   [{"RoomGrant" {"room" room-id "username" "bob" "capability" "view"}}])))
+                                                   [{"RoomGrant" {"room" room-id "username" "bob" "capabilities" ["view"]}}])))
                 "grant View RPC ok")
 
        (println "\nbob (View only) tries to post prose…")
@@ -117,7 +117,7 @@
        ;; Alice grants bob Post.
        (println "\nalice grants bob Post…")
        (assert! (rpc-line-ok? (:parsed (rpc-batch! base-url alice-token
-                                                   [{"RoomGrant" {"room" room-id "username" "bob" "capability" "post"}}])))
+                                                   [{"RoomGrant" {"room" room-id "username" "bob" "capabilities" ["post"]}}])))
                 "grant Post RPC ok")
 
        (println "\nbob (View + Post) posts prose…")
@@ -143,7 +143,7 @@
        ;; Alice grants bob Vote.
        (println "\nalice grants bob Vote…")
        (assert! (rpc-line-ok? (:parsed (rpc-batch! base-url alice-token
-                                                   [{"RoomGrant" {"room" room-id "username" "bob" "capability" "vote"}}])))
+                                                   [{"RoomGrant" {"room" room-id "username" "bob" "capabilities" ["vote"]}}])))
                 "grant Vote RPC ok")
 
        (println "\nbob (View + Post + Vote) votes…")
