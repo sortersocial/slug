@@ -1,12 +1,12 @@
 (ns test.grants
-  "Grant enforcement integration test: private thread access control on POST /api/v0/ingest.
+  "Grant enforcement integration test: private room capabilities via POST /api/v0/rpc.
 
   Covers:
-  - user without any grant -> 403 on private thread
-  - user with View but no Post -> 403 for prose
-  - user with View + Post -> 200 for prose
-  - user with View + Post but no Vote -> 403 for vote (requires items in scope)
-  - user with View + Post + Vote -> 200 for vote"
+  - user without any grant -> RPC line ok=false on private room post
+  - user with View but no Post -> ok=false for prose
+  - user with View + Post -> ok=true for prose
+  - user with View + Post but no Vote -> ok=false for vote
+  - user with View + Post + Vote -> ok=true for vote"
   (:require [babashka.process :as p]
             [babashka.fs :as fs]
             [cheshire.core :as json]
@@ -35,13 +35,14 @@
 (defn- http-client []
   (-> (java.net.http.HttpClient/newBuilder)
       (.followRedirects java.net.http.HttpClient$Redirect/ALWAYS)
+      (.connectTimeout (java.time.Duration/ofSeconds 15))
       (.build)))
 
 (defn- http-get [url & {:keys [headers]}]
   (let [b (java.net.http.HttpRequest/newBuilder (java.net.URI/create url))]
     (doseq [[k v] (or headers {})]
       (.header b k v))
-    (let [req (-> b (.GET) (.build))
+    (let [req (-> b (.timeout (java.time.Duration/ofSeconds 60)) (.GET) (.build))
           resp (.send (http-client) req (java.net.http.HttpResponse$BodyHandlers/ofString))]
       {:status (.statusCode resp) :body (.body resp)})))
 
@@ -52,6 +53,7 @@
     (doseq [[k v] (or headers {})]
       (.header b k v))
     (let [req (-> b
+                  (.timeout (java.time.Duration/ofSeconds 60))
                   (.POST (java.net.http.HttpRequest$BodyPublishers/ofString body))
                   (.build))
           resp (.send (http-client) req (java.net.http.HttpResponse$BodyHandlers/ofString))]
@@ -67,6 +69,7 @@
         b (java.net.http.HttpRequest/newBuilder (java.net.URI/create url))]
     (.header b "Content-Type" "application/x-www-form-urlencoded")
     (let [req (-> b
+                  (.timeout (java.time.Duration/ofSeconds 60))
                   (.POST (java.net.http.HttpRequest$BodyPublishers/ofString pairs))
                   (.build))
           resp (.send (http-client) req (java.net.http.HttpResponse$BodyHandlers/ofString))]
@@ -141,10 +144,21 @@
 
 (defn- bearer [token] {"Authorization" (str "Bearer " token)})
 
-(defn- ingest! [base-url token thread delegate text]
-  (http-post-json (str base-url "/api/v0/ingest")
-                  {:thread thread :delegate delegate :text text}
-                  :headers (bearer token)))
+(defn- rpc-batch! [base-url token cmds]
+  (let [resp (http-post-json (str base-url "/api/v0/rpc") cmds :headers (bearer token))]
+    {:status (:status resp)
+     :parsed (json/parse-string (:body resp) false)}))
+
+(defn- rpc-line-ok? [parsed]
+  (true? (get-in parsed ["results" 0 "ok"])))
+
+(defn- ingest! [base-url token room thread delegate text]
+  (rpc-batch! base-url token
+              [{"Post" {"room" room
+                        "thread_tag" thread
+                        "delegate" delegate
+                        "text" text
+                        "return_rank_diff" false}}]))
 
 (defn grants-test [& _args]
   (println "\n━━━ grants enforcement integration check ━━━\n")
@@ -194,80 +208,77 @@
                                       "00000000-0000-0000-0000-000000000002:test:local/dev"
                                       "bob")
 
-           ;; Alice creates a private thread.
-           _ (println "\nalice creates private thread…")
-           create-resp (http-post-json (str base-url "/api/v0/thread")
-                                       {:slug "secret-project" :visibility "private"}
-                                       :headers (bearer alice-token))
-           _ (assert! (= 200 (:status create-resp)) "thread create returns 200")
-           thread-id   (-> create-resp :body (json/parse-string true) :thread_id)
-           _ (assert! (some? thread-id) "thread_id present in response")]
+           ;; Alice creates a private room.
+           _ (println "\nalice creates private room…")
+           create (rpc-batch! base-url alice-token
+                              [{"RoomCreate" {"slug" "secret-project" "visibility" "private"}}])
+           _ (assert! (= 200 (:status create)) "room create HTTP 200")
+           _ (assert! (rpc-line-ok? (:parsed create)) "room create RPC ok")
+           room-id (get-in (:parsed create) ["results" 0 "result" "RoomCreated" "room_id"])
+           _ (assert! (some? room-id) "room_id present in RPC result")]
 
-       ;; Alice (owner) can post prose to her own private thread.
-       (println "\nalice posts prose to her private thread…")
-       (assert! (= 200 (:status (ingest! base-url alice-token thread-id
-                                         "00000000-0000-0000-0000-000000000001:test:local/dev"
-                                         "Hello from alice.")))
+       ;; Alice (owner) can post prose to her own private room.
+       (println "\nalice posts prose to her private room…")
+       (assert! (rpc-line-ok? (:parsed (ingest! base-url alice-token room-id "main"
+                                                 "00000000-0000-0000-0000-000000000001:test:local/dev"
+                                                 "Hello from alice.")))
                 "alice prose post succeeds")
 
-       ;; Bob has no grants at all — should get 403.
+       ;; Bob has no grants — RPC line fails.
        (println "\nbob (no grants) tries to post prose…")
-       (assert! (= 403 (:status (ingest! base-url bob-token thread-id
-                                         "00000000-0000-0000-0000-000000000002:test:local/dev"
-                                         "Hello from bob, unauthorized.")))
-                "bob without grants gets 403")
+       (assert! (not (rpc-line-ok? (:parsed (ingest! base-url bob-token room-id "main"
+                                                      "00000000-0000-0000-0000-000000000002:test:local/dev"
+                                                      "Hello from bob, unauthorized."))))
+                "bob without grants gets RPC failure")
 
-       ;; Alice grants bob View only — still not enough to post prose.
+       ;; Alice grants bob View only.
        (println "\nalice grants bob View only…")
-       (assert! (= 200 (:status (http-post-json (str base-url "/api/v0/thread/" thread-id "/grants")
-                                                {:username "bob" :capabilities ["view"]}
-                                                :headers (bearer alice-token))))
-                "grant View returns 200")
+       (assert! (rpc-line-ok? (:parsed (rpc-batch! base-url alice-token
+                                                   [{"RoomGrant" {"room" room-id "username" "bob" "capability" "view"}}])))
+                "grant View RPC ok")
 
        (println "\nbob (View only) tries to post prose…")
-       (assert! (= 403 (:status (ingest! base-url bob-token thread-id
-                                         "00000000-0000-0000-0000-000000000002:test:local/dev"
-                                         "Hello from bob, view only.")))
-                "bob with View but no Post gets 403")
+       (assert! (not (rpc-line-ok? (:parsed (ingest! base-url bob-token room-id "main"
+                                                      "00000000-0000-0000-0000-000000000002:test:local/dev"
+                                                      "Hello from bob, view only."))))
+                "bob with View but no Post gets RPC failure")
 
-       ;; Alice grants bob Post — now prose should work.
+       ;; Alice grants bob Post.
        (println "\nalice grants bob Post…")
-       (assert! (= 200 (:status (http-post-json (str base-url "/api/v0/thread/" thread-id "/grants")
-                                                {:username "bob" :capabilities ["post"]}
-                                                :headers (bearer alice-token))))
-                "grant Post returns 200")
+       (assert! (rpc-line-ok? (:parsed (rpc-batch! base-url alice-token
+                                                   [{"RoomGrant" {"room" room-id "username" "bob" "capability" "post"}}])))
+                "grant Post RPC ok")
 
        (println "\nbob (View + Post) posts prose…")
-       (assert! (= 200 (:status (ingest! base-url bob-token thread-id
-                                         "00000000-0000-0000-0000-000000000002:test:local/dev"
-                                         "Hello from bob, now authorised.")))
+       (assert! (rpc-line-ok? (:parsed (ingest! base-url bob-token room-id "main"
+                                                 "00000000-0000-0000-0000-000000000002:test:local/dev"
+                                                 "Hello from bob, now authorised.")))
                 "bob with View + Post succeeds for prose")
 
-       ;; Alice defines two items and votes on them in the private thread.
-       (println "\nalice posts items + vote to private thread…")
-       (assert! (= 200 (:status (ingest! base-url alice-token thread-id
-                                         "00000000-0000-0000-0000-000000000001:test:local/dev"
-                                         "~/fruits/apple { A crisp red apple. }\n~/fruits/banana { A yellow banana. }\n~/fruits/apple > ~/fruits/banana { apples are better }")))
-                "alice vote in private thread succeeds")
+       ;; Alice defines two items and votes in the private room.
+       (println "\nalice posts items + vote to private room…")
+       (assert! (rpc-line-ok? (:parsed (ingest! base-url alice-token room-id "main"
+                                                 "00000000-0000-0000-0000-000000000001:test:local/dev"
+                                                 "~/fruits/apple { A crisp red apple. }\n~/fruits/banana { A yellow banana. }\n~/fruits/apple > ~/fruits/banana { apples are better }")))
+                "alice vote in private room succeeds")
 
-       ;; Bob (View + Post, no Vote) tries to vote — should be 403.
+       ;; Bob (View + Post, no Vote) tries to vote.
        (println "\nbob (no Vote) tries to vote…")
-       (assert! (= 403 (:status (ingest! base-url bob-token thread-id
-                                         "00000000-0000-0000-0000-000000000002:test:local/dev"
-                                         "~/fruits/apple > ~/fruits/banana { bob's take }")))
-                "bob without Vote gets 403")
+       (assert! (not (rpc-line-ok? (:parsed (ingest! base-url bob-token room-id "main"
+                                                     "00000000-0000-0000-0000-000000000002:test:local/dev"
+                                                     "~/fruits/apple > ~/fruits/banana { bob's take }"))))
+                "bob without Vote gets RPC failure")
 
-       ;; Alice grants bob Vote — now voting should work.
+       ;; Alice grants bob Vote.
        (println "\nalice grants bob Vote…")
-       (assert! (= 200 (:status (http-post-json (str base-url "/api/v0/thread/" thread-id "/grants")
-                                                {:username "bob" :capabilities ["vote"]}
-                                                :headers (bearer alice-token))))
-                "grant Vote returns 200")
+       (assert! (rpc-line-ok? (:parsed (rpc-batch! base-url alice-token
+                                                   [{"RoomGrant" {"room" room-id "username" "bob" "capability" "vote"}}])))
+                "grant Vote RPC ok")
 
        (println "\nbob (View + Post + Vote) votes…")
-       (assert! (= 200 (:status (ingest! base-url bob-token thread-id
-                                         "00000000-0000-0000-0000-000000000002:test:local/dev"
-                                         "~/fruits/apple > ~/fruits/banana { bob's take }")))
+       (assert! (rpc-line-ok? (:parsed (ingest! base-url bob-token room-id "main"
+                                                 "00000000-0000-0000-0000-000000000002:test:local/dev"
+                                                 "~/fruits/apple > ~/fruits/banana { bob's take }")))
                 "bob with Vote succeeds"))
 
      (finally

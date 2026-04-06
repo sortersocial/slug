@@ -266,26 +266,21 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Mutation 7: self.ingests_by_thread.entry(thread).or_default().push_front(ing.id.clone())
-    //
-    // Original (reducer.rs line 419-420):
-    //   let q = self.ingests_by_thread.entry(thread).or_default();
-    //   q.push_front(ing.id.clone());
-    //
-    // Path version:
-    //   nav!(self.ingests_by_thread, keypath(thread), push_front(ing_id));
+    // Mutation 7: ingests_by_scope_thread (scope, thread_tag) push_front
     // -----------------------------------------------------------------------
     #[test]
-    fn mutation_7_ingests_by_thread() {
-        let mut ingests_by_thread: HashMap<String, VecDeque<String>> = HashMap::new();
+    fn mutation_7_ingests_by_scope_thread() {
+        use crate::reducer::ScopeId;
+        let mut ingests_by_scope_thread: HashMap<(ScopeId, String), VecDeque<String>> = HashMap::new();
         let thread = "debate-1".to_string();
         let id1 = "ing-1".to_string();
         let id2 = "ing-2".to_string();
+        let k = (ScopeId::Public, thread.clone());
 
-        nav!(ingests_by_thread, keypath(thread.clone()), push_front(id1));
-        nav!(ingests_by_thread, keypath(thread), push_front(id2));
+        nav!(ingests_by_scope_thread, keypath(k.clone()), push_front(id1));
+        nav!(ingests_by_scope_thread, keypath(k), push_front(id2));
 
-        let q = ingests_by_thread.get("debate-1").unwrap();
+        let q = ingests_by_scope_thread.get(&(ScopeId::Public, "debate-1".to_string())).unwrap();
         assert_eq!(q[0], "ing-2"); // most recent first
         assert_eq!(q[1], "ing-1");
     }

@@ -2,12 +2,12 @@ SLUG DSL REFERENCE
 
 The Slug DSL mixes freeform prose with structured statements. Statements start with specific characters (`#`, `~`, or `http`/`https`). Everything else is prose.
 
-Identity and routing are **not** in the document body: the human principal comes from the bearer token, the thread from `--thread` / request metadata, and an optional AI delegate from `--delegate` (`uuid:rig:provider/model`, no `@`). The web UI uses the same split (session + form fields).
+Identity and routing are **not** in the document body: the human principal comes from the bearer token, the forum channel from `forum post <TAG>` (CLI) or request metadata (RPC/web), and the AI delegate from `--delegate` on CLI posts (`uuid:rig:provider/model`, no `@`). The web UI uses the same split (session + form fields).
 
-CLI vs ingest (important)
----------------------------
-- **Ingest documents** (`.sorter` files, or stdin/heredoc where the shell does not expand `~`): write ontology items as `~/languages/python`. The `~/` prefix is part of the DSL.
-- **`npx slugsocial garden …` path arguments**: pass **no** tilde — use `languages/python`, not `~/languages/python`. In the shell, `~` expands to your home directory (`$HOME`), which breaks paths. The CLI strips sigils and the server maps these paths into the `~/` ontology namespace.
+CLI vs .sorter file (important)
+-------------------------------
+- **.sorter documents** (files, or stdin/heredoc where the shell does not expand `~`): write ontology items as `~/languages/python`. The `~/` prefix is part of the DSL.
+- **`npx slugsocial public garden …` path arguments**: pass **no** tilde — use `languages/python`, not `~/languages/python`. In the shell, `~` expands to your home directory (`$HOME`), which breaks paths. The CLI strips sigils and the server maps these paths into the `~/` ontology namespace.
 
 ```sorter
 #review { My Review Thread }

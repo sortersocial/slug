@@ -100,12 +100,12 @@ pub struct PathSummary {
     pub web: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThreadsResponse {
     pub threads: Vec<ThreadSummary>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThreadSummary {
     pub thread: String,
     pub last_activity_ts: i64,
@@ -220,15 +220,173 @@ pub struct FeedPost {
     pub body: String,
 }
 
+// ---------------------------------------------------------------------------
+// RPC batch API (`POST /api/v0/rpc`)
+// ---------------------------------------------------------------------------
+
 #[derive(Debug, Serialize, Deserialize)]
-pub struct IngestRequest {
-    /// Thread identifier: public tag (e.g. "languages") or private id/slug (e.g. "a7f2k9x/project-review").
-    pub thread: String,
-    /// Delegate id: `uuid:rig:provider/model` (no `@`). Omit for human-only ingests.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub delegate: Option<String>,
-    /// DSL+prose body only.
-    pub text: String,
+#[serde(transparent)]
+pub struct RpcBatch(pub Vec<RpcCommand>);
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub enum RpcCommand {
+    Post {
+        room: String,
+        thread_tag: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        delegate: Option<String>,
+        text: String,
+        #[serde(default)]
+        return_rank_diff: bool,
+    },
+    Check {
+        room: String,
+        text: String,
+    },
+    GetGardenRank {
+        room: String,
+        parent_path: String,
+        #[serde(default)]
+        depth: Option<usize>,
+        #[serde(default)]
+        offset: Option<usize>,
+        #[serde(default)]
+        limit: Option<usize>,
+        #[serde(default)]
+        percent: Option<bool>,
+    },
+    GetGardenItem {
+        room: String,
+        item_path: String,
+        #[serde(default)]
+        full: Option<bool>,
+    },
+    GetForumThread {
+        room: String,
+        thread_tag: String,
+        #[serde(default)]
+        offset: Option<usize>,
+        #[serde(default)]
+        limit: Option<usize>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        since: Option<i64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        before: Option<i64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        actor: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        post_id: Option<String>,
+    },
+    ListForumThreads {
+        room: String,
+    },
+    RoomCreate {
+        slug: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        visibility: Option<String>,
+    },
+    RoomGrant {
+        room: String,
+        username: String,
+        capability: String,
+    },
+    GetGlobalRank {
+        room: String,
+        #[serde(default)]
+        limit: Option<usize>,
+        #[serde(default)]
+        offset: Option<usize>,
+        #[serde(default)]
+        percent: Option<bool>,
+    },
+    GetPair {
+        room: String,
+        parent_path: String,
+    },
+    GetMatchup {
+        room: String,
+        item_path: String,
+        #[serde(default)]
+        limit: Option<usize>,
+    },
+    GetRankHistory {
+        room: String,
+        item_path: String,
+    },
+    GetLeaves {
+        room: String,
+    },
+    GetPaths {
+        room: String,
+    },
+    GetRecentVotes {
+        room: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent: Option<String>,
+        #[serde(default)]
+        limit: Option<usize>,
+    },
+    Search {
+        query: String,
+    },
+    GetFeed {
+        actor: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        since: Option<i64>,
+        #[serde(default)]
+        limit: Option<usize>,
+    },
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub enum RpcResult {
+    PostOk {
+        events_appended: usize,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ranking_changes: Option<Vec<ScopeRankChanges>>,
+        threads: Vec<String>,
+        next: NextMoves,
+    },
+    CheckOk {
+        rankings: Vec<CheckScopeRanking>,
+        threads: Vec<String>,
+        next: Vec<String>,
+    },
+    GardenRank(RankResponse),
+    GardenItem(ItemResponse),
+    ForumThread(ThreadDetailResponse),
+    ForumThreads(ThreadsResponse),
+    RoomCreated {
+        room_id: String,
+    },
+    GrantOk {},
+    GlobalRank(GlobalRankResponse),
+    Pair(PairResponse),
+    Matchup(MatchupResponse),
+    RankHistory(RankHistoryResponse),
+    Leaves(LeavesResponse),
+    Paths(PathsResponse),
+    RecentVotes(RecentVotesResponse),
+    Search(SearchResponse),
+    Feed(FeedResponse),
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RpcLine {
+    pub ok: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<RpcResult>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hint: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RpcBatchResponse {
+    pub results: Vec<RpcLine>,
 }
 
 /// Start a browser-based OAuth login flow for a CLI agent.

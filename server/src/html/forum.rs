@@ -8,7 +8,7 @@ use maud::{html, Markup};
 
 use crate::{
     canonical_path::canonicalize_tag,
-    reducer::ReducerState,
+    reducer::{ReducerState, ScopeId},
     state::AppState,
     timeago,
 };
@@ -30,10 +30,15 @@ struct ThreadRow {
 fn collect_thread_rows(reduced: &ReducerState, now: i64) -> Vec<ThreadRow> {
     let _ = now;
     reduced
-        .threads
+        .forum_threads
         .iter()
-        .map(|(tag, thread)| {
-            let ingests = reduced.ingests_by_thread.get(tag).map(|q| q.len()).unwrap_or(0);
+        .filter(|((scope, _), _)| scope == &ScopeId::Public)
+        .map(|((_, tag), thread)| {
+            let ingests = reduced
+                .ingests_by_scope_thread
+                .get(&(ScopeId::Public, tag.clone()))
+                .map(|q| q.len())
+                .unwrap_or(0);
             ThreadRow {
                 tag: tag.clone(),
                 subtitle: None,
@@ -163,12 +168,12 @@ pub async fn thread_view(
 ) -> impl IntoResponse {
     let tag = canonicalize_tag(&tag);
 
-    // ingests_by_thread is newest-first; collect all IDs in chronological order.
+    // Newest-first queue → chronological for the page.
     let all_ids: Vec<String> = {
         let reduced = state.reduced.read().await;
         reduced
-            .ingests_by_thread
-            .get(&tag)
+            .ingests_by_scope_thread
+            .get(&(ScopeId::Public, tag.clone()))
             .map(|q| q.iter().rev().cloned().collect())
             .unwrap_or_default()
     };
@@ -243,7 +248,7 @@ pub async fn thread_post_view(
     let index: usize = index_str.parse().unwrap_or(0);
     let (ing, subtitle) = {
         let reduced = state.reduced.read().await;
-        let ing = reduced.ingests_by_thread.get(&tag)
+        let ing = reduced.ingests_by_scope_thread.get(&(ScopeId::Public, tag.clone()))
             .and_then(|q| q.iter().rev().nth(index))
             .and_then(|id| reduced.ingests_by_id.get(id).cloned());
         let subtitle: Option<String> = None;
@@ -288,8 +293,8 @@ pub async fn thread_post_expand(
     let ing = {
         let reduced = state.reduced.read().await;
         reduced
-            .ingests_by_thread
-            .get(&tag)
+            .ingests_by_scope_thread
+            .get(&(ScopeId::Public, tag.clone()))
             .and_then(|q| q.iter().rev().nth(index))
             .and_then(|id| reduced.ingests_by_id.get(id).cloned())
     };

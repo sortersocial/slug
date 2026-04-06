@@ -78,9 +78,20 @@
 
 (defn start-server
   "Start the slugsocial-server binary with the given env map.
-   Returns the babashka.process map."
-  [server-bin env-map]
-  (p/process [server-bin] {:out :inherit :err :inherit :env env-map}))
+   Returns the babashka.process map.
+
+   When `log-file` (string path) is provided, stdout and stderr are appended there
+   instead of inheriting the parent descriptors. Inheriting shared pipes while the
+   parent blocks on HTTP I/O can fill the pipe buffer and deadlock the server on log writes."
+  ([server-bin env-map]
+   (start-server server-bin env-map nil))
+  ([server-bin env-map log-file]
+   (p/process [server-bin]
+              (if log-file
+                ;; Two string paths (same file): babashka.process can deref the process cleanly.
+                ;; :err :out + ProcessBuilder$Redirect breaks stream copying in deref/kill-server.
+                {:env env-map :out log-file :err log-file}
+                {:out :inherit :err :inherit :env env-map}))))
 
 (defn kill-server
   "Forcibly kill a server process (babashka.process map) and wait for it to exit."

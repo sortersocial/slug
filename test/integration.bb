@@ -146,7 +146,7 @@
 
         ;; 2.5 check endpoint — disconnected components not flattened (before OAuth; no events.jsonl yet)
       (println "\nchecking (dry-run) returns discrete ranking groups…")
-      (bind check-result (common/run-cli cli-bin base-url ["check" "--json" "--thread" "integration-test"] :input check-doc-disconnected))
+      (bind check-result (common/run-cli cli-bin base-url ["public" "check" "--json"] :input check-doc-disconnected))
       (assert! (zero? (:exit check-result)) "cli check exits 0")
       (bind check-resp   (json/parse-string (:out check-result) true))
       (assert! (:ok check-resp) "check response ok=true")
@@ -166,7 +166,7 @@
 
         ;; 3. ingest via CLI (bearer required)
       (println "\ningesting .sorter document via CLI…")
-      (bind ingest1-result (common/run-cli cli-bin base-url ["ingest" "--json" "--thread" "integration-test" "--delegate" "00000000-0000-0000-0000-000000000000:cli:local/dev"] :input sorter-doc :extra-env token-env))
+      (bind ingest1-result (common/run-cli cli-bin base-url ["public" "forum" "post" "integration-test" "--json" "--delegate" "00000000-0000-0000-0000-000000000000:cli:local/dev"] :input sorter-doc :extra-env token-env))
       (assert! (zero? (:exit ingest1-result)) "cli ingest exits 0")
       (bind ingest1-resp   (json/parse-string (:out ingest1-result) true))
       (assert! (:ok ingest1-resp) "ingest response ok=true")
@@ -176,7 +176,7 @@
 
         ;; 4. query rankings via CLI
       (println "\nquerying garden children via CLI…")
-      (bind children-result (common/run-cli cli-bin base-url ["garden" "children" "languages" "--json"]))
+      (bind children-result (common/run-cli cli-bin base-url ["public" "garden" "children" "languages" "--json"]))
       (assert! (zero? (:exit children-result)) "cli garden children exits 0")
       (bind children-resp   (json/parse-string (:out children-result) true))
       (bind ranked          (mapv :item (mapcat :ranking (:components children-resp))))
@@ -195,14 +195,14 @@
 
         ;; 6. query forum via CLI
       (println "\nquerying forum via CLI…")
-      (bind forum-result (common/run-cli cli-bin base-url ["forum" "--json"]))
+      (bind forum-result (common/run-cli cli-bin base-url ["public" "forum" "list" "--json"]))
       (assert! (zero? (:exit forum-result)) "cli forum exits 0")
       (bind forum-resp   (json/parse-string (:out forum-result) true))
       (assert! (some (fn [t] (= "#integration-test" (:thread t))) (:threads forum-resp))
                "thread '#integration-test' visible in forum")
 
         ;; 7. query item body via CLI
-      (bind body-result (common/run-cli cli-bin base-url ["garden" "body" "languages/rust" "--json"]))
+      (bind body-result (common/run-cli cli-bin base-url ["public" "garden" "body" "languages/rust" "--json"]))
       (assert! (zero? (:exit body-result)) "cli garden body exits 0")
       (bind body-resp   (json/parse-string (:out body-result) true))
       (assert! (str/includes? (or (:body body-resp) "") "ownership")
@@ -210,7 +210,7 @@
 
         ;; 9. global rank endpoint
       (println "\ntesting global rank endpoint…")
-      (bind grank-result (common/run-cli cli-bin base-url ["garden" "rank" "--json"]))
+      (bind grank-result (common/run-cli cli-bin base-url ["public" "garden" "rank" "--json"]))
       (assert! (zero? (:exit grank-result)) "cli garden rank exits 0")
       (bind grank-resp   (json/parse-string (:out grank-result) true))
       (assert! (pos? (:ranked_total grank-resp)) "global rank has ranked items")
@@ -218,13 +218,13 @@
       (assert! (str/ends-with? (:item (first (:items grank-resp))) "languages/rust")
                (str "rust is #1 globally (got " (:item (first (:items grank-resp))) ")"))
 
-      (bind grank-pct-result (common/run-cli cli-bin base-url ["garden" "rank" "--percent" "--limit" "2" "--json"]))
+      (bind grank-pct-result (common/run-cli cli-bin base-url ["public" "garden" "rank" "--percent" "--limit" "2" "--json"]))
       (assert! (zero? (:exit grank-pct-result)) "cli garden rank --percent --limit 2 exits 0")
       (bind grank-pct-resp   (json/parse-string (:out grank-pct-result) true))
       (assert! (= 2 (count (:items grank-pct-resp))) "limit=2 returns 2 items")
       (assert! (= 100.0 (:percent (first (:items grank-pct-resp)))) "top item has 100.0% score")
 
-      (bind grank-off-result (common/run-cli cli-bin base-url ["garden" "rank" "--limit" "1" "--offset" "1" "--json"]))
+      (bind grank-off-result (common/run-cli cli-bin base-url ["public" "garden" "rank" "--limit" "1" "--offset" "1" "--json"]))
       (assert! (zero? (:exit grank-off-result)) "cli garden rank --offset 1 exits 0")
       (bind grank-off-resp   (json/parse-string (:out grank-off-result) true))
       (assert! (= (:item (second (:items grank-pct-resp))) (:item (first (:items grank-off-resp))))
@@ -237,7 +237,7 @@
                                         "#integration-test"
                                         "~/languages/rust 4:1 ~/languages/python { type safety }"
                                         "~/languages/rust 3:1 ~/languages/go { zero-cost abstractions }"]))
-      (bind hist-ingest      (common/run-cli cli-bin base-url ["ingest" "--json" "--thread" "integration-test" "--delegate" "00000000-0000-0000-0000-000000000000:cli:local/dev"] :input two-vote-doc :extra-env token-env))
+      (bind hist-ingest      (common/run-cli cli-bin base-url ["public" "forum" "post" "integration-test" "--json" "--delegate" "00000000-0000-0000-0000-000000000000:cli:local/dev"] :input two-vote-doc :extra-env token-env))
       (assert! (zero? (:exit hist-ingest))
                (str "two-vote ingest exits 0 (err: " (:err hist-ingest) ")"))
 
@@ -245,7 +245,7 @@
       (assert! (= 5 (count event-lines-after-hist))
                (str "5 events in JSONL after second ingest (got " (count event-lines-after-hist) ")"))
 
-      (bind hist-result      (common/run-cli cli-bin base-url ["garden" "history" "languages/rust" "--json"]))
+      (bind hist-result      (common/run-cli cli-bin base-url ["public" "garden" "history" "languages/rust" "--json"]))
       (assert! (zero? (:exit hist-result))
                (str "cli garden history exits 0 (err: " (:err hist-result) ")"))
       (bind hist-resp        (json/parse-string (:out hist-result) true))
@@ -270,7 +270,7 @@
 
         ;; 12. same query, same result
       (println "\nquerying rankings after replay…")
-      (bind replay-result (common/run-cli cli-bin base-url ["garden" "children" "languages" "--json"]))
+      (bind replay-result (common/run-cli cli-bin base-url ["public" "garden" "children" "languages" "--json"]))
       (assert! (zero? (:exit replay-result)) "cli garden children exits 0 after restart")
       (bind replay-resp   (json/parse-string (:out replay-result) true))
       (bind replay-ranked (mapv :item (mapcat :ranking (:components replay-resp))))

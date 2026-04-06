@@ -23,7 +23,7 @@ pub enum Event {
     UserRegistered(UserRegistered),
     TokenIssued(TokenIssued),
     AgentBound(AgentBound),
-    ThreadCreated(ThreadCreated),
+    RoomCreated(RoomCreated),
     GrantAdded(GrantAdded),
     GrantRevoked(GrantRevoked),
     /// Ingest of a DSL+prose body. Identity and routing live in event metadata.
@@ -56,9 +56,9 @@ pub struct AgentBound {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ThreadCreated {
+pub struct RoomCreated {
     pub ts: i64,
-    pub thread_id: String,
+    pub room_id: String,
     pub slug: String,
     pub owner: String,
     pub visibility: ThreadVisibility,
@@ -67,7 +67,7 @@ pub struct ThreadCreated {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GrantAdded {
     pub ts: i64,
-    pub thread_id: String,
+    pub room_id: String,
     pub username: String,
     pub capabilities: Vec<ThreadCapability>,
     pub granted_by: String,
@@ -76,7 +76,7 @@ pub struct GrantAdded {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GrantRevoked {
     pub ts: i64,
-    pub thread_id: String,
+    pub room_id: String,
     pub username: String,
     pub capabilities: Vec<ThreadCapability>,
     pub revoked_by: String,
@@ -96,8 +96,10 @@ pub struct Ingest {
     /// AI delegate id `uuid:rig:model` (wire and storage: no `@`). Omitted when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delegate: Option<String>,
-    /// Thread identifier: public tag (e.g. "languages") or private id/slug (e.g. "a7f2k9x/project-review").
-    pub thread_id: String,
+    /// Permission boundary: `"public"` or private room id (`shortid/slug`).
+    pub room_id: String,
+    /// Forum channel within the room (e.g. `languages`).
+    pub thread_tag: String,
 }
 
 fn generate_id() -> String {

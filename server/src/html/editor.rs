@@ -111,7 +111,8 @@ pub async fn editor_check(
                 raw: form.text.clone(),
                 principal: String::new(),
                 delegate: None,
-                thread_id: String::new(),
+                room_id: "public".to_string(),
+                thread_tag: String::new(),
             });
             let mut simulated = { reduced_arc.read().await.clone() };
             simulated.apply_event(event);

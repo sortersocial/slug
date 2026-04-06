@@ -9,11 +9,20 @@ use crate::path_types::CanonicalItemUrl;
 #[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ScopeId {
     Public,
-    Thread(String),
+    Room(String),
+}
+
+/// Wire `room` field → content scope (`"public"` → [`ScopeId::Public`]).
+pub fn scope_from_room_wire(room: &str) -> ScopeId {
+    let r = room.trim();
+    if r.is_empty() || r == "public" {
+        ScopeId::Public
+    } else {
+        ScopeId::Room(r.to_string())
+    }
 }
 
 /// Parsed vote data (internal representation).
-// Note: NOT a wire-format struct — this is internal only. `a` and `b` are CanonicalItemUrl.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct VoteData {
     pub ts: i64,
@@ -22,15 +31,12 @@ pub struct VoteData {
     pub ratio_left: i32,
     pub ratio_right: i32,
     pub body: String,
-    /// Human principal username (no `@` in stored events).
     pub principal: String,
-    /// AI delegate id, if any (no `@` in stored events).
     pub delegate: Option<String>,
-    /// Thread id where this vote was cast (public tag or private id/slug).
-    pub thread_id: String,
+    /// Forum channel where this vote was cast (tag only, not room id).
+    pub thread_tag: String,
 }
 
-/// Single ranking group (one-ranking model). All votes contribute to this group.
 #[derive(Debug, Clone)]
 pub struct GroupState {
     pub item_to_idx: HashMap<CanonicalItemUrl, usize>,
@@ -41,10 +47,8 @@ pub struct GroupState {
 
     /// Unordered pairs that have at least one vote recorded between them (i<j).
     pub voted_pairs: HashSet<(usize, usize)>,
-
     pub dirty: bool,
     pub cached_scores: Vec<f64>,
-
     pub recent_votes: VecDeque<VoteData>,
 }
 
@@ -100,7 +104,7 @@ impl GroupState {
     pub fn apply_vote(&mut self, mut vote: VoteData) {
         vote.a = CanonicalItemUrl::parse(vote.a.as_str()).unwrap_or(vote.a);
         vote.b = CanonicalItemUrl::parse(vote.b.as_str()).unwrap_or(vote.b);
-        vote.thread_id = canonicalize_tag(&vote.thread_id);
+        vote.thread_tag = canonicalize_tag(&vote.thread_tag);
         if vote.ratio_left < 0 {
             vote.ratio_left = 0;
         }
@@ -147,18 +151,20 @@ pub struct RankHistoryEntry {
     pub post_id: String,
 }
 
-/// First-class thread metadata.
 #[derive(Debug, Clone)]
-pub struct ThreadState {
-    pub last_activity_ts: i64,
+pub struct RoomState {
     pub visibility: crate::events::ThreadVisibility,
 }
 
-impl Default for ThreadState {
+#[derive(Debug, Clone)]
+pub struct ForumThreadState {
+    pub last_activity_ts: i64,
+}
+
+impl Default for ForumThreadState {
     fn default() -> Self {
         Self {
             last_activity_ts: 0,
-            visibility: crate::events::ThreadVisibility::Public,
         }
     }
 }
@@ -188,23 +194,21 @@ pub struct ReducerState {
     pub users_by_provider: HashMap<(String, String), String>,
     /// token_id -> (username, salt, token_hash)
     pub tokens_by_id: HashMap<String, (String, String, String)>,
-    /// agent id (naked `uuid:rig:model`) -> username
     pub agent_bindings: HashMap<String, String>,
 
+
     pub ingests_by_id: HashMap<String, Ingest>,
-    /// Thread -> recent ingest ids (most recent first).
-    pub ingests_by_thread: HashMap<String, VecDeque<String>>,
-
-    /// First-class thread state: bump time, subscriber count.
-    pub threads: HashMap<String, ThreadState>,
-
-    /// Last ingest timestamp (ms) per actor. Used by feed to default `since`.
+    /// (scope, thread_tag) → ingest ids, newest first.
+    pub ingests_by_scope_thread: HashMap<(ScopeId, String), VecDeque<String>>,
+    /// Private (or public) room registry: room_id → visibility from [`RoomCreated`].
+    pub rooms: HashMap<String, RoomState>,
+    /// (scope, thread_tag) → last activity.
+    pub forum_threads: HashMap<(ScopeId, String), ForumThreadState>,
     pub actor_last_post_ts: HashMap<String, i64>,
 
     /// All ingest IDs in chronological order (oldest first). Used by the feed endpoint.
     pub ingests_ordered: Vec<String>,
-
-    /// thread_id -> username -> set of capabilities
+    /// room_id → username → capabilities
     pub grants: HashMap<String, HashMap<String, HashSet<ThreadCapability>>>,
 }
 
@@ -213,10 +217,9 @@ impl ReducerState {
         self.content.get(scope)
     }
 
-    /// Check whether `username` has `cap` in `thread_id`.
-    pub fn user_has_cap(&self, thread_id: &str, username: &str, cap: ThreadCapability) -> bool {
+    pub fn user_has_cap(&self, room_id: &str, username: &str, cap: ThreadCapability) -> bool {
         self.grants
-            .get(thread_id)
+            .get(room_id)
             .and_then(|t| t.get(username))
             .map(|caps| caps.contains(&cap))
             .unwrap_or(false)
@@ -346,23 +349,22 @@ impl ReducerState {
                 }
                 self.agent_bindings.insert(ab.agent, ab.username);
             }
-            Event::ThreadCreated(tc) => {
-                self.threads.entry(tc.thread_id.clone()).or_default().visibility = tc.visibility;
+            Event::RoomCreated(rc) => {
+                self.rooms.insert(
+                    rc.room_id.clone(),
+                    RoomState {
+                        visibility: rc.visibility,
+                    },
+                );
             }
             Event::Ingest(mut ing) => {
-                ing.thread_id = canonicalize_tag(&ing.thread_id);
+                ing.thread_tag = canonicalize_tag(&ing.thread_tag);
+                let room_key = ing.room_id.trim().to_string();
+                let scope = scope_from_room_wire(&room_key);
+                let canonical_thread = ing.thread_tag.clone();
+                let scope_thread_key = (scope.clone(), canonical_thread.clone());
 
                 self.ingests_by_id.insert(ing.id.clone(), ing.clone());
-
-                let visibility = self
-                    .threads
-                    .entry(ing.thread_id.clone())
-                    .or_default()
-                    .visibility;
-                let scope = match visibility {
-                    crate::events::ThreadVisibility::Public => ScopeId::Public,
-                    crate::events::ThreadVisibility::Private => ScopeId::Thread(ing.thread_id.clone()),
-                };
 
                 let doc = match crate::dsl::parse_full(&ing.raw) {
                     Ok(d) => d,
@@ -386,10 +388,9 @@ impl ReducerState {
 
                 let principal = ing.principal.clone();
                 let delegate = ing.delegate.clone();
-                let canonical_thread: String = ing.thread_id.clone();
 
                 {
-                    let content = self.content_for_scope_mut(scope);
+                    let content = self.content_for_scope_mut(scope.clone());
 
                     // Snapshot ranks before votes are applied (force-compute if stale).
                     let before: HashMap<CanonicalItemUrl, (usize, usize)> = if !voted_items.is_empty() {
@@ -446,7 +447,7 @@ impl ReducerState {
                                     body: explanation,
                                     principal: principal.clone(),
                                     delegate: delegate.clone(),
-                                    thread_id: canonical_thread.clone(),
+                                    thread_tag: canonical_thread.clone(),
                                 };
 
                                 ingest_items.insert(item_a.clone());
@@ -513,12 +514,11 @@ impl ReducerState {
                     }
                 }
 
-                // Bump thread state for the canonical thread.
-                let ts = self.threads.entry(canonical_thread.clone()).or_default();
-                nav!(ts.last_activity_ts, selected(ing.ts > ts.last_activity_ts, setval(ing.ts)));
+                let ft = self.forum_threads.entry(scope_thread_key.clone()).or_default();
+                let prev_ts = ft.last_activity_ts;
+                nav!(ft.last_activity_ts, selected(ing.ts > prev_ts, setval(ing.ts)));
 
-                // Index ingest by canonical thread.
-                nav!(self.ingests_by_thread, keypath(canonical_thread.clone()), push_front(ing.id.clone()));
+                nav!(self.ingests_by_scope_thread, keypath(scope_thread_key), push_front(ing.id.clone()));
 
                 nav!(self.ingests_ordered, push_back(ing.id.clone()));
 
@@ -526,7 +526,7 @@ impl ReducerState {
             }
             Event::GrantAdded(ga) => {
                 let caps = self.grants
-                    .entry(ga.thread_id)
+                    .entry(ga.room_id)
                     .or_default()
                     .entry(ga.username)
                     .or_default();
@@ -535,18 +535,18 @@ impl ReducerState {
                 }
             }
             Event::GrantRevoked(gr) => {
-                if let Some(thread_grants) = self.grants.get_mut(&gr.thread_id) {
+                if let Some(room_grants) = self.grants.get_mut(&gr.room_id) {
                     let username = gr.username;
-                    if let Some(caps) = thread_grants.get_mut(&username) {
+                    if let Some(caps) = room_grants.get_mut(&username) {
                         for cap in &gr.capabilities {
                             caps.remove(cap);
                         }
                         if caps.is_empty() {
-                            thread_grants.remove(&username);
+                            room_grants.remove(&username);
                         }
                     }
-                    if thread_grants.is_empty() {
-                        self.grants.remove(&gr.thread_id);
+                    if room_grants.is_empty() {
+                        self.grants.remove(&gr.room_id);
                     }
                 }
             }
@@ -564,8 +564,9 @@ impl Default for ReducerState {
             tokens_by_id: HashMap::new(),
             agent_bindings: HashMap::new(),
             ingests_by_id: HashMap::new(),
-            ingests_by_thread: HashMap::new(),
-            threads: HashMap::new(),
+            ingests_by_scope_thread: HashMap::new(),
+            rooms: HashMap::new(),
+            forum_threads: HashMap::new(),
             actor_last_post_ts: HashMap::new(),
             ingests_ordered: Vec::new(),
             grants: HashMap::new(),

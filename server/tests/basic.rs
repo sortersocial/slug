@@ -3,7 +3,7 @@ use slugsocial_server::{
     canonical_path::{canonicalize_item, canonicalize_tag},
     events::{Event, Ingest},
     ranking::ranked_items,
-    reducer::{GroupState, ReducerState},
+    reducer::{GroupState, ReducerState, ScopeId},
 };
 
 
@@ -17,7 +17,8 @@ fn ingest_event(ts: i64, raw: &str) -> Event {
         raw: raw.to_string(),
         principal: "test".to_string(),
         delegate: Some("00000000-0000-0000-0000-000000000000:test:local/test".to_string()),
-        thread_id: "t".to_string(),
+        room_id: "public".to_string(),
+        thread_tag: "t".to_string(),
     })
 }
 
@@ -94,12 +95,12 @@ fn reducer_handles_item_and_body_from_ingest() {
 #[test]
 fn reducer_indexes_item_threads_and_vote_thread() {
     let mut state = ReducerState::default();
-    // Thread routing is metadata now (ingest.thread_id), not parsed from raw.
+    // Thread routing is metadata (ingest.thread_tag), not parsed from raw.
     let mut ev = match ingest_event(1, "~/sorts/insertion { O(n^2) }\n~/sorts/mergesort { O(n log n) }\n~/sorts/insertion 3:1 ~/sorts/mergesort { simpler for small n }\n") {
         Event::Ingest(i) => i,
         _ => unreachable!(),
     };
-    ev.thread_id = "sorting-hat".to_string();
+    ev.thread_tag = "sorting-hat".to_string();
     state.apply_event(Event::Ingest(ev));
 
     let content = state.public();
@@ -109,7 +110,7 @@ fn reducer_indexes_item_threads_and_vote_thread() {
     assert!(threads_for_mergesort.contains("sorting-hat"));
 
     let vote = content.item_votes.get("https://slug.social/~/sorts/insertion").unwrap().front().unwrap();
-    assert_eq!(vote.thread_id, "sorting-hat");
+    assert_eq!(vote.thread_tag, "sorting-hat");
 }
 
 #[test]
@@ -493,7 +494,7 @@ fn reducer_negative_ratio_clamped_to_zero() {
         body: "negative".to_string(),
         principal: "test".to_string(),
         delegate: Some("00000000-0000-0000-0000-000000000000:test:local/test".to_string()),
-        thread_id: "t".to_string(),
+        thread_tag: "t".to_string(),
     });
     assert_eq!(group.idx_to_item.len(), 2);
     // Both edges should exist (negatives clamped to 0, then 0:0 -> 1:1)
@@ -664,22 +665,23 @@ fn test_actor_last_post_ts() {
 #[test]
 fn test_thread_timestamp_bump() {
     let mut state = ReducerState::default();
+    let key = (ScopeId::Public, "my-thread".to_string());
     let mut ev1 = match ingest_event(100, "~/t/a {a}\n") { Event::Ingest(i) => i, _ => unreachable!() };
-    ev1.thread_id = "my-thread".to_string();
+    ev1.thread_tag = "my-thread".to_string();
     state.apply_event(Event::Ingest(ev1));
-    assert_eq!(state.threads.get("my-thread").unwrap().last_activity_ts, 100);
+    assert_eq!(state.forum_threads.get(&key).unwrap().last_activity_ts, 100);
 
     let mut ev2 = match ingest_event(200, "~/t/b {b}\n") { Event::Ingest(i) => i, _ => unreachable!() };
-    ev2.thread_id = "my-thread".to_string();
+    ev2.thread_tag = "my-thread".to_string();
     state.apply_event(Event::Ingest(ev2));
-    assert_eq!(state.threads.get("my-thread").unwrap().last_activity_ts, 200);
+    assert_eq!(state.forum_threads.get(&key).unwrap().last_activity_ts, 200);
 
     // Ingest with earlier timestamp should NOT regress
     let mut ev3 = match ingest_event(150, "~/t/c {c}\n") { Event::Ingest(i) => i, _ => unreachable!() };
-    ev3.thread_id = "my-thread".to_string();
+    ev3.thread_tag = "my-thread".to_string();
     state.apply_event(Event::Ingest(ev3));
     assert_eq!(
-        state.threads.get("my-thread").unwrap().last_activity_ts,
+        state.forum_threads.get(&key).unwrap().last_activity_ts,
         200,
         "thread timestamp should not regress to an earlier value"
     );
@@ -692,7 +694,7 @@ fn test_thread_id_is_used_for_votes_and_indexes() {
         Event::Ingest(i) => i,
         _ => unreachable!(),
     };
-    ev.thread_id = "first".to_string();
+    ev.thread_tag = "first".to_string();
     state.apply_event(Event::Ingest(ev));
 
     let content = state.public();
@@ -702,8 +704,8 @@ fn test_thread_id_is_used_for_votes_and_indexes() {
         .unwrap()
         .front()
         .unwrap();
-    assert_eq!(vote.thread_id, "first");
-    assert!(state.ingests_by_thread.contains_key("first"));
+    assert_eq!(vote.thread_tag, "first");
+    assert!(state.ingests_by_scope_thread.contains_key(&(ScopeId::Public, "first".to_string())));
     assert!(state
         .public()
         .item_threads
@@ -772,10 +774,13 @@ fn test_ingests_by_thread_ordering() {
     let mut state = ReducerState::default();
     for ts in [100, 200, 300] {
         let mut ev = match ingest_event(ts, "~/t/a {a}\n") { Event::Ingest(i) => i, _ => unreachable!() };
-        ev.thread_id = "order-thread".to_string();
+        ev.thread_tag = "order-thread".to_string();
         state.apply_event(Event::Ingest(ev));
     }
-    let thread_ingests = state.ingests_by_thread.get("order-thread").unwrap();
+    let thread_ingests = state
+        .ingests_by_scope_thread
+        .get(&(ScopeId::Public, "order-thread".to_string()))
+        .unwrap();
     assert_eq!(thread_ingests.len(), 3);
     // Most recent first (push_front ordering)
     assert_eq!(thread_ingests[0], "test-300");
