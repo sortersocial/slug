@@ -21,8 +21,9 @@ struct Cli {
     cmd: Option<Command>,
 }
 
+/// Commands scoped to a room (`public` or `shortid/slug`).
 #[derive(Subcommand, Debug)]
-enum Command {
+enum ScopedCmd {
     /// Browse the garden (ontology) — light mode, ranked by votes
     Garden {
         #[command(subcommand)]
@@ -173,6 +174,23 @@ enum Command {
         /// Output as JSON for agent parsing
         #[arg(long)]
         json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum Command {
+    /// Public site (same as room `public`)
+    Public {
+        #[command(subcommand)]
+        sub: ScopedCmd,
+    },
+    /// Private room id (`shortid/slug` from `room create`)
+    Private {
+        /// Room id, e.g. `a1b2c3d/my-project`
+        #[arg(value_name = "ROOM_ID")]
+        room: String,
+        #[command(subcommand)]
+        sub: ScopedCmd,
     },
 
     /// Show all activity since you last posted (global feed)
@@ -628,6 +646,37 @@ fn http_client() -> Result<reqwest::Client> {
         .build()?)
 }
 
+async fn send_rpc(
+    client: &reqwest::Client,
+    base: &str,
+    bearer: Option<&str>,
+    commands: Vec<RpcCommand>,
+) -> Result<RpcBatchResponse> {
+    let url = format!("{}/api/v0/rpc", base.trim_end_matches('/'));
+    let mut req = client.post(url).json(&RpcBatch(commands));
+    if let Some(b) = bearer {
+        req = req.header("Authorization", format!("Bearer {}", b));
+    }
+    let resp = req.send().await?;
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(anyhow!("rpc HTTP {}: {}", status, text.trim()));
+    }
+    serde_json::from_str(&text).map_err(|e| anyhow!("rpc response: {e}"))
+}
+
+fn rpc_line_ok(line: &RpcLine) -> Result<&RpcResult> {
+    if !line.ok {
+        let mut m = line.error.clone().unwrap_or_else(|| "rpc error".into());
+        if let Some(h) = &line.hint {
+            m.push_str(&format!("\nhint: {h}"));
+        }
+        return Err(anyhow!(m));
+    }
+    line.result.as_ref().ok_or_else(|| anyhow!("rpc missing result"))
+}
+
 /// Normalize ontology path for API. Accepts path with or without ~/ (shell expands ~ to $HOME).
 /// Returns a bare slug path (e.g. `languages/python`) with no leading `/` or `~/`.
 /// Call `ontology_path_for_api_query` before sending `item=` / `parent=` params so the server
@@ -729,6 +778,418 @@ fn write_secret_file(name: &str, contents: &str) -> Result<()> {
     Ok(())
 }
 
+async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
+    let room = room.trim();
+    let client = http_client()?;
+    match sub {
+        ScopedCmd::Garden { sub } => match sub {
+            GardenCmd::Tree { json } => {
+                let batch = send_rpc(&client, base, None, vec![RpcCommand::GetLeaves { room: room.to_string() }]).await?;
+                match rpc_line_ok(&batch.results[0])? {
+                    RpcResult::Leaves(resp) => {
+                        if json {
+                            println!("{}", serde_json::to_string_pretty(&resp)?);
+                        } else {
+                            for p in &resp.paths {
+                                println!("~/{}", p);
+                            }
+                        }
+                    }
+                    _ => return Err(anyhow!("unexpected RPC result")),
+                }
+            }
+            GardenCmd::Body { path, json, full } => {
+                let path = normalize_ontology_path_input(&path).map_err(anyhow::Error::msg)?;
+                let item_q = ontology_path_for_api_query(&path);
+                let batch = send_rpc(
+                    &client,
+                    base,
+                    None,
+                    vec![RpcCommand::GetGardenItem {
+                        room: room.to_string(),
+                        item_path: item_q,
+                        full: Some(full),
+                    }],
+                )
+                .await?;
+                match rpc_line_ok(&batch.results[0])? {
+                    RpcResult::GardenItem(resp) => {
+                        if json {
+                            println!("{}", serde_json::to_string_pretty(&resp)?);
+                        } else {
+                            print_item_response(&resp);
+                        }
+                    }
+                    _ => return Err(anyhow!("unexpected RPC result")),
+                }
+            }
+            GardenCmd::Children { paths, depth, json } => {
+                let paths: Vec<String> = paths
+                    .iter()
+                    .map(|p| normalize_ontology_path_input(p).map_err(anyhow::Error::msg))
+                    .collect::<Result<Vec<_>>>()?;
+                let parent_param = paths
+                    .iter()
+                    .map(|p| ontology_path_for_api_query(p))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                let batch = send_rpc(
+                    &client,
+                    base,
+                    None,
+                    vec![RpcCommand::GetGardenRank {
+                        room: room.to_string(),
+                        parent_path: parent_param,
+                        depth,
+                        offset: None,
+                        limit: None,
+                        percent: None,
+                    }],
+                )
+                .await?;
+                match rpc_line_ok(&batch.results[0])? {
+                    RpcResult::GardenRank(resp) => {
+                        if json {
+                            println!("{}", serde_json::to_string_pretty(&resp)?);
+                        } else {
+                            print_rank_response(&resp);
+                        }
+                    }
+                    _ => return Err(anyhow!("unexpected RPC result")),
+                }
+            }
+            GardenCmd::Pair { path, json } => {
+                let path = normalize_ontology_path_input(&path).map_err(anyhow::Error::msg)?;
+                let parent_q = ontology_path_for_api_query(&path);
+                let batch = send_rpc(
+                    &client,
+                    base,
+                    None,
+                    vec![RpcCommand::GetPair {
+                        room: room.to_string(),
+                        parent_path: parent_q,
+                    }],
+                )
+                .await?;
+                match rpc_line_ok(&batch.results[0])? {
+                    RpcResult::Pair(resp) => {
+                        if json {
+                            println!("{}", serde_json::to_string_pretty(&resp)?);
+                        } else {
+                            print_pair_response(&resp);
+                        }
+                    }
+                    _ => return Err(anyhow!("unexpected RPC result")),
+                }
+            }
+            GardenCmd::Matchup { path, json } => {
+                let path = normalize_ontology_path_input(&path).map_err(anyhow::Error::msg)?;
+                let item_q = ontology_path_for_api_query(&path);
+                let batch = send_rpc(
+                    &client,
+                    base,
+                    None,
+                    vec![RpcCommand::GetMatchup {
+                        room: room.to_string(),
+                        item_path: item_q,
+                        limit: None,
+                    }],
+                )
+                .await?;
+                match rpc_line_ok(&batch.results[0])? {
+                    RpcResult::Matchup(resp) => {
+                        if json {
+                            println!("{}", serde_json::to_string_pretty(&resp)?);
+                        } else {
+                            print_matchup_response(&resp);
+                        }
+                    }
+                    _ => return Err(anyhow!("unexpected RPC result")),
+                }
+            }
+            GardenCmd::History { path, json } => {
+                let path = normalize_ontology_path_input(&path).map_err(anyhow::Error::msg)?;
+                let item_q = ontology_path_for_api_query(&path);
+                let batch = send_rpc(
+                    &client,
+                    base,
+                    None,
+                    vec![RpcCommand::GetRankHistory {
+                        room: room.to_string(),
+                        item_path: item_q,
+                    }],
+                )
+                .await?;
+                match rpc_line_ok(&batch.results[0])? {
+                    RpcResult::RankHistory(resp) => {
+                        if json {
+                            println!("{}", serde_json::to_string_pretty(&resp)?);
+                        } else {
+                            print_rank_history_response(&resp);
+                        }
+                    }
+                    _ => return Err(anyhow!("unexpected RPC result")),
+                }
+            }
+            GardenCmd::Rank { limit, offset, percent, json } => {
+                let batch = send_rpc(
+                    &client,
+                    base,
+                    None,
+                    vec![RpcCommand::GetGlobalRank {
+                        room: room.to_string(),
+                        limit: Some(limit),
+                        offset: Some(offset),
+                        percent: Some(percent),
+                    }],
+                )
+                .await?;
+                match rpc_line_ok(&batch.results[0])? {
+                    RpcResult::GlobalRank(resp) => {
+                        if json {
+                            println!("{}", serde_json::to_string_pretty(&resp)?);
+                        } else {
+                            print_global_rank_response(&resp);
+                        }
+                    }
+                    _ => return Err(anyhow!("unexpected RPC result")),
+                }
+            }
+        },
+        ScopedCmd::Forum {
+            title,
+            json,
+            offset,
+            limit,
+            since,
+            before,
+            actor,
+            post,
+        } => {
+            match title {
+                None => {
+                    let batch = send_rpc(
+                        &client,
+                        base,
+                        None,
+                        vec![RpcCommand::ListForumThreads {
+                            room: room.to_string(),
+                        }],
+                    )
+                    .await?;
+                    match rpc_line_ok(&batch.results[0])? {
+                        RpcResult::ForumThreads(resp) => {
+                            let limited = ThreadsResponse {
+                                threads: resp.threads.iter().take(10).cloned().collect(),
+                            };
+                            if json {
+                                println!("{}", serde_json::to_string_pretty(&limited)?);
+                            } else {
+                                print_threads(&limited);
+                            }
+                        }
+                        _ => return Err(anyhow!("unexpected RPC result")),
+                    }
+                }
+                Some(name) => {
+                    let tag = normalize_thread_input(&name);
+                    let batch = send_rpc(
+                        &client,
+                        base,
+                        None,
+                        vec![RpcCommand::GetForumThread {
+                            room: room.to_string(),
+                            thread_tag: tag,
+                            offset,
+                            limit,
+                            since: match &since {
+                                Some(s) => Some(parse_ts(s)?),
+                                None => None,
+                            },
+                            before: match &before {
+                                Some(s) => Some(parse_ts(s)?),
+                                None => None,
+                            },
+                            actor,
+                            post_id: post,
+                        }],
+                    )
+                    .await?;
+                    match rpc_line_ok(&batch.results[0])? {
+                        RpcResult::ForumThread(resp) => {
+                            if json {
+                                println!("{}", serde_json::to_string_pretty(&resp)?);
+                            } else {
+                                print_thread(&resp);
+                            }
+                        }
+                        _ => return Err(anyhow!("unexpected RPC result")),
+                    }
+                }
+            }
+        }
+        ScopedCmd::Ingest {
+            file,
+            thread,
+            delegate,
+            json,
+        } => {
+            let mut text = String::new();
+            match file {
+                Some(path) => {
+                    text = std::fs::read_to_string(&path)
+                        .with_context(|| format!("failed to read {}", path.display()))?;
+                }
+                None => {
+                    std::io::stdin()
+                        .read_to_string(&mut text)
+                        .context("failed to read stdin")?;
+                }
+            }
+            if text.trim().is_empty() {
+                return Err(anyhow!("no input provided (empty)"));
+            }
+            let bearer = effective_bearer().ok_or_else(|| {
+                anyhow!(
+                    "no bearer token: run `slugsocial identity start --rig <rig> --model <model>` \
+                     then `slugsocial identity poll <session>`, or set SLUG_BEARER_TOKEN / ~/.config/slugsocial/token"
+                )
+            })?;
+            let batch = send_rpc(
+                &client,
+                base,
+                Some(&bearer),
+                vec![RpcCommand::Post {
+                    room: room.to_string(),
+                    thread_tag: thread,
+                    delegate,
+                    text,
+                    return_rank_diff: true,
+                }],
+            )
+            .await?;
+            match rpc_line_ok(&batch.results[0])? {
+                RpcResult::PostOk {
+                    events_appended,
+                    ranking_changes,
+                    threads,
+                    next,
+                } => {
+                    if json {
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&serde_json::json!({
+                                "ok": true,
+                                "events_appended": events_appended,
+                                "ranking_changes": ranking_changes,
+                                "threads": threads,
+                                "next": next,
+                            }))?
+                        );
+                    } else {
+                        println!("✓ ingested");
+                        println!("events: {}", events_appended);
+                        if !threads.is_empty() {
+                            println!("threads:");
+                            for t in threads {
+                                println!("  {t}");
+                            }
+                        }
+                        if let Some(ref rc) = ranking_changes {
+                            print_ranking_changes(rc);
+                        }
+                        print_next(&next);
+                        println!();
+                        println!("---");
+                        println!("For your next comparison: remember to ask your human first. Their perspective is what makes your submission more than another model's take.");
+                        println!("---");
+                    }
+                }
+                _ => return Err(anyhow!("unexpected RPC result")),
+            }
+        }
+        ScopedCmd::Check {
+            file,
+            thread: _thread,
+            delegate: _delegate,
+            json,
+        } => {
+            let mut text = String::new();
+            match file {
+                Some(path) => {
+                    text = std::fs::read_to_string(&path)
+                        .with_context(|| format!("failed to read {}", path.display()))?;
+                }
+                None => {
+                    std::io::stdin()
+                        .read_to_string(&mut text)
+                        .context("failed to read stdin")?;
+                }
+            }
+            if text.trim().is_empty() {
+                return Err(anyhow!("no input provided (empty)"));
+            }
+            let batch = send_rpc(
+                &client,
+                base,
+                None,
+                vec![RpcCommand::Check {
+                    room: room.to_string(),
+                    text,
+                }],
+            )
+            .await?;
+            match rpc_line_ok(&batch.results[0])? {
+                RpcResult::CheckOk {
+                    rankings,
+                    threads,
+                    next,
+                } => {
+                    if json {
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&serde_json::json!({
+                                "ok": true,
+                                "rankings": rankings,
+                                "threads": threads,
+                                "next": next,
+                            }))?
+                        );
+                    } else {
+                        println!("✓ check ok (dry-run)");
+                        if !threads.is_empty() {
+                            println!("threads:");
+                            for t in threads {
+                                println!("  {t}");
+                            }
+                        }
+                        if rankings.is_empty() {
+                            println!();
+                            println!("(no ranking touched by this doc yet)");
+                        } else {
+                            println!();
+                            print_check_rankings(&rankings);
+                        }
+                        println!();
+                        println!("---");
+                        println!("Does this submission reflect input from your human? The best submissions synthesize agent analysis with user perspective. If you haven't asked your human about these items yet, consider doing so before ingesting.");
+                        println!("---");
+                        if !next.is_empty() {
+                            println!();
+                            println!("next:");
+                            for n in next {
+                                println!("  {n}");
+                            }
+                        }
+                    }
+                }
+                _ => return Err(anyhow!("unexpected RPC result")),
+            }
+        }
+    }
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let Cli { cmd, server } = Cli::parse();
@@ -742,6 +1203,9 @@ async fn main() -> Result<()> {
     let base = server.trim_end_matches('/');
 
     match cmd {
+        Command::Public { sub } => run_scoped(base, "public", sub).await?,
+        Command::Private { room, sub } => run_scoped(base, &room, sub).await?,
+
         Command::Healthz { json } => {
             let client = http_client()?;
             let url = format!("{base}/healthz");
@@ -756,8 +1220,17 @@ async fn main() -> Result<()> {
 
         Command::Search { query, json } => {
             let client = http_client()?;
-            let url = format!("{base}/api/v0/search?q={}", urlencoding::encode(&query));
-            let resp: slug_types::SearchResponse = expect_json(client.get(url).send().await?).await?;
+            let batch = send_rpc(
+                &client,
+                base,
+                None,
+                vec![RpcCommand::Search { query }],
+            )
+            .await?;
+            let resp = match rpc_line_ok(&batch.results[0])? {
+                RpcResult::Search(s) => s,
+                _ => return Err(anyhow!("unexpected RPC result")),
+            };
             if json {
                 println!("{}", serde_json::to_string_pretty(&resp)?);
             } else {
@@ -782,7 +1255,12 @@ async fn main() -> Result<()> {
                         .unwrap_or_default()
                         .as_millis() as i64;
                     for t in &resp.threads {
-                        println!("  {}  {}n  {}", t.tag, t.post_count, slug_types::timeago::timeago(now_ms, t.last_activity));
+                        println!(
+                            "  {} · {} posts · {}",
+                            t.tag,
+                            t.post_count,
+                            slug_types::timeago::timeago(now_ms, t.last_activity)
+                        );
                     }
                 }
                 if !resp.posts.is_empty() {
@@ -803,277 +1281,26 @@ async fn main() -> Result<()> {
             }
         }
 
-        Command::Garden { sub } => match sub {
-            GardenCmd::Tree { json } => {
-                let client = http_client()?;
-                let url = format!("{base}/api/v0/leaves");
-                let builder = client.get(url);
-                let resp: LeavesResponse = expect_json(builder.send().await?).await?;
-                if json {
-                    println!("{}", serde_json::to_string_pretty(&resp)?);
-                } else {
-                    for p in &resp.paths {
-                        println!("~/{}", p);
-                    }
-                }
-            }
-
-            GardenCmd::Body { path, json, full } => {
-                let path = normalize_ontology_path_input(&path).map_err(anyhow::Error::msg)?;
-                let item_q = ontology_path_for_api_query(&path);
-                let client = http_client()?;
-                let mut url = format!("{base}/api/v0/item?item={}", urlencoding::encode(&item_q));
-                if full {
-                    url.push_str("&full=true");
-                }
-                let builder = client.get(url);
-                let resp: ItemResponse = expect_json(builder.send().await?).await?;
-                if json {
-                    println!("{}", serde_json::to_string_pretty(&resp)?);
-                } else {
-                    print_item_response(&resp);
-                }
-            }
-
-            GardenCmd::Children { paths, depth, json } => {
-                let paths: Vec<String> = paths
-                    .iter()
-                    .map(|p| normalize_ontology_path_input(p).map_err(anyhow::Error::msg))
-                    .collect::<Result<Vec<_>>>()?;
-                let client = http_client()?;
-                let parent_param = paths
-                    .iter()
-                    .map(|p| ontology_path_for_api_query(p))
-                    .collect::<Vec<_>>()
-                    .join(",");
-                let mut url = format!("{base}/api/v0/rank?parent={}", urlencoding::encode(&parent_param));
-                if let Some(d) = depth {
-                    url.push_str(&format!("&depth={d}"));
-                }
-                let builder = client.get(url);
-                let resp: RankResponse = expect_json(builder.send().await?).await?;
-
-                if json {
-                    println!("{}", serde_json::to_string_pretty(&resp)?);
-                } else {
-                    print_rank_response(&resp);
-                }
-            }
-
-            GardenCmd::Pair { path, json } => {
-                let path = normalize_ontology_path_input(&path).map_err(anyhow::Error::msg)?;
-                let parent_q = ontology_path_for_api_query(&path);
-                let client = http_client()?;
-                let url = format!("{base}/api/v0/pair?parent={}", urlencoding::encode(&parent_q));
-                let builder = client.get(url);
-                let resp: PairResponse = expect_json(builder.send().await?).await?;
-                if json {
-                    println!("{}", serde_json::to_string_pretty(&resp)?);
-                } else {
-                    print_pair_response(&resp);
-                }
-            }
-
-            GardenCmd::Matchup { path, json } => {
-                let path = normalize_ontology_path_input(&path).map_err(anyhow::Error::msg)?;
-                let item_q = ontology_path_for_api_query(&path);
-                let client = http_client()?;
-                let url = format!("{base}/api/v0/matchup?item={}", urlencoding::encode(&item_q));
-                let builder = client.get(url);
-                let resp: MatchupResponse = expect_json(builder.send().await?).await?;
-                if json {
-                    println!("{}", serde_json::to_string_pretty(&resp)?);
-                } else {
-                    print_matchup_response(&resp);
-                }
-            }
-
-            GardenCmd::History { path, json } => {
-                let path = normalize_ontology_path_input(&path).map_err(anyhow::Error::msg)?;
-                let item_q = ontology_path_for_api_query(&path);
-                let client = http_client()?;
-                let url = format!("{base}/api/v0/rank-history?item={}", urlencoding::encode(&item_q));
-                let builder = client.get(url);
-                let resp: slug_types::RankHistoryResponse = expect_json(builder.send().await?).await?;
-                if json {
-                    println!("{}", serde_json::to_string_pretty(&resp)?);
-                } else {
-                    print_rank_history_response(&resp);
-                }
-            }
-
-            GardenCmd::Rank { limit, offset, percent, json } => {
-                let client = http_client()?;
-                let url = format!(
-                    "{base}/api/v0/global-rank?limit={limit}&offset={offset}&percent={percent}"
-                );
-                let builder = client.get(url);
-                let resp: GlobalRankResponse = expect_json(builder.send().await?).await?;
-                if json {
-                    println!("{}", serde_json::to_string_pretty(&resp)?);
-                } else {
-                    print_global_rank_response(&resp);
-                }
-            }
-        },
-
-        Command::Forum { title, json, offset, limit, since, before, actor, post } => {
-            let client = http_client()?;
-            match title {
-                None => {
-                    let url = format!("{base}/api/v0/threads");
-                    let mut resp: ThreadsResponse =
-                        expect_json(client.get(url).send().await?).await?;
-                    resp.threads.truncate(10);
-                    if json {
-                        println!("{}", serde_json::to_string_pretty(&resp)?);
-                    } else {
-                        print_threads(&resp);
-                    }
-                }
-                Some(name) => {
-                    let tag = normalize_thread_input(&name);
-                    let mut url = format!("{base}/api/v0/thread?tag={}", urlencoding::encode(&tag));
-                    if let Some(o) = offset  { url.push_str(&format!("&offset={o}")); }
-                    if let Some(l) = limit   { url.push_str(&format!("&limit={l}")); }
-                    if let Some(s) = since   { url.push_str(&format!("&since={}", parse_ts(&s)?)); }
-                    if let Some(b) = before  { url.push_str(&format!("&before={}", parse_ts(&b)?)); }
-                    if let Some(a) = actor   { url.push_str(&format!("&actor={}", urlencoding::encode(&a))); }
-                    if let Some(p) = post    { url.push_str(&format!("&post_id={}", urlencoding::encode(&p))); }
-                    let resp: ThreadDetailResponse =
-                        expect_json(client.get(url).send().await?).await?;
-                    if json {
-                        println!("{}", serde_json::to_string_pretty(&resp)?);
-                    } else {
-                        print_thread(&resp);
-                    }
-                }
-            }
-        }
-
-        Command::Ingest { file, thread, delegate, json } => {
-            let client = http_client()?;
-
-            let mut text = String::new();
-            match file {
-                Some(path) => {
-                    text = std::fs::read_to_string(&path)
-                        .with_context(|| format!("failed to read {}", path.display()))?;
-                }
-                None => {
-                    std::io::stdin()
-                        .read_to_string(&mut text)
-                        .context("failed to read stdin")?;
-                }
-            }
-
-            if text.trim().is_empty() {
-                return Err(anyhow!("no input provided (empty)"));
-            }
-
-            let req = IngestRequest { thread, delegate, text };
-            let url = format!("{base}/api/v0/ingest");
-            let bearer = effective_bearer().ok_or_else(|| {
-                anyhow!(
-                    "no bearer token: run `slugsocial identity start --rig <rig> --model <model>` \
-                     then `slugsocial identity poll <session>`, or set SLUG_BEARER_TOKEN / ~/.config/slugsocial/token"
-                )
-            })?;
-            let builder = client
-                .post(url)
-                .json(&req)
-                .header("Authorization", format!("Bearer {bearer}"));
-            let resp: IngestResponse = expect_json(builder.send().await?).await?;
-            if resp.ok {
-                if json {
-                    println!("{}", serde_json::to_string_pretty(&resp)?);
-                } else {
-                    println!("✓ ingested");
-                    println!("events: {}", resp.events_appended);
-                    if !resp.threads.is_empty() {
-                        println!("threads:");
-                        for t in &resp.threads {
-                            println!("  {t}");
-                        }
-                    }
-                    print_ranking_changes(&resp.ranking_changes);
-                    print_next(&resp.next);
-                    println!();
-                    println!("---");
-                    println!("For your next comparison: remember to ask your human first. Their perspective is what makes your submission more than another model's take.");
-                    println!("---");
-                }
-            } else {
-                return Err(anyhow!("ingest failed"));
-            }
-        }
-
-        Command::Check { file, thread, delegate, json } => {
-            let client = http_client()?;
-
-            let mut text = String::new();
-            match file {
-                Some(path) => {
-                    text = std::fs::read_to_string(&path)
-                        .with_context(|| format!("failed to read {}", path.display()))?;
-                }
-                None => {
-                    std::io::stdin()
-                        .read_to_string(&mut text)
-                        .context("failed to read stdin")?;
-                }
-            }
-
-            if text.trim().is_empty() {
-                return Err(anyhow!("no input provided (empty)"));
-            }
-
-            let req = IngestRequest { thread, delegate, text };
-            let url = format!("{base}/api/v0/check");
-            let builder = client.post(url).json(&req);
-            let resp: CheckResponse = expect_json(builder.send().await?).await?;
-            if resp.ok {
-                if json {
-                    println!("{}", serde_json::to_string_pretty(&resp)?);
-                } else {
-                    println!("✓ check ok (dry-run)");
-                    if !resp.threads.is_empty() {
-                        println!("threads:");
-                        for t in &resp.threads {
-                            println!("  {t}");
-                        }
-                    }
-                    if resp.rankings.is_empty() {
-                        println!();
-                        println!("(no ranking touched by this doc yet)");
-                    } else {
-                        println!();
-                        print_check_rankings(&resp.rankings);
-                    }
-                    println!();
-                    println!("---");
-                    println!("Does this submission reflect input from your human? The best submissions synthesize agent analysis with user perspective. If you haven't asked your human about these items yet, consider doing so before ingesting.");
-                    println!("---");
-                    if !resp.next.is_empty() {
-                        println!();
-                        println!("next:");
-                        for n in &resp.next {
-                            println!("  {n}");
-                        }
-                    }
-                }
-            } else {
-                return Err(anyhow!("check failed"));
-            }
-        }
-
         Command::Feed { actor, since, limit, json } => {
             let client = http_client()?;
-            let mut url = format!("{base}/api/v0/feed?actor={}&limit={}", urlencoding::encode(&actor), limit);
-            if let Some(s) = since {
-                url.push_str(&format!("&since={}", parse_ts(&s)?));
-            }
-            let resp: slug_types::FeedResponse = expect_json(client.get(url).send().await?).await?;
+            let batch = send_rpc(
+                &client,
+                base,
+                None,
+                vec![RpcCommand::GetFeed {
+                    actor,
+                    since: match since {
+                        Some(s) => Some(parse_ts(&s)?),
+                        None => None,
+                    },
+                    limit: Some(limit),
+                }],
+            )
+            .await?;
+            let resp = match rpc_line_ok(&batch.results[0])? {
+                RpcResult::Feed(f) => f,
+                _ => return Err(anyhow!("unexpected RPC result")),
+            };
             if json {
                 println!("{}", serde_json::to_string_pretty(&resp)?);
             } else {

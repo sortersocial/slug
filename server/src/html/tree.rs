@@ -713,7 +713,8 @@ mod tests {
             raw: raw.to_string(),
             principal: "tester".to_string(),
             delegate: None,
-            thread_id: String::new(),
+            room_id: "public".to_string(),
+            thread_tag: String::new(),
         })
     }
 

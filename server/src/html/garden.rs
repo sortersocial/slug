@@ -217,7 +217,7 @@ fn build_rank_history(
                                     .map(|ing| ing.principal.clone())
                                     .unwrap_or_default(),
                                 delegate: reduced.ingests_by_id.get(&e.post_id).and_then(|ing| ing.delegate.clone()),
-                                thread_id: e.thread.clone(),
+                                thread_tag: e.thread.clone(),
                             })
                         } else { None }
                     } else { None }
@@ -225,8 +225,8 @@ fn build_rank_history(
             })
             .unwrap_or_default();
 
-        let thread_post_index = reduced.ingests_by_thread
-            .get(&e.thread)
+        let thread_post_index = reduced.ingests_by_scope_thread
+            .get(&(crate::reducer::ScopeId::Public, e.thread.clone()))
             .and_then(|q| q.iter().rev().position(|id| id == &e.post_id))
             .map(|i| i + 1)
             .unwrap_or(0);
@@ -481,7 +481,8 @@ mod tests {
             raw: raw.to_string(),
             principal: "testuser".to_string(),
             delegate: Some("00000000-0000-0000-0000-000000000000:test:local/test".to_string()),
-            thread_id: String::new(),
+            room_id: "public".to_string(),
+            thread_tag: String::new(),
         }));
     }
 

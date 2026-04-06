@@ -1,18 +1,7 @@
-mod debug;
 mod auth;
-mod feed;
-mod forum;
-mod garden;
 mod helpers;
-mod ingest;
-mod rank;
-mod search;
-mod thread;
-// mod stream; // disabled while HTML/SSE views are offline
-
-// Re-export all public items so `api::get_rank`, `api::post_ingest`, etc. still work.
-
-pub use debug::{get_debug_query, DebugQuery};
+mod rpc;
+mod validate;
 
 pub use auth::{
     get_pending_session,
@@ -25,32 +14,15 @@ pub use auth::{
     get_choose_username,
 };
 
-pub use feed::{get_feed, FeedQuery};
-
-pub use forum::{get_thread, get_threads, ThreadDetailQuery};
-
-pub use garden::{
-    get_item, get_leaves, get_matchup, get_paths, get_recent_votes,
-    ItemQuery, LeavesQuery, MatchupQuery, PathsQuery, RecentVotesQuery,
-};
-
 pub use helpers::{
     api_error, compute_connectivity_stats, is_pair_voted, now_ms, paginate_rankings,
     parse_parent_specs, pick_random_distinct, sha256_hex, resolve_item, vote_touches_path,
+    item_path_for_api,
 };
 
-pub use ingest::{post_check, post_ingest, validate_ingest_document, IngestQuery, ValidatedIngest};
+pub use rpc::handle_rpc_batch;
 
-pub use rank::{
-    get_global_rank, get_pair, get_rank, get_rank_history,
-    GlobalRankQuery, PairQuery, RankHistoryQuery, RankQuery,
-};
-
-pub use search::{get_search, SearchApiQuery};
-
-pub use thread::{post_create_thread, post_thread_grants};
-
-// pub use stream::{get_html_stream, get_stream};
+pub use validate::{normalize_room_and_thread, validate_ingest_document, ValidatedIngest};
 
 #[cfg(test)]
 mod tests {
@@ -66,7 +38,8 @@ mod tests {
             raw: raw.to_string(),
             principal: "test".to_string(),
             delegate: Some("00000000-0000-0000-0000-000000000000:test:local/test".to_string()),
-            thread_id: "t".to_string(),
+            room_id: "public".to_string(),
+            thread_tag: "t".to_string(),
         }));
     }
 
@@ -94,7 +67,7 @@ mod tests {
     #[test]
     fn validate_ingest_document_rejects_vote_on_undefined_item() {
         let reduced = ReducerState::default();
-        let text = "~/t/a {a}\n~/t/b 1:1 ~/t/missing {why}\n";
+        let text = "~/t/a {x}\n~/t/b 1:1 ~/t/missing {why}\n";
         let err = validate_ingest_document(&reduced, text, &crate::reducer::ScopeId::Public).unwrap_err();
         assert_eq!(err.0, StatusCode::BAD_REQUEST);
         assert!(err.1.contains("undefined item"));
@@ -103,7 +76,6 @@ mod tests {
     #[test]
     fn validate_ingest_document_accepts_quoted_thread_title() {
         let reduced = ReducerState::default();
-        // quoted thread title is now prose; should still parse.
         let text = "\"This is a title\" { This is the body of the post }\n~/t/a {a}\n";
         validate_ingest_document(&reduced, text, &crate::reducer::ScopeId::Public).unwrap();
     }
@@ -111,7 +83,6 @@ mod tests {
     #[test]
     fn validate_ingest_document_rejects_multiple_threads() {
         let reduced = ReducerState::default();
-        // multiple thread declarations are now prose; should still parse.
         let text = "#one\n#two\n~/t/a {a}\n";
         validate_ingest_document(&reduced, text, &crate::reducer::ScopeId::Public).unwrap();
     }

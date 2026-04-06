@@ -6,7 +6,7 @@ use maud::{html, Markup, PreEscaped};
 use serde::Deserialize;
 
 use crate::{
-    reducer::ReducerState,
+    reducer::{ReducerState, ScopeId},
     state::AppState,
     timeago,
 };
@@ -113,8 +113,11 @@ fn search(state: &ReducerState, q: &str, limit: usize) -> SearchResults {
         }
     }
 
-    // Search threads
-    for (tag, thread_state) in &state.threads {
+    // Search threads (public room only in HTML)
+    for ((scope, tag), thread_state) in &state.forum_threads {
+        if scope != &ScopeId::Public {
+            continue;
+        }
         let mut score: u32 = 0;
         if contains_all(tag, &words) {
             score += 8;
@@ -122,7 +125,11 @@ fn search(state: &ReducerState, q: &str, limit: usize) -> SearchResults {
             score += 4;
         }
         if score > 0 {
-            let post_count = state.ingests_by_thread.get(tag).map(|q| q.len()).unwrap_or(0);
+            let post_count = state
+                .ingests_by_scope_thread
+                .get(&(ScopeId::Public, tag.clone()))
+                .map(|q| q.len())
+                .unwrap_or(0);
             scored_threads.push((score, ThreadRow {
                 tag: tag.clone(),
                 subtitle: None,
@@ -145,10 +152,13 @@ fn search(state: &ReducerState, q: &str, limit: usize) -> SearchResults {
         }
         if score > 0 {
             let thread = state
-                .ingests_by_thread
+                .ingests_by_scope_thread
                 .iter()
                 .find(|(_, ids)| ids.contains(id))
-                .map(|(tag, _)| tag.clone())
+                .map(|((scope, tag), _)| match scope {
+                    ScopeId::Public => format!("#{tag}"),
+                    ScopeId::Room(rid) => format!("{rid}/#{tag}"),
+                })
                 .unwrap_or_else(|| "unknown".to_string());
             scored_posts.push((score, PostRow {
                 thread,

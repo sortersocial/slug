@@ -11,7 +11,6 @@ use crate::{
     canonical_path::canonicalize_item,
     path_types::CanonicalItemUrl,
     ranking::connected_components_from_voted_pairs,
-    reducer::ReducerState,
 };
 
 pub fn api_error(status: StatusCode, error: impl Into<String>, hint: Option<String>) -> axum::response::Response {
@@ -136,8 +135,7 @@ pub fn is_pair_voted(group: &crate::reducer::GroupState, a: &str, b: &str) -> bo
 }
 
 /// Compute graph connectivity stats for a set of items within the ranking group.
-pub fn compute_connectivity_stats(reduced: &ReducerState, pool: &[String]) -> ConnectivityStats {
-    let group = &reduced.public().ranking_group;
+pub fn compute_connectivity_stats(group: &crate::reducer::GroupState, pool: &[String]) -> ConnectivityStats {
     let n = pool.len();
 
     // Map pool items to global indices (items not yet in the group get no index)
