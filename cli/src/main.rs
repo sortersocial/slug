@@ -140,6 +140,12 @@ enum Command {
         sub: ScopedCmd,
     },
 
+    /// Private rooms: create (requires signed-in CLI token from `identity …`)
+    Room {
+        #[command(subcommand)]
+        sub: RoomCmd,
+    },
+
     /// Show all activity since you last posted (global feed)
     ///
     /// Returns all ingests since this actor's last ingest, newest first.
@@ -198,6 +204,18 @@ enum Command {
 
     /// Show who the saved bearer token resolves to (or SLUG_BEARER_TOKEN)
     Whoami {
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum RoomCmd {
+    /// Create a private room; prints `shortid/slug` for `private <ROOM_ID> …` (public site is `public …`, not a room)
+    Create {
+        /// Room slug (lowercase letters, digits, hyphens; 1–64 chars), e.g. `austin` or `my-project`
+        #[arg(value_name = "SLUG")]
+        slug: String,
         #[arg(long)]
         json: bool,
     },
@@ -1252,6 +1270,43 @@ async fn main() -> Result<()> {
     match cmd {
         Command::Public { sub } => run_scoped(base, "public", sub).await?,
         Command::Private { room, sub } => run_scoped(base, &room, sub).await?,
+        Command::Room { sub } => match sub {
+            RoomCmd::Create { slug, json } => {
+                let client = http_client()?;
+                let bearer = effective_bearer().ok_or_else(|| {
+                    anyhow!(
+                        "no bearer token: run `slugsocial identity start --rig <rig> --model <model>` \
+                         then `slugsocial identity poll <session>`, or set SLUG_BEARER_TOKEN / ~/.config/slugsocial/token"
+                    )
+                })?;
+                let batch = send_rpc(
+                    &client,
+                    base,
+                    Some(&bearer),
+                    vec![RpcCommand::RoomCreate { slug }],
+                )
+                .await?;
+                match rpc_line_ok(&batch.results[0])? {
+                    RpcResult::RoomCreated { room_id } => {
+                        if json {
+                            println!(
+                                "{}",
+                                serde_json::to_string_pretty(&serde_json::json!({
+                                    "ok": true,
+                                    "room_id": room_id,
+                                }))?
+                            );
+                        } else {
+                            println!("{room_id}");
+                            println!();
+                            println!("Next: npx slugsocial private {room_id} forum post <TAG> --delegate '…' …");
+                            println!("      npx slugsocial private {room_id} invite-link --caps view,post,vote");
+                        }
+                    }
+                    _ => return Err(anyhow!("unexpected RPC result")),
+                }
+            }
+        },
 
         Command::Healthz { json } => {
             let client = http_client()?;

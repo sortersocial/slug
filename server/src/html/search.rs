@@ -113,7 +113,7 @@ fn search(state: &ReducerState, q: &str, limit: usize) -> SearchResults {
         }
     }
 
-    // Search threads (public room only in HTML)
+    // Search threads (shared site scope only — `room` wire `public`)
     for ((scope, tag), thread_state) in &state.forum_threads {
         if scope != &ScopeId::Public {
             continue;

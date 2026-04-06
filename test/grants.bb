@@ -82,7 +82,7 @@
            ;; Alice creates a private room.
            _ (println "\nalice creates private room…")
            create (rpc-batch! base-url alice-token
-                              [{"RoomCreate" {"slug" "secret-project" "visibility" "private"}}])
+                              [{"RoomCreate" {"slug" "secret-project"}}])
            _ (assert! (= 200 (:status create)) "room create HTTP 200")
            _ (assert! (rpc-line-ok? (:parsed create)) "room create RPC ok")
            room-id (get-in (:parsed create) ["results" 0 "result" "RoomCreated" "room_id"])

@@ -96,11 +96,11 @@ async fn test_healthz() {
 }
 
 #[tokio::test]
-async fn test_room_create_private_rpc() {
+async fn test_room_create_rpc() {
     let (addr, _tmp, _log, _handle) = create_test_server().await;
     let client = reqwest::Client::new();
     let batch = serde_json::json!([{
-        "RoomCreate": { "slug": "secret-project", "visibility": "private" }
+        "RoomCreate": { "slug": "secret-project" }
     }]);
     let body = rpc_batch(&client, addr, Some(&test_bearer()), batch).await;
     let line = &body["results"][0];

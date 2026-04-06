@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use serde::{Deserialize, Serialize};
 
 use crate::canonical_path::canonicalize_tag;
-use crate::events::{Event, Ingest, ThreadCapability, ThreadVisibility};
+use crate::events::{Event, Ingest, ThreadCapability};
 use crate::path_types::CanonicalItemUrl;
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
@@ -151,11 +151,6 @@ pub struct RankHistoryEntry {
     pub post_id: String,
 }
 
-#[derive(Debug, Clone)]
-pub struct RoomState {
-    pub visibility: crate::events::ThreadVisibility,
-}
-
 /// Durable invite link state (from [`crate::events::InviteMinted`] / [`crate::events::InviteRedeemed`]).
 #[derive(Debug, Clone)]
 pub struct ActiveInviteState {
@@ -171,7 +166,6 @@ pub enum RoomTimelineKind {
     RoomCreated {
         owner: String,
         slug: String,
-        visibility: ThreadVisibility,
     },
     GrantAdded {
         username: String,
@@ -235,8 +229,8 @@ pub struct ReducerState {
     pub ingests_by_id: HashMap<String, Ingest>,
     /// (scope, thread_tag) → ingest ids, newest first.
     pub ingests_by_scope_thread: HashMap<(ScopeId, String), VecDeque<String>>,
-    /// Private (or public) room registry: room_id → visibility from [`RoomCreated`].
-    pub rooms: HashMap<String, RoomState>,
+    /// Private room ids (`shortid/slug`) known from [`RoomCreated`].
+    pub rooms: HashSet<String>,
     /// (scope, thread_tag) → last activity.
     pub forum_threads: HashMap<(ScopeId, String), ForumThreadState>,
     pub actor_last_post_ts: HashMap<String, i64>,
@@ -403,12 +397,7 @@ impl ReducerState {
                 self.agent_bindings.insert(ab.agent, ab.username);
             }
             Event::RoomCreated(rc) => {
-                self.rooms.insert(
-                    rc.room_id.clone(),
-                    RoomState {
-                        visibility: rc.visibility,
-                    },
-                );
+                self.rooms.insert(rc.room_id.clone());
                 self.room_timeline
                     .entry(rc.room_id.clone())
                     .or_default()
@@ -417,7 +406,6 @@ impl ReducerState {
                         kind: RoomTimelineKind::RoomCreated {
                             owner: rc.owner.clone(),
                             slug: rc.slug.clone(),
-                            visibility: rc.visibility,
                         },
                     });
             }
@@ -673,7 +661,7 @@ impl Default for ReducerState {
             agent_bindings: HashMap::new(),
             ingests_by_id: HashMap::new(),
             ingests_by_scope_thread: HashMap::new(),
-            rooms: HashMap::new(),
+            rooms: HashSet::new(),
             forum_threads: HashMap::new(),
             actor_last_post_ts: HashMap::new(),
             ingests_ordered: Vec::new(),

@@ -14,7 +14,7 @@ use crate::{
     canonical_path::{canonicalize_item, canonicalize_tag},
     dsl,
     events::{
-        AgentBound, Event, GrantAdded, Ingest, RoomCreated, ThreadCapability, ThreadVisibility,
+        AgentBound, Event, GrantAdded, Ingest, RoomCreated, ThreadCapability,
     },
     identity::{parse_agent, parse_username},
     path_types::CanonicalItemUrl,
@@ -270,7 +270,7 @@ async fn rpc_post(
     let scope = scope_from_room_wire(&room_key);
 
     let is_private = !matches!(scope, ScopeId::Public);
-    if is_private && !reduced.rooms.contains_key(&room_key) {
+    if is_private && !reduced.rooms.contains(&room_key) {
         drop(reduced);
         return Err(("unknown room".into(), Some(format!("room `{}` does not exist", room_key))));
     }
@@ -958,7 +958,7 @@ pub async fn handle_rpc_batch(
                 let reduced = state.reduced.read().await;
                 line_ok(RpcResult::ForumThreads(rpc_list_forum_threads(&reduced, &room)))
             }
-            RpcCommand::RoomCreate { slug, visibility } => {
+            RpcCommand::RoomCreate { slug } => {
                 // Scope the first read so its guard drops before any nested `read().await` / `write().await`.
                 // A guard from `match verify(..., &*state.reduced.read().await)` would otherwise live for the
                 // whole `match` and deadlock here (tokio::sync::RwLock is not reentrant).
@@ -975,53 +975,42 @@ pub async fn handle_rpc_batch(
                         } else if !slug.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
                             line_err("slug must be lowercase alphanumeric with hyphens", None)
                         } else {
-                            match visibility.as_deref().unwrap_or("private") {
-                                "private" | "public" => {
-                                    let vis = if visibility.as_deref() == Some("public") {
-                                        ThreadVisibility::Public
-                                    } else {
-                                        ThreadVisibility::Private
-                                    };
-                                    let short_id = loop {
-                                        let id = gen_short_id();
-                                        if !state.reduced.read().await.rooms.contains_key(&format!("{id}/{slug}")) {
-                                            break id;
-                                        }
-                                    };
-                                    let room_id = format!("{short_id}/{slug}");
-                                    let ts = now_ms();
-                                    let tc_ev = Event::RoomCreated(RoomCreated {
-                                        ts,
-                                        room_id: room_id.clone(),
-                                        slug: slug.clone(),
-                                        owner: principal.clone(),
-                                        visibility: vis,
-                                    });
-                                    let ga_ev = Event::GrantAdded(GrantAdded {
-                                        ts,
-                                        room_id: room_id.clone(),
-                                        username: principal.clone(),
-                                        capabilities: vec![
-                                            ThreadCapability::View,
-                                            ThreadCapability::Post,
-                                            ThreadCapability::Vote,
-                                            ThreadCapability::AddItem,
-                                            ThreadCapability::Manage,
-                                        ],
-                                        granted_by: principal.clone(),
-                                    });
-                                    if let Err(e) = state.event_log.append(&tc_ev).await {
-                                        line_err(format!("{e}"), None)
-                                    } else if let Err(e) = state.event_log.append(&ga_ev).await {
-                                        line_err(format!("{e}"), None)
-                                    } else {
-                                        let mut r = state.reduced.write().await;
-                                        r.apply_event(tc_ev);
-                                        r.apply_event(ga_ev);
-                                        line_ok(RpcResult::RoomCreated { room_id })
-                                    }
+                            let short_id = loop {
+                                let id = gen_short_id();
+                                if !state.reduced.read().await.rooms.contains(&format!("{id}/{slug}")) {
+                                    break id;
                                 }
-                                other => line_err(format!("unknown visibility: {other}"), None),
+                            };
+                            let room_id = format!("{short_id}/{slug}");
+                            let ts = now_ms();
+                            let tc_ev = Event::RoomCreated(RoomCreated {
+                                ts,
+                                room_id: room_id.clone(),
+                                slug: slug.clone(),
+                                owner: principal.clone(),
+                            });
+                            let ga_ev = Event::GrantAdded(GrantAdded {
+                                ts,
+                                room_id: room_id.clone(),
+                                username: principal.clone(),
+                                capabilities: vec![
+                                    ThreadCapability::View,
+                                    ThreadCapability::Post,
+                                    ThreadCapability::Vote,
+                                    ThreadCapability::AddItem,
+                                    ThreadCapability::Manage,
+                                ],
+                                granted_by: principal.clone(),
+                            });
+                            if let Err(e) = state.event_log.append(&tc_ev).await {
+                                line_err(format!("{e}"), None)
+                            } else if let Err(e) = state.event_log.append(&ga_ev).await {
+                                line_err(format!("{e}"), None)
+                            } else {
+                                let mut r = state.reduced.write().await;
+                                r.apply_event(tc_ev);
+                                r.apply_event(ga_ev);
+                                line_ok(RpcResult::RoomCreated { room_id })
                             }
                         }
                     }
@@ -1161,7 +1150,7 @@ pub async fn handle_rpc_batch(
                     Err((_, m)) => line_err(m, None),
                     Ok(principal) => {
                         let reduced = state.reduced.read().await;
-                        if !reduced.rooms.contains_key(&room) {
+                        if !reduced.rooms.contains(&room) {
                             line_err("unknown room", None)
                         } else {
                             let can_audit = reduced.user_has_cap(&room, &principal, ThreadCapability::View)

@@ -319,8 +319,6 @@ pub enum RpcCommand {
     },
     RoomCreate {
         slug: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        visibility: Option<String>,
     },
     RoomGrant {
         room: String,

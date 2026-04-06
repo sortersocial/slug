@@ -25,16 +25,8 @@ fn caps_list(caps: &[crate::events::ThreadCapability]) -> String {
 /// Human-readable system line for the thread feed.
 pub fn format_room_timeline_entry(e: &RoomTimelineEntry) -> String {
     match &e.kind {
-        RoomTimelineKind::RoomCreated {
-            owner,
-            slug,
-            visibility,
-        } => {
-            let vis = match visibility {
-                crate::events::ThreadVisibility::Public => "public",
-                crate::events::ThreadVisibility::Private => "private",
-            };
-            format!("@{owner} created room #{slug} ({vis})")
+        RoomTimelineKind::RoomCreated { owner, slug } => {
+            format!("@{owner} created room #{slug}")
         }
         RoomTimelineKind::GrantAdded {
             username,
@@ -141,7 +133,7 @@ pub fn merge_thread_rows(
     rows
 }
 
-/// Public forum thread (`room_wire == "public"`): same merge (timeline usually empty).
+/// Shared-site thread view (`room_wire == "public"` on the wire). Same merge as private rooms; private-room timeline is unused here.
 pub fn merge_public_thread_rows(
     reduced: &ReducerState,
     thread_tag: &str,

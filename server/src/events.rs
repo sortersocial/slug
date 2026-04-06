@@ -1,12 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ThreadVisibility {
-    Public,
-    Private,
-}
-
 #[derive(Debug, Clone, Copy, Hash, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ThreadCapability {
@@ -57,13 +50,13 @@ pub struct AgentBound {
     pub username: String,
 }
 
+/// Private space keyed as `shortid/slug`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RoomCreated {
     pub ts: i64,
     pub room_id: String,
     pub slug: String,
     pub owner: String,
-    pub visibility: ThreadVisibility,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
