@@ -12,7 +12,6 @@ mod editor;
 mod forum;
 mod garden;
 mod search;
-mod tree;
 use breadcrumb_path::OntologyPath;
 
 pub use auth::{auth_complete_page, auth_signed_in_fragment, choose_username_error_fragment, choose_username_page};
@@ -20,7 +19,6 @@ pub use editor::{editor_check, editor_page};
 pub use forum::{index, thread_feed_html, thread_post_expand, thread_post_view, thread_view};
 pub use garden::{garden_index, ontology_path};
 pub use search::{search_page, search_results_fragment};
-pub use tree::{tree_path, tree_root, tree_select, tree_toggle};
 
 // Embed CSS files at compile time
 const THEME_DEFAULT_CSS: &str = include_str!("../../static/theme_default.css");
