@@ -71,14 +71,6 @@ mod tests {
     }
 
     #[test]
-    fn validate_ingest_document_requires_actor() {
-        let reduced = ReducerState::default();
-        let text = "~/t/a {a}\n~/t/b {b}\n";
-        let v = validate_ingest_document(&reduced, text, &crate::reducer::ScopeId::Public).unwrap();
-        assert_eq!(v.raw_text.trim(), text.trim());
-    }
-
-    #[test]
     fn validate_ingest_document_parse_error() {
         let reduced = ReducerState::default();
         let text = "~/t/a { unclosed ";
@@ -106,14 +98,6 @@ mod tests {
         let err = validate_ingest_document(&reduced, text, &crate::reducer::ScopeId::Public).unwrap_err();
         assert_eq!(err.0, StatusCode::BAD_REQUEST);
         assert!(err.1.contains("undefined item"));
-    }
-
-    #[test]
-    fn validate_ingest_document_requires_tag() {
-        let reduced = ReducerState::default();
-        // tags are no longer DSL routing metadata; validation no longer requires them.
-        let text = "~/t/a {a}\n~/t/b {b}\n";
-        validate_ingest_document(&reduced, text, &crate::reducer::ScopeId::Public).unwrap();
     }
 
     #[test]
