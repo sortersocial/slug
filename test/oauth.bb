@@ -1,18 +1,23 @@
 (ns test.oauth
   "Shared Babashka HTTP helpers + mock Google OAuth + token handoff for integration tests."
   (:require [cheshire.core :as json]
+            [clojure.string :as str]
             [org.httpkit.server :as http]))
+
+(def ^:private connect-timeout (java.time.Duration/ofSeconds 15))
+(def ^:private request-timeout (java.time.Duration/ofSeconds 60))
 
 (defn http-client []
   (-> (java.net.http.HttpClient/newBuilder)
       (.followRedirects java.net.http.HttpClient$Redirect/ALWAYS)
+      (.connectTimeout connect-timeout)
       (.build)))
 
 (defn http-get [url & {:keys [headers]}]
   (let [b (java.net.http.HttpRequest/newBuilder (java.net.URI/create url))]
     (doseq [[k v] (or headers {})]
       (.header b k v))
-    (let [req (-> b (.GET) (.build))
+    (let [req (-> b (.timeout request-timeout) (.GET) (.build))
           resp (.send (http-client) req (java.net.http.HttpResponse$BodyHandlers/ofString))]
       {:status (.statusCode resp) :body (.body resp) :headers (.map (.headers resp))})))
 
@@ -23,6 +28,7 @@
     (doseq [[k v] (or headers {})]
       (.header b k v))
     (let [req (-> b
+                  (.timeout request-timeout)
                   (.POST (java.net.http.HttpRequest$BodyPublishers/ofString body))
                   (.build))
           resp (.send (http-client) req (java.net.http.HttpResponse$BodyHandlers/ofString))]
@@ -34,10 +40,11 @@
                           (str (java.net.URLEncoder/encode (name k) "UTF-8")
                                "="
                                (java.net.URLEncoder/encode (str v) "UTF-8"))))
-                   (clojure.string/join "&"))
+                   (str/join "&"))
         b (java.net.http.HttpRequest/newBuilder (java.net.URI/create url))]
     (.header b "Content-Type" "application/x-www-form-urlencoded")
     (let [req (-> b
+                  (.timeout request-timeout)
                   (.POST (java.net.http.HttpRequest$BodyPublishers/ofString pairs))
                   (.build))
           resp (.send (http-client) req (java.net.http.HttpResponse$BodyHandlers/ofString))]
@@ -45,9 +52,9 @@
 
 (defn parse-query [s]
   (into {}
-        (for [part (clojure.string/split (or s "") #"&")
-              :when (not (clojure.string/blank? part))]
-          (let [[k v] (clojure.string/split part #"=" 2)]
+        (for [part (str/split (or s "") #"&")
+              :when (not (str/blank? part))]
+          (let [[k v] (str/split part #"=" 2)]
             [(keyword (java.net.URLDecoder/decode k "UTF-8"))
              (some-> v (java.net.URLDecoder/decode "UTF-8"))]))))
 
@@ -62,8 +69,14 @@
        (b64url (json/generate-string {:sub sub}))
        ".fakesig"))
 
-(defn start-mock-google [port]
-  (let [handler
+(defn start-mock-google
+  "Minimal Google OAuth stub. With multiple `google-users`, each `/token` call returns the next
+   `sub` in order (wraps), so several registrations get distinct Google identities."
+  [port & {:keys [google-users] :or {google-users ["google-user-1"]}}]
+  (let [users (vec google-users)
+        multi? (> (count users) 1)
+        !call-count (when multi? (atom 0))
+        handler
         (fn [req]
           (cond
             (and (= :get (:request-method req))
@@ -76,9 +89,13 @@
 
             (and (= :post (:request-method req))
                  (= "/token" (:uri req)))
-            {:status 200
-             :headers {"Content-Type" "application/json"}
-             :body (json/generate-string {:id_token (make-id-token "google-user-1")})}
+            (let [sub (if multi?
+                        (let [n (swap! !call-count inc)]
+                          (nth users (mod (dec n) (count users))))
+                        (first users))]
+              {:status 200
+               :headers {"Content-Type" "application/json"}
+               :body (json/generate-string {:id_token (make-id-token sub)})})
 
             :else
             {:status 404 :body "not found"}))
@@ -87,28 +104,46 @@
 
 (def ^:private default-agent "00000000-0000-0000-0000-000000000000:cli:local/dev")
 
+(defn complete-registration!
+  "Run pending-session → login redirect → choose-username → poll; return bearer token string.
+   With `assert!`, use `(fn [pred msg] …)` for test-style checks; without it, throw `ex-info` on failure."
+  [base-url & {:keys [username agent assert!]
+               :or {username "user" agent default-agent}}]
+  (let [check! (fn [pred msg resp]
+                 (if assert!
+                   (assert! pred msg)
+                   (when-not pred
+                     (throw (ex-info msg {:resp resp})))))]
+    (let [start-resp (http-post-json (str base-url "/api/v0/pending-session")
+                                     {:agent agent})]
+      (check! (= 200 (:status start-resp))
+              (str "pending-session for " username " returns 200")
+              start-resp)
+      (let [start-json (json/parse-string (:body start-resp) true)
+            login-get (http-get (:login_url start-json))]
+        (check! (= 200 (:status login-get))
+                (str "login redirect chain for " username)
+                login-get)
+        (let [choose (http-post-form (str base-url "/auth/choose-username")
+                                     {:session (:session start-json) :username username})]
+          (check! (= 200 (:status choose))
+                  (str "choose-username for " username " returns 200")
+                  choose)
+          (let [poll (http-get (str base-url "/api/v0/pending-session/" (:session start-json)))]
+            (check! (= 200 (:status poll))
+                    (str "pending-session poll for " username " returns 200")
+                    poll)
+            (let [poll-json (json/parse-string (:body poll) true)]
+              (check! (:complete poll-json)
+                      (str "pending session complete for " username)
+                      poll)
+              (:token poll-json))))))))
+
 (defn fetch-bearer-token!
   "Simulate browser OAuth + username choice; returns `slug_…` bearer token.
    Ingest `--delegate` must match this agent string for `AgentBound` on first write."
   [base-url & {:keys [username agent] :or {username "intuser" agent default-agent}}]
-  (let [start-resp (http-post-json (str base-url "/api/v0/pending-session")
-                                   {:agent agent})]
-    (when-not (= 200 (:status start-resp))
-      (throw (ex-info "pending-session start failed" {:resp start-resp})))
-    (let [start-json (json/parse-string (:body start-resp) true)
-          login-get (http-get (:login_url start-json))]
-      (when-not (= 200 (:status login-get))
-        (throw (ex-info "login redirect chain failed" {:resp login-get})))
-      (let [choose (http-post-form (str base-url "/auth/choose-username")
-                                   {:session (:session start-json) :username username})]
-        (when-not (= 200 (:status choose))
-          (throw (ex-info "choose-username failed" {:resp choose})))
-        (let [poll (http-get (str base-url "/api/v0/pending-session/" (:session start-json)))]
-          (when-not (= 200 (:status poll))
-            (throw (ex-info "pending-session poll failed" {:resp poll})))
-          (let [poll-json (json/parse-string (:body poll) true)]
-            (when-not (:complete poll-json)
-              (throw (ex-info "pending session not complete" {:poll poll-json})))
-            (when-not (clojure.string/starts-with? (:token poll-json) "slug_")
-              (throw (ex-info "bad token in poll response" {:poll poll-json})))
-            (:token poll-json)))))))
+  (let [token (complete-registration! base-url :username username :agent agent)]
+    (when-not (str/starts-with? token "slug_")
+      (throw (ex-info "bad token in poll response" {:token token})))
+    token))

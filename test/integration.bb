@@ -2,8 +2,7 @@
   "End-to-end integration check: DSL → CLI → HTTP → JSONL → materialized view → CLI query.
    Boots a server, ingests via CLI, queries back, kills server, restarts from
    the same JSONL, and queries again to prove replay determinism."
-  (:require [babashka.process :as p]
-            [clojure.string :as str]
+  (:require [clojure.string :as str]
             [babashka.fs :as fs]
             [cheshire.core :as json]
             [test.common :as common]
@@ -13,25 +12,10 @@
 ;; helpers
 ;; ---------------------------------------------------------------------------
 
-(def ^:private ansi-green "\033[32m")
-(def ^:private ansi-red   "\033[31m")
-(def ^:private ansi-reset "\033[0m")
-
 (def ^:private counts (atom {:pass 0 :fail 0}))
 
-(defn- pass [msg]
-  (swap! counts update :pass inc)
-  (println (str ansi-green "  ✓ " ansi-reset msg)))
-
-(defn- fail [msg]
-  (swap! counts update :fail inc)
-  (println (str ansi-red "  ✗ " ansi-reset msg)))
-
 (defn- assert! [pred msg]
-  (if pred
-    (pass msg)
-    (do (fail msg)
-        (throw (ex-info (str "FAIL: " msg) {})))))
+  (common/test-assert! counts pred msg))
 
 ;; ---------------------------------------------------------------------------
 ;; letlocals unit tests
@@ -102,8 +86,7 @@
   (println "\nbuilding binaries…")
   (common/letlocals
     ;; 1. build
-   (bind build      @(p/process [(common/cargo-bin) "build" "--release" "-p" "slugsocial-server" "-p" "slugsocial"]
-                                {:inherit true :env common/base-env}))
+   (bind build (common/run-cargo-build-release! ["slugsocial-server" "slugsocial"]))
    (assert! (zero? (:exit build)) "cargo build succeeds")
 
    (bind server-bin "target/release/slugsocial-server")
@@ -120,16 +103,7 @@
    (bind !server    (atom nil))
    (bind !server2   (atom nil))
    (bind !google    (atom nil))
-   (bind server-env (merge common/base-env
-                           {"SLUG_DATA_DIR" tmp-dir
-                            "SLUG_KEYS"     "test:test"
-                            "PORT"          (str port)
-                            "RUST_LOG"      "warn"
-                            "SLUG_PUBLIC_URL" base-url
-                            "SLUG_GOOGLE_AUTH_URL" (str google-url "/o/oauth2/v2/auth")
-                            "SLUG_GOOGLE_TOKEN_URL" (str google-url "/token")
-                            "SLUG_GOOGLE_CLIENT_ID" "mock"
-                            "SLUG_GOOGLE_CLIENT_SECRET" "mock"}))
+   (bind server-env (common/slug-server-env tmp-dir base-url google-url port))
 
    (try
      (common/letlocals
@@ -291,4 +265,4 @@
        (fs/delete-tree tmp-dir)))
 
    (bind {pass :pass} @counts)
-   (println (str "\n" ansi-green "━━━ " pass " checks passed ━━━" ansi-reset "\n"))))
+   (println (str "\n" common/ansi-green "━━━ " pass " checks passed ━━━" common/ansi-reset "\n"))))

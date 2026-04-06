@@ -1,6 +1,7 @@
 (ns test.common
   "Shared utilities for slug test rigs: port allocation, server lifecycle,
-   environment helpers, CLI runner, and the letlocals macro."
+   environment helpers, CLI runner, test harness (ANSI + pass/fail counts),
+   standard server env for bb suites, and the letlocals macro."
   (:require [babashka.process :as p]
             [clojure.string :as str]
             [babashka.fs :as fs]))
@@ -43,12 +44,55 @@
               env
               (assoc env "PATH" (str cargo-home ":" (get env "PATH" "")))))))
 
+;; ---------------------------------------------------------------------------
+;; test harness (ANSI + counters)
+;; ---------------------------------------------------------------------------
+
+(def ansi-green "\033[32m")
+(def ansi-red   "\033[31m")
+(def ansi-reset "\033[0m")
+
+(defn test-pass! [counts-atom msg]
+  (swap! counts-atom update :pass inc)
+  (println (str ansi-green "  ✓ " ansi-reset msg)))
+
+(defn test-fail! [counts-atom msg]
+  (swap! counts-atom update :fail inc)
+  (println (str ansi-red "  ✗ " ansi-reset msg)))
+
+(defn test-assert! [counts-atom pred msg]
+  (if pred
+    (test-pass! counts-atom msg)
+    (do (test-fail! counts-atom msg)
+        (throw (ex-info (str "FAIL: " msg) {})))))
+
+(defn slug-server-env
+  "Env map for `slugsocial-server` in bb integration tests (mock Google URLs, data dir, keys)."
+  [tmp-dir base-url google-base-url slug-port]
+  (merge base-env
+         {"SLUG_DATA_DIR" tmp-dir
+          "SLUG_KEYS"     "test:test"
+          "PORT"          (str slug-port)
+          "RUST_LOG"      "warn"
+          "SLUG_PUBLIC_URL" base-url
+          "SLUG_GOOGLE_AUTH_URL" (str google-base-url "/o/oauth2/v2/auth")
+          "SLUG_GOOGLE_TOKEN_URL" (str google-base-url "/token")
+          "SLUG_GOOGLE_CLIENT_ID" "mock"
+          "SLUG_GOOGLE_CLIENT_SECRET" "mock"}))
+
 (defn cargo-bin
   "Resolve cargo, preferring ~/.cargo/bin if not on PATH."
   []
   (if (fs/exists? (str cargo-home "/cargo"))
     (str cargo-home "/cargo")
     "cargo"))
+
+(defn run-cargo-build-release!
+  "`cargo build --release` for each package name in `packages` (e.g. [\"slugsocial-server\"])."
+  [packages]
+  @(p/process (into [(cargo-bin) "build" "--release"]
+                    (mapcat (fn [p] ["-p" p]) packages))
+              {:inherit true :env base-env}))
 
 ;; ---------------------------------------------------------------------------
 ;; port / server utilities
