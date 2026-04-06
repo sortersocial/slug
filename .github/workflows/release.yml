@@ -88,8 +88,11 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           registry-url: "https://registry.npmjs.org"
+
+      - name: Upgrade npm for OIDC trusted publishing support
+        run: npm install -g npm@latest
 
       - name: Copy binaries into npm platform packages
         shell: bash
@@ -125,8 +128,6 @@ jobs:
 
       - name: Publish npm platform packages
         shell: bash
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euxo pipefail
           for pkg in packages/npm/platforms/*; do
@@ -135,15 +136,10 @@ jobs:
 
       - name: Publish npm root package
         shell: bash
-        env:
-          # Unscoped packages need a token that is allowed to create/publish unscoped names.
-          # GitHub's setup-node expects NODE_AUTH_TOKEN. See:
-          # https://docs.github.com/en/actions/tutorials/publish-packages/publish-nodejs-packages
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN_UNSCOPED }}
         run: |
           set -euxo pipefail
           cd packages/npm
-          npm publish --access public --provenance
+          npm publish --access public
 
   publish-pypi:
     name: publish PyPI
