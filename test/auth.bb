@@ -176,7 +176,7 @@
          (assert! (= 200 (:status poll)) "pending-session poll returns 200")
          (let [poll-json (json/parse-string (:body poll) true)]
            (assert! (:complete poll-json) "pending session complete=true")
-           (assert! (= "@bbuser" (:user poll-json)) "poll returns @bbuser")
+           (assert! (= "bbuser" (:user poll-json)) "poll returns stored username bbuser")
            (assert! (clojure.string/starts-with? (:token poll-json) "slug_") "poll returns bearer token")
 
            (println "\nwhoami…")
@@ -184,7 +184,7 @@
                                :headers {"Authorization" (str "Bearer " (:token poll-json))})]
              (assert! (= 200 (:status who)) "whoami returns 200")
              (let [who-json (json/parse-string (:body who) true)]
-               (assert! (= "@bbuser" (:user who-json)) "whoami user is @bbuser"))))))
+               (assert! (= "bbuser" (:user who-json)) "whoami user is bbuser (stored form)"))))))
 
      (println "\nCLI: identity start → OAuth → identity poll → whoami…")
      (let [cli-home (str tmp-dir "/cli-home")
@@ -208,7 +208,7 @@
                       (str "identity poll exits 0 (stderr: " (:err poll-proc) ")"))
              (let [poll-cli (json/parse-string (:out poll-proc) true)]
                (assert! (= "complete" (:phase poll-cli)) "identity poll --json phase")
-               (assert! (= "@cliuser" (:user poll-cli)) "CLI poll user")
+               (assert! (= "cliuser" (:user poll-cli)) "CLI poll user (stored form)")
                (assert! (clojure.string/starts-with? (:token poll-cli) "slug_") "CLI poll token")
                (let [token-path (str cli-home "/.config/slugsocial/token")]
                  (assert! (fs/exists? token-path) "token written under isolated HOME")
@@ -219,7 +219,7 @@
                  (assert! (zero? (:exit who-proc))
                           (str "whoami exits 0 (stderr: " (:err who-proc) ")"))
                  (let [who-cli (json/parse-string (:out who-proc) true)]
-                   (assert! (= "@cliuser" (:user who-cli)) "CLI whoami uses saved token"))))))))
+                   (assert! (= "cliuser" (:user who-cli)) "CLI whoami uses saved token"))))))))
 
      (finally
        (when-some [s @!server] (common/kill-server s))

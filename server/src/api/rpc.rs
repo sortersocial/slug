@@ -936,7 +936,15 @@ pub async fn handle_rpc_batch(
                 line_ok(RpcResult::ForumThreads(rpc_list_forum_threads(&reduced, &room)))
             }
             RpcCommand::RoomCreate { slug, visibility } => {
-                match verify_bearer_principal(&headers, &*state.reduced.read().await) {
+                // Scope the first read so its guard drops before any nested `read().await` / `write().await`.
+                // A guard from `match verify(..., &*state.reduced.read().await)` would otherwise live for the
+                // whole `match` and deadlock here (tokio::sync::RwLock is not reentrant).
+                let principal = {
+                    let reduced = state.reduced.read().await;
+                    verify_bearer_principal(&headers, &*reduced)
+                };
+                match principal {
+                    Err((_, m)) => line_err(m, None),
                     Ok(principal) => {
                         let slug = slug.trim().to_lowercase();
                         if slug.is_empty() || slug.len() > 64 {
@@ -994,7 +1002,6 @@ pub async fn handle_rpc_batch(
                             }
                         }
                     }
-                    Err((_, m)) => line_err(m, None),
                 }
             }
             RpcCommand::RoomGrant {
@@ -1002,17 +1009,28 @@ pub async fn handle_rpc_batch(
                 username,
                 capability,
             } => {
-                match verify_bearer_principal(&headers, &*state.reduced.read().await) {
+                let principal = {
+                    let reduced = state.reduced.read().await;
+                    verify_bearer_principal(&headers, &*reduced)
+                };
+                match principal {
                     Err((_, m)) => line_err(m, None),
                     Ok(principal) => {
-                        let reduced = state.reduced.read().await;
-                        if !reduced.user_has_cap(&room, &principal, ThreadCapability::Manage) {
+                        let can_manage = {
+                            let reduced = state.reduced.read().await;
+                            reduced.user_has_cap(&room, &principal, ThreadCapability::Manage)
+                        };
+                        if !can_manage {
                             line_err("requires Manage capability", None)
                         } else {
                             match parse_username(&username) {
                                 Err(msg) => line_err("invalid username", Some(msg)),
                                 Ok(target) => {
-                                    if !reduced.users_by_provider.values().any(|u| u == &target) {
+                                    let user_exists = {
+                                        let reduced = state.reduced.read().await;
+                                        reduced.users_by_provider.values().any(|u| u == &target)
+                                    };
+                                    if !user_exists {
                                         line_err(format!("user @{target} not found"), None)
                                     } else {
                                         match parse_capability(&capability) {

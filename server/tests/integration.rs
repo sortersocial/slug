@@ -96,6 +96,23 @@ async fn test_healthz() {
 }
 
 #[tokio::test]
+async fn test_room_create_private_rpc() {
+    let (addr, _tmp, _log, _handle) = create_test_server().await;
+    let client = reqwest::Client::new();
+    let batch = serde_json::json!([{
+        "RoomCreate": { "slug": "secret-project", "visibility": "private" }
+    }]);
+    let body = rpc_batch(&client, addr, Some(&test_bearer()), batch).await;
+    let line = &body["results"][0];
+    assert_eq!(line["ok"], true, "room create: {:?}", line);
+    let room_id = line["result"]["RoomCreated"]["room_id"].as_str().unwrap();
+    assert!(
+        room_id.contains("/secret-project"),
+        "expected room_id to contain slug, got {room_id}"
+    );
+}
+
+#[tokio::test]
 async fn test_index_page() {
     // HTML routes are offline during the auth-v3 refactor.
 }
