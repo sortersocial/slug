@@ -1,7 +1,9 @@
 mod auth;
 mod helpers;
 mod rpc;
+mod stream;
 mod validate;
+mod web_post;
 
 pub use auth::{
     get_join_invite,
@@ -13,6 +15,11 @@ pub use auth::{
     get_auth_callback,
     get_auth_complete,
     get_choose_username,
+    get_web_login,
+    get_logout,
+    optional_principal,
+    session_cookie_header_value,
+    SLUG_SESSION_COOKIE,
 };
 
 pub use helpers::{
@@ -23,7 +30,11 @@ pub use helpers::{
 
 pub use rpc::handle_rpc_batch;
 
+pub use stream::{get_html_stream, get_stream};
+
 pub use validate::{normalize_room_and_thread, validate_ingest_document, ValidatedIngest};
+
+pub use web_post::post_web_ingest;
 
 #[cfg(test)]
 mod tests {

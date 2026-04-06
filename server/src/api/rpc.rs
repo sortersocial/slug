@@ -407,6 +407,22 @@ async fn rpc_post(
     })
 }
 
+/// Post forum content using a raw bearer token (CLI `Authorization` header or browser session cookie).
+pub async fn rpc_post_with_bearer(
+    state: &AppState,
+    bearer_token: &str,
+    room: String,
+    thread_tag: String,
+    text: String,
+) -> Result<RpcResult, RpcErr> {
+    use axum::http::{header, HeaderMap, HeaderValue};
+    let mut headers = HeaderMap::new();
+    let hv = HeaderValue::from_str(&format!("Bearer {bearer_token}"))
+        .map_err(|_| ("invalid session token".into(), None))?;
+    headers.insert(header::AUTHORIZATION, hv);
+    rpc_post(state, &headers, room, thread_tag, None, text, false).await
+}
+
 async fn rpc_check(
     state: &AppState,
     _room: String,

@@ -1,9 +1,11 @@
 use axum::{
+    body::Body,
     extract::{Path, Query, State},
-    http::{HeaderMap, StatusCode},
-    response::{IntoResponse, Redirect},
+    http::{header, HeaderMap, HeaderValue, StatusCode},
+    response::{IntoResponse, Redirect, Response},
     Form, Json,
 };
+use axum_extra::extract::cookie::CookieJar;
 use base64::Engine;
 use serde::Deserialize;
 use slug_types::{PendingSessionPollResponse, PendingSessionStartRequest, PendingSessionStartResponse, WhoamiResponse};
@@ -13,13 +15,46 @@ use tokio::sync::RwLock;
 use crate::{
     api::helpers::{api_error, now_ms, sha256_hex},
     events::{Event, GrantAdded, TokenIssued, UserRegistered},
-    identity::{parse_agent, parse_username},
     html::{auth_complete_page, auth_signed_in_fragment, choose_username_error_fragment, choose_username_page},
+    identity::{parse_agent, parse_username},
+    reducer::ReducerState,
     state::{AppState, PendingSession},
 };
 
 /// Delegate id for browser users who land via `/join/inv_…` (no CLI agent).
 const INVITE_BROWSER_AGENT: &str = "00000000-0000-0000-0000-000000000000:invite:web/join";
+
+/// Agent id for `/login` browser OAuth (no CLI); must pass [`parse_agent`].
+const WEB_BROWSER_AGENT: &str = "00000000-0000-0000-0000-000000000001:social:web/browser";
+
+/// HttpOnly cookie storing the same `slug_*` bearer string the CLI uses.
+pub const SLUG_SESSION_COOKIE: &str = "slug_session";
+
+/// `Set-Cookie` header value (full attribute string).
+pub fn session_cookie_header_value(bearer: &str) -> HeaderValue {
+    let s = format!(
+        "{SLUG_SESSION_COOKIE}={bearer}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000"
+    );
+    HeaderValue::from_str(&s).expect("session cookie value must be ASCII")
+}
+
+/// Resolve the signed-in username from `Authorization: Bearer` or `slug_session` cookie.
+pub fn optional_principal(headers: &HeaderMap, jar: &CookieJar, reduced: &ReducerState) -> Option<String> {
+    if let Ok(u) = verify_bearer_principal(headers, reduced) {
+        return Some(u);
+    }
+    let c = jar.get(SLUG_SESSION_COOKIE)?;
+    verify_token(reduced, c.value()).ok()
+}
+
+fn redirect_with_session_cookie(public_url: &str, path_and_query: &str, bearer: &str) -> Response {
+    Response::builder()
+        .status(StatusCode::TEMPORARY_REDIRECT)
+        .header(header::LOCATION, format!("{public_url}{path_and_query}"))
+        .header(header::SET_COOKIE, session_cookie_header_value(bearer))
+        .body(Body::empty())
+        .unwrap()
+}
 
 async fn apply_invite_redemption(state: &AppState, invite_token: &str, grantee_username: &str) -> Result<(), String> {
     let now = now_ms();
@@ -306,8 +341,9 @@ pub async fn get_auth_callback(Query(q): Query<AuthCallbackQuery>, State(state):
                     tracing::warn!(error = %e, "invite redemption skipped after oauth");
                 }
             }
+            let cookie_bearer = bearer.clone();
             s.complete = Some((username, bearer));
-            return Redirect::temporary(&format!("{public_url}/auth/complete")).into_response();
+            return redirect_with_session_cookie(&public_url, "/", &cookie_bearer).into_response();
         }
     }
 
@@ -418,7 +454,47 @@ pub async fn post_choose_username(
         s.complete = Some((canon_user.clone(), bearer.clone()));
     }
 
-    auth_signed_in_fragment().into_response()
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+        .header(header::SET_COOKIE, session_cookie_header_value(&bearer))
+        .body(Body::from(auth_signed_in_fragment().into_string()))
+        .unwrap()
+        .into_response()
+}
+
+/// Start a browser-only OAuth flow (no CLI polling). Sets session cookie on success.
+pub async fn get_web_login(State(state): State<AppState>) -> impl IntoResponse {
+    let session = format!("p_{}", uuid::Uuid::new_v4().simple());
+    let s = PendingSession {
+        agent: WEB_BROWSER_AGENT.to_string(),
+        created_ts: now_ms(),
+        provider: None,
+        provider_id: None,
+        redeem_invite: None,
+        complete: None,
+    };
+    state.pending_sessions.write().await.insert(session.clone(), s);
+    let public_url = std::env::var("SLUG_PUBLIC_URL").unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
+    Redirect::temporary(&format!(
+        "{public_url}/auth/login?session={}",
+        urlencoding::encode(&session)
+    ))
+    .into_response()
+}
+
+pub async fn get_logout() -> impl IntoResponse {
+    let clear = format!("{SLUG_SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0");
+    Response::builder()
+        .status(StatusCode::TEMPORARY_REDIRECT)
+        .header(header::LOCATION, "/")
+        .header(
+            header::SET_COOKIE,
+            HeaderValue::from_str(&clear).expect("static cookie clears"),
+        )
+        .body(Body::empty())
+        .unwrap()
+        .into_response()
 }
 
 pub async fn post_pending_session(
