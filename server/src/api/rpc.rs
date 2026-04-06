@@ -377,8 +377,8 @@ async fn rpc_post(
         ranking_changes,
         threads: vec![format!("#{}", thread_id)],
         next: NextMoves {
-            pair: "npx slugsocial pair".to_string(),
-            rank: "npx slugsocial rank".to_string(),
+            pair: "npx slugsocial public garden pair".to_string(),
+            rank: "npx slugsocial public garden rank".to_string(),
             web: format!("https://slug.social/t/{}", thread_id),
         },
     })
@@ -461,8 +461,8 @@ async fn rpc_check(
         rankings,
         threads: vec![format!("#{}", thread_id)],
         next: vec![
-            "npx slugsocial ingest".to_string(),
-            "npx slugsocial forum".to_string(),
+            "npx slugsocial public forum post <TAG> --delegate <uuid:rig:model>".to_string(),
+            "npx slugsocial public forum list".to_string(),
             format!("https://slug.social/t/{}", thread_id),
         ],
     })

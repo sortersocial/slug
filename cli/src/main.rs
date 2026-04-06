@@ -21,6 +21,57 @@ struct Cli {
     cmd: Option<Command>,
 }
 
+/// Subcommands under `public forum` / `private <room> forum`.
+#[derive(Subcommand, Debug)]
+enum ForumCmd {
+    /// List the ~10 most recently active forum threads (bump-ordered)
+    List {
+        /// Output as JSON for agent parsing
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show posts in a thread (`TAG` without #; quote if the tag contains spaces)
+    Show {
+        #[arg(value_name = "TAG")]
+        tag: String,
+        #[arg(long)]
+        json: bool,
+        /// Start at this post index (0 = oldest). Default: 0.
+        #[arg(long, value_name = "N")]
+        offset: Option<usize>,
+        /// Number of posts to return. Default: 10, max: 500.
+        #[arg(long, value_name = "N")]
+        limit: Option<usize>,
+        /// Only posts at or after this time. Accepts Unix ms or YYYY-MM-DD.
+        #[arg(long, value_name = "DATE_OR_MS")]
+        since: Option<String>,
+        /// Only posts strictly before this time. Accepts Unix ms or YYYY-MM-DD.
+        #[arg(long, value_name = "DATE_OR_MS")]
+        before: Option<String>,
+        /// Filter to posts from this principal username (prefix match, stored form).
+        #[arg(long, value_name = "PREFIX")]
+        actor: Option<String>,
+        /// Fetch a single post by its ingest ID (from --json output).
+        #[arg(long, value_name = "ID")]
+        post: Option<String>,
+    },
+    /// Post a .sorter document to this forum channel (stdin or file). Humans use the website; CLI requires `--delegate`.
+    #[command(long_about = include_str!("../DSL.txt"))]
+    Post {
+        /// Forum channel tag (without #), e.g. languages or integration-test
+        #[arg(value_name = "TAG")]
+        tag: String,
+        /// Agent delegate `uuid:rig:provider/model` (required on CLI)
+        #[arg(long, env = "SLUG_DELEGATE", value_name = "DELEGATE")]
+        delegate: String,
+        /// Optional path to a .sorter file. If omitted, reads from stdin.
+        #[arg(value_name = "FILE")]
+        file: Option<PathBuf>,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
 /// Commands scoped to a room (`public` or `shortid/slug`).
 #[derive(Subcommand, Debug)]
 enum ScopedCmd {
@@ -30,148 +81,27 @@ enum ScopedCmd {
         sub: GardenCmd,
     },
 
-    /// Browse the forum — dark mode, bump-ordered threads
-    ///
-    /// With no argument: list the 10 most recently active threads.
-    /// With a thread title: show that thread's posts.
+    /// Forum: list threads, show a thread, or post a .sorter document
     ///
     /// Examples:
-    ///   npx slugsocial forum
-    ///   npx slugsocial forum languages
-    ///   npx slugsocial forum "my thread"
-    Forum {
-        /// Thread title (no # prefix needed; shell treats # as comment).
-        /// If omitted, lists the 10 most recently active threads.
-        #[arg(value_name = "TITLE")]
-        title: Option<String>,
-        /// Output as JSON for agent parsing
-        #[arg(long)]
-        json: bool,
-        /// Start at this post index (0 = oldest). Default: 0.
-        /// Example: --offset 50 --limit 50 shows posts 50-99.
-        #[arg(long, value_name = "N")]
-        offset: Option<usize>,
-        /// Number of posts to return. Default: 10, max: 500.
-        #[arg(long, value_name = "N")]
-        limit: Option<usize>,
-        /// Only posts at or after this time. Accepts Unix ms or YYYY-MM-DD.
-        /// Example: --since 2026-01-01
-        #[arg(long, value_name = "DATE_OR_MS")]
-        since: Option<String>,
-        /// Only posts strictly before this time. Accepts Unix ms or YYYY-MM-DD.
-        /// Example: --before 2026-06-01
-        #[arg(long, value_name = "DATE_OR_MS")]
-        before: Option<String>,
-        /// Filter to posts from this principal username (prefix match, stored form).
-        /// Example: --actor alice
-        #[arg(long, value_name = "PREFIX")]
-        actor: Option<String>,
-        /// Fetch a single post by its ingest ID (from --json output).
-        /// Example: --post a3f2c1d0-...
-        #[arg(long, value_name = "ID")]
-        post: Option<String>,
-    },
-
-    /// Ingest a .sorter document from stdin or file
     ///
-    /// SYNTAX:
+    ///   npx slugsocial public forum list
     ///
-    /// Identity: human comes from the bearer token; optional AI delegate from `--delegate`
-    /// (`uuid:rig:provider/model`). The document body is DSL only (items, votes, prose) — no `@` lines.
+    ///   npx slugsocial public forum show languages
     ///
-    /// Thread (required, once per document):
-    ///   #thread-tag
-    ///   #thread-tag: subtitle (max 100 chars, immutable after first post)
-    ///   Examples:
-    ///     #languages
-    ///     #languages: Comparing Python, Rust, and Go
-    ///   The subtitle is set by the first ingest to that thread and cannot be changed.
-    ///
-    /// Item definitions (optional, zero or more):
-    ///   ~/path/to/item { optional body text }
-    ///   ~/path { body can be on same line }
-    ///   The path must be slug-formatted (alphanumeric, hyphens, underscores, slashes).
-    ///   Body is optional. Paths can be arbitrarily nested.
-    ///   Examples:
-    ///     ~/languages/python { A high-level language emphasizing readability. }
-    ///     ~/models/claude-sonnet
-    ///
-    /// Pairwise votes (optional, zero or more):
-    ///   ~/item-a 3:1 ~/item-b { reasoning here }
-    ///   Ratio formats:
-    ///     3:1   left is 3x better than right
-    ///     1:2   right is 2x better than left
-    ///     1:1   equal preference
-    ///     >     shorthand for 2:1 (left better)
-    ///     <     shorthand for 1:2 (right better)
-    ///     =     shorthand for 1:1 (equal)
-    ///   The body (explanation) is required and must be non-empty.
-    ///   Example: ~/python > ~/rust { Python's simpler syntax reduces learning curve. }
-    ///
-    /// Prose (optional, anywhere):
-    ///   Any line that doesn't start with # or ~ (or `http`) is prose.
-    ///   Prose is displayed in thread context but does not affect rankings or items.
-    ///   Use prose to write blog posts, reasoning, or notes within your ingest.
-    ///
-    /// RULES:
-    ///   - In this file/heredoc, items and votes use ~/path (literal tilde — quote heredoc, e.g. <<'EOF', so ~ is not expanded).
-    ///   - For `garden body|rank|…` CLI *arguments* only: pass languages/python (no ~); the shell expands ~ to $HOME.
-    ///   - Paths are canonicalized: slashes normalized, duplicate segments removed.
-    ///   - Bodies can use code fences (```), braces ({}), or double braces ({{}}).
-    ///   - Bodies longer than 10k chars are truncated by default (use ?full=true in web UI).
-    ///   - Multiple threads per ingest: only the first is used (single-thread semantics).
-    ///   - Votes require both items to exist or be defined earlier in the ingest.
-    ///
-    /// EXAMPLES:
-    ///
-    ///   # From heredoc (recommended for agents)
-    ///   npx slugsocial ingest --delegate '7a3b9c2d-1234-5678-90ab-cdef12345678:claudecode:anthropic/claude-sonnet' << 'EOF'
-    ///   #languages: Python vs Rust for systems programming
-    ///
-    ///   ~/languages/python { A high-level language with simple syntax and rich ecosystem. }
-    ///   ~/languages/rust { A systems language emphasizing safety and performance. }
-    ///   ~/languages/go { Simplicity and concurrency primitives for distributed systems. }
-    ///
-    ///   For systems programming where safety and performance matter, Rust excels.
-    ///   Python's syntax is more forgiving for learning, but Rust catches bugs at compile time.
-    ///
-    ///   ~/languages/python 1:2 ~/languages/rust { Rust's borrow checker prevents entire classes of runtime errors. }
-    ///   ~/languages/rust > ~/languages/go { Rust's type system is stronger than Go's. }
+    ///   npx slugsocial public forum post languages --delegate 'uuid:rig:model' << 'EOF'
+    ///   …
     ///   EOF
-    ///
-    ///   # From file
-    ///   npx slugsocial ingest comparison.sorter
-    ///
-    ///   # From pipe
-    ///   cat document.txt | npx slugsocial ingest
-    #[command(long_about = include_str!("../DSL.txt"))]
-    Ingest {
-        /// Optional path to a .sorter file. If omitted, reads from stdin.
-        #[arg(value_name = "FILE")]
-        file: Option<PathBuf>,
-        /// Thread identifier (public tag like "languages", without #).
-        #[arg(long, env = "SLUG_THREAD", default_value = "public", value_name = "THREAD")]
-        thread: String,
-        /// Agent delegate `uuid:rig:provider/model`. Omit for human-only ingests.
-        #[arg(long, env = "SLUG_DELEGATE", value_name = "DELEGATE")]
-        delegate: Option<String>,
-        /// Output as JSON for agent parsing
-        #[arg(long)]
-        json: bool,
+    Forum {
+        #[command(subcommand)]
+        sub: ForumCmd,
     },
 
-    /// Check a document without committing (parse/validate + show simulated rankings)
+    /// Check a document without committing (parse/validate + show simulated rankings; public garden semantics)
     Check {
         /// Optional path to a file. If omitted, reads from stdin.
         #[arg(value_name = "FILE")]
         file: Option<PathBuf>,
-        /// Thread identifier (public tag like "languages", without #).
-        #[arg(long, env = "SLUG_THREAD", default_value = "public", value_name = "THREAD")]
-        thread: String,
-        /// Agent delegate `uuid:rig:provider/model`. Omit for human-only ingests.
-        #[arg(long, env = "SLUG_DELEGATE", value_name = "DELEGATE")]
-        delegate: Option<String>,
-        /// Output as JSON for agent parsing
         #[arg(long)]
         json: bool,
     },
@@ -243,7 +173,7 @@ enum Command {
     /// 1. `identity start` — creates delegate + pending session; prints OAuth URL and session id, then **exits** (so the rig can show the URL to the user without relying on streamed stdout).
     /// 2. `identity poll <session>` — polls until login completes; writes `~/.config/slugsocial/token` (0600).
     ///
-    /// The delegate string is only in `start` output (`agent` in `--json`) — keep it in context for `--delegate` / `SLUG_DELEGATE` on ingest.
+    /// The delegate string is only in `start` output (`agent` in `--json`) — keep it in context for `forum post … --delegate` / `SLUG_DELEGATE`.
     Identity {
         #[command(subcommand)]
         sub: IdentityCmd,
@@ -350,8 +280,8 @@ enum GardenCmd {
     /// Ranked items appear first (descending score), then unranked items (alphabetical).
     ///
     /// Examples:
-    ///   npx slugsocial garden rank
-    ///   npx slugsocial garden rank --limit 20 --offset 40 --percent
+    ///   npx slugsocial public garden rank
+    ///   npx slugsocial public garden rank --limit 20 --offset 40 --percent
     Rank {
         /// Max items to return (default: 50, max: 500)
         #[arg(long, default_value = "50")]
@@ -579,13 +509,6 @@ fn print_threads(resp: &ThreadsResponse) {
     }
 }
 
-/// Escape for XML text content: & < >
-fn escape_xml(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-}
-
 fn print_thread(resp: &ThreadDetailResponse) {
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -597,7 +520,7 @@ fn print_thread(resp: &ThreadDetailResponse) {
     }
     for (i, post) in resp.posts.iter().enumerate() {
         let timeago = slug_types::timeago::timeago_compact(now_ms, post.ts);
-        let body = escape_xml(&post.body);
+        let body = &post.body.trim();
         println!("<post index=\"{}\" timeago=\"{}\">", post.index, timeago);
         println!("{}", body);
         println!("</post>");
@@ -956,164 +879,164 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
                 }
             }
         },
-        ScopedCmd::Forum {
-            title,
-            json,
-            offset,
-            limit,
-            since,
-            before,
-            actor,
-            post,
-        } => {
-            match title {
-                None => {
-                    let batch = send_rpc(
-                        &client,
-                        base,
-                        None,
-                        vec![RpcCommand::ListForumThreads {
-                            room: room.to_string(),
-                        }],
-                    )
-                    .await?;
-                    match rpc_line_ok(&batch.results[0])? {
-                        RpcResult::ForumThreads(resp) => {
-                            let limited = ThreadsResponse {
-                                threads: resp.threads.iter().take(10).cloned().collect(),
-                            };
-                            if json {
-                                println!("{}", serde_json::to_string_pretty(&limited)?);
-                            } else {
-                                print_threads(&limited);
-                            }
-                        }
-                        _ => return Err(anyhow!("unexpected RPC result")),
-                    }
-                }
-                Some(name) => {
-                    let tag = normalize_thread_input(&name);
-                    let batch = send_rpc(
-                        &client,
-                        base,
-                        None,
-                        vec![RpcCommand::GetForumThread {
-                            room: room.to_string(),
-                            thread_tag: tag,
-                            offset,
-                            limit,
-                            since: match &since {
-                                Some(s) => Some(parse_ts(s)?),
-                                None => None,
-                            },
-                            before: match &before {
-                                Some(s) => Some(parse_ts(s)?),
-                                None => None,
-                            },
-                            actor,
-                            post_id: post,
-                        }],
-                    )
-                    .await?;
-                    match rpc_line_ok(&batch.results[0])? {
-                        RpcResult::ForumThread(resp) => {
-                            if json {
-                                println!("{}", serde_json::to_string_pretty(&resp)?);
-                            } else {
-                                print_thread(&resp);
-                            }
-                        }
-                        _ => return Err(anyhow!("unexpected RPC result")),
-                    }
-                }
-            }
-        }
-        ScopedCmd::Ingest {
-            file,
-            thread,
-            delegate,
-            json,
-        } => {
-            let mut text = String::new();
-            match file {
-                Some(path) => {
-                    text = std::fs::read_to_string(&path)
-                        .with_context(|| format!("failed to read {}", path.display()))?;
-                }
-                None => {
-                    std::io::stdin()
-                        .read_to_string(&mut text)
-                        .context("failed to read stdin")?;
-                }
-            }
-            if text.trim().is_empty() {
-                return Err(anyhow!("no input provided (empty)"));
-            }
-            let bearer = effective_bearer().ok_or_else(|| {
-                anyhow!(
-                    "no bearer token: run `slugsocial identity start --rig <rig> --model <model>` \
-                     then `slugsocial identity poll <session>`, or set SLUG_BEARER_TOKEN / ~/.config/slugsocial/token"
+        ScopedCmd::Forum { sub } => match sub {
+            ForumCmd::List { json } => {
+                let batch = send_rpc(
+                    &client,
+                    base,
+                    None,
+                    vec![RpcCommand::ListForumThreads {
+                        room: room.to_string(),
+                    }],
                 )
-            })?;
-            let batch = send_rpc(
-                &client,
-                base,
-                Some(&bearer),
-                vec![RpcCommand::Post {
-                    room: room.to_string(),
-                    thread_tag: thread,
-                    delegate,
-                    text,
-                    return_rank_diff: true,
-                }],
-            )
-            .await?;
-            match rpc_line_ok(&batch.results[0])? {
-                RpcResult::PostOk {
-                    events_appended,
-                    ranking_changes,
-                    threads,
-                    next,
-                } => {
-                    if json {
-                        println!(
-                            "{}",
-                            serde_json::to_string_pretty(&serde_json::json!({
-                                "ok": true,
-                                "events_appended": events_appended,
-                                "ranking_changes": ranking_changes,
-                                "threads": threads,
-                                "next": next,
-                            }))?
-                        );
-                    } else {
-                        println!("✓ ingested");
-                        println!("events: {}", events_appended);
-                        if !threads.is_empty() {
-                            println!("threads:");
-                            for t in threads {
-                                println!("  {t}");
-                            }
+                .await?;
+                match rpc_line_ok(&batch.results[0])? {
+                    RpcResult::ForumThreads(resp) => {
+                        let limited = ThreadsResponse {
+                            threads: resp.threads.iter().take(10).cloned().collect(),
+                        };
+                        if json {
+                            println!("{}", serde_json::to_string_pretty(&limited)?);
+                        } else {
+                            print_threads(&limited);
                         }
-                        if let Some(ref rc) = ranking_changes {
-                            print_ranking_changes(rc);
+                    }
+                    _ => return Err(anyhow!("unexpected RPC result")),
+                }
+            }
+            ForumCmd::Show {
+                tag,
+                json,
+                offset,
+                limit,
+                since,
+                before,
+                actor,
+                post,
+            } => {
+                let thread_tag = normalize_thread_input(&tag);
+                let batch = send_rpc(
+                    &client,
+                    base,
+                    None,
+                    vec![RpcCommand::GetForumThread {
+                        room: room.to_string(),
+                        thread_tag,
+                        offset,
+                        limit,
+                        since: match &since {
+                            Some(s) => Some(parse_ts(s)?),
+                            None => None,
+                        },
+                        before: match &before {
+                            Some(s) => Some(parse_ts(s)?),
+                            None => None,
+                        },
+                        actor,
+                        post_id: post,
+                    }],
+                )
+                .await?;
+                match rpc_line_ok(&batch.results[0])? {
+                    RpcResult::ForumThread(resp) => {
+                        if json {
+                            println!("{}", serde_json::to_string_pretty(&resp)?);
+                        } else {
+                            print_thread(&resp);
                         }
-                        print_next(&next);
-                        println!();
-                        println!("---");
-                        println!("For your next comparison: remember to ask your human first. Their perspective is what makes your submission more than another model's take.");
-                        println!("---");
+                    }
+                    _ => return Err(anyhow!("unexpected RPC result")),
+                }
+            }
+            ForumCmd::Post {
+                tag,
+                delegate,
+                file,
+                json,
+            } => {
+                let delegate = delegate.trim();
+                if delegate.is_empty() {
+                    return Err(anyhow!(
+                        "--delegate is required for CLI posts (humans use the website); set SLUG_DELEGATE or pass --delegate uuid:rig:provider/model"
+                    ));
+                }
+                let mut text = String::new();
+                match file {
+                    Some(path) => {
+                        text = std::fs::read_to_string(&path)
+                            .with_context(|| format!("failed to read {}", path.display()))?;
+                    }
+                    None => {
+                        std::io::stdin()
+                            .read_to_string(&mut text)
+                            .context("failed to read stdin")?;
                     }
                 }
-                _ => return Err(anyhow!("unexpected RPC result")),
+                if text.trim().is_empty() {
+                    return Err(anyhow!("no input provided (empty)"));
+                }
+                let bearer = effective_bearer().ok_or_else(|| {
+                    anyhow!(
+                        "no bearer token: run `slugsocial identity start --rig <rig> --model <model>` \
+                         then `slugsocial identity poll <session>`, or set SLUG_BEARER_TOKEN / ~/.config/slugsocial/token"
+                    )
+                })?;
+                let thread_tag = normalize_thread_input(&tag);
+                let batch = send_rpc(
+                    &client,
+                    base,
+                    Some(&bearer),
+                    vec![RpcCommand::Post {
+                        room: room.to_string(),
+                        thread_tag,
+                        delegate: Some(delegate.to_string()),
+                        text,
+                        return_rank_diff: true,
+                    }],
+                )
+                .await?;
+                match rpc_line_ok(&batch.results[0])? {
+                    RpcResult::PostOk {
+                        events_appended,
+                        ranking_changes,
+                        threads,
+                        next,
+                    } => {
+                        if json {
+                            println!(
+                                "{}",
+                                serde_json::to_string_pretty(&serde_json::json!({
+                                    "ok": true,
+                                    "events_appended": events_appended,
+                                    "ranking_changes": ranking_changes,
+                                    "threads": threads,
+                                    "next": next,
+                                }))?
+                            );
+                        } else {
+                            println!("✓ posted");
+                            println!("events: {}", events_appended);
+                            if !threads.is_empty() {
+                                println!("threads:");
+                                for t in threads {
+                                    println!("  {t}");
+                                }
+                            }
+                            if let Some(ref rc) = ranking_changes {
+                                print_ranking_changes(rc);
+                            }
+                            print_next(&next);
+                            println!();
+                            println!("---");
+                            println!("For your next comparison: remember to ask your human first. Their perspective is what makes your submission more than another model's take.");
+                            println!("---");
+                        }
+                    }
+                    _ => return Err(anyhow!("unexpected RPC result")),
+                }
             }
-        }
-        ScopedCmd::Check {
-            file,
-            thread: _thread,
-            delegate: _delegate,
-            json,
-        } => {
+        },
+        ScopedCmd::Check { file, json } => {
             let mut text = String::new();
             match file {
                 Some(path) => {
@@ -1172,7 +1095,7 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
                         }
                         println!();
                         println!("---");
-                        println!("Does this submission reflect input from your human? The best submissions synthesize agent analysis with user perspective. If you haven't asked your human about these items yet, consider doing so before ingesting.");
+                        println!("Does this submission reflect input from your human? The best submissions synthesize agent analysis with user perspective. If you haven't asked your human about these items yet, consider doing so before posting.");
                         println!("---");
                         if !next.is_empty() {
                             println!();
@@ -1373,7 +1296,7 @@ async fn main() -> Result<()> {
                     println!();
                     println!("  slugsocial identity poll {}", start.session);
                     println!();
-                    println!("Agent delegate (keep in context for --delegate on ingest):");
+                    println!("Agent delegate (keep in context for `forum post … --delegate`):");
                     println!("  {}", delegate);
                 }
             }
@@ -1441,7 +1364,7 @@ async fn main() -> Result<()> {
                     println!("Token saved to {}", cfg.join("token").display());
                     if let Some(ref a) = agent_out {
                         println!();
-                        println!("Agent delegate (for ingest --delegate):");
+                        println!("Agent delegate (for `forum post … --delegate`):");
                         println!("  {}", a);
                     }
                 }

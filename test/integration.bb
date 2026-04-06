@@ -146,7 +146,7 @@
 
         ;; 2.5 check endpoint — disconnected components not flattened (before OAuth; no events.jsonl yet)
       (println "\nchecking (dry-run) returns discrete ranking groups…")
-      (bind check-result (common/run-cli cli-bin base-url ["public" "check" "--json" "--thread" "integration-test"] :input check-doc-disconnected))
+      (bind check-result (common/run-cli cli-bin base-url ["public" "check" "--json"] :input check-doc-disconnected))
       (assert! (zero? (:exit check-result)) "cli check exits 0")
       (bind check-resp   (json/parse-string (:out check-result) true))
       (assert! (:ok check-resp) "check response ok=true")
@@ -166,7 +166,7 @@
 
         ;; 3. ingest via CLI (bearer required)
       (println "\ningesting .sorter document via CLI…")
-      (bind ingest1-result (common/run-cli cli-bin base-url ["public" "ingest" "--json" "--thread" "integration-test" "--delegate" "00000000-0000-0000-0000-000000000000:cli:local/dev"] :input sorter-doc :extra-env token-env))
+      (bind ingest1-result (common/run-cli cli-bin base-url ["public" "forum" "post" "integration-test" "--json" "--delegate" "00000000-0000-0000-0000-000000000000:cli:local/dev"] :input sorter-doc :extra-env token-env))
       (assert! (zero? (:exit ingest1-result)) "cli ingest exits 0")
       (bind ingest1-resp   (json/parse-string (:out ingest1-result) true))
       (assert! (:ok ingest1-resp) "ingest response ok=true")
@@ -195,7 +195,7 @@
 
         ;; 6. query forum via CLI
       (println "\nquerying forum via CLI…")
-      (bind forum-result (common/run-cli cli-bin base-url ["public" "forum" "--json"]))
+      (bind forum-result (common/run-cli cli-bin base-url ["public" "forum" "list" "--json"]))
       (assert! (zero? (:exit forum-result)) "cli forum exits 0")
       (bind forum-resp   (json/parse-string (:out forum-result) true))
       (assert! (some (fn [t] (= "#integration-test" (:thread t))) (:threads forum-resp))
@@ -237,7 +237,7 @@
                                         "#integration-test"
                                         "~/languages/rust 4:1 ~/languages/python { type safety }"
                                         "~/languages/rust 3:1 ~/languages/go { zero-cost abstractions }"]))
-      (bind hist-ingest      (common/run-cli cli-bin base-url ["public" "ingest" "--json" "--thread" "integration-test" "--delegate" "00000000-0000-0000-0000-000000000000:cli:local/dev"] :input two-vote-doc :extra-env token-env))
+      (bind hist-ingest      (common/run-cli cli-bin base-url ["public" "forum" "post" "integration-test" "--json" "--delegate" "00000000-0000-0000-0000-000000000000:cli:local/dev"] :input two-vote-doc :extra-env token-env))
       (assert! (zero? (:exit hist-ingest))
                (str "two-vote ingest exits 0 (err: " (:err hist-ingest) ")"))
 
