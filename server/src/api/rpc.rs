@@ -14,7 +14,7 @@ use crate::{
     canonical_path::{canonicalize_item, canonicalize_tag},
     dsl,
     events::{
-        AgentBound, Event, GrantAdded, Ingest, RoomCreated, ThreadCapability,
+        AgentBound, Event, GrantAdded, GrantRevoked, Ingest, RoomCreated, ThreadCapability,
     },
     identity::{parse_agent, parse_username},
     path_types::CanonicalItemUrl,
@@ -58,6 +58,48 @@ fn line_err(msg: impl Into<String>, hint: Option<String>) -> RpcLine {
         error: Some(msg.into()),
         hint,
     }
+}
+
+fn can_view_scope(reduced: &ReducerState, scope: &ScopeId, principal: Option<&str>) -> bool {
+    match scope {
+        ScopeId::Public => true,
+        ScopeId::Room(room_id) => {
+            principal.is_some_and(|u| reduced.user_has_cap(room_id, u, ThreadCapability::View))
+        }
+    }
+}
+
+fn principal_from_optional_bearer(headers: &HeaderMap, reduced: &ReducerState) -> Result<Option<String>, RpcErr> {
+    if headers.contains_key(axum::http::header::AUTHORIZATION) {
+        verify_bearer_principal(headers, reduced)
+            .map(Some)
+            .map_err(|(_, m)| (m, None))
+    } else {
+        Ok(None)
+    }
+}
+
+/// Authorize room-scoped reads.
+///
+/// Public room reads are always allowed. Private room reads require a valid bearer token and
+/// explicit View capability. Unknown and unauthorized private rooms are both returned as
+/// "not found"
+/// to avoid resource-enumeration leaks.
+fn authorize_room_read(reduced: &ReducerState, headers: &HeaderMap, room: &str) -> Result<Option<String>, RpcErr> {
+    let scope = scope_from_room_wire(room);
+    let ScopeId::Room(room_id) = scope else {
+        return Ok(None);
+    };
+    let principal = match verify_bearer_principal(headers, reduced) {
+        Ok(p) => p,
+        Err(_) => return Err(("room not found".into(), None)),
+    };
+    if !reduced.rooms.contains(&room_id)
+        || !reduced.user_has_cap(&room_id, &principal, ThreadCapability::View)
+    {
+        return Err(("room not found".into(), None));
+    }
+    Ok(Some(principal))
 }
 
 fn compute_scope_rank_changes(
@@ -425,24 +467,56 @@ pub async fn rpc_post_with_bearer(
 
 async fn rpc_check(
     state: &AppState,
-    _room: String,
+    headers: &HeaderMap,
+    room: String,
     text: String,
 ) -> Result<RpcResult, RpcErr> {
     let reduced_arc = state.reduced.clone();
+    let room_key = room.trim().to_string();
+    let scope = scope_from_room_wire(&room_key);
     let reduced = reduced_arc.read().await;
+    let principal = authorize_room_read(&reduced, headers, &room_key)?;
     let thread_id = "check".to_string();
-    let v = validate_ingest_document(&reduced, &text, &ScopeId::Public).map_err(|(_, m, h)| (m, h))?;
+    let v = validate_ingest_document(&reduced, &text, &scope).map_err(|(_, m, h)| (m, h))?;
+
+    if let ScopeId::Room(_) = scope {
+        let principal = principal
+            .as_ref()
+            .ok_or_else(|| ("room not found".to_string(), None))?;
+        let mut required: HashSet<ThreadCapability> = HashSet::new();
+        required.insert(ThreadCapability::View);
+        for stmt in &v.doc.statements {
+            match stmt {
+                dsl::Stmt::Vote { .. } => {
+                    required.insert(ThreadCapability::Vote);
+                }
+                dsl::Stmt::Item { .. } => {
+                    required.insert(ThreadCapability::AddItem);
+                }
+                dsl::Stmt::Prose { .. } => {
+                    required.insert(ThreadCapability::Post);
+                }
+            }
+        }
+        let missing: Vec<_> = required
+            .iter()
+            .filter(|cap| !reduced.user_has_cap(&room_key, principal, **cap))
+            .collect();
+        if !missing.is_empty() {
+            return Err(("insufficient capabilities for this room".into(), None));
+        }
+    }
     drop(reduced);
 
     let delegate: Option<String> = None;
-    let principal = "placeholder".to_string();
+    let principal = principal.unwrap_or_else(|| "placeholder".to_string());
     let event = Event::Ingest(Ingest {
         ts: v.ts,
         id: uuid::Uuid::new_v4().to_string(),
         raw: v.raw_text.clone(),
         principal,
         delegate,
-        room_id: "public".into(),
+        room_id: room_key,
         thread_tag: thread_id.clone(),
     });
 
@@ -467,7 +541,10 @@ async fn rpc_check(
     let rankings: Vec<CheckScopeRanking> = voted_parents
         .iter()
         .map(|parent| {
-            let scoped = crate::scope_rank::build_children_rankings(simulated.public(), parent);
+            let scoped_content = simulated
+                .content_for_scope(&scope)
+                .unwrap_or_else(|| simulated.public());
+            let scoped = crate::scope_rank::build_children_rankings(scoped_content, parent);
             let components: Vec<RankComponent> = scoped
                 .component_rankings
                 .into_iter()
@@ -644,7 +721,7 @@ fn snippet_around(text: &str, words: &[String], max_len: usize) -> String {
     text[start..end].to_string()
 }
 
-fn rpc_search(reduced: &ReducerState, q: &str, limit: usize) -> SearchResponse {
+fn rpc_search(reduced: &ReducerState, q: &str, limit: usize, principal: Option<&str>) -> SearchResponse {
     let words = tokenize_query(q);
     if words.is_empty() {
         return SearchResponse {
@@ -701,15 +778,25 @@ fn rpc_search(reduced: &ReducerState, q: &str, limit: usize) -> SearchResponse {
             if any > 0 { score += any as u32; }
         }
         if score > 0 {
-            let thread = reduced
+            let Some((scope, tag)) = reduced
                 .ingests_by_scope_thread
                 .iter()
-                .find(|(_, ids)| ids.contains(id))
-                .map(|((scope, tag), _)| match scope {
-                    ScopeId::Public => format!("#{tag}"),
-                    ScopeId::Room(rid) => format!("{rid}/#{tag}"),
-                })
-                .unwrap_or_else(|| "#unknown".to_string());
+                .find_map(|((scope, tag), ids)| {
+                    if ids.contains(id) {
+                        Some((scope.clone(), tag.clone()))
+                    } else {
+                        None
+                    }
+                }) else {
+                    continue;
+                };
+            if !can_view_scope(reduced, &scope, principal) {
+                continue;
+            }
+            let thread = match scope {
+                ScopeId::Public => format!("#{tag}"),
+                ScopeId::Room(rid) => format!("{rid}/#{tag}"),
+            };
             scored_posts.push((score, ingest.ts, SearchPostHit {
                 thread,
                 actor: ingest.principal.clone(),
@@ -859,7 +946,7 @@ pub async fn handle_rpc_batch(
                 Ok(r) => line_ok(r),
                 Err((e, h)) => line_err(e, h),
             },
-            RpcCommand::Check { room, text } => match rpc_check(&state, room, text).await {
+            RpcCommand::Check { room, text } => match rpc_check(&state, &headers, room, text).await {
                 Ok(r) => line_ok(r),
                 Err((e, h)) => line_err(e, h),
             },
@@ -872,6 +959,9 @@ pub async fn handle_rpc_batch(
                 percent,
             } => {
                 let reduced = state.reduced.read().await;
+                if let Err((e, h)) = authorize_room_read(&reduced, &headers, &room) {
+                    line_err(e, h)
+                } else {
                 let content = content_for_room(&reduced, &room);
                 let popt = if parent_path.trim().is_empty() {
                     None
@@ -889,6 +979,7 @@ pub async fn handle_rpc_batch(
                     Ok(r) => line_ok(RpcResult::GardenRank(r)),
                     Err((e, h)) => line_err(e, h),
                 }
+                }
             }
             RpcCommand::GetGardenItem {
                 room,
@@ -896,6 +987,9 @@ pub async fn handle_rpc_batch(
                 full,
             } => {
                 let reduced = state.reduced.read().await;
+                if let Err((e, h)) = authorize_room_read(&reduced, &headers, &room) {
+                    line_err(e, h)
+                } else {
                 let content = content_for_room(&reduced, &room);
                 let item_str = canonicalize_item(&item_path);
                 let item = CanonicalItemUrl(item_str.clone());
@@ -932,6 +1026,7 @@ pub async fn handle_rpc_batch(
                         threads,
                     }))
                 }
+                }
             }
             RpcCommand::GetForumThread {
                 room,
@@ -944,6 +1039,9 @@ pub async fn handle_rpc_batch(
                 post_id,
             } => {
                 let reduced = state.reduced.read().await;
+                if let Err((e, h)) = authorize_room_read(&reduced, &headers, &room) {
+                    line_err(e, h)
+                } else {
                 let actor_prefix = match actor.as_deref().map(str::trim) {
                     None | Some("") => Ok(String::new()),
                     Some(s) => parse_username(s).map_err(|msg| ("invalid actor filter".to_string(), Some(msg))),
@@ -969,10 +1067,15 @@ pub async fn handle_rpc_batch(
                         }
                     }
                 }
+                }
             }
             RpcCommand::ListForumThreads { room } => {
                 let reduced = state.reduced.read().await;
-                line_ok(RpcResult::ForumThreads(rpc_list_forum_threads(&reduced, &room)))
+                if let Err((e, h)) = authorize_room_read(&reduced, &headers, &room) {
+                    line_err(e, h)
+                } else {
+                    line_ok(RpcResult::ForumThreads(rpc_list_forum_threads(&reduced, &room)))
+                }
             }
             RpcCommand::RoomCreate { slug } => {
                 // Scope the first read so its guard drops before any nested `read().await` / `write().await`.
@@ -1200,13 +1303,74 @@ pub async fn handle_rpc_batch(
                     }
                 }
             }
-            RpcCommand::RoomRevoke { .. } => line_err("RoomRevoke is not implemented yet", None),
+            RpcCommand::RoomRevoke {
+                room,
+                username,
+                capability,
+            } => {
+                let principal = {
+                    let reduced = state.reduced.read().await;
+                    verify_bearer_principal(&headers, &*reduced)
+                };
+                match principal {
+                    Err((_, m)) => line_err(m, None),
+                    Ok(principal) => {
+                        let can_manage = {
+                            let reduced = state.reduced.read().await;
+                            reduced.user_has_cap(&room, &principal, ThreadCapability::Manage)
+                        };
+                        if !can_manage {
+                            line_err("requires Manage capability", None)
+                        } else {
+                            match parse_username(&username) {
+                                Err(msg) => line_err("invalid username", Some(msg)),
+                                Ok(target) => {
+                                    let user_exists = {
+                                        let reduced = state.reduced.read().await;
+                                        reduced.users_by_provider.values().any(|u| u == &target)
+                                    };
+                                    if !user_exists {
+                                        line_err(format!("user @{target} not found"), None)
+                                    } else {
+                                        match parse_capability(capability.trim()) {
+                                            Err(msg) => line_err(msg, None),
+                                            Ok(cap) => {
+                                                let gr_ev = Event::GrantRevoked(GrantRevoked {
+                                                    ts: now_ms(),
+                                                    room_id: room,
+                                                    username: target,
+                                                    capabilities: vec![cap],
+                                                    revoked_by: principal,
+                                                });
+                                                if let Err(e) = state.event_log.append(&gr_ev).await {
+                                                    line_err(format!("{e}"), None)
+                                                } else {
+                                                    let mut r = state.reduced.write().await;
+                                                    r.apply_event(gr_ev);
+                                                    line_ok(RpcResult::GrantOk {})
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
             RpcCommand::GetGlobalRank {
                 room,
                 limit,
                 offset,
                 percent,
             } => {
+                {
+                    let reduced = state.reduced.read().await;
+                    if let Err((e, h)) = authorize_room_read(&reduced, &headers, &room) {
+                        results.push(line_err(e, h));
+                        continue;
+                    }
+                }
                 const DEFAULT_LIMIT: usize = 50;
                 const MAX_LIMIT: usize = 500;
                 let limit = limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT);
@@ -1262,16 +1426,27 @@ pub async fn handle_rpc_batch(
                     items: page,
                 }))
             }
-            RpcCommand::GetPair { room, parent_path } => match rpc_get_pair(&state, room, parent_path).await {
-                Ok(r) => line_ok(r),
-                Err((e, h)) => line_err(e, h),
-            },
+            RpcCommand::GetPair { room, parent_path } => {
+                let reduced = state.reduced.read().await;
+                if let Err((e, h)) = authorize_room_read(&reduced, &headers, &room) {
+                    line_err(e, h)
+                } else {
+                    drop(reduced);
+                    match rpc_get_pair(&state, room, parent_path).await {
+                        Ok(r) => line_ok(r),
+                        Err((e, h)) => line_err(e, h),
+                    }
+                }
+            }
             RpcCommand::GetMatchup {
                 room,
                 item_path,
                 limit,
             } => {
                 let reduced = state.reduced.read().await;
+                if let Err((e, h)) = authorize_room_read(&reduced, &headers, &room) {
+                    line_err(e, h)
+                } else {
                 let content = content_for_room(&reduced, &room);
                 let item_str = canonicalize_item(&item_path);
                 let item = CanonicalItemUrl(item_str.clone());
@@ -1305,9 +1480,13 @@ pub async fn handle_rpc_batch(
                         votes,
                     }))
                 }
+                }
             },
             RpcCommand::GetRankHistory { room, item_path } => {
                 let reduced = state.reduced.read().await;
+                if let Err((e, h)) = authorize_room_read(&reduced, &headers, &room) {
+                    line_err(e, h)
+                } else {
                 let content = content_for_room(&reduced, &room);
                 let scope = scope_from_room_wire(&room);
                 let item_str = canonicalize_item(&item_path);
@@ -1364,9 +1543,13 @@ pub async fn handle_rpc_batch(
                     item: item_path_for_api(&item_str),
                     history,
                 }))
+                }
             },
             RpcCommand::GetLeaves { room } => {
                 let reduced = state.reduced.read().await;
+                if let Err((e, h)) = authorize_room_read(&reduced, &headers, &room) {
+                    line_err(e, h)
+                } else {
                 let content = content_for_room(&reduced, &room);
                 let parents: HashSet<&str> = content.item_children.keys().map(|s| s.as_str()).collect();
                 let mut paths: Vec<String> = content
@@ -1377,9 +1560,13 @@ pub async fn handle_rpc_batch(
                     .collect();
                 paths.sort();
                 line_ok(RpcResult::Leaves(LeavesResponse { paths }))
+                }
             },
             RpcCommand::GetPaths { room } => {
                 let reduced = state.reduced.read().await;
+                if let Err((e, h)) = authorize_room_read(&reduced, &headers, &room) {
+                    line_err(e, h)
+                } else {
                 let content = content_for_room(&reduced, &room);
                 let out: Vec<PathSummary> = content
                     .item_children
@@ -1399,6 +1586,7 @@ pub async fn handle_rpc_batch(
                     })
                     .unwrap_or_default();
                 line_ok(RpcResult::Paths(PathsResponse { paths: out }))
+                }
             },
             RpcCommand::GetRecentVotes {
                 room,
@@ -1406,6 +1594,9 @@ pub async fn handle_rpc_batch(
                 limit,
             } => {
                 let reduced = state.reduced.read().await;
+                if let Err((e, h)) = authorize_room_read(&reduced, &headers, &room) {
+                    line_err(e, h)
+                } else {
                 let content = content_for_room(&reduced, &room);
                 let group = &content.ranking_group;
                 let limit = limit.unwrap_or(25).clamp(1, 200);
@@ -1428,11 +1619,15 @@ pub async fn handle_rpc_batch(
                         thread: Some(v.thread_tag.clone()),
                     }).collect();
                 line_ok(RpcResult::RecentVotes(RecentVotesResponse { votes: out }))
+                }
             },
             RpcCommand::Search { query } => {
                 let reduced = state.reduced.read().await;
                 let limit = 50usize.min(200);
-                line_ok(RpcResult::Search(rpc_search(&reduced, &query, limit)))
+                match principal_from_optional_bearer(&headers, &reduced) {
+                    Ok(principal) => line_ok(RpcResult::Search(rpc_search(&reduced, &query, limit, principal.as_deref()))),
+                    Err((e, h)) => line_err(e, h),
+                }
             },
             RpcCommand::GetFeed {
                 actor,
@@ -1445,40 +1640,64 @@ pub async fn handle_rpc_batch(
                     Err(msg) => line_err("invalid actor", Some(msg)),
                     Ok(actor_stored) => {
                         let reduced = state.reduced.read().await;
-                        let since = since.or_else(|| reduced.actor_last_post_ts.get(&actor_stored).copied());
-                        let cutoff = since.unwrap_or(0);
-                        let limit = limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT);
-                        let matching: Vec<&str> = reduced.ingests_ordered.iter().rev()
-                            .map(|id| id.as_str())
-                            .take_while(|id| reduced.ingests_by_id.get(*id).map_or(false, |ing| ing.ts > cutoff))
-                            .collect();
-                        let total = matching.len();
-                        let posts: Vec<FeedPost> = matching.into_iter()
-                            .take(limit)
-                            .filter_map(|id| reduced.ingests_by_id.get(id))
-                            .map(|ing| {
-                                let scope = scope_from_room_wire(&ing.room_id);
-                                let thread_post_index = reduced
-                                    .ingests_by_scope_thread
-                                    .get(&(scope, ing.thread_tag.clone()))
-                                    .and_then(|q| {
-                                        q.iter().rev().position(|pid| pid == &ing.id).map(|i| i + 1)
-                                    });
-                                FeedPost {
-                                    ts: ing.ts,
-                                    id: ing.id.clone(),
-                                    thread: Some(ing.thread_tag.clone()),
-                                    thread_post_index,
-                                    body: ing.raw.clone(),
-                                }
-                            })
-                            .collect();
-                        line_ok(RpcResult::Feed(FeedResponse {
-                            actor: actor_stored,
-                            since,
-                            posts,
-                            total,
-                        }))
+                        match principal_from_optional_bearer(&headers, &reduced) {
+                            Err((e, h)) => line_err(e, h),
+                            Ok(viewer) => {
+                                let since_default = reduced
+                                    .ingests_ordered
+                                    .iter()
+                                    .rev()
+                                    .filter_map(|id| reduced.ingests_by_id.get(id))
+                                    .find(|ing| {
+                                        if ing.principal != actor_stored {
+                                            return false;
+                                        }
+                                        let scope = scope_from_room_wire(&ing.room_id);
+                                        can_view_scope(&reduced, &scope, viewer.as_deref())
+                                    })
+                                    .map(|ing| ing.ts);
+                                let since = since.or(since_default);
+                                let cutoff = since.unwrap_or(0);
+                                let limit = limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT);
+                                let matching: Vec<&str> = reduced.ingests_ordered.iter().rev()
+                                    .map(|id| id.as_str())
+                                    .take_while(|id| reduced.ingests_by_id.get(*id).map_or(false, |ing| ing.ts > cutoff))
+                                    .filter(|id| {
+                                        reduced.ingests_by_id.get(*id).is_some_and(|ing| {
+                                            let scope = scope_from_room_wire(&ing.room_id);
+                                            can_view_scope(&reduced, &scope, viewer.as_deref())
+                                        })
+                                    })
+                                    .collect();
+                                let total = matching.len();
+                                let posts: Vec<FeedPost> = matching.into_iter()
+                                    .take(limit)
+                                    .filter_map(|id| reduced.ingests_by_id.get(id))
+                                    .map(|ing| {
+                                        let scope = scope_from_room_wire(&ing.room_id);
+                                        let thread_post_index = reduced
+                                            .ingests_by_scope_thread
+                                            .get(&(scope, ing.thread_tag.clone()))
+                                            .and_then(|q| {
+                                                q.iter().rev().position(|pid| pid == &ing.id).map(|i| i + 1)
+                                            });
+                                        FeedPost {
+                                            ts: ing.ts,
+                                            id: ing.id.clone(),
+                                            thread: Some(ing.thread_tag.clone()),
+                                            thread_post_index,
+                                            body: ing.raw.clone(),
+                                        }
+                                    })
+                                    .collect();
+                                line_ok(RpcResult::Feed(FeedResponse {
+                                    actor: actor_stored,
+                                    since,
+                                    posts,
+                                    total,
+                                }))
+                            }
+                        }
                     }
                 }
             },
