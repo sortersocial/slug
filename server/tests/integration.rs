@@ -234,7 +234,6 @@ async fn test_private_room_thread_urls_use_t_segment() {
     let (addr, _tmp, _log, _handle) = create_test_server().await;
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
-        .cookie_store(true)
         .build()
         .unwrap();
     let bearer = test_bearer();
@@ -254,16 +253,9 @@ async fn test_private_room_thread_urls_use_t_segment() {
         .to_string();
     let (room_short, room_slug) = room_id.split_once('/').unwrap();
 
-    let login = client
-        .get(format!("http://{addr}/api/v0/whoami"))
-        .header("Authorization", format!("Bearer {bearer}"))
-        .send()
-        .await
-        .unwrap();
-    assert!(login.status().is_success());
-
     let post = client
         .post(format!("http://{addr}/post"))
+        .header("Authorization", format!("Bearer {bearer}"))
         .form(&[
             ("room", room_id.as_str()),
             ("thread_tag", "main-thread"),
@@ -283,6 +275,7 @@ async fn test_private_room_thread_urls_use_t_segment() {
 
     let thread_page = client
         .get(format!("http://{addr}{location}"))
+        .header("Authorization", format!("Bearer {bearer}"))
         .send()
         .await
         .unwrap();
