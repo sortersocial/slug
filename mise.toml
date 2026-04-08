@@ -1,0 +1,6 @@
+[tools]
+# Matches the Rust baseline required by current deps (edition 2024).
+rust = "1.88.0"
+# Used by TEST.sh and test/*.bb integration suites.
+babashka = "1.12.217"
+
