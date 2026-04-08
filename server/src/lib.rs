@@ -46,15 +46,15 @@ pub fn create_app(state: AppState) -> Router {
         .route("/t/:tag/:index", get(crate::html::thread_post_view))
         .route("/t/:tag", get(crate::html::thread_view))
         .route(
-            "/r/:room_short/:room_slug/:thread_tag/:index/expand",
+            "/r/:room_short/:room_slug/t/:thread_tag/:index/expand",
             get(crate::html::room_thread_post_expand),
         )
         .route(
-            "/r/:room_short/:room_slug/:thread_tag/:index",
+            "/r/:room_short/:room_slug/t/:thread_tag/:index",
             get(crate::html::room_thread_post_view),
         )
         .route(
-            "/r/:room_short/:room_slug/:thread_tag",
+            "/r/:room_short/:room_slug/t/:thread_tag",
             get(crate::html::room_thread_view),
         )
         .route("/r/:room_short/:room_slug", get(crate::html::room_page))

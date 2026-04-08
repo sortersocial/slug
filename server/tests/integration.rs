@@ -230,6 +230,69 @@ async fn test_private_room_read_requires_explicit_view_capability() {
 }
 
 #[tokio::test]
+async fn test_private_room_thread_urls_use_t_segment() {
+    let (addr, _tmp, _log, _handle) = create_test_server().await;
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .cookie_store(true)
+        .build()
+        .unwrap();
+    let bearer = test_bearer();
+
+    let create = rpc_batch(
+        &client,
+        addr,
+        Some(&bearer),
+        serde_json::json!([{
+            "RoomCreate": { "slug": "url-shape" }
+        }]),
+    )
+    .await;
+    let room_id = create["results"][0]["result"]["RoomCreated"]["room_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let (room_short, room_slug) = room_id.split_once('/').unwrap();
+
+    let login = client
+        .get(format!("http://{addr}/api/v0/whoami"))
+        .header("Authorization", format!("Bearer {bearer}"))
+        .send()
+        .await
+        .unwrap();
+    assert!(login.status().is_success());
+
+    let post = client
+        .post(format!("http://{addr}/post"))
+        .form(&[
+            ("room", room_id.as_str()),
+            ("thread_tag", "main-thread"),
+            ("text", "private post via web"),
+        ])
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(post.status(), reqwest::StatusCode::SEE_OTHER);
+    let location = post
+        .headers()
+        .get(reqwest::header::LOCATION)
+        .and_then(|v| v.to_str().ok())
+        .unwrap();
+    assert_eq!(location, format!("/r/{room_short}/{room_slug}/t/main-thread"));
+
+    let thread_page = client
+        .get(format!("http://{addr}{location}"))
+        .send()
+        .await
+        .unwrap();
+    assert!(thread_page.status().is_success());
+    let body = thread_page.text().await.unwrap();
+    assert!(body.contains("#main-thread"));
+    assert!(body.contains("private post via web"));
+}
+
+#[tokio::test]
 async fn test_index_page() {
     // HTML routes are offline during the auth-v3 refactor.
 }

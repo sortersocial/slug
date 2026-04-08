@@ -29,12 +29,13 @@ struct ThreadRow {
     ingests: usize,
 }
 
-/// URL prefix for thread pages: public `/t/…` or room `/r/{short}/{slug}/…`.
+/// URL helpers for public `/t/…` and private room threads `/r/{short}/{slug}/t/…`.
 #[derive(Clone)]
 pub struct ThreadNav {
     pub room_wire: String,
     scope: ScopeId,
-    path_prefix: String,
+    room_path: String,
+    thread_path_prefix: String,
 }
 
 impl ThreadNav {
@@ -42,7 +43,8 @@ impl ThreadNav {
         Self {
             room_wire: "public".into(),
             scope: ScopeId::Public,
-            path_prefix: "/t".into(),
+            room_path: "/t".into(),
+            thread_path_prefix: "/t".into(),
         }
     }
 
@@ -55,7 +57,8 @@ impl ThreadNav {
         Some(Self {
             room_wire: room_id.to_string(),
             scope: ScopeId::Room(room_id.to_string()),
-            path_prefix: format!("/r/{short}/{slug}"),
+            room_path: format!("/r/{short}/{slug}"),
+            thread_path_prefix: format!("/r/{short}/{slug}/t"),
         })
     }
 
@@ -63,8 +66,12 @@ impl ThreadNav {
         self.scope.clone()
     }
 
+    fn room_url(&self) -> &str {
+        &self.room_path
+    }
+
     fn thread_url(&self, tag: &str) -> String {
-        format!("{}/{}", self.path_prefix, tag)
+        format!("{}/{}", self.thread_path_prefix, tag)
     }
 
     fn thread_page_url(&self, tag: &str, offset: usize) -> String {
@@ -77,11 +84,11 @@ impl ThreadNav {
     }
 
     fn post_url(&self, tag: &str, idx: usize) -> String {
-        format!("{}/{}/{}", self.path_prefix, tag, idx)
+        format!("{}/{}/{}", self.thread_path_prefix, tag, idx)
     }
 
     fn expand_url(&self, tag: &str, idx: usize) -> String {
-        format!("{}/{}/{}/expand", self.path_prefix, tag, idx)
+        format!("{}/{}/{}/expand", self.thread_path_prefix, tag, idx)
     }
 }
 
@@ -196,14 +203,14 @@ fn bc_room(nav: &ThreadNav, room_slug: &str, thread_tag: Option<&str>) -> Markup
         @if let Some(t) = thread_tag {
             (bc_segment(
                 &format!("r / {room_slug}"),
-                &nav.path_prefix,
+                nav.room_url(),
                 false,
             ))
             (bc_segment(&format!("#{t}"), &nav.thread_url(t), true))
         } @else {
             (bc_segment(
                 &format!("r / {room_slug}"),
-                &nav.path_prefix,
+                nav.room_url(),
                 true,
             ))
         }
@@ -298,7 +305,7 @@ pub async fn home(
                         @if let Some(nav_r) = ThreadNav::from_room_id(rid) {
                             @let slug = if let Some((_, s)) = rid.split_once('/') { s } else { rid.as_str() };
                             li {
-                                a href=(nav_r.path_prefix) {
+                                a href=(nav_r.room_url()) {
                                     (slug)
                                     span class="muted" { " · " (rid) }
                                 }
@@ -485,7 +492,7 @@ pub async fn thread_view(
     thread_view_inner(state, tag, q, ThreadNav::public(), headers, jar).await
 }
 
-/// Room thread — `/r/:short/:slug/:tag`
+/// Room thread — `/r/:short/:slug/t/:tag`
 pub async fn room_thread_view(
     State(state): State<AppState>,
     Path((room_short, room_slug, tag)): Path<(String, String, String)>,

@@ -34,7 +34,7 @@ fn post_redirect_location(room: &str, thread_tag: &str) -> String {
         let Some((a, b)) = room.split_once('/') else {
             return "/".to_string();
         };
-        format!("/r/{a}/{b}/{tag}")
+        format!("/r/{a}/{b}/t/{tag}")
     }
 }
 
