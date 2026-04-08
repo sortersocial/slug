@@ -1,7 +1,7 @@
 use sha2::{Digest, Sha256};
 use slugsocial_server::{
     event_log::EventLog,
-    events::{Event, TokenIssued},
+    events::{Event, TokenIssued, UserRegistered},
     state::{AppConfig, AppState},
 };
 use tempfile::TempDir;
@@ -43,6 +43,12 @@ async fn rpc_batch(
 }
 
 async fn seed_test_token(state: &AppState) {
+    let registered = Event::UserRegistered(UserRegistered {
+        ts: 0,
+        username: "testuser".to_string(),
+        provider: "test".to_string(),
+        provider_id: "testuser".to_string(),
+    });
     let token_id = "testtok";
     let secret = "secret";
     let salt = "salt";
@@ -56,6 +62,7 @@ async fn seed_test_token(state: &AppState) {
         issued_via: "test".to_string(),
     });
     let mut r = state.reduced.write().await;
+    r.apply_event(registered);
     r.apply_event(ev);
 }
 
@@ -109,6 +116,116 @@ async fn test_room_create_rpc() {
     assert!(
         room_id.contains("/secret-project"),
         "expected room_id to contain slug, got {room_id}"
+    );
+}
+
+#[tokio::test]
+async fn test_private_room_read_requires_explicit_view_capability() {
+    let (addr, _tmp, _log, _handle) = create_test_server().await;
+    let client = reqwest::Client::new();
+    let bearer = test_bearer();
+
+    // Create private room as testuser.
+    let create = rpc_batch(
+        &client,
+        addr,
+        Some(&bearer),
+        serde_json::json!([{
+            "RoomCreate": { "slug": "private-read-acl" }
+        }]),
+    )
+    .await;
+    let room_id = create["results"][0]["result"]["RoomCreated"]["room_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // Ingest private content while owner still has full caps.
+    let post = rpc_batch(
+        &client,
+        addr,
+        Some(&bearer),
+        serde_json::json!([{
+            "Post": {
+                "room": room_id,
+                "thread_tag": "main",
+                "delegate": "00000000-0000-0000-0000-000000000000:test:local/test",
+                "text": "~/secret/item {top secret}\nprivate prose\n",
+                "return_rank_diff": false
+            }
+        }]),
+    )
+    .await;
+    assert_eq!(post["results"][0]["ok"], true);
+
+    // Remove explicit view cap from owner (still has Manage/Post/Vote/AddItem).
+    let revoke_view = rpc_batch(
+        &client,
+        addr,
+        Some(&bearer),
+        serde_json::json!([{
+            "RoomRevoke": {
+                "room": room_id,
+                "username": "testuser",
+                "capability": "view"
+            }
+        }]),
+    )
+    .await;
+    assert_eq!(revoke_view["results"][0]["ok"], true);
+
+    // Private reads must now be denied with not-found semantics.
+    let item_read = rpc_batch(
+        &client,
+        addr,
+        Some(&bearer),
+        serde_json::json!([{
+            "GetGardenItem": {
+                "room": room_id,
+                "item_path": "~/secret/item",
+                "full": true
+            }
+        }]),
+    )
+    .await;
+    let line = &item_read["results"][0];
+    assert_eq!(line["ok"], false);
+    assert_eq!(line["error"], "room not found");
+
+    // Search should not leak private posts when caller lacks explicit view.
+    let search = rpc_batch(
+        &client,
+        addr,
+        Some(&bearer),
+        serde_json::json!([{
+            "Search": { "query": "secret" }
+        }]),
+    )
+    .await;
+    let posts = search["results"][0]["result"]["Search"]["posts"]
+        .as_array()
+        .unwrap();
+    assert!(
+        posts.is_empty(),
+        "search should hide private posts without view capability"
+    );
+
+    // Feed should likewise hide private posts.
+    let feed = rpc_batch(
+        &client,
+        addr,
+        Some(&bearer),
+        serde_json::json!([{
+            "GetFeed": { "actor": "testuser", "limit": 20 }
+        }]),
+    )
+    .await;
+    let feed_posts = feed["results"][0]["result"]["Feed"]["posts"]
+        .as_array()
+        .unwrap();
+    assert!(
+        feed_posts.is_empty(),
+        "feed should hide private posts without view capability"
     );
 }
 

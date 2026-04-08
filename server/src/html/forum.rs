@@ -126,8 +126,6 @@ fn user_can_view_room(reduced: &ReducerState, room_id: &str, username: Option<&s
         return false;
     };
     reduced.user_has_cap(room_id, u, ThreadCapability::View)
-        || reduced.user_has_cap(room_id, u, ThreadCapability::Post)
-        || reduced.user_has_cap(room_id, u, ThreadCapability::Manage)
 }
 
 fn user_can_post_room(reduced: &ReducerState, room_id: &str, username: &str) -> bool {
@@ -500,7 +498,7 @@ pub async fn room_thread_view(
     let user = optional_principal(&headers, &jar, &reduced);
     if !user_can_view_room(&reduced, &room_id, user.as_deref()) {
         drop(reduced);
-        return room_forbidden_page().into_response();
+        return room_not_found_page().into_response();
     }
     drop(reduced);
     let Some(nav) = ThreadNav::from_room_id(&room_id) else {
@@ -511,15 +509,15 @@ pub async fn room_thread_view(
         .into_response()
 }
 
-fn room_forbidden_page() -> impl IntoResponse {
+fn room_not_found_page() -> impl IntoResponse {
     let body = html! {
         nav class="breadcrumb" { a href="/" { "slug.social" } }
-        h1 { "private room" }
-        p { "Log in with an account that has been granted access to this room." }
-        p { a href="/login" { "log in" } " · " a href="/" { "home" } }
+        h1 { "not found" }
+        p { "The requested page could not be found." }
+        p { a href="/" { "home" } }
     };
-    let page = layout("private room — slug.social", "view-thread", body, None);
-    (StatusCode::FORBIDDEN, Html(page.into_string()))
+    let page = layout("not found — slug.social", "view-thread", body, None);
+    (StatusCode::NOT_FOUND, Html(page.into_string()))
 }
 
 /// Private room index — `/r/:short/:slug`
@@ -539,7 +537,7 @@ pub async fn room_page(
     let user = optional_principal(&headers, &jar, &reduced);
     if !user_can_view_room(&reduced, &room_id, user.as_deref()) {
         drop(reduced);
-        return room_forbidden_page().into_response();
+        return room_not_found_page().into_response();
     }
     let scope = ScopeId::Room(room_id.clone());
     let mut rows = collect_thread_rows_for_scope(&reduced, &scope, now);
@@ -672,7 +670,7 @@ pub async fn room_thread_post_view(
     let user = optional_principal(&headers, &jar, &reduced);
     if !user_can_view_room(&reduced, &room_id, user.as_deref()) {
         drop(reduced);
-        return room_forbidden_page().into_response();
+        return room_not_found_page().into_response();
     }
     drop(reduced);
     let Some(nav) = ThreadNav::from_room_id(&room_id) else {
@@ -760,7 +758,7 @@ pub async fn room_thread_post_expand(
     let user = optional_principal(&headers, &jar, &reduced);
     if !user_can_view_room(&reduced, &room_id, user.as_deref()) {
         drop(reduced);
-        return (StatusCode::FORBIDDEN, "forbidden").into_response();
+        return room_not_found_page().into_response();
     }
     drop(reduced);
     let Some(nav) = ThreadNav::from_room_id(&room_id) else {

@@ -1,11 +1,15 @@
 use axum::{
     extract::{Query, State},
+    http::HeaderMap,
     response::{Html, IntoResponse},
 };
+use axum_extra::extract::cookie::CookieJar;
 use maud::{html, Markup, PreEscaped};
 use serde::Deserialize;
 
 use crate::{
+    api::optional_principal,
+    events::ThreadCapability,
     reducer::{ReducerState, ScopeId},
     state::AppState,
     timeago,
@@ -75,7 +79,14 @@ struct SearchResults {
     posts: Vec<PostRow>,
 }
 
-fn search(state: &ReducerState, q: &str, limit: usize) -> SearchResults {
+fn can_view_scope(state: &ReducerState, scope: &ScopeId, principal: Option<&str>) -> bool {
+    match scope {
+        ScopeId::Public => true,
+        ScopeId::Room(room_id) => principal.is_some_and(|u| state.user_has_cap(room_id, u, ThreadCapability::View)),
+    }
+}
+
+fn search(state: &ReducerState, q: &str, limit: usize, principal: Option<&str>) -> SearchResults {
     let words = tokenize(q);
     if words.is_empty() {
         return SearchResults { items: vec![], threads: vec![], posts: vec![] };
@@ -151,15 +162,25 @@ fn search(state: &ReducerState, q: &str, limit: usize) -> SearchResults {
             }
         }
         if score > 0 {
-            let thread = state
+            let Some((scope, tag)) = state
                 .ingests_by_scope_thread
                 .iter()
-                .find(|(_, ids)| ids.contains(id))
-                .map(|((scope, tag), _)| match scope {
-                    ScopeId::Public => format!("#{tag}"),
-                    ScopeId::Room(rid) => format!("{rid}/#{tag}"),
-                })
-                .unwrap_or_else(|| "unknown".to_string());
+                .find_map(|((scope, tag), ids)| {
+                    if ids.contains(id) {
+                        Some((scope.clone(), tag.clone()))
+                    } else {
+                        None
+                    }
+                }) else {
+                    continue;
+                };
+            if !can_view_scope(state, &scope, principal) {
+                continue;
+            }
+            let thread = match scope {
+                ScopeId::Public => format!("#{tag}"),
+                ScopeId::Room(rid) => format!("{rid}/#{tag}"),
+            };
             scored_posts.push((score, PostRow {
                 thread,
                 actor_display: authorship_address(&ingest.principal, &ingest.delegate),
@@ -329,9 +350,20 @@ fn render_search_results(results: &SearchResults, query: &str) -> Markup {
                     h3 { "posts " span class="muted" { "(" (results.posts.len()) ")" } }
                     ul class="search-posts" {
                         @for r in &results.posts {
+                            @let (post_href, post_label) = if let Some((room, tag)) = r.thread.split_once("/#") {
+                                if let Some((short, slug)) = room.split_once('/') {
+                                    (format!("/r/{short}/{slug}/{tag}"), format!("{room}/#{tag}"))
+                                } else {
+                                    ("/".to_string(), r.thread.clone())
+                                }
+                            } else if let Some(tag) = r.thread.strip_prefix('#') {
+                                (format!("/t/{tag}"), r.thread.clone())
+                            } else {
+                                ("/".to_string(), r.thread.clone())
+                            };
                             li {
                                 div class="search-post-meta muted" {
-                                    a href=(format!("/t/{}", r.thread)) { "#" (r.thread) }
+                                    a href=(post_href) { (post_label) }
                                     " · " (r.actor_display)
                                     " · " (timeago::timeago(now, r.ts))
                                 }
@@ -362,11 +394,14 @@ pub struct SearchQuery {
 pub async fn search_page(
     State(state): State<AppState>,
     Query(params): Query<SearchQuery>,
+    headers: HeaderMap,
+    jar: CookieJar,
 ) -> impl IntoResponse {
     let query = params.q.clone().unwrap_or_default();
     let results = if query.len() >= 2 {
         let reduced = state.reduced.read().await;
-        search(&reduced, &query, 50)
+        let principal = optional_principal(&headers, &jar, &reduced);
+        search(&reduced, &query, 50, principal.as_deref())
     } else {
         SearchResults { items: vec![], threads: vec![], posts: vec![] }
     };
@@ -392,11 +427,14 @@ pub async fn search_page(
 pub async fn search_results_fragment(
     State(state): State<AppState>,
     Query(params): Query<SearchQuery>,
+    headers: HeaderMap,
+    jar: CookieJar,
 ) -> impl IntoResponse {
     let query = params.q.unwrap_or_default();
     let results = if query.len() >= 2 {
         let reduced = state.reduced.read().await;
-        search(&reduced, &query, 50)
+        let principal = optional_principal(&headers, &jar, &reduced);
+        search(&reduced, &query, 50, principal.as_deref())
     } else {
         SearchResults { items: vec![], threads: vec![], posts: vec![] }
     };
