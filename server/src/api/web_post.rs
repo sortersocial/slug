@@ -1,7 +1,7 @@
 use axum::{
     extract::State,
     http::{header, HeaderMap, StatusCode},
-    response::{Html, IntoResponse, Redirect, Response},
+    response::{Html, IntoResponse, Response},
     Form,
 };
 use axum_extra::extract::cookie::CookieJar;
@@ -47,7 +47,7 @@ fn js_redirect(to: &str) -> Response {
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "text/javascript; charset=utf-8")
-        .body(js)
+        .body(axum::body::Body::from(js))
         .unwrap()
 }
 
