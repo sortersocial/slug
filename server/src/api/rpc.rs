@@ -61,16 +61,13 @@ async fn broadcast_web_refresh(state: &AppState, room_key: &str, thread_id: &str
 
     let builder = JsBuilder::new().morph_selector(&format!("#{feed_id}"), feed_markup);
     let builder = if room_key == "public" {
-        builder.raw("var __slugCompose = document.querySelector('#public-new-thread-compose form'); if (__slugCompose) { __slugCompose.reset(); }")
+        builder.qs("#public-new-thread-compose form").reset()
     } else {
-        builder.raw("var __slugCompose = document.querySelector('#room-new-thread-compose form'); if (__slugCompose) { __slugCompose.reset(); }")
+        builder.qs("#room-new-thread-compose form").reset()
     };
-    let builder = builder.raw(format!(
-        "var __slugHere = window.location.pathname + window.location.search; var __slugThreadBase = {}; if (__slugHere === __slugThreadBase || __slugHere.indexOf(__slugThreadBase + '?') === 0) {{",
-        crate::html::js_string_literal(&thread_url),
-    ))
-    .morph_selector("#thread-feed-region", thread_feed_markup)
-    .raw("}");
+    let builder = builder.if_current_path_matches(&thread_url, |builder| {
+        builder.morph_selector("#thread-feed-region", thread_feed_markup)
+    });
     let js = builder.build();
     let _ = state.js_tx.send(crate::state::JsSnippet { code: js });
 }

@@ -58,6 +58,11 @@ pub(crate) struct JsBuilder {
     snippets: Vec<String>,
 }
 
+pub(crate) struct JsQueryBuilder {
+    builder: JsBuilder,
+    expr: String,
+}
+
 impl JsBuilder {
     pub(crate) fn new() -> Self {
         Self { snippets: Vec::new() }
@@ -82,8 +87,19 @@ impl JsBuilder {
         self
     }
 
-    pub(crate) fn raw(mut self, code: impl Into<String>) -> Self {
-        self.snippets.push(code.into());
+    pub(crate) fn qs(self, selector: &str) -> JsQueryBuilder {
+        JsQueryBuilder {
+            builder: self,
+            expr: format!("document.querySelector({})", js_string_literal(selector)),
+        }
+    }
+
+    pub(crate) fn if_current_path_matches(mut self, path: &str, f: impl FnOnce(JsBuilder) -> JsBuilder) -> Self {
+        let inner = f(JsBuilder::new()).build();
+        self.snippets.push(format!(
+            "var __slugHere = window.location.pathname + window.location.search; var __slugPath = {path}; if (__slugHere === __slugPath || __slugHere.indexOf(__slugPath + '?') === 0) {{ {inner} }}",
+            path = js_string_literal(path),
+        ));
         self
     }
 
@@ -103,6 +119,16 @@ impl JsBuilder {
             .header(header::CONTENT_TYPE, "text/javascript; charset=utf-8")
             .body(Body::from(self.build()))
             .unwrap()
+    }
+}
+
+impl JsQueryBuilder {
+    pub(crate) fn reset(mut self) -> JsBuilder {
+        self.builder.snippets.push(format!(
+            "var __slugTarget = {expr}; if (__slugTarget) {{ __slugTarget.reset(); }}",
+            expr = self.expr,
+        ));
+        self.builder
     }
 }
 
