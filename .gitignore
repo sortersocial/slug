@@ -1,4 +1,5 @@
 target/
+.cpcache/
 repomix-output.xml
 psalms_kjv.txt
 dev-data/
