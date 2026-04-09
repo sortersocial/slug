@@ -43,21 +43,15 @@ pub fn session_cookie_header_value(bearer: &str) -> HeaderValue {
 
 fn js_form_error_fragment(session: &str, error: &str) -> Response {
     JsBuilder::new()
-        .morph_expr(
-            "window.__slugActiveForm",
-            choose_username_error_fragment(session, error),
-            Some("innerHTML"),
-        )
+        .id("choose-username-form")
+        .morph_inner(choose_username_error_fragment(session, error))
         .into_response()
 }
 
 fn js_signed_in_fragment(bearer: &str) -> Response {
     let mut response = JsBuilder::new()
-        .morph_expr(
-            "window.__slugActiveForm",
-            auth_signed_in_fragment(),
-            Some("innerHTML"),
-        )
+        .id("choose-username-form")
+        .morph_inner(auth_signed_in_fragment())
         .redirect("/auth/complete")
         .into_response();
     response

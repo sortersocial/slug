@@ -177,8 +177,10 @@ pub async fn editor_check(
     };
 
     JsBuilder::new()
-        .morph_expr("document.getElementById('editor-status')", status_markup, None)
-        .morph_expr("document.getElementById('editor-results')", results_markup, None)
+        .id("editor-status")
+        .morph(status_markup)
+        .id("editor-results")
+        .morph(results_markup)
         .into_response()
         .into_response()
 }

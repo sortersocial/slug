@@ -32,7 +32,7 @@ pub fn choose_username_page(session: &str, error: Option<&str>) -> Markup {
         }
         h1 { "choose a username" }
         p { "pick a handle for slug.social." }
-        form.auth-form method="POST" action="/auth/choose-username" {
+        form.auth-form id="choose-username-form" method="POST" action="/auth/choose-username" {
             (form_inner(session, error))
         }
     };

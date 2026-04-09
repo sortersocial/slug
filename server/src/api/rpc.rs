@@ -69,7 +69,15 @@ async fn broadcast_web_refresh(state: &AppState, room_key: &str, thread_id: &str
         builder.morph_selector("#thread-feed-region", thread_feed_markup)
     });
     let js = builder.build();
-    let _ = state.js_tx.send(crate::state::JsSnippet { code: js });
+    let mut path_prefixes = vec![if room_key == "public" {
+        "/".to_string()
+    } else if let Some((short, slug)) = room_key.split_once('/') {
+        format!("/r/{short}/{slug}")
+    } else {
+        "/".to_string()
+    }];
+    path_prefixes.push(thread_url.clone());
+    let _ = state.js_tx.send(crate::state::JsSnippet { code: js, path_prefixes });
 }
 
 type RpcErr = (String, Option<String>);

@@ -94,6 +94,10 @@ impl JsBuilder {
         }
     }
 
+    pub(crate) fn id(self, id: &str) -> JsQueryBuilder {
+        self.qs(&format!("#{id}"))
+    }
+
     pub(crate) fn if_current_path_matches(mut self, path: &str, f: impl FnOnce(JsBuilder) -> JsBuilder) -> Self {
         let inner = f(JsBuilder::new()).build();
         self.snippets.push(format!(
@@ -123,6 +127,24 @@ impl JsBuilder {
 }
 
 impl JsQueryBuilder {
+    pub(crate) fn morph(mut self, markup: Markup) -> JsBuilder {
+        let html = js_string_literal(&markup.into_string());
+        self.builder.snippets.push(format!(
+            "var __slugTarget = {expr}; if (__slugTarget) {{ Idiomorph.morph(__slugTarget, {html}); }}",
+            expr = self.expr,
+        ));
+        self.builder
+    }
+
+    pub(crate) fn morph_inner(mut self, markup: Markup) -> JsBuilder {
+        let html = js_string_literal(&markup.into_string());
+        self.builder.snippets.push(format!(
+            "var __slugTarget = {expr}; if (__slugTarget) {{ Idiomorph.morph(__slugTarget, {html}, {{morphStyle: 'innerHTML'}}); }}",
+            expr = self.expr,
+        ));
+        self.builder
+    }
+
     pub(crate) fn reset(mut self) -> JsBuilder {
         self.builder.snippets.push(format!(
             "var __slugTarget = {expr}; if (__slugTarget) {{ __slugTarget.reset(); }}",
@@ -204,8 +226,6 @@ script { (maud::PreEscaped(r#"
                             if (!f || f.tagName !== 'FORM') return;
                             if ((f.method || 'get').toLowerCase() !== 'post') return;
                             e.preventDefault();
-                            const btn = f.querySelector('button[type="submit"], input[type="submit"]');
-                            if (btn) { btn.disabled = true; btn.textContent = '…'; }
                             const resp = await fetch(f.action, {
                                 method: 'POST',
                                 body: new URLSearchParams(new FormData(f)),
@@ -216,7 +236,6 @@ script { (maud::PreEscaped(r#"
                             if (js && js.trim()) {
                                 eval(js);
                             }
-                            if (btn) { btn.disabled = false; btn.textContent = 'submit'; }
                         });
 
                         // Search: debounced fetch + idiomorph.
@@ -246,7 +265,8 @@ script { (maud::PreEscaped(r#"
 
                         // SSE: evaluate server-pushed JavaScript snippets.
                         (function connectSSE() {
-                            const es = new EventSource('/sse');
+                            const ssePath = window.location.pathname + window.location.search;
+                            const es = new EventSource('/sse?path=' + encodeURIComponent(ssePath));
                             es.onmessage = (e) => {
                                 if (e.data && e.data.trim()) {
                                     eval(e.data);

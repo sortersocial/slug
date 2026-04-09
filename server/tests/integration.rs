@@ -338,7 +338,7 @@ async fn test_choose_username_returns_evalable_js() {
         Some("text/javascript; charset=utf-8")
     );
     let body = choose.text().await.unwrap();
-    assert!(body.contains("window.__slugActiveForm"));
+    assert!(body.contains("#choose-username-form"));
     assert!(body.contains("Idiomorph.morph"));
     assert!(body.contains("window.location = \"/auth/complete\""));
 }
@@ -348,13 +348,6 @@ async fn test_sse_stream_emits_evalable_js_after_post() {
     let (addr, _tmp, _log, _state, _handle) = create_test_server_with_state().await;
     let client = reqwest::Client::new();
     let bearer = test_bearer();
-
-    let sse_resp = client
-        .get(format!("http://{addr}/sse"))
-        .send()
-        .await
-        .unwrap();
-    assert!(sse_resp.status().is_success());
 
     let create = rpc_batch(
         &client,
@@ -369,6 +362,15 @@ async fn test_sse_stream_emits_evalable_js_after_post() {
         .as_str()
         .unwrap()
         .to_string();
+    let (room_short, room_slug) = room_id.split_once('/').unwrap();
+    let room_path = format!("/r/{room_short}/{room_slug}");
+
+    let sse_resp = client
+        .get(format!("http://{addr}/sse?path={}", urlencoding::encode(&room_path)))
+        .send()
+        .await
+        .unwrap();
+    assert!(sse_resp.status().is_success());
 
     let _post = client
         .post(format!("http://{addr}/post"))
@@ -389,7 +391,7 @@ async fn test_sse_stream_emits_evalable_js_after_post() {
         match tokio::time::timeout(std::time::Duration::from_millis(500), sse_resp.chunk()).await {
             Ok(Ok(Some(chunk))) => {
                 body.push_str(&String::from_utf8_lossy(&chunk));
-                if body.contains("Idiomorph.morph") {
+                if body.contains("room-thread-feed") {
                     break;
                 }
             }
@@ -398,9 +400,8 @@ async fn test_sse_stream_emits_evalable_js_after_post() {
             Err(_) => {}
         }
     }
-    assert!(body.contains("data: "));
-    assert!(body.contains("Idiomorph.morph"));
     assert!(body.contains("room-thread-feed"));
+    assert!(body.contains("live-thread"));
 }
 
 #[tokio::test]

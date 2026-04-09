@@ -92,8 +92,11 @@
                      (locator/fill (page/locator alice-pg "#room-new-thread-compose textarea") "hello from alice over sse")
                      (locator/click (page/locator alice-pg "#room-new-thread-compose button[type='submit']"))
 
-                     (assert! (wait-for-text bob-pg "#room-thread-feed" "#sse-thread" 15000)
-                              "bob sees new private thread without refresh via sse")))))))))
+                    (assert! (wait-for-text bob-pg "#room-thread-feed" "#sse-thread" 15000)
+                             "bob sees new private thread without refresh via sse")
+                    (page/navigate bob-pg (str room-url "/t/sse-thread"))
+                    (assert! (wait-for-text bob-pg "#thread-feed-region" "hello from alice over sse" 15000)
+                             "bob sees alice post body in live private thread without refresh via sse")))))))))
 
      (finally
        (when-some [s @!server] (common/kill-server s))

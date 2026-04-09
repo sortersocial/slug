@@ -40,6 +40,9 @@ pub struct StreamEvent {
 #[derive(Debug, Clone)]
 pub struct JsSnippet {
     pub code: String,
+    /// Only deliver to SSE streams whose subscribed path matches one of these prefixes.
+    /// Empty means broadcast to all connected pages.
+    pub path_prefixes: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
