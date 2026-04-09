@@ -17,7 +17,8 @@ use breadcrumb_path::OntologyPath;
 pub use auth::{auth_complete_page, auth_signed_in_fragment, choose_username_error_fragment, choose_username_page};
 pub use editor::{editor_check, editor_page};
 pub use forum::{
-    home, room_page, room_thread_post_expand, room_thread_post_view, room_thread_view, thread_feed_html,
+    home, room_page, room_thread_post_expand, room_thread_post_view, room_thread_view,
+    thread_feed_html, thread_feed_html_for_room,
     thread_post_expand, thread_post_view, thread_view,
 };
 pub use garden::{garden_index, ontology_path};
@@ -160,13 +161,13 @@ script { (maud::PreEscaped(r#"
                             });
                         })();
 
-                        // Poem: SSE morph.
+                        // SSE: evaluate server-pushed JavaScript snippets.
                         (function connectSSE() {
                             const es = new EventSource('/sse');
                             es.onmessage = (e) => {
-                                const [sel, ...rest] = e.data.split('\n');
-                                const el = document.querySelector(sel);
-                                if (el) Idiomorph.morph(el, rest.join('\n'));
+                                if (e.data && e.data.trim()) {
+                                    eval(e.data);
+                                }
                             };
                             es.onerror = () => { es.close(); setTimeout(connectSSE, 3000); };
                         })();

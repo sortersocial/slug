@@ -66,7 +66,7 @@ async fn seed_test_token(state: &AppState) {
     r.apply_event(ev);
 }
 
-async fn create_test_server() -> (SocketAddr, TempDir, EventLog, tokio::task::JoinHandle<()>) {
+async fn create_test_server_with_state() -> (SocketAddr, TempDir, EventLog, AppState, tokio::task::JoinHandle<()>) {
     let tmp = TempDir::new().unwrap();
     let log_path = tmp.path().join("events.jsonl");
     let log = EventLog::new(&log_path);
@@ -78,7 +78,7 @@ async fn create_test_server() -> (SocketAddr, TempDir, EventLog, tokio::task::Jo
 
     let state = AppState::new(cfg);
     seed_test_token(&state).await;
-    let app = slugsocial_server::create_app(state);
+    let app = slugsocial_server::create_app(state.clone());
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -88,6 +88,11 @@ async fn create_test_server() -> (SocketAddr, TempDir, EventLog, tokio::task::Jo
 
     // Give server a moment to start
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    (addr, tmp, log, state, handle)
+}
+
+async fn create_test_server() -> (SocketAddr, TempDir, EventLog, tokio::task::JoinHandle<()>) {
+    let (addr, tmp, log, _state, handle) = create_test_server_with_state().await;
     (addr, tmp, log, handle)
 }
 
@@ -290,7 +295,7 @@ async fn test_private_room_thread_urls_use_t_segment() {
 
 #[tokio::test]
 async fn test_choose_username_returns_evalable_js() {
-    let (addr, _tmp, _log, _handle) = create_test_server().await;
+    let (addr, _tmp, _log, state, _handle) = create_test_server_with_state().await;
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .build()
@@ -309,19 +314,93 @@ async fn test_choose_username_returns_evalable_js() {
     let session = start_json["session"].as_str().unwrap();
 
     {
-        let state = {
-            let sessions_url = format!("http://{addr}/api/v0/pending-session/{session}");
-            let _ = sessions_url; // keep addr/session used in test context
-        };
-        let _ = state;
+        let mut sessions = state.pending_sessions.write().await;
+        let pending = sessions.get_mut(session).expect("pending session must exist");
+        pending.provider = Some("google".to_string());
+        pending.provider_id = Some("google-user-123".to_string());
     }
 
-    // Seed the pending session as if OAuth had already completed.
-    // This mirrors the state expected by POST /auth/choose-username.
-    // We do it by hitting the login flow would require live Google in this test.
-    // Instead, mutate the in-process reducer-backed pending session through the eventless state path.
-    // The test server uses the same app state instance for the running axum app.
-    // A follow-up HTTP request cannot access it directly, so we rely on the callback-free setup here.
+    let choose = client
+        .post(format!("http://{addr}/auth/choose-username"))
+        .form(&[
+            ("session", session),
+            ("username", "webuser"),
+        ])
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(choose.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        choose.headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok()),
+        Some("text/javascript; charset=utf-8")
+    );
+    let body = choose.text().await.unwrap();
+    assert!(body.contains("window.__slugActiveForm"));
+    assert!(body.contains("Idiomorph.morph"));
+    assert!(body.contains("window.location = \"/auth/complete\""));
+}
+
+#[tokio::test]
+async fn test_sse_stream_emits_evalable_js_after_post() {
+    let (addr, _tmp, _log, _state, _handle) = create_test_server_with_state().await;
+    let client = reqwest::Client::new();
+    let bearer = test_bearer();
+
+    let sse_resp = client
+        .get(format!("http://{addr}/sse"))
+        .send()
+        .await
+        .unwrap();
+    assert!(sse_resp.status().is_success());
+
+    let create = rpc_batch(
+        &client,
+        addr,
+        Some(&bearer),
+        serde_json::json!([{
+            "RoomCreate": { "slug": "sse-room" }
+        }]),
+    )
+    .await;
+    let room_id = create["results"][0]["result"]["RoomCreated"]["room_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let _post = client
+        .post(format!("http://{addr}/post"))
+        .header("Authorization", format!("Bearer {bearer}"))
+        .form(&[
+            ("room", room_id.as_str()),
+            ("thread_tag", "live-thread"),
+            ("text", "hello over sse"),
+        ])
+        .send()
+        .await
+        .unwrap();
+
+    let mut body = String::new();
+    let mut sse_resp = sse_resp;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while std::time::Instant::now() < deadline {
+        match tokio::time::timeout(std::time::Duration::from_millis(500), sse_resp.chunk()).await {
+            Ok(Ok(Some(chunk))) => {
+                body.push_str(&String::from_utf8_lossy(&chunk));
+                if body.contains("Idiomorph.morph") {
+                    break;
+                }
+            }
+            Ok(Ok(None)) => break,
+            Ok(Err(err)) => panic!("sse read failed: {err}"),
+            Err(_) => {}
+        }
+    }
+    assert!(body.contains("data: "));
+    assert!(body.contains("Idiomorph.morph"));
+    assert!(body.contains("room-thread-feed"));
 }
 
 #[tokio::test]
