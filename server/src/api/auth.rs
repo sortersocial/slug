@@ -38,6 +38,40 @@ pub fn session_cookie_header_value(bearer: &str) -> HeaderValue {
     HeaderValue::from_str(&s).expect("session cookie value must be ASCII")
 }
 
+fn js_string_literal(s: &str) -> String {
+    serde_json::to_string(s).expect("javascript string escaping")
+}
+
+fn js_morph_form(html: &str) -> String {
+    let html = js_string_literal(html);
+    format!(
+        "if (window.__slugActiveForm) {{ Idiomorph.morph(window.__slugActiveForm, {html}, {{morphStyle: 'innerHTML'}}); }}"
+    )
+}
+
+fn js_form_error_fragment(session: &str, error: &str) -> Response {
+    let html = choose_username_error_fragment(session, error).into_string();
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/javascript; charset=utf-8")
+        .body(Body::from(js_morph_form(&html)))
+        .unwrap()
+}
+
+fn js_signed_in_fragment(bearer: &str) -> Response {
+    let html = auth_signed_in_fragment().into_string();
+    let html_js = js_string_literal(&html);
+    let done_js = js_string_literal("/auth/complete");
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/javascript; charset=utf-8")
+        .header(header::SET_COOKIE, session_cookie_header_value(bearer))
+        .body(Body::from(format!(
+            "if (window.__slugActiveForm) {{ Idiomorph.morph(window.__slugActiveForm, {html_js}, {{morphStyle: 'innerHTML'}}); }} window.location = {done_js};"
+        )))
+        .unwrap()
+}
+
 /// Resolve the signed-in username from `Authorization: Bearer` or `slug_session` cookie.
 pub fn optional_principal(headers: &HeaderMap, jar: &CookieJar, reduced: &ReducerState) -> Option<String> {
     if let Ok(u) = verify_bearer_principal(headers, reduced) {
@@ -378,7 +412,7 @@ pub async fn post_choose_username(
 ) -> impl IntoResponse {
     let canon_user = match parse_username(&form.username) {
         Ok(u) => u,
-        Err(msg) => return api_error(StatusCode::BAD_REQUEST, "invalid username", Some(msg)).into_response(),
+        Err(msg) => return js_form_error_fragment(&form.session, &format!("invalid username — {msg}")).into_response(),
     };
 
     let sessions = pending_sessions(&state);
@@ -388,23 +422,23 @@ pub async fn post_choose_username(
             return api_error(StatusCode::NOT_FOUND, "unknown session", None).into_response();
         };
         let Some(provider) = s.provider.clone() else {
-            return api_error(StatusCode::BAD_REQUEST, "oauth not completed", None).into_response();
+            return js_form_error_fragment(&form.session, "oauth not completed").into_response();
         };
         let Some(provider_id) = s.provider_id.clone() else {
-            return api_error(StatusCode::BAD_REQUEST, "oauth not completed", None).into_response();
+            return js_form_error_fragment(&form.session, "oauth not completed").into_response();
         };
         (provider, provider_id, s.agent.clone())
     };
 
     if let Err(msg) = parse_agent(&agent) {
-        return api_error(StatusCode::BAD_REQUEST, "invalid agent format", Some(msg)).into_response();
+        return js_form_error_fragment(&form.session, &format!("invalid agent format — {msg}")).into_response();
     }
 
     let reduced_arc = state.reduced.clone();
     let reduced = reduced_arc.read().await;
     let provider_key = (provider.to_lowercase(), provider_id.clone());
     if reduced.users_by_provider.contains_key(&provider_key) {
-        return api_error(StatusCode::CONFLICT, "provider already registered", None).into_response();
+        return js_form_error_fragment(&form.session, "provider already registered").into_response();
     }
     if reduced.users_by_provider.values().any(|u| u == &canon_user) {
         drop(reduced);
@@ -454,13 +488,7 @@ pub async fn post_choose_username(
         s.complete = Some((canon_user.clone(), bearer.clone()));
     }
 
-    Response::builder()
-        .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
-        .header(header::SET_COOKIE, session_cookie_header_value(&bearer))
-        .body(Body::from(auth_signed_in_fragment().into_string()))
-        .unwrap()
-        .into_response()
+    js_signed_in_fragment(&bearer).into_response()
 }
 
 /// Start a browser-only OAuth flow (no CLI polling). Sets session cookie on success.

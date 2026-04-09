@@ -1,7 +1,7 @@
 use axum::{
     extract::State,
-    http::{HeaderMap, StatusCode},
-    response::{Html, IntoResponse, Redirect},
+    http::{header, HeaderMap, StatusCode},
+    response::{Html, IntoResponse, Redirect, Response},
     Form,
 };
 use axum_extra::extract::cookie::CookieJar;
@@ -38,6 +38,19 @@ fn post_redirect_location(room: &str, thread_tag: &str) -> String {
     }
 }
 
+fn js_quote(s: &str) -> String {
+    serde_json::to_string(s).expect("js string escaping must succeed")
+}
+
+fn js_redirect(to: &str) -> Response {
+    let js = format!("window.location = {};", js_quote(to));
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/javascript; charset=utf-8")
+        .body(js)
+        .unwrap()
+}
+
 pub async fn post_web_ingest(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -47,7 +60,7 @@ pub async fn post_web_ingest(
     let reduced = state.reduced.read().await;
     let Some(username) = optional_principal(&headers, &jar, &reduced) else {
         drop(reduced);
-        return Redirect::temporary("/login").into_response();
+        return js_redirect("/login").into_response();
     };
 
     let bearer = headers
@@ -59,7 +72,7 @@ pub async fn post_web_ingest(
     drop(reduced);
 
     let Some(bearer) = bearer else {
-        return Redirect::temporary("/login").into_response();
+        return js_redirect("/login").into_response();
     };
 
     let room = form.room.trim().to_string();
@@ -76,9 +89,7 @@ pub async fn post_web_ingest(
     }
 
     match rpc_post_with_bearer(&state, &bearer, room.clone(), thread_tag.clone(), text).await {
-        Ok(RpcResult::PostOk { .. }) => {
-            Redirect::to(&post_redirect_location(&room, &thread_tag)).into_response()
-        }
+        Ok(RpcResult::PostOk { .. }) => js_redirect(&post_redirect_location(&room, &thread_tag)).into_response(),
         Ok(_) => error_page("unexpected response", "Post did not return PostOk.", &username).into_response(),
         Err((msg, hint)) => error_page(
             &msg,

@@ -114,9 +114,7 @@ script { (maud::PreEscaped(r#"
                             setSpread(parseFloat(this.value));
                         });
 
-                        // Poem: intercept POST forms, send via fetch, await SSE for DOM update.
-                        // If the response body is non-empty HTML, morph the form's innerHTML with it
-                        // (used for inline feedback without a page reload, e.g. auth forms).
+                        // Intercept POST forms and eval the server's JS response body.
                         document.addEventListener('submit', async (e) => {
                             const f = e.target;
                             if (!f || f.tagName !== 'FORM') return;
@@ -130,13 +128,11 @@ script { (maud::PreEscaped(r#"
                                 headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
                                 credentials: 'same-origin',
                             });
-                            const html = await resp.text();
-                            if (html && html.trim()) {
-                                Idiomorph.morph(f, html, {morphStyle: 'innerHTML'});
-                            } else {
-                                if (btn) { btn.disabled = false; btn.textContent = 'submit'; }
-                                f.reset();
+                            const js = await resp.text();
+                            if (js && js.trim()) {
+                                eval(js);
                             }
+                            if (btn) { btn.disabled = false; btn.textContent = 'submit'; }
                         });
 
                         // Search: debounced fetch + idiomorph.
