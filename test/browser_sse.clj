@@ -83,18 +83,21 @@
 
                    (let [[room-short room-slug] (str/split room-id #"/" 2)
                          room-url (str base-url "/r/" room-short "/" room-slug)]
-                     (page/navigate bob-pg room-url)
-                     (assert! (wait-for-text bob-pg "#room-thread-feed" "no threads yet" 5000)
-                              "bob sees empty room thread feed")
+                    (page/navigate alice-pg room-url)
+                    (locator/fill (page/locator alice-pg "#room-new-tag") "sse-thread")
+                    (locator/fill (page/locator alice-pg "#room-new-thread-compose textarea") "seed thread")
+                    (locator/click (page/locator alice-pg "#room-new-thread-compose button[type='submit']"))
 
-                     (page/navigate alice-pg room-url)
-                     (locator/fill (page/locator alice-pg "#room-new-tag") "sse-thread")
-                     (locator/fill (page/locator alice-pg "#room-new-thread-compose textarea") "hello from alice over sse")
-                     (locator/click (page/locator alice-pg "#room-new-thread-compose button[type='submit']"))
+                    (assert! (wait-for-text alice-pg "#thread-feed-region" "seed thread" 15000)
+                             "alice lands on seeded thread page")
 
-                    (assert! (wait-for-text bob-pg "#room-thread-feed" "#sse-thread" 15000)
-                             "bob sees new private thread without refresh via sse")
                     (page/navigate bob-pg (str room-url "/t/sse-thread"))
+                    (assert! (wait-for-text bob-pg "#thread-feed-region" "seed thread" 15000)
+                             "bob sees seeded thread body before live update")
+
+                    (locator/fill (page/locator alice-pg "#thread-compose textarea") "hello from alice over sse")
+                    (locator/click (page/locator alice-pg "#thread-compose button[type='submit']"))
+
                     (assert! (wait-for-text bob-pg "#thread-feed-region" "hello from alice over sse" 15000)
                              "bob sees alice post body in live private thread without refresh via sse")))))))))
 
