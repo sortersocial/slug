@@ -28,14 +28,10 @@
                                          {:agent (format "00000000-0000-0000-0000-%012d:test:browser/chrome"
                                                          (inc (count username)))})
         start-json (json/parse-string (:body start-resp) true)
-        login-url  (:login_url start-json)
-        session    (:session start-json)]
+        login-url  (:login_url start-json)]
     (page/navigate pg login-url)
-    (locator/fill (page/locator pg "#username") username)
-    (locator/click (page/locator pg "button[type='submit']"))
-    (assert! (wait-for-text pg "body" "you're signed in" 15000)
-             (str "browser login completes for " username))
-    session))
+    (assert! (wait-for-text pg "body" (str "@" username) 15000)
+             (str "browser login completes for " username))))
 
 (defn private-thread-sse-browser-test [& _args]
   (println "\n━━━ browser SSE private-thread check ━━━\n")
