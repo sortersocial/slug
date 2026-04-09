@@ -57,17 +57,7 @@ async fn broadcast_web_refresh(state: &AppState, room_key: &str, thread_id: &str
         crate::html::thread_feed_html_for_room(state, room_key).await
     };
 
-    let thread_feed_markup = if room_key == "public" {
-        None
-    } else if let Some((short, slug)) = room_key.split_once('/') {
-        Some(maud::html! {
-            div id="thread-feed-region" {
-                iframe src=(format!("/r/{short}/{slug}/t/{thread_id}")) {}
-            }
-        })
-    } else {
-        None
-    };
+    let thread_feed_markup = crate::html::thread_feed_region_markup(state, Some(room_key), thread_id).await;
 
     let builder = JsBuilder::new().morph_selector(&format!("#{feed_id}"), feed_markup);
     let builder = if room_key == "public" {
@@ -75,19 +65,12 @@ async fn broadcast_web_refresh(state: &AppState, room_key: &str, thread_id: &str
     } else {
         builder.raw("var __slugCompose = document.querySelector('#room-new-thread-compose form'); if (__slugCompose) { __slugCompose.reset(); }")
     };
-    let builder = if let Some(markup) = thread_feed_markup {
-        builder.raw(format!(
-            "var __slugHere = window.location.pathname + window.location.search; var __slugThreadBase = {}; if (__slugHere === __slugThreadBase || __slugHere.indexOf(__slugThreadBase + '?') === 0) {{",
-            crate::html::js_string_literal(&thread_url),
-        ))
-        .morph_selector("#thread-feed-region", markup)
-        .raw("}")
-    } else {
-        builder.raw(format!(
-            "var __slugHere = window.location.pathname + window.location.search; var __slugThreadBase = {}; if (__slugHere === __slugThreadBase || __slugHere.indexOf(__slugThreadBase + '?') === 0) {{ window.location = __slugThreadBase; }}",
-            crate::html::js_string_literal(&thread_url),
-        ))
-    };
+    let builder = builder.raw(format!(
+        "var __slugHere = window.location.pathname + window.location.search; var __slugThreadBase = {}; if (__slugHere === __slugThreadBase || __slugHere.indexOf(__slugThreadBase + '?') === 0) {{",
+        crate::html::js_string_literal(&thread_url),
+    ))
+    .morph_selector("#thread-feed-region", thread_feed_markup)
+    .raw("}");
     let js = builder.build();
     let _ = state.js_tx.send(crate::state::JsSnippet { code: js });
 }

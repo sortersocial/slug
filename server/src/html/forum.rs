@@ -285,6 +285,81 @@ pub async fn thread_feed_html_for_room(state: &AppState, room_id: &str) -> Marku
     render_thread_feed(Some(&nav), "room-thread-feed", &rows, now)
 }
 
+fn render_thread_feed_region_markup(
+    nav: &ThreadNav,
+    tag: &str,
+    display_ingests: &[crate::events::Ingest],
+    offset: usize,
+    total: usize,
+    now: i64,
+) -> Markup {
+    let paginator_top = render_thread_paginator(nav, tag, offset, total, true);
+    let paginator_bot = render_thread_paginator(nav, tag, offset, total, false);
+    html! {
+        div id="thread-feed-region" {
+            @if display_ingests.is_empty() {
+                p class="muted" { "no activity yet" }
+            } @else {
+                (paginator_top)
+                @for (i, ing) in display_ingests.iter().enumerate() {
+                    @let post_idx = offset + i;
+                    @let post_href = nav.post_url(tag, post_idx);
+                    @let hover = timeago::rfc3339_utc(ing.ts);
+                    @let ago = timeago::timeago(now, ing.ts);
+                    @let truncated = ing.raw.len() > 2000;
+                    @let display_body = if truncated { &ing.raw[..2000] } else { &ing.raw[..] };
+                    div class="ingest-entry" data-ingest-id=(ing.id) {
+                        div class="ingest-meta muted" title=(hover) {
+                            a href=(post_href) class="post-num" { "#" (post_idx) }
+                            " · "
+                            (ago)
+                        }
+                        (render_linkified_with_embeds(display_body))
+                        @if truncated {
+                            @let exp = nav.expand_url(tag, post_idx);
+                            a href="#" class="show-full-link"
+                              onclick=(format!("fetch('{exp}').then(r=>r.text()).then(eval);return false")) {
+                                "[show full post]"
+                            }
+                        }
+                    }
+                }
+                (paginator_bot)
+            }
+        }
+    }
+}
+
+pub async fn thread_feed_region_markup(state: &AppState, room_id: Option<&str>, tag: &str) -> Markup {
+    let tag = canonicalize_tag(tag);
+    let Some(nav) = (match room_id {
+        Some(room_id) => ThreadNav::from_room_id(room_id),
+        None => Some(ThreadNav::public()),
+    }) else {
+        return html! { div id="thread-feed-region" { p class="muted" { "thread not found" } } };
+    };
+    let scope = nav.scope();
+    let all_ids: Vec<String> = {
+        let reduced = state.reduced.read().await;
+        reduced
+            .ingests_by_scope_thread
+            .get(&(scope.clone(), tag.clone()))
+            .map(|q| q.iter().rev().cloned().collect())
+            .unwrap_or_default()
+    };
+    let total = all_ids.len();
+    let offset = total.saturating_sub(PAGE_SIZE);
+    let page_ids: Vec<String> = all_ids.into_iter().skip(offset).take(PAGE_SIZE).collect();
+    let display_ingests = {
+        let reduced = state.reduced.read().await;
+        page_ids
+            .iter()
+            .filter_map(|id| reduced.ingests_by_id.get(id).cloned())
+            .collect::<Vec<_>>()
+    };
+    render_thread_feed_region_markup(&nav, &tag, &display_ingests, offset, total, now_ms())
+}
+
 /// Home: private rooms (signed-in), then public bump-ordered threads.
 pub async fn home(
     State(state): State<AppState>,
