@@ -1,4 +1,5 @@
 use axum::{
+    body::Body,
     extract::Path,
     http::{header, StatusCode},
     response::{IntoResponse, Response},
@@ -47,6 +48,62 @@ pub async fn serve_theme_css(Path(filename): Path<String>) -> impl IntoResponse 
         .body(css.to_string())
         .unwrap()
         .into_response()
+}
+
+pub(crate) fn js_string_literal(s: &str) -> String {
+    serde_json::to_string(s).expect("javascript string escaping")
+}
+
+pub(crate) struct JsBuilder {
+    snippets: Vec<String>,
+}
+
+impl JsBuilder {
+    pub(crate) fn new() -> Self {
+        Self { snippets: Vec::new() }
+    }
+
+    pub(crate) fn morph_selector(self, selector: &str, markup: Markup) -> Self {
+        self.morph_expr(
+            &format!("document.querySelector({})", js_string_literal(selector)),
+            markup,
+            None,
+        )
+    }
+
+    pub(crate) fn morph_expr(mut self, expr: &str, markup: Markup, morph_style: Option<&str>) -> Self {
+        let html = js_string_literal(&markup.into_string());
+        let opts = morph_style
+            .map(|style| format!(", {{morphStyle: {}}}", js_string_literal(style)))
+            .unwrap_or_default();
+        self.snippets.push(format!(
+            "var __slugEl = {expr}; if (__slugEl) {{ Idiomorph.morph(__slugEl, {html}{opts}); }}",
+        ));
+        self
+    }
+
+    pub(crate) fn raw(mut self, code: impl Into<String>) -> Self {
+        self.snippets.push(code.into());
+        self
+    }
+
+    pub(crate) fn redirect(mut self, to: &str) -> Self {
+        self.snippets
+            .push(format!("window.location = {};", js_string_literal(to)));
+        self
+    }
+
+    pub(crate) fn build(self) -> String {
+        self.snippets.join(" ")
+    }
+
+    pub(crate) fn into_response(self) -> Response {
+        Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "text/javascript; charset=utf-8")
+            .body(Body::from(self.build()))
+            .unwrap()
+    }
 }
 
 pub(super) fn layout(title: &str, view: &str, body: Markup, views: Option<u64>) -> Markup {

@@ -1,7 +1,7 @@
 use axum::{
     extract::{Path, Query, State},
-    http::{header, HeaderMap, StatusCode},
-    response::{Html, IntoResponse, Response},
+    http::{HeaderMap, StatusCode},
+    response::{Html, IntoResponse},
 };
 use axum_extra::extract::cookie::CookieJar;
 use maud::{html, Markup};
@@ -18,7 +18,7 @@ use crate::{
 
 use super::{
     authorship_address, bc_segment, bc_threads, cli_panel, layout, now_ms, recency_class,
-    render_linkified_with_embeds,
+    render_linkified_with_embeds, JsBuilder,
 };
 
 #[derive(Clone)]
@@ -257,8 +257,8 @@ fn new_thread_form_public(show: bool) -> Markup {
     }
 }
 
-/// Returns the current public thread feed HTML fragment for SSE (`#thread-feed`).
-pub async fn thread_feed_html(state: &AppState) -> String {
+/// Returns the current public thread feed markup for SSE (`#thread-feed`).
+pub async fn thread_feed_html(state: &AppState) -> Markup {
     let now = now_ms();
     let nav = ThreadNav::public();
     let mut rows = {
@@ -266,21 +266,21 @@ pub async fn thread_feed_html(state: &AppState) -> String {
         collect_thread_rows_for_scope(&reduced, &ScopeId::Public, now)
     };
     rows.sort_by(|a, b| b.last_ts.cmp(&a.last_ts));
-    render_thread_feed(Some(&nav), "thread-feed", &rows, now).into_string()
+    render_thread_feed(Some(&nav), "thread-feed", &rows, now)
 }
 
-/// Returns the current private room thread feed HTML fragment for SSE (`#room-thread-feed`).
-pub async fn thread_feed_html_for_room(state: &AppState, room_id: &str) -> String {
+/// Returns the current private room thread feed markup for SSE (`#room-thread-feed`).
+pub async fn thread_feed_html_for_room(state: &AppState, room_id: &str) -> Markup {
     let now = now_ms();
     let Some(nav) = ThreadNav::from_room_id(room_id) else {
-        return html! { div id="room-thread-feed" { p class="muted" { "room not found" } } }.into_string();
+        return html! { div id="room-thread-feed" { p class="muted" { "room not found" } } };
     };
     let mut rows = {
         let reduced = state.reduced.read().await;
         collect_thread_rows_for_scope(&reduced, &ScopeId::Room(room_id.to_string()), now)
     };
     rows.sort_by(|a, b| b.last_ts.cmp(&a.last_ts));
-    render_thread_feed(Some(&nav), "room-thread-feed", &rows, now).into_string()
+    render_thread_feed(Some(&nav), "room-thread-feed", &rows, now)
 }
 
 /// Home: private rooms (signed-in), then public bump-ordered threads.
@@ -743,23 +743,12 @@ async fn thread_post_expand_inner(
         }
     };
 
-    let full_html_str = full_html.into_string();
-    let escaped = full_html_str
-        .replace('\\', "\\\\")
-        .replace('`', "\\`")
-        .replace("${", "\\${");
-
-    let ingest_id_escaped = ing.id.replace('\\', "\\\\").replace('\'', "\\'");
-
-    let js = format!(
-        "Idiomorph.morph(document.querySelector('[data-ingest-id=\"{ingest_id_escaped}\"]'), `{escaped}`)"
-    );
-
-    Response::builder()
-        .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, "text/javascript; charset=utf-8")
-        .body(axum::body::Body::from(js))
-        .unwrap()
+    JsBuilder::new()
+        .morph_selector(
+            &format!("[data-ingest-id=\"{}\"]", ing.id),
+            full_html,
+        )
+        .into_response()
         .into_response()
 }
 

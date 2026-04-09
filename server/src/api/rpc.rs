@@ -16,6 +16,7 @@ use crate::{
     events::{
         AgentBound, Event, GrantAdded, GrantRevoked, Ingest, RoomCreated, ThreadCapability,
     },
+    html::JsBuilder,
     identity::{parse_agent, parse_username},
     path_types::CanonicalItemUrl,
     ranking::{connected_components_from_voted_pairs, ranked_items_subset},
@@ -40,18 +41,6 @@ fn content_for_room<'a>(reduced: &'a ReducerState, room: &str) -> &'a crate::red
     reduced.content.get(&scope).unwrap_or(empty_content())
 }
 
-fn js_quote(s: &str) -> String {
-    serde_json::to_string(s).expect("javascript string escaping")
-}
-
-fn js_morph(selector: &str, html: &str) -> String {
-    format!(
-        "var __slugEl = document.querySelector({selector}); if (__slugEl) {{ Idiomorph.morph(__slugEl, {html}); }}",
-        selector = js_quote(selector),
-        html = js_quote(html),
-    )
-}
-
 async fn broadcast_web_refresh(state: &AppState, room_key: &str, thread_id: &str) {
     let feed_id = if room_key == "public" { "thread-feed" } else { "room-thread-feed" };
     let thread_url = if room_key == "public" {
@@ -62,39 +51,24 @@ async fn broadcast_web_refresh(state: &AppState, room_key: &str, thread_id: &str
         format!("/t/{thread_id}")
     };
 
-    let public_feed_html = if room_key == "public" {
-        Some(crate::html::thread_feed_html(state).await)
+    let feed_markup = if room_key == "public" {
+        crate::html::thread_feed_html(state).await
     } else {
-        None
-    };
-    let room_feed_html = if room_key == "public" {
-        None
-    } else {
-        Some(crate::html::thread_feed_html_for_room(state, room_key).await)
+        crate::html::thread_feed_html_for_room(state, room_key).await
     };
 
-    let mut snippets = Vec::new();
-    snippets.push(js_morph(
-        &format!("#{feed_id}"),
-        if room_key == "public" {
-            public_feed_html.as_deref().unwrap_or("")
-        } else {
-            room_feed_html.as_deref().unwrap_or("")
-        },
-    ));
-
-    if room_key == "public" {
-        snippets.push("var __slugCompose = document.querySelector('#public-new-thread-compose form'); if (__slugCompose) { __slugCompose.reset(); }".to_string());
+    let builder = JsBuilder::new().morph_selector(&format!("#{feed_id}"), feed_markup);
+    let builder = if room_key == "public" {
+        builder.raw("var __slugCompose = document.querySelector('#public-new-thread-compose form'); if (__slugCompose) { __slugCompose.reset(); }")
     } else {
-        snippets.push("var __slugCompose = document.querySelector('#room-new-thread-compose form'); if (__slugCompose) { __slugCompose.reset(); }".to_string());
-    }
-
-    snippets.push(format!(
-        "var __slugHere = window.location.pathname + window.location.search; var __slugThreadBase = {thread_base}; if (__slugHere === __slugThreadBase || __slugHere.indexOf(__slugThreadBase + '?') === 0) {{ window.location = __slugThreadBase; }}",
-        thread_base = js_quote(&thread_url),
-    ));
-
-    let js = snippets.join(" ");
+        builder.raw("var __slugCompose = document.querySelector('#room-new-thread-compose form'); if (__slugCompose) { __slugCompose.reset(); }")
+    };
+    let js = builder
+        .raw(format!(
+            "var __slugHere = window.location.pathname + window.location.search; var __slugThreadBase = {}; if (__slugHere === __slugThreadBase || __slugHere.indexOf(__slugThreadBase + '?') === 0) {{ window.location = __slugThreadBase; }}",
+            crate::html::js_string_literal(&thread_url),
+        ))
+        .build();
     let _ = state.js_tx.send(crate::state::JsSnippet { code: js });
 }
 

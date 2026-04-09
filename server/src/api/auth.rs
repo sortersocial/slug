@@ -15,7 +15,10 @@ use tokio::sync::RwLock;
 use crate::{
     api::helpers::{api_error, now_ms, sha256_hex},
     events::{Event, GrantAdded, TokenIssued, UserRegistered},
-    html::{auth_complete_page, auth_signed_in_fragment, choose_username_error_fragment, choose_username_page},
+    html::{
+        auth_complete_page, auth_signed_in_fragment, choose_username_error_fragment,
+        choose_username_page, JsBuilder,
+    },
     identity::{parse_agent, parse_username},
     reducer::ReducerState,
     state::{AppState, PendingSession},
@@ -38,38 +41,29 @@ pub fn session_cookie_header_value(bearer: &str) -> HeaderValue {
     HeaderValue::from_str(&s).expect("session cookie value must be ASCII")
 }
 
-fn js_string_literal(s: &str) -> String {
-    serde_json::to_string(s).expect("javascript string escaping")
-}
-
-fn js_morph_form(html: &str) -> String {
-    let html = js_string_literal(html);
-    format!(
-        "if (window.__slugActiveForm) {{ Idiomorph.morph(window.__slugActiveForm, {html}, {{morphStyle: 'innerHTML'}}); }}"
-    )
-}
-
 fn js_form_error_fragment(session: &str, error: &str) -> Response {
-    let html = choose_username_error_fragment(session, error).into_string();
-    Response::builder()
-        .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, "text/javascript; charset=utf-8")
-        .body(Body::from(js_morph_form(&html)))
-        .unwrap()
+    JsBuilder::new()
+        .morph_expr(
+            "window.__slugActiveForm",
+            choose_username_error_fragment(session, error),
+            Some("innerHTML"),
+        )
+        .into_response()
 }
 
 fn js_signed_in_fragment(bearer: &str) -> Response {
-    let html = auth_signed_in_fragment().into_string();
-    let html_js = js_string_literal(&html);
-    let done_js = js_string_literal("/auth/complete");
-    Response::builder()
-        .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, "text/javascript; charset=utf-8")
-        .header(header::SET_COOKIE, session_cookie_header_value(bearer))
-        .body(Body::from(format!(
-            "if (window.__slugActiveForm) {{ Idiomorph.morph(window.__slugActiveForm, {html_js}, {{morphStyle: 'innerHTML'}}); }} window.location = {done_js};"
-        )))
-        .unwrap()
+    let mut response = JsBuilder::new()
+        .morph_expr(
+            "window.__slugActiveForm",
+            auth_signed_in_fragment(),
+            Some("innerHTML"),
+        )
+        .redirect("/auth/complete")
+        .into_response();
+    response
+        .headers_mut()
+        .insert(header::SET_COOKIE, session_cookie_header_value(bearer));
+    response
 }
 
 /// Resolve the signed-in username from `Authorization: Bearer` or `slug_session` cookie.
@@ -442,7 +436,8 @@ pub async fn post_choose_username(
     }
     if reduced.users_by_provider.values().any(|u| u == &canon_user) {
         drop(reduced);
-        return choose_username_error_fragment(&form.session, "that username is taken — try another").into_response();
+        return js_form_error_fragment(&form.session, "that username is taken — try another")
+            .into_response();
     }
     drop(reduced);
 

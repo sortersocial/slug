@@ -1,7 +1,6 @@
 use axum::{
     extract::State,
-    http::{header, StatusCode},
-    response::{Html, IntoResponse, Response},
+    response::{Html, IntoResponse},
     Form,
 };
 use maud::{html, Markup};
@@ -9,6 +8,7 @@ use serde::Deserialize;
 
 use crate::{
     api::{validate_ingest_document, resolve_item},
+    html::JsBuilder,
     reducer::ScopeId,
     state::AppState,
 };
@@ -85,7 +85,7 @@ pub async fn editor_check(
     let reduced = state.reduced.read().await;
     let result = validate_ingest_document(&reduced, &form.text, &ScopeId::Public);
 
-    let (status_html, results_html) = match result {
+    let (status_markup, results_markup) = match result {
         Err((_code, msg, hint)) => {
             let status = html! {
                 span class="editor-error" {
@@ -98,7 +98,10 @@ pub async fn editor_check(
             let results = html! {
                 div id="editor-results" {}
             };
-            (status.into_string(), results.into_string())
+            (
+                html! { div id="editor-status" { (status) } },
+                results,
+            )
         }
         Ok(v) => {
             drop(reduced);
@@ -166,23 +169,16 @@ pub async fn editor_check(
                 }
             };
 
-            (status.into_string(), results.into_string())
+            (
+                html! { div id="editor-status" { (status) } },
+                results,
+            )
         }
     };
 
-    // Return JS that morphs both elements.
-    let status_escaped = status_html.replace('\\', "\\\\").replace('`', "\\`").replace("${", "\\${");
-    let results_escaped = results_html.replace('\\', "\\\\").replace('`', "\\`").replace("${", "\\${");
-
-    let js = format!(
-        "Idiomorph.morph(document.getElementById('editor-status'), `<div id=\"editor-status\">{status_escaped}</div>`);\
-         Idiomorph.morph(document.getElementById('editor-results'), `{results_escaped}`);"
-    );
-
-    Response::builder()
-        .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, "text/javascript; charset=utf-8")
-        .body(js)
-        .unwrap()
+    JsBuilder::new()
+        .morph_expr("document.getElementById('editor-status')", status_markup, None)
+        .morph_expr("document.getElementById('editor-results')", results_markup, None)
+        .into_response()
         .into_response()
 }
