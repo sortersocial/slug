@@ -1,1 +1,0 @@
-../../test/invites.bb

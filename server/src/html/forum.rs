@@ -225,6 +225,7 @@ fn compose_form(nav: &ThreadNav, thread_tag: &str, show: bool) -> Markup {
         section class="compose" id="thread-compose" {
             h3 { "reply" }
             p class="muted" { "Uses the same ingest DSL as the CLI. You must be logged in." }
+            div id="errors" {}
             form method="POST" action="/post" {
                 input type="hidden" name="room" value=(nav.room_wire.clone());
                 input type="hidden" name="thread_tag" value=(thread_tag);
@@ -245,6 +246,7 @@ fn new_thread_form_public(show: bool) -> Markup {
         section class="compose" id="public-new-thread-compose" {
             h3 { "new public thread" }
             p class="muted" { "Set thread tag and body. Example: start with a title line or use the CLI-shaped DSL." }
+            div id="errors" {}
             form method="POST" action="/post" {
                 input type="hidden" name="room" value="public";
                 label for="new-thread-tag" { "thread tag" }
@@ -458,7 +460,7 @@ async fn thread_view_inner(
             nav class="breadcrumb" { (bc) }
             h2 { "#" (tag) @if let Some(sub) = &subtitle { ": " (sub) } }
             p class="muted" { "top=oldest · bottom=newest" }
-            div id="thread-live-region" {
+            div id="thread-feed-region" {
                 @if display_ingests.is_empty() {
                     p class="muted" { "no activity yet" }
                 } @else {
@@ -488,6 +490,8 @@ async fn thread_view_inner(
                     }
                     (paginator_bot)
                 }
+            }
+            div id="thread-live-region" {
                 (compose_form(&nav, &tag, show_compose))
             }
             (cli_panel(&cli))
@@ -605,6 +609,7 @@ fn new_thread_form_for_room(nav: &ThreadNav, show: bool) -> Markup {
     html! {
         section class="compose" id="room-new-thread-compose" {
             h3 { "new thread in this room" }
+            div id="errors" {}
             form method="POST" action="/post" {
                 input type="hidden" name="room" value=(nav.room_wire.clone());
                 label for="room-new-tag" { "thread tag" }
