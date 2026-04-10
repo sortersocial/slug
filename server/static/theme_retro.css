@@ -64,6 +64,73 @@ p.auth-success { color: #00ff41; font-family: monospace; font-size: 0.8rem; marg
 .ingest-form button[type="submit"]:hover { border-color: #00ff41; }
 .ingest-form button[type="submit"]:disabled { opacity: 0.5; cursor: default; }
 
+.compose {
+  margin: 1rem 0;
+  width: 100%;
+}
+.compose form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  width: 100%;
+}
+.compose textarea,
+.compose input[type="text"] {
+  background: #0a0a0a;
+  border: 1px solid #333;
+  color: #00ff41;
+  font-family: monospace;
+  font-size: 0.85rem;
+  padding: 0.5rem;
+  width: 100%;
+  min-width: 100%;
+  box-sizing: border-box;
+}
+.compose textarea:focus,
+.compose input[type="text"]:focus {
+  outline: 1px solid #00ff41;
+}
+.form-toggle {
+  background: #0a0a0a;
+  border: 1px solid #333;
+  color: #00ff41;
+  cursor: pointer;
+  font-family: monospace;
+  font-size: 0.85rem;
+  padding: 0.25rem 0.75rem;
+}
+.form-toggle:hover { border-color: #00ff41; }
+.room-links,
+.room-members {
+  font-family: monospace;
+  font-size: 0.85rem;
+}
+.room-members {
+  list-style: none;
+  padding-left: 0;
+}
+.room-members li {
+  margin: 0.25rem 0;
+}
+
+div.ingest-entry,
+pre,
+.ont-item-shell,
+.ont-group-shell,
+.ont-vote-entry,
+details.ont-related-votes,
+details.ont-rank-history {
+  width: 100%;
+  min-width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+pre {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 /* Ontology view: paper mode */
 body.view-ontology {
   background: #f5f0e8;

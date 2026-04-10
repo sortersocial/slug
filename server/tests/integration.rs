@@ -279,7 +279,9 @@ async fn test_private_room_thread_urls_use_t_segment() {
     );
     let post_js = post.text().await.unwrap();
     let location = format!("/r/{room_short}/{room_slug}/t/main-thread");
-    assert_eq!(post_js, format!("window.location = {:?};", location));
+    assert!(post_js.contains(&format!("window.location = {:?};", location)));
+    assert!(post_js.contains("#room-thread-feed"));
+    assert!(post_js.contains("#thread-feed-region"));
 
     let thread_page = client
         .get(format!("http://{addr}{location}"))
@@ -291,6 +293,100 @@ async fn test_private_room_thread_urls_use_t_segment() {
     let body = thread_page.text().await.unwrap();
     assert!(body.contains("#main-thread"));
     assert!(body.contains("private post via web"));
+}
+
+#[tokio::test]
+async fn test_private_room_post_links_use_private_garden_routes() {
+    let (addr, _tmp, _log, _handle) = create_test_server().await;
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    let bearer = test_bearer();
+
+    let create = rpc_batch(
+        &client,
+        addr,
+        Some(&bearer),
+        serde_json::json!([{
+            "RoomCreate": { "slug": "private-garden-links" }
+        }]),
+    )
+    .await;
+    let room_id = create["results"][0]["result"]["RoomCreated"]["room_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let (room_short, room_slug) = room_id.split_once('/').unwrap();
+
+    let post = client
+        .post(format!("http://{addr}/post"))
+        .header("Authorization", format!("Bearer {bearer}"))
+        .form(&[
+            ("room", room_id.as_str()),
+            ("thread_tag", "garden-thread"),
+            ("text", "~/secret/item {classified}\n~/secret/other {other body}\n~/secret/item 3:1 ~/secret/other {because}\n"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(post.status(), reqwest::StatusCode::OK);
+
+    let thread_page = client
+        .get(format!("http://{addr}/r/{room_short}/{room_slug}/t/garden-thread"))
+        .header("Authorization", format!("Bearer {bearer}"))
+        .send()
+        .await
+        .unwrap();
+    assert!(thread_page.status().is_success());
+    let body = thread_page.text().await.unwrap();
+    assert!(body.contains(&format!("/r/{room_short}/{room_slug}/~/secret/item")));
+    assert!(!body.contains("href=\"/~/secret/item\""));
+
+    let garden_page = client
+        .get(format!("http://{addr}/r/{room_short}/{room_slug}/~/secret/item"))
+        .header("Authorization", format!("Bearer {bearer}"))
+        .send()
+        .await
+        .unwrap();
+    assert!(garden_page.status().is_success());
+    let garden_body = garden_page.text().await.unwrap();
+    assert!(garden_body.contains("classified"));
+    assert!(garden_body.contains(&format!("/r/{room_short}/{room_slug}/t/garden-thread")));
+}
+
+#[tokio::test]
+async fn test_post_check_returns_targeted_js_error_for_missing_thread_tag() {
+    let (addr, _tmp, _log, _handle) = create_test_server().await;
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    let bearer = test_bearer();
+
+    let resp = client
+        .post(format!("http://{addr}/post/check"))
+        .header("Authorization", format!("Bearer {bearer}"))
+        .form(&[
+            ("room", "public"),
+            ("thread_tag", ""),
+            ("text", "hello"),
+            ("error_target", "thread-compose-errors"),
+        ])
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        resp.headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok()),
+        Some("text/javascript; charset=utf-8")
+    );
+    let js = resp.text().await.unwrap();
+    assert!(js.contains("#thread-compose-errors"));
+    assert!(js.contains("missing thread tag"));
 }
 
 #[tokio::test]

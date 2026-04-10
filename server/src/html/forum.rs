@@ -9,7 +9,7 @@ use serde::Deserialize;
 
 use crate::{
     api::optional_principal,
-    canonical_path::canonicalize_tag,
+    canonical_path::{canonicalize_item, canonicalize_tag},
     events::ThreadCapability,
     reducer::{ReducerState, ScopeId},
     state::AppState,
@@ -18,7 +18,7 @@ use crate::{
 
 use super::{
     authorship_address, bc_segment, bc_threads, cli_panel, layout, now_ms, recency_class,
-    render_linkified_with_embeds, JsBuilder,
+    render_linkified_with_embeds_in_scope, JsBuilder,
 };
 
 #[derive(Clone)]
@@ -29,6 +29,12 @@ struct ThreadRow {
     ingests: usize,
 }
 
+#[derive(Clone)]
+struct RoomMemberRow {
+    username: String,
+    capabilities: Vec<&'static str>,
+}
+
 /// URL helpers for public `/t/…` and private room threads `/r/{short}/{slug}/t/…`.
 #[derive(Clone)]
 pub struct ThreadNav {
@@ -36,20 +42,22 @@ pub struct ThreadNav {
     scope: ScopeId,
     room_path: String,
     thread_path_prefix: String,
+    garden_path_prefix: String,
 }
 
 impl ThreadNav {
-    pub fn public() -> Self {
+    pub(crate) fn public() -> Self {
         Self {
             room_wire: "public".into(),
             scope: ScopeId::Public,
             room_path: "/t".into(),
             thread_path_prefix: "/t".into(),
+            garden_path_prefix: "/~".into(),
         }
     }
 
     /// `room_id` wire form `shortid/slug`.
-    pub fn from_room_id(room_id: &str) -> Option<Self> {
+    pub(crate) fn from_room_id(room_id: &str) -> Option<Self> {
         let (short, slug) = room_id.split_once('/')?;
         if short.is_empty() || slug.is_empty() {
             return None;
@@ -59,19 +67,34 @@ impl ThreadNav {
             scope: ScopeId::Room(room_id.to_string()),
             room_path: format!("/r/{short}/{slug}"),
             thread_path_prefix: format!("/r/{short}/{slug}/t"),
+            garden_path_prefix: format!("/r/{short}/{slug}/~"),
         })
     }
 
-    fn scope(&self) -> ScopeId {
+    pub(crate) fn scope(&self) -> ScopeId {
         self.scope.clone()
     }
 
-    fn room_url(&self) -> &str {
+    pub(crate) fn room_url(&self) -> &str {
         &self.room_path
     }
 
-    fn thread_url(&self, tag: &str) -> String {
+    pub(crate) fn thread_url(&self, tag: &str) -> String {
         format!("{}/{}", self.thread_path_prefix, tag)
+    }
+
+    pub(crate) fn garden_root_url(&self) -> &str {
+        &self.garden_path_prefix
+    }
+
+    pub(crate) fn garden_item_url(&self, item: &str) -> String {
+        if let Some(tail) = crate::path_types::CanonicalItemUrl::parse(item)
+            .and_then(|c| c.tilde_tail().map(str::to_owned))
+        {
+            format!("{}/{}", self.garden_path_prefix, tail)
+        } else {
+            format!("{}/{}", self.garden_path_prefix, canonicalize_item(item))
+        }
     }
 
     fn thread_page_url(&self, tag: &str, offset: usize) -> String {
@@ -139,6 +162,45 @@ fn user_can_post_room(reduced: &ReducerState, room_id: &str, username: &str) -> 
     reduced.user_has_cap(room_id, username, ThreadCapability::Post)
 }
 
+fn capability_label(cap: ThreadCapability) -> &'static str {
+    match cap {
+        ThreadCapability::View => "view",
+        ThreadCapability::Post => "post",
+        ThreadCapability::Vote => "vote",
+        ThreadCapability::AddItem => "add_item",
+        ThreadCapability::Manage => "manage",
+    }
+}
+
+fn room_members_for_room(reduced: &ReducerState, room_id: &str) -> Vec<RoomMemberRow> {
+    let mut rows: Vec<RoomMemberRow> = reduced
+        .grants
+        .get(room_id)
+        .into_iter()
+        .flat_map(|members| members.iter())
+        .map(|(username, caps)| {
+            let mut ordered = Vec::new();
+            for cap in [
+                ThreadCapability::View,
+                ThreadCapability::Post,
+                ThreadCapability::Vote,
+                ThreadCapability::AddItem,
+                ThreadCapability::Manage,
+            ] {
+                if caps.contains(&cap) {
+                    ordered.push(capability_label(cap));
+                }
+            }
+            RoomMemberRow {
+                username: username.clone(),
+                capabilities: ordered,
+            }
+        })
+        .collect();
+    rows.sort_by(|a, b| a.username.cmp(&b.username));
+    rows
+}
+
 /// `feed_id` is e.g. `thread-feed` (public bump list, SSE) or `room-thread-feed`.
 fn render_thread_feed(nav: Option<&ThreadNav>, feed_id: &str, rows: &[ThreadRow], now: i64) -> Markup {
     html! {
@@ -202,14 +264,14 @@ fn bc_room(nav: &ThreadNav, room_slug: &str, thread_tag: Option<&str>) -> Markup
         a href="/" { "slug.social" }
         @if let Some(t) = thread_tag {
             (bc_segment(
-                &format!("r / {room_slug}"),
+                &format!("room:{room_slug}"),
                 nav.room_url(),
                 false,
             ))
             (bc_segment(&format!("#{t}"), &nav.thread_url(t), true))
         } @else {
             (bc_segment(
-                &format!("r / {room_slug}"),
+                &format!("room:{room_slug}"),
                 nav.room_url(),
                 true,
             ))
@@ -225,11 +287,13 @@ fn compose_form(nav: &ThreadNav, thread_tag: &str, show: bool) -> Markup {
         section class="compose" id="thread-compose" {
             h3 { "reply" }
             p class="muted" { "Uses the same ingest DSL as the CLI. You must be logged in." }
-            div id="errors" {}
-            form method="POST" action="/post" {
+            div id="thread-compose-errors" {}
+            form id="thread-compose-form" method="POST" action="/post" data-check-action="/post/check" {
                 input type="hidden" name="room" value=(nav.room_wire.clone());
                 input type="hidden" name="thread_tag" value=(thread_tag);
-                textarea name="text" rows="8" cols="80" placeholder="prose or ~/items and votes…" {}
+                input type="hidden" name="error_target" value="thread-compose-errors";
+                input type="hidden" name="form_id" value="thread-compose-form";
+                textarea name="text" rows="5" cols="80" placeholder="prose or ~/items and votes…" {}
                 p {
                     button type="submit" { "post" }
                 }
@@ -243,16 +307,28 @@ fn new_thread_form_public(show: bool) -> Markup {
         return html! {};
     }
     html! {
-        section class="compose" id="public-new-thread-compose" {
+        button
+            type="button"
+            class="form-toggle"
+            data-toggle-target="#public-new-thread-compose"
+            data-open-label="new public thread"
+            data-close-label="hide new public thread"
+            aria-expanded="false"
+        {
+            "new public thread"
+        }
+        section class="compose" id="public-new-thread-compose" hidden {
             h3 { "new public thread" }
             p class="muted" { "Set thread tag and body. Example: start with a title line or use the CLI-shaped DSL." }
-            div id="errors" {}
-            form method="POST" action="/post" {
+            div id="public-new-thread-errors" {}
+            form id="public-new-thread-form" method="POST" action="/post" data-check-action="/post/check" {
                 input type="hidden" name="room" value="public";
+                input type="hidden" name="error_target" value="public-new-thread-errors";
+                input type="hidden" name="form_id" value="public-new-thread-form";
                 label for="new-thread-tag" { "thread tag" }
                 input type="text" id="new-thread-tag" name="thread_tag" pattern="[a-z0-9_\\-]{1,64}" placeholder="my-topic";
                 label for="new-thread-text" { "text" }
-                textarea id="new-thread-text" name="text" rows="6" placeholder="#my-topic\n\nYour first post…" {}
+                textarea id="new-thread-text" name="text" rows="4" placeholder="#my-topic\n\nYour first post…" {}
                 p { button type="submit" { "create / post" } }
             }
         }
@@ -314,7 +390,7 @@ fn render_thread_feed_region_markup(
                             " · "
                             (ago)
                         }
-                        (render_linkified_with_embeds(display_body))
+                        (render_linkified_with_embeds_in_scope(display_body, nav.garden_root_url()))
                         @if truncated {
                             @let exp = nav.expand_url(tag, post_idx);
                             a href="#" class="show-full-link"
@@ -409,7 +485,7 @@ pub async fn home(
             p class="muted" { "dark = time-ordered · light = vote-ranked" }
             (render_thread_feed(Some(&nav), "thread-feed", &public_rows, now))
             (new_thread_form_public(show_forms))
-            (cli_panel("npx slugsocial forum"))
+            (cli_panel("npx slugsocial public forum list"))
         },
         None,
     );
@@ -523,8 +599,8 @@ async fn thread_view_inner(
     };
 
     let cli = match &sc {
-        ScopeId::Public => format!("npx slugsocial forum {tag}"),
-        ScopeId::Room(r) => format!("npx slugsocial private {r} forum {tag}"),
+        ScopeId::Public => format!("npx slugsocial public forum show {tag}"),
+        ScopeId::Room(r) => format!("npx slugsocial private {r} forum show {tag}"),
     };
 
     let page = layout(
@@ -535,6 +611,12 @@ async fn thread_view_inner(
             nav class="breadcrumb" { (bc) }
             h2 { "#" (tag) @if let Some(sub) = &subtitle { ": " (sub) } }
             p class="muted" { "top=oldest · bottom=newest" }
+            @if matches!(sc, ScopeId::Room(_)) {
+                p class="muted" {
+                    "room garden · "
+                    a href=(nav.garden_root_url()) { "~" }
+                }
+            }
             div id="thread-feed-region" {
                 @if display_ingests.is_empty() {
                     p class="muted" { "no activity yet" }
@@ -553,7 +635,7 @@ async fn thread_view_inner(
                                 " · "
                                 (ago)
                             }
-                            (render_linkified_with_embeds(display_body))
+                            (render_linkified_with_embeds_in_scope(display_body, nav.garden_root_url()))
                             @if truncated {
                                 @let exp = nav.expand_url(&tag, post_idx);
                                 a href="#" class="show-full-link"
@@ -644,6 +726,7 @@ pub async fn room_page(
     let scope = ScopeId::Room(room_id.clone());
     let mut rows = collect_thread_rows_for_scope(&reduced, &scope, now);
     let strip = auth_strip(&headers, &jar, &reduced);
+    let members = room_members_for_room(&reduced, &room_id);
     let show_new = user
         .as_ref()
         .map(|u| user_can_post_room(&reduced, &room_id, u))
@@ -655,7 +738,9 @@ pub async fn room_page(
         return (StatusCode::NOT_FOUND, "room not found").into_response();
     };
     let slug_display = room_slug.as_str();
-    let cli = format!("npx slugsocial private {room_id} forum");
+    let forum_cli = format!("npx slugsocial private {room_id} forum list");
+    let garden_cli = format!("npx slugsocial private {room_id} garden tree");
+    let audit_cli = format!("npx slugsocial private {room_id} audit");
 
     let page = layout(
         &format!("room {slug_display} — slug.social"),
@@ -665,12 +750,32 @@ pub async fn room_page(
             nav class="breadcrumb" { (bc_room(&nav, slug_display, None)) }
             h2 { (slug_display) }
             p class="muted" { (room_id) }
+            p class="muted room-links" {
+                "room garden · "
+                a href=(nav.garden_root_url()) { "~" }
+            }
+            @if !members.is_empty() {
+                h3 { "members" }
+                ul class="room-members" {
+                    @for member in &members {
+                        li {
+                            span class="room-member-name" { "@" (member.username) }
+                            span class="muted" {
+                                " · "
+                                (member.capabilities.join(", "))
+                            }
+                        }
+                    }
+                }
+            }
             h3 { "threads" }
             (render_thread_feed(Some(&nav), "room-thread-feed", &rows, now))
             @if show_new {
                 (new_thread_form_for_room(&nav, show_new))
             }
-            (cli_panel(&cli))
+            (cli_panel(&forum_cli))
+            (cli_panel(&garden_cli))
+            (cli_panel(&audit_cli))
         },
         None,
     );
@@ -682,14 +787,26 @@ fn new_thread_form_for_room(nav: &ThreadNav, show: bool) -> Markup {
         return html! {};
     }
     html! {
-        section class="compose" id="room-new-thread-compose" {
+        button
+            type="button"
+            class="form-toggle"
+            data-toggle-target="#room-new-thread-compose"
+            data-open-label="new thread in this room"
+            data-close-label="hide room thread form"
+            aria-expanded="false"
+        {
+            "new thread in this room"
+        }
+        section class="compose" id="room-new-thread-compose" hidden {
             h3 { "new thread in this room" }
-            div id="errors" {}
-            form method="POST" action="/post" {
+            div id="room-new-thread-errors" {}
+            form id="room-new-thread-form" method="POST" action="/post" data-check-action="/post/check" {
                 input type="hidden" name="room" value=(nav.room_wire.clone());
+                input type="hidden" name="error_target" value="room-new-thread-errors";
+                input type="hidden" name="form_id" value="room-new-thread-form";
                 label for="room-new-tag" { "thread tag" }
                 input type="text" id="room-new-tag" name="thread_tag" pattern="[a-z0-9_\\-]{1,64}" required;
-                textarea name="text" rows="6" placeholder="First post body…" required {}
+                textarea name="text" rows="4" placeholder="First post body…" required {}
                 p { button type="submit" { "post" } }
             }
         }
@@ -744,7 +861,7 @@ async fn thread_post_view_inner(
                         " · "
                         (ago)
                     }
-                    (render_linkified_with_embeds(&ing.raw))
+                    (render_linkified_with_embeds_in_scope(&ing.raw, nav.garden_root_url()))
                 }
             } @else {
                 p class="muted" { "post not found" }
@@ -819,7 +936,7 @@ async fn thread_post_expand_inner(
                 " · "
                 (ago)
             }
-            (render_linkified_with_embeds(&ing.raw))
+            (render_linkified_with_embeds_in_scope(&ing.raw, nav.garden_root_url()))
         }
     };
 
