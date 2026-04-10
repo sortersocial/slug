@@ -138,6 +138,52 @@
       (assert! (not (str/blank? bearer-token)) "bearer token from OAuth")
       (bind token-env {"SLUG_BEARER_TOKEN" bearer-token})
 
+        ;; 2.6 private room: CLI read RPCs must send bearer (regression — missing header looked like "room not found")
+      (println "\nprivate room: create → post thread → forum show via CLI…")
+      (bind private-slug "cli-private-read-regression")
+      (bind create-room-result (common/run-cli cli-bin base-url ["room" "create" private-slug "--json"] :extra-env token-env))
+      (assert! (zero? (:exit create-room-result))
+               (str "cli room create exits 0 (err: " (:err create-room-result) ")"))
+      (bind create-room-json (json/parse-string (:out create-room-result) true))
+      (bind private-room-id (:room_id create-room-json))
+      (assert! (and (string? private-room-id) (str/includes? private-room-id "/"))
+               (str "room create returns shortid/slug room_id (got " (pr-str private-room-id) ")"))
+      (bind private-thread "private-cli-thread")
+      (bind private-marker "private room prose regression marker")
+      (bind private-doc
+            (str/join "\n"
+                      ["@00000000-0000-0000-0000-000000000000:cli:local/dev"
+                       (str "#" private-thread)
+                       ""
+                       private-marker]))
+      (bind private-post-result
+            (common/run-cli cli-bin base-url
+                            ["private" private-room-id "forum" "post" private-thread "--json"
+                             "--delegate" "00000000-0000-0000-0000-000000000000:cli:local/dev"]
+                            :input private-doc :extra-env token-env))
+      (assert! (zero? (:exit private-post-result))
+               (str "private forum post exits 0 (err: " (:err private-post-result) ")"))
+      (bind private-post-json (json/parse-string (:out private-post-result) true))
+      (assert! (:ok private-post-json) "private forum post ok=true")
+
+      (bind show-no-token (common/run-cli cli-bin base-url
+                                         ["private" private-room-id "forum" "show" private-thread "--json"]))
+      (assert! (not (zero? (:exit show-no-token)))
+               "private forum show without SLUG_BEARER_TOKEN must fail (server hides private rooms without auth)")
+
+      (bind show-with-token (common/run-cli cli-bin base-url
+                                            ["private" private-room-id "forum" "show" private-thread "--json"]
+                                            :extra-env token-env))
+      (assert! (zero? (:exit show-with-token))
+               (str "private forum show with bearer exits 0 (err: " (:err show-with-token) ")"))
+      (bind show-json (json/parse-string (:out show-with-token) true))
+      ;; ThreadItem JSON uses serde snake_case tag values: {:kind "post" :body ...}
+      (assert! (some (fn [row]
+                       (and (= "post" (:kind row))
+                            (str/includes? (str (:body row)) private-marker)))
+                     (:items show-json))
+               "private forum show --json includes posted prose body")
+
         ;; 3. ingest via CLI (bearer required)
       (println "\ningesting .sorter document via CLI…")
       (bind ingest1-result (common/run-cli cli-bin base-url ["public" "forum" "post" "integration-test" "--json" "--delegate" "00000000-0000-0000-0000-000000000000:cli:local/dev"] :input sorter-doc :extra-env token-env))
@@ -161,11 +207,12 @@
       (assert! (str/ends-with? (last ranked) "languages/go")
                (str "go is #3 (got " (last ranked) ")"))
 
-        ;; 5. verify JSONL written (user_registered + token_issued + agent_bound + ingest)
+        ;; 5. verify JSONL written (user_registered + token_issued + room_created + grant_added
+        ;;    + private ingest + agent_bound + public ingest)
       (assert! (fs/exists? event-log) "events.jsonl exists")
       (bind event-lines (->> (slurp event-log) str/split-lines (remove str/blank?)))
-      (assert! (= 4 (count event-lines))
-               (str "4 events in JSONL (user_registered + token_issued + agent_bound + ingest, got " (count event-lines) ")"))
+      (assert! (= 7 (count event-lines))
+               (str "7 events in JSONL (incl. private room + first public ingest, got " (count event-lines) ")"))
 
         ;; 6. query forum via CLI
       (println "\nquerying forum via CLI…")
@@ -216,8 +263,8 @@
                (str "two-vote ingest exits 0 (err: " (:err hist-ingest) ")"))
 
       (bind event-lines-after-hist (->> (slurp event-log) str/split-lines (remove str/blank?)))
-      (assert! (= 5 (count event-lines-after-hist))
-               (str "5 events in JSONL after second ingest (got " (count event-lines-after-hist) ")"))
+      (assert! (= 8 (count event-lines-after-hist))
+               (str "8 events in JSONL after second public ingest (got " (count event-lines-after-hist) ")"))
 
       (bind hist-result      (common/run-cli cli-bin base-url ["public" "garden" "history" "languages/rust" "--json"]))
       (assert! (zero? (:exit hist-result))
