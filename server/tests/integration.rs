@@ -124,6 +124,91 @@ async fn test_room_create_rpc() {
     );
 }
 
+/// Private room reads use `authorize_room_read`, which returns "room not found" when no bearer is sent
+/// (same as unknown room). The CLI must attach the saved token for `private … forum show` etc.
+#[tokio::test]
+async fn test_private_room_forum_read_requires_bearer() {
+    let (addr, _tmp, _log, _handle) = create_test_server().await;
+    let client = reqwest::Client::new();
+    let bearer = test_bearer();
+
+    let create = rpc_batch(
+        &client,
+        addr,
+        Some(&bearer),
+        serde_json::json!([{
+            "RoomCreate": { "slug": "bearer-for-reads" }
+        }]),
+    )
+    .await;
+    let room_id = create["results"][0]["result"]["RoomCreated"]["room_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let post = rpc_batch(
+        &client,
+        addr,
+        Some(&bearer),
+        serde_json::json!([{
+            "Post": {
+                "room": room_id,
+                "thread_tag": "cli-read-test",
+                "delegate": "00000000-0000-0000-0000-000000000000:test:local/test",
+                "text": "hello from private room\n",
+                "return_rank_diff": false
+            }
+        }]),
+    )
+    .await;
+    assert_eq!(post["results"][0]["ok"], true);
+
+    let no_auth = rpc_batch(
+        &client,
+        addr,
+        None,
+        serde_json::json!([{
+            "GetForumThread": {
+                "room": room_id,
+                "thread_tag": "cli-read-test",
+                "offset": null,
+                "limit": null,
+                "since": null,
+                "before": null,
+                "actor": null,
+                "post_id": null
+            }
+        }]),
+    )
+    .await;
+    let line_na = &no_auth["results"][0];
+    assert_eq!(line_na["ok"], false, "expected failure without bearer: {:?}", line_na);
+    assert_eq!(line_na["error"], "room not found");
+
+    let with_auth = rpc_batch(
+        &client,
+        addr,
+        Some(&bearer),
+        serde_json::json!([{
+            "GetForumThread": {
+                "room": room_id,
+                "thread_tag": "cli-read-test",
+                "offset": null,
+                "limit": null,
+                "since": null,
+                "before": null,
+                "actor": null,
+                "post_id": null
+            }
+        }]),
+    )
+    .await;
+    let line_ok = &with_auth["results"][0];
+    assert_eq!(line_ok["ok"], true, "expected success with bearer: {:?}", line_ok);
+    let total = line_ok["result"]["ForumThread"]["total"].as_u64().unwrap();
+    assert!(total >= 1);
+}
+
 #[tokio::test]
 async fn test_private_room_read_requires_explicit_view_capability() {
     let (addr, _tmp, _log, _handle) = create_test_server().await;
