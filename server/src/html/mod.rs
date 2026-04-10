@@ -1,4 +1,5 @@
 use axum::{
+    body::Body,
     extract::Path,
     http::{header, StatusCode},
     response::{IntoResponse, Response},
@@ -17,7 +18,8 @@ use breadcrumb_path::OntologyPath;
 pub use auth::{auth_complete_page, auth_signed_in_fragment, choose_username_error_fragment, choose_username_page};
 pub use editor::{editor_check, editor_page};
 pub use forum::{
-    home, room_page, room_thread_post_expand, room_thread_post_view, room_thread_view, thread_feed_html,
+    home, room_page, room_thread_post_expand, room_thread_post_view, room_thread_view,
+    thread_feed_html, thread_feed_html_for_room, thread_feed_region_markup,
     thread_post_expand, thread_post_view, thread_view,
 };
 pub use garden::{garden_index, ontology_path};
@@ -46,6 +48,110 @@ pub async fn serve_theme_css(Path(filename): Path<String>) -> impl IntoResponse 
         .body(css.to_string())
         .unwrap()
         .into_response()
+}
+
+pub(crate) fn js_string_literal(s: &str) -> String {
+    serde_json::to_string(s).expect("javascript string escaping")
+}
+
+pub(crate) struct JsBuilder {
+    snippets: Vec<String>,
+}
+
+pub(crate) struct JsQueryBuilder {
+    builder: JsBuilder,
+    expr: String,
+}
+
+impl JsBuilder {
+    pub(crate) fn new() -> Self {
+        Self { snippets: Vec::new() }
+    }
+
+    pub(crate) fn morph_selector(self, selector: &str, markup: Markup) -> Self {
+        self.morph_expr(
+            &format!("document.querySelector({})", js_string_literal(selector)),
+            markup,
+            None,
+        )
+    }
+
+    pub(crate) fn morph_expr(mut self, expr: &str, markup: Markup, morph_style: Option<&str>) -> Self {
+        let html = js_string_literal(&markup.into_string());
+        let opts = morph_style
+            .map(|style| format!(", {{morphStyle: {}}}", js_string_literal(style)))
+            .unwrap_or_default();
+        self.snippets.push(format!(
+            "var __slugEl = {expr}; if (__slugEl) {{ Idiomorph.morph(__slugEl, {html}{opts}); }}",
+        ));
+        self
+    }
+
+    pub(crate) fn qs(self, selector: &str) -> JsQueryBuilder {
+        JsQueryBuilder {
+            builder: self,
+            expr: format!("document.querySelector({})", js_string_literal(selector)),
+        }
+    }
+
+    pub(crate) fn id(self, id: &str) -> JsQueryBuilder {
+        self.qs(&format!("#{id}"))
+    }
+
+    pub(crate) fn if_current_path_matches(mut self, path: &str, f: impl FnOnce(JsBuilder) -> JsBuilder) -> Self {
+        let inner = f(JsBuilder::new()).build();
+        self.snippets.push(format!(
+            "var __slugHere = window.location.pathname + window.location.search; var __slugPath = {path}; if (__slugHere === __slugPath || __slugHere.indexOf(__slugPath + '?') === 0) {{ {inner} }}",
+            path = js_string_literal(path),
+        ));
+        self
+    }
+
+    pub(crate) fn redirect(mut self, to: &str) -> Self {
+        self.snippets
+            .push(format!("window.location = {};", js_string_literal(to)));
+        self
+    }
+
+    pub(crate) fn build(self) -> String {
+        self.snippets.join(" ")
+    }
+
+    pub(crate) fn into_response(self) -> Response {
+        Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "text/javascript; charset=utf-8")
+            .body(Body::from(self.build()))
+            .unwrap()
+    }
+}
+
+impl JsQueryBuilder {
+    pub(crate) fn morph(mut self, markup: Markup) -> JsBuilder {
+        let html = js_string_literal(&markup.into_string());
+        self.builder.snippets.push(format!(
+            "var __slugTarget = {expr}; if (__slugTarget) {{ Idiomorph.morph(__slugTarget, {html}); }}",
+            expr = self.expr,
+        ));
+        self.builder
+    }
+
+    pub(crate) fn morph_inner(mut self, markup: Markup) -> JsBuilder {
+        let html = js_string_literal(&markup.into_string());
+        self.builder.snippets.push(format!(
+            "var __slugTarget = {expr}; if (__slugTarget) {{ Idiomorph.morph(__slugTarget, {html}, {{morphStyle: 'innerHTML'}}); }}",
+            expr = self.expr,
+        ));
+        self.builder
+    }
+
+    pub(crate) fn reset(mut self) -> JsBuilder {
+        self.builder.snippets.push(format!(
+            "var __slugTarget = {expr}; if (__slugTarget) {{ __slugTarget.reset(); }}",
+            expr = self.expr,
+        ));
+        self.builder
+    }
 }
 
 pub(super) fn layout(title: &str, view: &str, body: Markup, views: Option<u64>) -> Markup {
@@ -114,28 +220,21 @@ script { (maud::PreEscaped(r#"
                             setSpread(parseFloat(this.value));
                         });
 
-                        // Poem: intercept POST forms, send via fetch, await SSE for DOM update.
-                        // If the response body is non-empty HTML, morph the form's innerHTML with it
-                        // (used for inline feedback without a page reload, e.g. auth forms).
+                        // Intercept POST forms and eval the server's JS response body.
                         document.addEventListener('submit', async (e) => {
                             const f = e.target;
                             if (!f || f.tagName !== 'FORM') return;
                             if ((f.method || 'get').toLowerCase() !== 'post') return;
                             e.preventDefault();
-                            const btn = f.querySelector('button[type="submit"], input[type="submit"]');
-                            if (btn) { btn.disabled = true; btn.textContent = '…'; }
                             const resp = await fetch(f.action, {
                                 method: 'POST',
                                 body: new URLSearchParams(new FormData(f)),
                                 headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
                                 credentials: 'same-origin',
                             });
-                            const html = await resp.text();
-                            if (html && html.trim()) {
-                                Idiomorph.morph(f, html, {morphStyle: 'innerHTML'});
-                            } else {
-                                if (btn) { btn.disabled = false; btn.textContent = 'submit'; }
-                                f.reset();
+                            const js = await resp.text();
+                            if (js && js.trim()) {
+                                eval(js);
                             }
                         });
 
@@ -164,13 +263,14 @@ script { (maud::PreEscaped(r#"
                             });
                         })();
 
-                        // Poem: SSE morph.
+                        // SSE: evaluate server-pushed JavaScript snippets.
                         (function connectSSE() {
-                            const es = new EventSource('/sse');
+                            const ssePath = window.location.pathname + window.location.search;
+                            const es = new EventSource('/sse?path=' + encodeURIComponent(ssePath));
                             es.onmessage = (e) => {
-                                const [sel, ...rest] = e.data.split('\n');
-                                const el = document.querySelector(sel);
-                                if (el) Idiomorph.morph(el, rest.join('\n'));
+                                if (e.data && e.data.trim()) {
+                                    eval(e.data);
+                                }
                             };
                             es.onerror = () => { es.close(); setTimeout(connectSSE, 3000); };
                         })();

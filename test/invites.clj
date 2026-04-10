@@ -146,5 +146,3 @@
      (do (println (str "\n" common/ansi-red "━━━ " fail " invite checks FAILED ━━━" common/ansi-reset "\n"))
          (System/exit 1)))))
 
-(when (= *file* (System/getProperty "babashka.file"))
-  (invites-test))

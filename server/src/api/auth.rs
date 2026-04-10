@@ -15,7 +15,10 @@ use tokio::sync::RwLock;
 use crate::{
     api::helpers::{api_error, now_ms, sha256_hex},
     events::{Event, GrantAdded, TokenIssued, UserRegistered},
-    html::{auth_complete_page, auth_signed_in_fragment, choose_username_error_fragment, choose_username_page},
+    html::{
+        auth_complete_page, auth_signed_in_fragment, choose_username_error_fragment,
+        choose_username_page, JsBuilder,
+    },
     identity::{parse_agent, parse_username},
     reducer::ReducerState,
     state::{AppState, PendingSession},
@@ -36,6 +39,25 @@ pub fn session_cookie_header_value(bearer: &str) -> HeaderValue {
         "{SLUG_SESSION_COOKIE}={bearer}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000"
     );
     HeaderValue::from_str(&s).expect("session cookie value must be ASCII")
+}
+
+fn js_form_error_fragment(session: &str, error: &str) -> Response {
+    JsBuilder::new()
+        .id("choose-username-form")
+        .morph_inner(choose_username_error_fragment(session, error))
+        .into_response()
+}
+
+fn js_signed_in_fragment(bearer: &str) -> Response {
+    let mut response = JsBuilder::new()
+        .id("choose-username-form")
+        .morph_inner(auth_signed_in_fragment())
+        .redirect("/auth/complete")
+        .into_response();
+    response
+        .headers_mut()
+        .insert(header::SET_COOKIE, session_cookie_header_value(bearer));
+    response
 }
 
 /// Resolve the signed-in username from `Authorization: Bearer` or `slug_session` cookie.
@@ -378,7 +400,7 @@ pub async fn post_choose_username(
 ) -> impl IntoResponse {
     let canon_user = match parse_username(&form.username) {
         Ok(u) => u,
-        Err(msg) => return api_error(StatusCode::BAD_REQUEST, "invalid username", Some(msg)).into_response(),
+        Err(msg) => return js_form_error_fragment(&form.session, &format!("invalid username — {msg}")).into_response(),
     };
 
     let sessions = pending_sessions(&state);
@@ -388,27 +410,28 @@ pub async fn post_choose_username(
             return api_error(StatusCode::NOT_FOUND, "unknown session", None).into_response();
         };
         let Some(provider) = s.provider.clone() else {
-            return api_error(StatusCode::BAD_REQUEST, "oauth not completed", None).into_response();
+            return js_form_error_fragment(&form.session, "oauth not completed").into_response();
         };
         let Some(provider_id) = s.provider_id.clone() else {
-            return api_error(StatusCode::BAD_REQUEST, "oauth not completed", None).into_response();
+            return js_form_error_fragment(&form.session, "oauth not completed").into_response();
         };
         (provider, provider_id, s.agent.clone())
     };
 
     if let Err(msg) = parse_agent(&agent) {
-        return api_error(StatusCode::BAD_REQUEST, "invalid agent format", Some(msg)).into_response();
+        return js_form_error_fragment(&form.session, &format!("invalid agent format — {msg}")).into_response();
     }
 
     let reduced_arc = state.reduced.clone();
     let reduced = reduced_arc.read().await;
     let provider_key = (provider.to_lowercase(), provider_id.clone());
     if reduced.users_by_provider.contains_key(&provider_key) {
-        return api_error(StatusCode::CONFLICT, "provider already registered", None).into_response();
+        return js_form_error_fragment(&form.session, "provider already registered").into_response();
     }
     if reduced.users_by_provider.values().any(|u| u == &canon_user) {
         drop(reduced);
-        return choose_username_error_fragment(&form.session, "that username is taken — try another").into_response();
+        return js_form_error_fragment(&form.session, "that username is taken — try another")
+            .into_response();
     }
     drop(reduced);
 
@@ -454,13 +477,7 @@ pub async fn post_choose_username(
         s.complete = Some((canon_user.clone(), bearer.clone()));
     }
 
-    Response::builder()
-        .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
-        .header(header::SET_COOKIE, session_cookie_header_value(&bearer))
-        .body(Body::from(auth_signed_in_fragment().into_string()))
-        .unwrap()
-        .into_response()
+    js_signed_in_fragment(&bearer).into_response()
 }
 
 /// Start a browser-only OAuth flow (no CLI polling). Sets session cookie on success.

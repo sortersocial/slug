@@ -1,7 +1,7 @@
 use axum::{
     extract::State,
-    http::{HeaderMap, StatusCode},
-    response::{Html, IntoResponse, Redirect},
+    http::{header, HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
     Form,
 };
 use axum_extra::extract::cookie::CookieJar;
@@ -14,7 +14,7 @@ use crate::{
         rpc::rpc_post_with_bearer,
     },
     canonical_path::canonicalize_tag,
-    html::layout,
+    html::JsBuilder,
     state::AppState,
 };
 
@@ -34,8 +34,35 @@ fn post_redirect_location(room: &str, thread_tag: &str) -> String {
         let Some((a, b)) = room.split_once('/') else {
             return "/".to_string();
         };
-        format!("/r/{a}/{b}/{tag}")
+        format!("/r/{a}/{b}/t/{tag}")
     }
+}
+
+fn js_quote(s: &str) -> String {
+    serde_json::to_string(s).expect("js string escaping must succeed")
+}
+
+fn js_redirect(to: &str) -> Response {
+    let js = format!("window.location = {};", js_quote(to));
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/javascript; charset=utf-8")
+        .body(axum::body::Body::from(js))
+        .unwrap()
+}
+
+fn js_error(title: &str, detail: &str) -> Response {
+    let markup = maud::html! {
+        div id="errors" {
+            p class="auth-error" { (title) }
+            @if !detail.is_empty() {
+                pre class="muted" { (detail) }
+            }
+        }
+    };
+    JsBuilder::new()
+        .morph_selector("#errors", markup)
+        .into_response()
 }
 
 pub async fn post_web_ingest(
@@ -45,9 +72,9 @@ pub async fn post_web_ingest(
     Form(form): Form<WebPostForm>,
 ) -> impl IntoResponse {
     let reduced = state.reduced.read().await;
-    let Some(username) = optional_principal(&headers, &jar, &reduced) else {
+    let Some(_username) = optional_principal(&headers, &jar, &reduced) else {
         drop(reduced);
-        return Redirect::temporary("/login").into_response();
+        return js_redirect("/login").into_response();
     };
 
     let bearer = headers
@@ -59,7 +86,7 @@ pub async fn post_web_ingest(
     drop(reduced);
 
     let Some(bearer) = bearer else {
-        return Redirect::temporary("/login").into_response();
+        return js_redirect("/login").into_response();
     };
 
     let room = form.room.trim().to_string();
@@ -67,41 +94,13 @@ pub async fn post_web_ingest(
     let text = form.text.clone();
 
     if text.trim().is_empty() {
-        return error_page(
-            "empty post",
-            "Write something in the text area (DSL / prose).",
-            &username,
-        )
-        .into_response();
+        return js_error("empty post", "Write something in the text area (DSL / prose).")
+            .into_response();
     }
 
     match rpc_post_with_bearer(&state, &bearer, room.clone(), thread_tag.clone(), text).await {
-        Ok(RpcResult::PostOk { .. }) => {
-            Redirect::to(&post_redirect_location(&room, &thread_tag)).into_response()
-        }
-        Ok(_) => error_page("unexpected response", "Post did not return PostOk.", &username).into_response(),
-        Err((msg, hint)) => error_page(
-            &msg,
-            hint.as_deref().unwrap_or(""),
-            &username,
-        )
-        .into_response(),
+        Ok(RpcResult::PostOk { .. }) => js_redirect(&post_redirect_location(&room, &thread_tag)).into_response(),
+        Ok(_) => js_error("unexpected response", "Post did not return PostOk.").into_response(),
+        Err((msg, hint)) => js_error(&msg, hint.as_deref().unwrap_or("")).into_response(),
     }
-}
-
-fn error_page(title: &str, detail: &str, user: &str) -> impl IntoResponse {
-    use maud::html;
-    let body = html! {
-        nav class="breadcrumb" {
-            a href="/" { "slug.social" }
-        }
-        h1 { "could not post" }
-        p { (title) }
-        @if !detail.is_empty() {
-            pre class="muted" { (detail) }
-        }
-        p class="muted" { "signed in as @" (user) " · " a href="/" { "home" } }
-    };
-    let page = layout("post error — slug.social", "view-thread", body, None);
-    (StatusCode::BAD_REQUEST, Html(page.into_string()))
 }

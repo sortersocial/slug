@@ -1,7 +1,7 @@
 use axum::{
     extract::{Path, Query, State},
-    http::{header, HeaderMap, StatusCode},
-    response::{Html, IntoResponse, Response},
+    http::{HeaderMap, StatusCode},
+    response::{Html, IntoResponse},
 };
 use axum_extra::extract::cookie::CookieJar;
 use maud::{html, Markup};
@@ -18,7 +18,7 @@ use crate::{
 
 use super::{
     authorship_address, bc_segment, bc_threads, cli_panel, layout, now_ms, recency_class,
-    render_linkified_with_embeds,
+    render_linkified_with_embeds, JsBuilder,
 };
 
 #[derive(Clone)]
@@ -29,12 +29,13 @@ struct ThreadRow {
     ingests: usize,
 }
 
-/// URL prefix for thread pages: public `/t/…` or room `/r/{short}/{slug}/…`.
+/// URL helpers for public `/t/…` and private room threads `/r/{short}/{slug}/t/…`.
 #[derive(Clone)]
 pub struct ThreadNav {
     pub room_wire: String,
     scope: ScopeId,
-    path_prefix: String,
+    room_path: String,
+    thread_path_prefix: String,
 }
 
 impl ThreadNav {
@@ -42,7 +43,8 @@ impl ThreadNav {
         Self {
             room_wire: "public".into(),
             scope: ScopeId::Public,
-            path_prefix: "/t".into(),
+            room_path: "/t".into(),
+            thread_path_prefix: "/t".into(),
         }
     }
 
@@ -55,7 +57,8 @@ impl ThreadNav {
         Some(Self {
             room_wire: room_id.to_string(),
             scope: ScopeId::Room(room_id.to_string()),
-            path_prefix: format!("/r/{short}/{slug}"),
+            room_path: format!("/r/{short}/{slug}"),
+            thread_path_prefix: format!("/r/{short}/{slug}/t"),
         })
     }
 
@@ -63,8 +66,12 @@ impl ThreadNav {
         self.scope.clone()
     }
 
+    fn room_url(&self) -> &str {
+        &self.room_path
+    }
+
     fn thread_url(&self, tag: &str) -> String {
-        format!("{}/{}", self.path_prefix, tag)
+        format!("{}/{}", self.thread_path_prefix, tag)
     }
 
     fn thread_page_url(&self, tag: &str, offset: usize) -> String {
@@ -77,11 +84,11 @@ impl ThreadNav {
     }
 
     fn post_url(&self, tag: &str, idx: usize) -> String {
-        format!("{}/{}/{}", self.path_prefix, tag, idx)
+        format!("{}/{}/{}", self.thread_path_prefix, tag, idx)
     }
 
     fn expand_url(&self, tag: &str, idx: usize) -> String {
-        format!("{}/{}/{}/expand", self.path_prefix, tag, idx)
+        format!("{}/{}/{}/expand", self.thread_path_prefix, tag, idx)
     }
 }
 
@@ -196,14 +203,14 @@ fn bc_room(nav: &ThreadNav, room_slug: &str, thread_tag: Option<&str>) -> Markup
         @if let Some(t) = thread_tag {
             (bc_segment(
                 &format!("r / {room_slug}"),
-                &nav.path_prefix,
+                nav.room_url(),
                 false,
             ))
             (bc_segment(&format!("#{t}"), &nav.thread_url(t), true))
         } @else {
             (bc_segment(
                 &format!("r / {room_slug}"),
-                &nav.path_prefix,
+                nav.room_url(),
                 true,
             ))
         }
@@ -215,9 +222,10 @@ fn compose_form(nav: &ThreadNav, thread_tag: &str, show: bool) -> Markup {
         return html! {};
     }
     html! {
-        section class="compose" {
+        section class="compose" id="thread-compose" {
             h3 { "reply" }
             p class="muted" { "Uses the same ingest DSL as the CLI. You must be logged in." }
+            div id="errors" {}
             form method="POST" action="/post" {
                 input type="hidden" name="room" value=(nav.room_wire.clone());
                 input type="hidden" name="thread_tag" value=(thread_tag);
@@ -235,9 +243,10 @@ fn new_thread_form_public(show: bool) -> Markup {
         return html! {};
     }
     html! {
-        section class="compose" {
+        section class="compose" id="public-new-thread-compose" {
             h3 { "new public thread" }
             p class="muted" { "Set thread tag and body. Example: start with a title line or use the CLI-shaped DSL." }
+            div id="errors" {}
             form method="POST" action="/post" {
                 input type="hidden" name="room" value="public";
                 label for="new-thread-tag" { "thread tag" }
@@ -250,8 +259,8 @@ fn new_thread_form_public(show: bool) -> Markup {
     }
 }
 
-/// Returns the current public thread feed HTML fragment for SSE (`#thread-feed`).
-pub async fn thread_feed_html(state: &AppState) -> String {
+/// Returns the current public thread feed markup for SSE (`#thread-feed`).
+pub async fn thread_feed_html(state: &AppState) -> Markup {
     let now = now_ms();
     let nav = ThreadNav::public();
     let mut rows = {
@@ -259,7 +268,96 @@ pub async fn thread_feed_html(state: &AppState) -> String {
         collect_thread_rows_for_scope(&reduced, &ScopeId::Public, now)
     };
     rows.sort_by(|a, b| b.last_ts.cmp(&a.last_ts));
-    render_thread_feed(Some(&nav), "thread-feed", &rows, now).into_string()
+    render_thread_feed(Some(&nav), "thread-feed", &rows, now)
+}
+
+/// Returns the current private room thread feed markup for SSE (`#room-thread-feed`).
+pub async fn thread_feed_html_for_room(state: &AppState, room_id: &str) -> Markup {
+    let now = now_ms();
+    let Some(nav) = ThreadNav::from_room_id(room_id) else {
+        return html! { div id="room-thread-feed" { p class="muted" { "room not found" } } };
+    };
+    let mut rows = {
+        let reduced = state.reduced.read().await;
+        collect_thread_rows_for_scope(&reduced, &ScopeId::Room(room_id.to_string()), now)
+    };
+    rows.sort_by(|a, b| b.last_ts.cmp(&a.last_ts));
+    render_thread_feed(Some(&nav), "room-thread-feed", &rows, now)
+}
+
+fn render_thread_feed_region_markup(
+    nav: &ThreadNav,
+    tag: &str,
+    display_ingests: &[crate::events::Ingest],
+    offset: usize,
+    total: usize,
+    now: i64,
+) -> Markup {
+    let paginator_top = render_thread_paginator(nav, tag, offset, total, true);
+    let paginator_bot = render_thread_paginator(nav, tag, offset, total, false);
+    html! {
+        div id="thread-feed-region" {
+            @if display_ingests.is_empty() {
+                p class="muted" { "no activity yet" }
+            } @else {
+                (paginator_top)
+                @for (i, ing) in display_ingests.iter().enumerate() {
+                    @let post_idx = offset + i;
+                    @let post_href = nav.post_url(tag, post_idx);
+                    @let hover = timeago::rfc3339_utc(ing.ts);
+                    @let ago = timeago::timeago(now, ing.ts);
+                    @let truncated = ing.raw.len() > 2000;
+                    @let display_body = if truncated { &ing.raw[..2000] } else { &ing.raw[..] };
+                    div class="ingest-entry" data-ingest-id=(ing.id) {
+                        div class="ingest-meta muted" title=(hover) {
+                            a href=(post_href) class="post-num" { "#" (post_idx) }
+                            " · "
+                            (ago)
+                        }
+                        (render_linkified_with_embeds(display_body))
+                        @if truncated {
+                            @let exp = nav.expand_url(tag, post_idx);
+                            a href="#" class="show-full-link"
+                              onclick=(format!("fetch('{exp}').then(r=>r.text()).then(eval);return false")) {
+                                "[show full post]"
+                            }
+                        }
+                    }
+                }
+                (paginator_bot)
+            }
+        }
+    }
+}
+
+pub async fn thread_feed_region_markup(state: &AppState, room_id: Option<&str>, tag: &str) -> Markup {
+    let tag = canonicalize_tag(tag);
+    let Some(nav) = (match room_id {
+        Some(room_id) => ThreadNav::from_room_id(room_id),
+        None => Some(ThreadNav::public()),
+    }) else {
+        return html! { div id="thread-feed-region" { p class="muted" { "thread not found" } } };
+    };
+    let scope = nav.scope();
+    let all_ids: Vec<String> = {
+        let reduced = state.reduced.read().await;
+        reduced
+            .ingests_by_scope_thread
+            .get(&(scope.clone(), tag.clone()))
+            .map(|q| q.iter().rev().cloned().collect())
+            .unwrap_or_default()
+    };
+    let total = all_ids.len();
+    let offset = total.saturating_sub(PAGE_SIZE);
+    let page_ids: Vec<String> = all_ids.into_iter().skip(offset).take(PAGE_SIZE).collect();
+    let display_ingests = {
+        let reduced = state.reduced.read().await;
+        page_ids
+            .iter()
+            .filter_map(|id| reduced.ingests_by_id.get(id).cloned())
+            .collect::<Vec<_>>()
+    };
+    render_thread_feed_region_markup(&nav, &tag, &display_ingests, offset, total, now_ms())
 }
 
 /// Home: private rooms (signed-in), then public bump-ordered threads.
@@ -298,7 +396,7 @@ pub async fn home(
                         @if let Some(nav_r) = ThreadNav::from_room_id(rid) {
                             @let slug = if let Some((_, s)) = rid.split_once('/') { s } else { rid.as_str() };
                             li {
-                                a href=(nav_r.path_prefix) {
+                                a href=(nav_r.room_url()) {
                                     (slug)
                                     span class="muted" { " · " (rid) }
                                 }
@@ -437,36 +535,40 @@ async fn thread_view_inner(
             nav class="breadcrumb" { (bc) }
             h2 { "#" (tag) @if let Some(sub) = &subtitle { ": " (sub) } }
             p class="muted" { "top=oldest · bottom=newest" }
-            @if display_ingests.is_empty() {
-                p class="muted" { "no activity yet" }
-            } @else {
-                (paginator_top)
-                @for (i, ing) in display_ingests.iter().enumerate() {
-                    @let post_idx = offset + i;
-                    @let post_href = nav.post_url(&tag, post_idx);
-                    @let hover = timeago::rfc3339_utc(ing.ts);
-                    @let ago = timeago::timeago(now, ing.ts);
-                    @let truncated = ing.raw.len() > 2000;
-                    @let display_body = if truncated { &ing.raw[..2000] } else { &ing.raw[..] };
-                    div class="ingest-entry" data-ingest-id=(ing.id) {
-                        div class="ingest-meta muted" title=(hover) {
-                            a href=(post_href) class="post-num" { "#" (post_idx) }
-                            " · "
-                            (ago)
-                        }
-                        (render_linkified_with_embeds(display_body))
-                        @if truncated {
-                            @let exp = nav.expand_url(&tag, post_idx);
-                            a href="#" class="show-full-link"
-                              onclick=(format!("fetch('{exp}').then(r=>r.text()).then(eval);return false")) {
-                                "[show full post]"
+            div id="thread-feed-region" {
+                @if display_ingests.is_empty() {
+                    p class="muted" { "no activity yet" }
+                } @else {
+                    (paginator_top)
+                    @for (i, ing) in display_ingests.iter().enumerate() {
+                        @let post_idx = offset + i;
+                        @let post_href = nav.post_url(&tag, post_idx);
+                        @let hover = timeago::rfc3339_utc(ing.ts);
+                        @let ago = timeago::timeago(now, ing.ts);
+                        @let truncated = ing.raw.len() > 2000;
+                        @let display_body = if truncated { &ing.raw[..2000] } else { &ing.raw[..] };
+                        div class="ingest-entry" data-ingest-id=(ing.id) {
+                            div class="ingest-meta muted" title=(hover) {
+                                a href=(post_href) class="post-num" { "#" (post_idx) }
+                                " · "
+                                (ago)
+                            }
+                            (render_linkified_with_embeds(display_body))
+                            @if truncated {
+                                @let exp = nav.expand_url(&tag, post_idx);
+                                a href="#" class="show-full-link"
+                                  onclick=(format!("fetch('{exp}').then(r=>r.text()).then(eval);return false")) {
+                                    "[show full post]"
+                                }
                             }
                         }
                     }
+                    (paginator_bot)
                 }
-                (paginator_bot)
             }
-            (compose_form(&nav, &tag, show_compose))
+            div id="thread-live-region" {
+                (compose_form(&nav, &tag, show_compose))
+            }
             (cli_panel(&cli))
         },
         None,
@@ -485,7 +587,7 @@ pub async fn thread_view(
     thread_view_inner(state, tag, q, ThreadNav::public(), headers, jar).await
 }
 
-/// Room thread — `/r/:short/:slug/:tag`
+/// Room thread — `/r/:short/:slug/t/:tag`
 pub async fn room_thread_view(
     State(state): State<AppState>,
     Path((room_short, room_slug, tag)): Path<(String, String, String)>,
@@ -580,8 +682,9 @@ fn new_thread_form_for_room(nav: &ThreadNav, show: bool) -> Markup {
         return html! {};
     }
     html! {
-        section class="compose" {
+        section class="compose" id="room-new-thread-compose" {
             h3 { "new thread in this room" }
+            div id="errors" {}
             form method="POST" action="/post" {
                 input type="hidden" name="room" value=(nav.room_wire.clone());
                 label for="room-new-tag" { "thread tag" }
@@ -720,23 +823,12 @@ async fn thread_post_expand_inner(
         }
     };
 
-    let full_html_str = full_html.into_string();
-    let escaped = full_html_str
-        .replace('\\', "\\\\")
-        .replace('`', "\\`")
-        .replace("${", "\\${");
-
-    let ingest_id_escaped = ing.id.replace('\\', "\\\\").replace('\'', "\\'");
-
-    let js = format!(
-        "Idiomorph.morph(document.querySelector('[data-ingest-id=\"{ingest_id_escaped}\"]'), `{escaped}`)"
-    );
-
-    Response::builder()
-        .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, "text/javascript; charset=utf-8")
-        .body(axum::body::Body::from(js))
-        .unwrap()
+    JsBuilder::new()
+        .morph_selector(
+            &format!("[data-ingest-id=\"{}\"]", ing.id),
+            full_html,
+        )
+        .into_response()
         .into_response()
 }
 

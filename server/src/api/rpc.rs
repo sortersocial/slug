@@ -16,6 +16,7 @@ use crate::{
     events::{
         AgentBound, Event, GrantAdded, GrantRevoked, Ingest, RoomCreated, ThreadCapability,
     },
+    html::JsBuilder,
     identity::{parse_agent, parse_username},
     path_types::CanonicalItemUrl,
     ranking::{connected_components_from_voted_pairs, ranked_items_subset},
@@ -38,6 +39,45 @@ fn empty_content() -> &'static crate::reducer::ContentState {
 fn content_for_room<'a>(reduced: &'a ReducerState, room: &str) -> &'a crate::reducer::ContentState {
     let scope = scope_from_room_wire(room);
     reduced.content.get(&scope).unwrap_or(empty_content())
+}
+
+async fn broadcast_web_refresh(state: &AppState, room_key: &str, thread_id: &str) {
+    let feed_id = if room_key == "public" { "thread-feed" } else { "room-thread-feed" };
+    let thread_url = if room_key == "public" {
+        format!("/t/{thread_id}")
+    } else if let Some((short, slug)) = room_key.split_once('/') {
+        format!("/r/{short}/{slug}/t/{thread_id}")
+    } else {
+        format!("/t/{thread_id}")
+    };
+
+    let feed_markup = if room_key == "public" {
+        crate::html::thread_feed_html(state).await
+    } else {
+        crate::html::thread_feed_html_for_room(state, room_key).await
+    };
+
+    let thread_feed_markup = crate::html::thread_feed_region_markup(state, Some(room_key), thread_id).await;
+
+    let builder = JsBuilder::new().morph_selector(&format!("#{feed_id}"), feed_markup);
+    let builder = if room_key == "public" {
+        builder.qs("#public-new-thread-compose form").reset()
+    } else {
+        builder.qs("#room-new-thread-compose form").reset()
+    };
+    let builder = builder.if_current_path_matches(&thread_url, |builder| {
+        builder.morph_selector("#thread-feed-region", thread_feed_markup)
+    });
+    let js = builder.build();
+    let mut path_prefixes = vec![if room_key == "public" {
+        "/".to_string()
+    } else if let Some((short, slug)) = room_key.split_once('/') {
+        format!("/r/{short}/{slug}")
+    } else {
+        "/".to_string()
+    }];
+    path_prefixes.push(thread_url.clone());
+    let _ = state.js_tx.send(crate::state::JsSnippet { code: js, path_prefixes });
 }
 
 type RpcErr = (String, Option<String>);
@@ -420,6 +460,8 @@ async fn rpc_post(
         let mut reduced = reduced_arc.write().await;
         reduced.apply_event(ingest_event);
     }
+
+    broadcast_web_refresh(state, &room_key, &thread_id).await;
 
     let ranking_changes: Option<Vec<ScopeRankChanges>> = if return_rank_diff && !voted_parent_scopes.is_empty() {
         let reduced = reduced_arc.read().await;

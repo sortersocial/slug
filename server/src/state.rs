@@ -36,13 +36,13 @@ pub struct StreamEvent {
     pub snippet: String,
 }
 
-/// An HTML fragment broadcast to web SSE subscribers (poem pattern).
-/// `selector` is a CSS selector identifying the morph target.
-/// `html` is the new HTML to morph into that element.
+/// JavaScript snippet broadcast to web SSE subscribers and `eval`'d client-side.
 #[derive(Debug, Clone)]
-pub struct HtmlFragment {
-    pub selector: String,
-    pub html: String,
+pub struct JsSnippet {
+    pub code: String,
+    /// Only deliver to SSE streams whose subscribed path matches one of these prefixes.
+    /// Empty means broadcast to all connected pages.
+    pub path_prefixes: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -61,15 +61,15 @@ pub struct AppState {
     pub invites: Arc<RwLock<HashMap<String, InviteState>>>,
     /// Broadcast channel for SSE live-streaming. Capacity = 64 events.
     pub stream_tx: broadcast::Sender<StreamEvent>,
-    /// Broadcast channel for web SSE HTML fragments (poem pattern). Capacity = 64.
-    pub html_tx: broadcast::Sender<HtmlFragment>,
+    /// Broadcast channel for web SSE JavaScript snippets. Capacity = 64.
+    pub js_tx: broadcast::Sender<JsSnippet>,
 }
 
 impl AppState {
     pub fn new(cfg: AppConfig) -> Self {
         let event_log = EventLog::new(cfg.event_log_path.clone());
         let (stream_tx, _) = broadcast::channel(64);
-        let (html_tx, _) = broadcast::channel(64);
+        let (js_tx, _) = broadcast::channel(64);
         Self {
             cfg: Arc::new(cfg),
             event_log: Arc::new(event_log),
@@ -77,7 +77,7 @@ impl AppState {
             pending_sessions: Arc::new(RwLock::new(HashMap::new())),
             invites: Arc::new(RwLock::new(HashMap::new())),
             stream_tx,
-            html_tx,
+            js_tx,
         }
     }
 }
