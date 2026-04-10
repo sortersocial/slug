@@ -757,10 +757,23 @@ fn write_secret_file(name: &str, contents: &str) -> Result<()> {
 async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
     let room = room.trim();
     let client = http_client()?;
+    // Private room RPC reads authorize via bearer; without it the server returns "room not found"
+    // (same as unknown room) to avoid enumeration. Public scope ignores the header.
+    let scoped_read_bearer: Option<String> = if room == "public" {
+        None
+    } else {
+        Some(effective_bearer().ok_or_else(|| {
+            anyhow!(
+                "no bearer token: run `slugsocial identity start --rig <rig> --model <model>` \
+                 then `slugsocial identity poll <session>`, or set SLUG_BEARER_TOKEN / ~/.config/slugsocial/token"
+            )
+        })?)
+    };
+    let scoped_read_bearer = scoped_read_bearer.as_deref();
     match sub {
         ScopedCmd::Garden { sub } => match sub {
             GardenCmd::Tree { json } => {
-                let batch = send_rpc(&client, base, None, vec![RpcCommand::GetLeaves { room: room.to_string() }]).await?;
+                let batch = send_rpc(&client, base, scoped_read_bearer, vec![RpcCommand::GetLeaves { room: room.to_string() }]).await?;
                 match rpc_line_ok(&batch.results[0])? {
                     RpcResult::Leaves(resp) => {
                         if json {
@@ -780,7 +793,7 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
                 let batch = send_rpc(
                     &client,
                     base,
-                    None,
+                    scoped_read_bearer,
                     vec![RpcCommand::GetGardenItem {
                         room: room.to_string(),
                         item_path: item_q,
@@ -812,7 +825,7 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
                 let batch = send_rpc(
                     &client,
                     base,
-                    None,
+                    scoped_read_bearer,
                     vec![RpcCommand::GetGardenRank {
                         room: room.to_string(),
                         parent_path: parent_param,
@@ -840,7 +853,7 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
                 let batch = send_rpc(
                     &client,
                     base,
-                    None,
+                    scoped_read_bearer,
                     vec![RpcCommand::GetPair {
                         room: room.to_string(),
                         parent_path: parent_q,
@@ -864,7 +877,7 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
                 let batch = send_rpc(
                     &client,
                     base,
-                    None,
+                    scoped_read_bearer,
                     vec![RpcCommand::GetMatchup {
                         room: room.to_string(),
                         item_path: item_q,
@@ -889,7 +902,7 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
                 let batch = send_rpc(
                     &client,
                     base,
-                    None,
+                    scoped_read_bearer,
                     vec![RpcCommand::GetRankHistory {
                         room: room.to_string(),
                         item_path: item_q,
@@ -911,7 +924,7 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
                 let batch = send_rpc(
                     &client,
                     base,
-                    None,
+                    scoped_read_bearer,
                     vec![RpcCommand::GetGlobalRank {
                         room: room.to_string(),
                         limit: Some(limit),
@@ -937,7 +950,7 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
                 let batch = send_rpc(
                     &client,
                     base,
-                    None,
+                    scoped_read_bearer,
                     vec![RpcCommand::ListForumThreads {
                         room: room.to_string(),
                     }],
@@ -971,7 +984,7 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
                 let batch = send_rpc(
                     &client,
                     base,
-                    None,
+                    scoped_read_bearer,
                     vec![RpcCommand::GetForumThread {
                         room: room.to_string(),
                         thread_tag,
@@ -1197,7 +1210,7 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
             let batch = send_rpc(
                 &client,
                 base,
-                None,
+                scoped_read_bearer,
                 vec![RpcCommand::Check {
                     room: room.to_string(),
                     text,
