@@ -211,14 +211,16 @@ section.compose {
   border: var(--bv-lg) solid;
   border-color: var(--hi) var(--lo) var(--lo) var(--hi);
   margin: 8px 0;
-  min-width: 320px;
   padding: 10px;
-  width: fit-content;
+  width: 100%;
+  min-width: 100%;
+  max-width: 100%;
 }
 section.compose form {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  width: 100%;
 }
 section.compose textarea {
   background: var(--g1);
@@ -227,11 +229,12 @@ section.compose textarea {
   color: var(--signal);
   font-family: monospace;
   font-size: 12px;
-  min-width: 320px;
   outline: none;
   padding: 6px 8px;
   resize: vertical;
   width: 100%;
+  min-width: 100%;
+  max-width: 100%;
 }
 section.compose textarea:focus {
   border-color: var(--lo) #666 #666 var(--lo);
@@ -494,7 +497,8 @@ div.ingest-entry {
   border: var(--bv) solid;
   border-color: var(--hi) var(--lo) var(--lo) var(--hi);
   margin: 0 0 5px;
-  width: fit-content;
+  width: 100%;
+  min-width: 100%;
   max-width: 100%;
 }
 /* Slug links in pre: always link-colored, no underline */
@@ -527,10 +531,12 @@ pre {
   font-size: 12px;
   margin: 0 0 6px;
   overflow-x: auto;
+  overflow-wrap: anywhere;
   padding: 8px 10px;
   white-space: pre-wrap;
-  word-break: break-all;
-  width: fit-content;
+  word-break: break-word;
+  width: 100%;
+  min-width: 100%;
   max-width: 100%;
 }
 .rich-embeds {
@@ -686,7 +692,8 @@ body.view-ontology-dark .ont-vote-entry {
   border: var(--bv-lg) solid;
   border-color: var(--hi) var(--lo) var(--lo) var(--hi);
   margin: 6px 0;
-  width: fit-content;
+  width: 100%;
+  min-width: 100%;
   max-width: 100%;
 }
 body.view-ontology-dark .ont-item-meta,
@@ -752,7 +759,8 @@ body.view-ontology-dark details.ont-related-votes {
   border: var(--bv-lg) solid;
   border-color: var(--hi) var(--lo) var(--lo) var(--hi);
   margin: 6px 0;
-  width: fit-content;
+  width: 100%;
+  min-width: 100%;
   max-width: 100%;
 }
 body.view-ontology-dark details.ont-related-votes > summary {
@@ -828,7 +836,8 @@ body.view-ontology-light .ont-item-shell {
   border: var(--bv-lg) solid;
   border-color: var(--hi) var(--lo) var(--lo) var(--hi);
   margin: 6px 0;
-  width: fit-content;
+  width: 100%;
+  min-width: 100%;
   max-width: 100%;
 }
 body.view-ontology-light .ont-group-shell,
@@ -836,7 +845,8 @@ body.view-ontology-light .ont-vote-entry {
   background: var(--g2);
   border: 1px solid var(--lo);
   margin: 6px 0;
-  width: fit-content;
+  width: 100%;
+  min-width: 100%;
   max-width: 100%;
 }
 body.view-ontology-light .ont-item-meta,
@@ -901,7 +911,8 @@ body.view-ontology-light details.ont-related-votes {
   background: var(--g2);
   border: 1px solid var(--lo);
   margin: 6px 0;
-  width: fit-content;
+  width: 100%;
+  min-width: 100%;
   max-width: 100%;
 }
 body.view-ontology-light details.ont-related-votes > summary {
@@ -1006,7 +1017,8 @@ body.view-ontology-dark details.ont-rank-history {
   border: var(--bv-lg) solid;
   border-color: var(--hi) var(--lo) var(--lo) var(--hi);
   margin: 6px 0;
-  width: fit-content;
+  width: 100%;
+  min-width: 100%;
   max-width: 100%;
 }
 body.view-ontology-dark details.ont-rank-history > summary {

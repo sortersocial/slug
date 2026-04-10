@@ -293,7 +293,7 @@ fn compose_form(nav: &ThreadNav, thread_tag: &str, show: bool) -> Markup {
                 input type="hidden" name="thread_tag" value=(thread_tag);
                 input type="hidden" name="error_target" value="thread-compose-errors";
                 input type="hidden" name="form_id" value="thread-compose-form";
-                textarea name="text" rows="8" cols="80" placeholder="prose or ~/items and votes…" {}
+                textarea name="text" rows="5" cols="80" placeholder="prose or ~/items and votes…" {}
                 p {
                     button type="submit" { "post" }
                 }
@@ -328,7 +328,7 @@ fn new_thread_form_public(show: bool) -> Markup {
                 label for="new-thread-tag" { "thread tag" }
                 input type="text" id="new-thread-tag" name="thread_tag" pattern="[a-z0-9_\\-]{1,64}" placeholder="my-topic";
                 label for="new-thread-text" { "text" }
-                textarea id="new-thread-text" name="text" rows="6" placeholder="#my-topic\n\nYour first post…" {}
+                textarea id="new-thread-text" name="text" rows="4" placeholder="#my-topic\n\nYour first post…" {}
                 p { button type="submit" { "create / post" } }
             }
         }
@@ -806,7 +806,7 @@ fn new_thread_form_for_room(nav: &ThreadNav, show: bool) -> Markup {
                 input type="hidden" name="form_id" value="room-new-thread-form";
                 label for="room-new-tag" { "thread tag" }
                 input type="text" id="room-new-tag" name="thread_tag" pattern="[a-z0-9_\\-]{1,64}" required;
-                textarea name="text" rows="6" placeholder="First post body…" required {}
+                textarea name="text" rows="4" placeholder="First post body…" required {}
                 p { button type="submit" { "post" } }
             }
         }

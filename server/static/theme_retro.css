@@ -66,11 +66,13 @@ p.auth-success { color: #00ff41; font-family: monospace; font-size: 0.8rem; marg
 
 .compose {
   margin: 1rem 0;
+  width: 100%;
 }
 .compose form {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
+  width: 100%;
 }
 .compose textarea,
 .compose input[type="text"] {
@@ -81,6 +83,7 @@ p.auth-success { color: #00ff41; font-family: monospace; font-size: 0.8rem; marg
   font-size: 0.85rem;
   padding: 0.5rem;
   width: 100%;
+  min-width: 100%;
   box-sizing: border-box;
 }
 .compose textarea:focus,
@@ -108,6 +111,24 @@ p.auth-success { color: #00ff41; font-family: monospace; font-size: 0.8rem; marg
 }
 .room-members li {
   margin: 0.25rem 0;
+}
+
+div.ingest-entry,
+pre,
+.ont-item-shell,
+.ont-group-shell,
+.ont-vote-entry,
+details.ont-related-votes,
+details.ont-rank-history {
+  width: 100%;
+  min-width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+pre {
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 /* Ontology view: paper mode */

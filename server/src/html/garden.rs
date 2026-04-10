@@ -19,7 +19,7 @@ use crate::{
 };
 
 use super::{
-    authorship_address, bc_path, cli_panel, layout, now_ms, ratio_pct,
+    authorship_address, bc_path, bc_segment, cli_panel, layout, now_ms, ratio_pct,
     render_linkified_with_embeds_in_scope, breadcrumb_path::OntologyPath,
     forum::ThreadNav,
 };
@@ -34,6 +34,29 @@ fn item_display_path(item: &str) -> String {
 /// Canonical ontology URL for an item path.
 fn item_href(item: &str, nav: &ThreadNav) -> String {
     nav.garden_item_url(item)
+}
+
+fn item_code_label(item: &str) -> String {
+    item_display_path(item)
+}
+
+fn scoped_bc_path(path: &OntologyPath, nav: &ThreadNav) -> maud::Markup {
+    match nav.scope() {
+        ScopeId::Public => bc_path(path),
+        ScopeId::Room(rid) => {
+            let slug = rid.split_once('/').map(|(_, s)| s).unwrap_or(rid.as_str());
+            html! {
+                a href="/" { "slug.social" }
+                (bc_segment(&format!("room:{slug}"), nav.room_url(), false))
+                (bc_segment("~", nav.garden_root_url(), path.is_root()))
+                @for (i, seg) in path.segments().iter().enumerate() {
+                    @let href = format!("{}/{}", nav.garden_root_url(), path.segments()[..=i].join("/"));
+                    @let is_last = i == path.segments().len() - 1;
+                    (bc_segment(seg, &href, is_last))
+                }
+            }
+        }
+    }
 }
 
 fn room_not_found_page() -> impl IntoResponse {
@@ -194,12 +217,15 @@ struct ItemPageViewModel {
 
 fn build_sibling_rank(
     reduced: &crate::reducer::ReducerState,
+    scope: &ScopeId,
     item: &CanonicalItemUrl,
 ) -> Option<SiblingRank> {
-    let public = reduced.public();
-    let group = &public.ranking_group;
+    let content = reduced
+        .content_for_scope(scope)
+        .unwrap_or_else(|| reduced.public());
+    let group = &content.ranking_group;
     let parent = item.parent()?;
-    let siblings: Vec<CanonicalItemUrl> = public
+    let siblings: Vec<CanonicalItemUrl> = content
         .item_children
         .get(&parent)
         .map(|s| s.iter().cloned().collect())
@@ -346,7 +372,7 @@ fn build_item_page_view_model(
             .get(&item_key)
             .cloned()
             .or_else(|| reduced.public().item_bodies.get(&item_key).cloned()),
-        sibling_rank: build_sibling_rank(reduced, &item_key),
+        sibling_rank: build_sibling_rank(reduced, scope, &item_key),
         child_rankings,
         touching_votes,
         rank_history,
@@ -370,7 +396,7 @@ async fn render_scope_view(
         &item_display_path(&model.item),
         "view-ontology view-ontology-dark",
         html! {
-            nav class="breadcrumb" { (bc_path(&path)) }
+            nav class="breadcrumb" { (scoped_bc_path(&path, &nav)) }
             section class="ont-item-shell" {
                 header class="ont-item-meta" {
                     span class="ont-item-title" { (item_display_path(&model.item)) }
@@ -415,9 +441,9 @@ async fn render_scope_view(
                                     (ago)
                                 }
                                 div class="ont-vote-header" {
-                                    a class="item-link" href=(item_href(v.a.as_str(), &nav)) { code class="vote-left" { "/" (v.a) } }
+                                    a class="item-link" href=(item_href(v.a.as_str(), &nav)) { code class="vote-left" { (item_code_label(v.a.as_str())) } }
                                     span class="vote-ratio" { (format!("{}:{}", v.ratio_left, v.ratio_right)) }
-                                    a class="item-link" href=(item_href(v.b.as_str(), &nav)) { code class="vote-right" { "/" (v.b) } }
+                                    a class="item-link" href=(item_href(v.b.as_str(), &nav)) { code class="vote-right" { (item_code_label(v.b.as_str())) } }
                                 }
                                 div class="ratio-bar" aria-label={(format!("ratio {}:{}", v.ratio_left, v.ratio_right))} {
                                     div class=(left_class) style={(format!("width: {:.3}%;", pct))} {}
@@ -472,9 +498,9 @@ async fn render_scope_view(
                                     @let right_class = if v.b.as_str() == model.item { "ratio-right current" } else { "ratio-right" };
                                     div class="rank-history-vote" {
                                         div class="ont-vote-header" {
-                                            a class="item-link" href=(item_href(v.a.as_str(), &nav)) { code { "/" (v.a) } }
+                                            a class="item-link" href=(item_href(v.a.as_str(), &nav)) { code { (item_code_label(v.a.as_str())) } }
                                             span class="vote-ratio" { (format!("{}:{}", v.ratio_left, v.ratio_right)) }
-                                            a class="item-link" href=(item_href(v.b.as_str(), &nav)) { code { "/" (v.b) } }
+                                            a class="item-link" href=(item_href(v.b.as_str(), &nav)) { code { (item_code_label(v.b.as_str())) } }
                                         }
                                         div class="ratio-bar" {
                                             div class=(left_class) style={(format!("width: {:.3}%;", pct))} {}
@@ -516,7 +542,7 @@ async fn render_scope_view(
                                     @let item_url = item_href(r.item.as_str(), &nav);
                                     @let score_str = format!("{:.3}", r.score);
                                     li {
-                                        a class="item-link" href=(item_url) { code { "/" (item_display_path(r.item.as_str())) } }
+                                        a class="item-link" href=(item_url) { code { (item_display_path(r.item.as_str())) } }
                                         span class="ont-rank-score" { (score_str) }
                                     }
                                 }
@@ -532,7 +558,7 @@ async fn render_scope_view(
                             @for name in &model.child_rankings.unranked_items {
                                 li {
                                     @let href = item_href(name.as_str(), &nav);
-                                    a class="item-link" href=(href) { code { "/" (item_display_path(name.as_str())) } }
+                                    a class="item-link" href=(href) { code { (item_display_path(name.as_str())) } }
                                 }
                             }
                         }
