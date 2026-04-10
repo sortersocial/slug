@@ -1,6 +1,8 @@
 [tools]
 # Matches the Rust baseline required by current deps (edition 2024).
 rust = "1.88.0"
+# JDK for Clojure CLI and JVM integration tests (Temurin LTS).
+java = "temurin-21"
 # JVM Clojure CLI for `clojure -M -m test.runner` / scripts/clj-test.sh (deps.edn).
 clojure = "1.12.0"
 # Used by TEST.sh and test/*.bb integration suites.
