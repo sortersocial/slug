@@ -206,6 +206,61 @@ form.ingest-form textarea:focus {
   gap: 8px;
 }
 
+section.compose {
+  background: var(--g2);
+  border: var(--bv-lg) solid;
+  border-color: var(--hi) var(--lo) var(--lo) var(--hi);
+  margin: 8px 0;
+  min-width: 320px;
+  padding: 10px;
+  width: fit-content;
+}
+section.compose form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+section.compose textarea {
+  background: var(--g1);
+  border: var(--bv) solid;
+  border-color: var(--lo) var(--hi) var(--hi) var(--lo);
+  color: var(--signal);
+  font-family: monospace;
+  font-size: 12px;
+  min-width: 320px;
+  outline: none;
+  padding: 6px 8px;
+  resize: vertical;
+  width: 100%;
+}
+section.compose textarea:focus {
+  border-color: var(--lo) #666 #666 var(--lo);
+}
+.form-toggle {
+  background: var(--g5);
+  border: var(--bv) solid;
+  border-color: var(--hi) var(--lo) var(--lo) var(--hi);
+  color: var(--signal);
+  cursor: pointer;
+  font-size: 12px;
+  margin: 8px 0 4px;
+  padding: 4px 10px;
+}
+.form-toggle:active {
+  border-color: var(--lo) var(--hi) var(--hi) var(--lo);
+  transform: translate(1px, 1px);
+}
+.room-members {
+  margin-bottom: 10px;
+}
+.room-member-name {
+  color: var(--signal);
+  font-family: monospace;
+}
+.room-links {
+  margin-top: 0;
+}
+
 /* ----------------------------------------------------------------
    AUTH FORM — choose username, complete page
    ---------------------------------------------------------------- */

@@ -20,9 +20,9 @@ pub use editor::{editor_check, editor_page};
 pub use forum::{
     home, room_page, room_thread_post_expand, room_thread_post_view, room_thread_view,
     thread_feed_html, thread_feed_html_for_room, thread_feed_region_markup,
-    thread_post_expand, thread_post_view, thread_view,
+    thread_post_expand, thread_post_view, thread_view, ThreadNav,
 };
-pub use garden::{garden_index, ontology_path};
+pub use garden::{garden_index, ontology_path, room_garden_index, room_ontology_path};
 pub use search::{search_page, search_results_fragment};
 
 // Embed CSS files at compile time
@@ -107,9 +107,23 @@ impl JsBuilder {
         self
     }
 
+    pub(crate) fn if_current_path_not_matches(mut self, path: &str, f: impl FnOnce(JsBuilder) -> JsBuilder) -> Self {
+        let inner = f(JsBuilder::new()).build();
+        self.snippets.push(format!(
+            "var __slugHere = window.location.pathname + window.location.search; var __slugPath = {path}; if (!(__slugHere === __slugPath || __slugHere.indexOf(__slugPath + '?') === 0)) {{ {inner} }}",
+            path = js_string_literal(path),
+        ));
+        self
+    }
+
     pub(crate) fn redirect(mut self, to: &str) -> Self {
         self.snippets
             .push(format!("window.location = {};", js_string_literal(to)));
+        self
+    }
+
+    pub(crate) fn raw(mut self, code: impl Into<String>) -> Self {
+        self.snippets.push(code.into());
         self
     }
 
@@ -236,6 +250,62 @@ script { (maud::PreEscaped(r#"
                             if (js && js.trim()) {
                                 eval(js);
                             }
+                        });
+
+                        // Small client-side toggles for compose panes.
+                        document.addEventListener('click', (e) => {
+                            const btn = e.target && e.target.closest && e.target.closest('[data-toggle-target]');
+                            if (!btn) return;
+                            const selector = btn.getAttribute('data-toggle-target');
+                            if (!selector) return;
+                            const target = document.querySelector(selector);
+                            if (!target) return;
+                            const willOpen = target.hasAttribute('hidden');
+                            if (willOpen) {
+                                target.removeAttribute('hidden');
+                            } else {
+                                target.setAttribute('hidden', '');
+                            }
+                            btn.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+                            const openLabel = btn.getAttribute('data-open-label');
+                            const closeLabel = btn.getAttribute('data-close-label');
+                            if (openLabel && closeLabel) {
+                                btn.textContent = willOpen ? closeLabel : openLabel;
+                            }
+                            if (willOpen) {
+                                const firstField = target.querySelector('input[type="text"], textarea');
+                                if (firstField) firstField.focus();
+                            }
+                        });
+
+                        // Debounced forum form validation.
+                        const checkTimers = new WeakMap();
+                        async function runFormCheck(form) {
+                            const action = form.getAttribute('data-check-action');
+                            if (!action) return;
+                            const resp = await fetch(action, {
+                                method: 'POST',
+                                body: new URLSearchParams(new FormData(form)),
+                                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                                credentials: 'same-origin',
+                            });
+                            const js = await resp.text();
+                            if (js && js.trim()) {
+                                eval(js);
+                            }
+                        }
+                        document.addEventListener('input', (e) => {
+                            const target = e.target;
+                            if (!target || !target.closest) return;
+                            const form = target.closest('form[data-check-action]');
+                            if (!form) return;
+                            if (!(target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return;
+                            const prev = checkTimers.get(form);
+                            if (prev) clearTimeout(prev);
+                            const handle = setTimeout(() => {
+                                runFormCheck(form).catch((err) => console.warn('slug form check failed', err));
+                            }, 250);
+                            checkTimers.set(form, handle);
                         });
 
                         // Search: debounced fetch + idiomorph.
@@ -383,7 +453,7 @@ fn escape_html(s: &str) -> String {
 }
 
 /// Replace ~/path slugs in raw text with clickable links.
-pub(super) fn linkify_slugs(raw: &str) -> String {
+pub(super) fn linkify_slugs_with_prefix(raw: &str, garden_prefix: &str) -> String {
     let escaped = escape_html(raw);
     let mut out = String::with_capacity(escaped.len() + 64);
     let mut i = 0;
@@ -398,7 +468,9 @@ pub(super) fn linkify_slugs(raw: &str) -> String {
                 .sum::<usize>();
             if path_len > 0 {
                 let path = &after_tilde[..path_len];
-                out.push_str(r#"<a href="/~/"#);
+                out.push_str(r#"<a href=""#);
+                out.push_str(&escape_html(garden_prefix.trim_end_matches('/')));
+                out.push('/');
                 out.push_str(path);
                 out.push_str(r#"" class="pre-link">~/"#);
                 out.push_str(path);
@@ -415,6 +487,10 @@ pub(super) fn linkify_slugs(raw: &str) -> String {
         }
     }
     out
+}
+
+pub(super) fn linkify_slugs(raw: &str) -> String {
+    linkify_slugs_with_prefix(raw, "/~")
 }
 
 #[derive(Clone)]
@@ -528,10 +604,10 @@ fn extract_embed_frames(raw: &str) -> Vec<EmbedFrame> {
     out
 }
 
-pub(super) fn render_linkified_with_embeds(raw: &str) -> Markup {
+pub(super) fn render_linkified_with_embeds_in_scope(raw: &str, garden_prefix: &str) -> Markup {
     let embeds = extract_embed_frames(raw);
     html! {
-        pre { (maud::PreEscaped(linkify_slugs(raw))) }
+        pre { (maud::PreEscaped(linkify_slugs_with_prefix(raw, garden_prefix))) }
         @if !embeds.is_empty() {
             div class="rich-embeds" {
                 @for e in embeds {
@@ -548,6 +624,10 @@ pub(super) fn render_linkified_with_embeds(raw: &str) -> Markup {
             }
         }
     }
+}
+
+pub(super) fn render_linkified_with_embeds(raw: &str) -> Markup {
+    render_linkified_with_embeds_in_scope(raw, "/~")
 }
 
 /// Small CLI hint panel showing how to look up this page from the terminal.

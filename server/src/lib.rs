@@ -31,6 +31,7 @@ pub fn create_app(state: AppState) -> Router {
         .route("/login", get(api::get_web_login))
         .route("/logout", get(api::get_logout))
         .route("/post", post(api::post_web_ingest))
+        .route("/post/check", post(api::check_web_ingest))
         .route("/sse", get(api::get_html_stream))
         .route("/stream", get(api::get_stream))
         .route("/search", get(crate::html::search_page))
@@ -39,6 +40,11 @@ pub fn create_app(state: AppState) -> Router {
         .route("/try/check", post(crate::html::editor_check))
         .route("/~", get(crate::html::garden_index))
         .route("/~/*path", get(crate::html::ontology_path))
+        .route("/r/:room_short/:room_slug/~", get(crate::html::room_garden_index))
+        .route(
+            "/r/:room_short/:room_slug/~/*path",
+            get(crate::html::room_ontology_path),
+        )
         .route(
             "/t/:tag/:index/expand",
             get(crate::html::thread_post_expand),

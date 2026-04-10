@@ -1,12 +1,17 @@
 use axum::{
     extract::{Path, State},
+    http::{HeaderMap, StatusCode},
     response::{Html, IntoResponse},
 };
+use axum_extra::extract::cookie::CookieJar;
 use maud::html;
 
 use crate::{
+    api::optional_principal,
     canonical_path::canonicalize_item,
+    events::ThreadCapability,
     path_types::CanonicalItemUrl,
+    reducer::{ReducerState, ScopeId},
     ranking::{connected_components_from_voted_pairs, ranked_items_subset},
     scope_rank::{build_children_rankings, ChildrenRankings},
     state::AppState,
@@ -14,8 +19,9 @@ use crate::{
 };
 
 use super::{
-    authorship_address, bc_path, cli_panel, layout, now_ms, ratio_pct, render_linkified_with_embeds,
-    breadcrumb_path::OntologyPath,
+    authorship_address, bc_path, cli_panel, layout, now_ms, ratio_pct,
+    render_linkified_with_embeds_in_scope, breadcrumb_path::OntologyPath,
+    forum::ThreadNav,
 };
 
 /// Display path for an item: `~/languages/rust` form.
@@ -26,14 +32,34 @@ fn item_display_path(item: &str) -> String {
 }
 
 /// Canonical ontology URL for an item path.
-fn item_href(item: &str) -> String {
-    CanonicalItemUrl::parse(item)
-        .and_then(|c| c.tilde_tail().map(|t| format!("/~/{}", t)))
-        .unwrap_or_else(|| format!("/~/{}", canonicalize_item(item)))
+fn item_href(item: &str, nav: &ThreadNav) -> String {
+    nav.garden_item_url(item)
+}
+
+fn room_not_found_page() -> impl IntoResponse {
+    let body = html! {
+        nav class="breadcrumb" { a href="/" { "slug.social" } }
+        h1 { "not found" }
+        p { "The requested page could not be found." }
+        p { a href="/" { "home" } }
+    };
+    let page = layout("not found — slug.social", "view-thread", body, None);
+    (StatusCode::NOT_FOUND, Html(page.into_string()))
+}
+
+fn user_can_view_room(reduced: &ReducerState, room_id: &str, username: Option<&str>) -> bool {
+    if !reduced.rooms.contains(room_id) {
+        return false;
+    }
+    let Some(u) = username else {
+        return false;
+    };
+    reduced.user_has_cap(room_id, u, ThreadCapability::View)
 }
 
 /// Ontology index — root-level paths. Private (UUID) roots are excluded.
 pub async fn garden_index(State(state): State<AppState>) -> impl IntoResponse {
+    let nav = ThreadNav::public();
     let child_rankings = {
         let reduced = state.reduced.read().await;
         build_children_rankings(reduced.public(), &CanonicalItemUrl::ontology_root())
@@ -57,9 +83,9 @@ pub async fn garden_index(State(state): State<AppState>) -> impl IntoResponse {
                         }
                         ol class="ont-ranking-list" {
                             @for r in comp.ranked.iter() {
-                                @let href = item_href(r.item.as_str());
+                                @let href = item_href(r.item.as_str(), &nav);
                                 li {
-                                    a href=(href) { "~/" (item_display_path(r.item.as_str())) }
+                                    a href=(href) { (item_display_path(r.item.as_str())) }
                                 }
                             }
                         }
@@ -71,8 +97,8 @@ pub async fn garden_index(State(state): State<AppState>) -> impl IntoResponse {
                         ul class="ont-group-list" {
                             @for name in &child_rankings.unranked_items {
                                 li {
-                                    @let href = item_href(name.as_str());
-                                    a href=(href) { "~/" (item_display_path(name.as_str())) }
+                                    @let href = item_href(name.as_str(), &nav);
+                                    a href=(href) { (item_display_path(name.as_str())) }
                                 }
                             }
                         }
@@ -92,7 +118,48 @@ pub async fn ontology_path(
     Path(path): Path<String>,
 ) -> impl IntoResponse {
     let path = OntologyPath::from_input(&path);
-    render_scope_view(state, path).await
+    render_scope_view(state, path, ThreadNav::public()).await
+}
+
+pub async fn room_garden_index(
+    State(state): State<AppState>,
+    Path((room_short, room_slug)): Path<(String, String)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> impl IntoResponse {
+    let room_id = format!("{room_short}/{room_slug}");
+    let reduced = state.reduced.read().await;
+    let user = optional_principal(&headers, &jar, &reduced);
+    if !user_can_view_room(&reduced, &room_id, user.as_deref()) {
+        drop(reduced);
+        return room_not_found_page().into_response();
+    }
+    drop(reduced);
+    let Some(nav) = ThreadNav::from_room_id(&room_id) else {
+        return (StatusCode::NOT_FOUND, "bad room path").into_response();
+    };
+    render_scope_view(state, OntologyPath::root(), nav).await
+}
+
+pub async fn room_ontology_path(
+    State(state): State<AppState>,
+    Path((room_short, room_slug, path)): Path<(String, String, String)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> impl IntoResponse {
+    let room_id = format!("{room_short}/{room_slug}");
+    let reduced = state.reduced.read().await;
+    let user = optional_principal(&headers, &jar, &reduced);
+    if !user_can_view_room(&reduced, &room_id, user.as_deref()) {
+        drop(reduced);
+        return room_not_found_page().into_response();
+    }
+    drop(reduced);
+    let Some(nav) = ThreadNav::from_room_id(&room_id) else {
+        return (StatusCode::NOT_FOUND, "bad room path").into_response();
+    };
+    let path = OntologyPath::from_input(&path);
+    render_scope_view(state, path, nav).await
 }
 
 #[derive(Debug, Clone)]
@@ -188,11 +255,14 @@ fn build_sibling_rank(
 
 fn build_rank_history(
     reduced: &crate::reducer::ReducerState,
+    scope: &ScopeId,
     item: &str,
 ) -> Vec<RankHistoryEntryView> {
-    let public = reduced.public();
+    let content = reduced
+        .content_for_scope(scope)
+        .unwrap_or_else(|| reduced.public());
     let item_key = CanonicalItemUrl(item.to_string());
-    let entries = match public.rank_history.get(&item_key) {
+    let entries = match content.rank_history.get(&item_key) {
         None => return vec![],
         Some(e) => e,
     };
@@ -226,7 +296,7 @@ fn build_rank_history(
             .unwrap_or_default();
 
         let thread_post_index = reduced.ingests_by_scope_thread
-            .get(&(crate::reducer::ScopeId::Public, e.thread.clone()))
+            .get(&(scope.clone(), e.thread.clone()))
             .and_then(|q| q.iter().rev().position(|id| id == &e.post_id))
             .map(|i| i + 1)
             .unwrap_or(0);
@@ -246,22 +316,25 @@ fn build_rank_history(
 
 fn build_item_page_view_model(
     reduced: &crate::reducer::ReducerState,
+    scope: &ScopeId,
     item: &str,
     vote_limit: usize,
 ) -> ItemPageViewModel {
-    let public = reduced.public();
+    let content = reduced
+        .content_for_scope(scope)
+        .unwrap_or_else(|| reduced.public());
     let item_key = CanonicalItemUrl::parse(item)
         .unwrap_or_else(|| CanonicalItemUrl::parse("~/").unwrap());
-    let child_rankings = build_children_rankings(public, &item_key);
-    let touching_votes: Vec<crate::reducer::VoteData> = public
+    let child_rankings = build_children_rankings(content, &item_key);
+    let touching_votes: Vec<crate::reducer::VoteData> = content
         .item_votes
         .get(&item_key)
         .map(|q| q.iter().take(vote_limit).cloned().collect())
         .unwrap_or_default();
 
-    let rank_history = build_rank_history(reduced, item_key.as_str());
+    let rank_history = build_rank_history(reduced, scope, item_key.as_str());
 
-    let mut threads: Vec<String> = public
+    let mut threads: Vec<String> = content
         .item_threads
         .get(&item_key)
         .map(|s| s.iter().cloned().collect())
@@ -270,7 +343,11 @@ fn build_item_page_view_model(
 
     ItemPageViewModel {
         item: item_key.as_str().to_string(),
-        body: public.item_bodies.get(&item_key).cloned(),
+        body: content
+            .item_bodies
+            .get(&item_key)
+            .cloned()
+            .or_else(|| reduced.public().item_bodies.get(&item_key).cloned()),
         sibling_rank: build_sibling_rank(reduced, &item_key),
         child_rankings,
         touching_votes,
@@ -279,11 +356,17 @@ fn build_item_page_view_model(
     }
 }
 
-async fn render_scope_view(state: AppState, path: OntologyPath) -> axum::response::Response {
+async fn render_scope_view(
+    state: AppState,
+    path: OntologyPath,
+    nav: ThreadNav,
+) -> axum::response::Response {
+    let scope = nav.scope();
     let model = {
         let reduced = state.reduced.read().await;
-        build_item_page_view_model(&reduced, path.as_str(), 50)
+        build_item_page_view_model(&reduced, &scope, path.as_str(), 50)
     };
+    let thread_href = |tag: &str| nav.thread_url(tag);
 
     let page = layout(
         &item_display_path(&model.item),
@@ -304,7 +387,7 @@ async fn render_scope_view(state: AppState, path: OntologyPath) -> axum::respons
                 }
                 @if let Some(body) = &model.body {
                     div class="ont-item-content" {
-                        (render_linkified_with_embeds(body))
+                        (render_linkified_with_embeds_in_scope(body, nav.garden_root_url()))
                     }
                 } @else {
                     div class="ont-item-content" { p class="muted" { "no body yet" } }
@@ -334,9 +417,9 @@ async fn render_scope_view(state: AppState, path: OntologyPath) -> axum::respons
                                     (ago)
                                 }
                                 div class="ont-vote-header" {
-                                    a class="item-link" href=(format!("/~/{}", v.a)) { code class="vote-left" { "/" (v.a) } }
+                                    a class="item-link" href=(item_href(v.a.as_str(), &nav)) { code class="vote-left" { "/" (v.a) } }
                                     span class="vote-ratio" { (format!("{}:{}", v.ratio_left, v.ratio_right)) }
-                                    a class="item-link" href=(format!("/~/{}", v.b)) { code class="vote-right" { "/" (v.b) } }
+                                    a class="item-link" href=(item_href(v.b.as_str(), &nav)) { code class="vote-right" { "/" (v.b) } }
                                 }
                                 div class="ratio-bar" aria-label={(format!("ratio {}:{}", v.ratio_left, v.ratio_right))} {
                                     div class=(left_class) style={(format!("width: {:.3}%;", pct))} {}
@@ -374,10 +457,10 @@ async fn render_scope_view(state: AppState, path: OntologyPath) -> axum::respons
                                 " · "
                                 span class="muted" { (ago) (label) }
                                 " · "
-                                a href=(format!("/t/{}", e.thread)) { "#" (e.thread) }
+                                a href=(thread_href(&e.thread)) { "#" (e.thread) }
                                 @if e.thread_post_index > 0 {
                                     " "
-                                    a href=(format!("/t/{}/{}", e.thread, e.post_id)) {
+                                    a href=(format!("{}/{}", thread_href(&e.thread), e.thread_post_index)) {
                                         span class="muted" { "post #" (e.thread_post_index) }
                                     }
                                 }
@@ -391,9 +474,9 @@ async fn render_scope_view(state: AppState, path: OntologyPath) -> axum::respons
                                     @let right_class = if v.b.as_str() == model.item { "ratio-right current" } else { "ratio-right" };
                                     div class="rank-history-vote" {
                                         div class="ont-vote-header" {
-                                            a class="item-link" href=(format!("/~/{}", v.a)) { code { "/" (v.a) } }
+                                            a class="item-link" href=(item_href(v.a.as_str(), &nav)) { code { "/" (v.a) } }
                                             span class="vote-ratio" { (format!("{}:{}", v.ratio_left, v.ratio_right)) }
-                                            a class="item-link" href=(format!("/~/{}", v.b)) { code { "/" (v.b) } }
+                                            a class="item-link" href=(item_href(v.b.as_str(), &nav)) { code { "/" (v.b) } }
                                         }
                                         div class="ratio-bar" {
                                             div class=(left_class) style={(format!("width: {:.3}%;", pct))} {}
@@ -415,7 +498,7 @@ async fn render_scope_view(state: AppState, path: OntologyPath) -> axum::respons
                     span class="muted" { "discussed in " }
                     @for (i, tag) in model.threads.iter().enumerate() {
                         @if i > 0 { span class="muted" { " · " } }
-                        a href=(format!("/t/{tag}")) { "#" (tag) }
+                        a href=(thread_href(tag)) { "#" (tag) }
                     }
                 }
             }
@@ -432,7 +515,7 @@ async fn render_scope_view(state: AppState, path: OntologyPath) -> axum::respons
                             }
                             ol class="ont-ranking-list" {
                                 @for r in comp.ranked.iter() {
-                                    @let item_url = item_href(r.item.as_str());
+                                    @let item_url = item_href(r.item.as_str(), &nav);
                                     @let score_str = format!("{:.3}", r.score);
                                     li {
                                         a class="item-link" href=(item_url) { code { "/" (item_display_path(r.item.as_str())) } }
@@ -450,7 +533,7 @@ async fn render_scope_view(state: AppState, path: OntologyPath) -> axum::respons
                         ul class="ont-group-list" {
                             @for name in &model.child_rankings.unranked_items {
                                 li {
-                                    @let href = item_href(name.as_str());
+                                    @let href = item_href(name.as_str(), &nav);
                                     a class="item-link" href=(href) { code { "/" (item_display_path(name.as_str())) } }
                                 }
                             }
@@ -458,7 +541,11 @@ async fn render_scope_view(state: AppState, path: OntologyPath) -> axum::respons
                     }
                 }
             }
-            (cli_panel(&format!("npx slugsocial garden body {}", item_display_path(&model.item))))
+            @let cli = match &scope {
+                ScopeId::Public => format!("npx slugsocial public garden body {}", path.as_str().trim_start_matches("https://slug.social/~/")),
+                ScopeId::Room(room_id) => format!("npx slugsocial private {room_id} garden body {}", path.as_str().trim_start_matches("https://slug.social/~/")),
+            };
+            (cli_panel(&cli))
         },
         None,
     );
@@ -471,7 +558,7 @@ mod tests {
     use super::build_item_page_view_model;
     use crate::{
         events::{Event, Ingest},
-        reducer::ReducerState,
+        reducer::{ReducerState, ScopeId},
     };
 
     fn apply_ingest(state: &mut ReducerState, ts: i64, raw: &str) {
@@ -498,7 +585,7 @@ mod tests {
              ~/topic/b {beta}\n",
         );
 
-        let model = build_item_page_view_model(&reduced, "~/topic/a", 50);
+        let model = build_item_page_view_model(&reduced, &ScopeId::Public, "~/topic/a", 50);
         assert_eq!(model.body.as_deref(), Some("alpha"));
         assert!(model.sibling_rank.is_none());
         assert!(model.child_rankings.component_rankings.is_empty());
@@ -519,7 +606,7 @@ mod tests {
              ~/other/x 4:1 ~/other/y {other vote}\n",
         );
 
-        let model = build_item_page_view_model(&reduced, "~/topic/a", 50);
+        let model = build_item_page_view_model(&reduced, &ScopeId::Public, "~/topic/a", 50);
         assert_eq!(model.touching_votes.len(), 1);
         assert_eq!(model.touching_votes[0].a.as_str(), "https://slug.social/~/topic/a");
         assert_eq!(model.touching_votes[0].b.as_str(), "https://slug.social/~/topic/b");
@@ -539,7 +626,7 @@ mod tests {
              ~/topic/a 2:1 ~/topic/b {a beats b}\n",
         );
 
-        let model = build_item_page_view_model(&reduced, "~/topic/a", 50);
+        let model = build_item_page_view_model(&reduced, &ScopeId::Public, "~/topic/a", 50);
         let rank = model.sibling_rank.expect("expected sibling rank");
         assert_eq!(rank.position, 1);
         assert_eq!(rank.component_size, 2);
@@ -562,7 +649,7 @@ mod tests {
              ~/topic/kid1/leaf {leaf}\n",
         );
 
-        let model = build_item_page_view_model(&reduced, "~/topic", 50);
+        let model = build_item_page_view_model(&reduced, &ScopeId::Public, "~/topic", 50);
         assert_eq!(model.child_rankings.component_rankings.len(), 1);
         assert_eq!(model.child_rankings.component_rankings[0].pairs, 1);
         let names: Vec<&str> = model.child_rankings.component_rankings[0]
