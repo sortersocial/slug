@@ -49,7 +49,7 @@
           resp (.send (http-client) req (java.net.http.HttpResponse$BodyHandlers/ofString))]
       {:status (.statusCode resp) :body (.body resp) :headers (.map (.headers resp))})))
 
-(defn http-post-form [url form]
+(defn http-post-form [url form & {:keys [headers]}]
   (let [pairs (->> form
                    (map (fn [[k v]]
                           (str (java.net.URLEncoder/encode (name k) "UTF-8")
@@ -58,6 +58,8 @@
                    (str/join "&"))
         b (java.net.http.HttpRequest/newBuilder (java.net.URI/create url))]
     (.header b "Content-Type" "application/x-www-form-urlencoded")
+    (doseq [[k v] (or headers {})]
+      (.header b k v))
     (let [req (-> b
                   (.timeout request-timeout)
                   (.POST (java.net.http.HttpRequest$BodyPublishers/ofString pairs))

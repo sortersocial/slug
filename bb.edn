@@ -58,6 +58,11 @@
            (grants/grants-test)
            (invites/invites-test))}
 
+  walkthrough-fixture
+  {:doc "Run local server + mock OAuth + seeded walkthrough data for manual browser demos"
+   :requires ([test.walkthrough-fixture :as walkthrough-fixture])
+   :task (walkthrough-fixture/run-fixture)}
+
   perf
   {:doc "Performance test: concurrent HTTP requests to detect blocking I/O"
    :requires ([scripts.perf :as perf])
