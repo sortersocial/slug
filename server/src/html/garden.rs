@@ -177,7 +177,6 @@ struct RankHistoryEntryView {
     scope_rank_delta: i32,
     thread: String,
     thread_post_index: usize,
-    post_id: String,
     caused_by: Vec<crate::reducer::VoteData>,
 }
 
@@ -308,7 +307,6 @@ fn build_rank_history(
             scope_rank_delta: e.scope_rank_delta,
             thread: e.thread.clone(),
             thread_post_index,
-            post_id: e.post_id.clone(),
             caused_by,
         }
     }).collect()

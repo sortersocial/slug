@@ -122,11 +122,6 @@ impl JsBuilder {
         self
     }
 
-    pub(crate) fn raw(mut self, code: impl Into<String>) -> Self {
-        self.snippets.push(code.into());
-        self
-    }
-
     pub(crate) fn build(self) -> String {
         self.snippets.join(" ")
     }
@@ -489,10 +484,6 @@ pub(super) fn linkify_slugs_with_prefix(raw: &str, garden_prefix: &str) -> Strin
     out
 }
 
-pub(super) fn linkify_slugs(raw: &str) -> String {
-    linkify_slugs_with_prefix(raw, "/~")
-}
-
 #[derive(Clone)]
 struct EmbedFrame {
     src: String,
@@ -624,10 +615,6 @@ pub(super) fn render_linkified_with_embeds_in_scope(raw: &str, garden_prefix: &s
             }
         }
     }
-}
-
-pub(super) fn render_linkified_with_embeds(raw: &str) -> Markup {
-    render_linkified_with_embeds_in_scope(raw, "/~")
 }
 
 /// Small CLI hint panel showing how to look up this page from the terminal.
