@@ -237,6 +237,8 @@ pub struct ReducerState {
 
     /// All ingest IDs in chronological order (oldest first). Used by the feed endpoint.
     pub ingests_ordered: Vec<String>,
+    /// Username → ingest ids in post order (oldest first), for profile pages.
+    pub posts_by_actor: HashMap<String, VecDeque<String>>,
     /// room_id → username → capabilities
     pub grants: HashMap<String, HashMap<String, HashSet<ThreadCapability>>>,
     /// room_id → chronological room admin lines (for thread UI).
@@ -248,6 +250,32 @@ pub struct ReducerState {
 impl ReducerState {
     pub fn content_for_scope(&self, scope: &ScopeId) -> Option<&ContentState> {
         self.content.get(scope)
+    }
+
+    /// Ingest ids authored by `actor`, oldest first. Unfiltered; use with access checks per ingest.
+    pub fn posts_by_actor_ids(&self, actor: &str) -> Vec<String> {
+        self.posts_by_actor
+            .get(actor)
+            .map(|q| q.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// Same order as [`Self::posts_by_actor_ids`], omitting ingests in scopes the viewer cannot see.
+    pub fn visible_posts_for_actor(&self, actor: &str, viewer: Option<&str>) -> Vec<String> {
+        self.posts_by_actor_ids(actor)
+            .into_iter()
+            .filter(|id| {
+                self.ingests_by_id.get(id).is_some_and(|ing| {
+                    let scope = scope_from_room_wire(&ing.room_id);
+                    match &scope {
+                        ScopeId::Public => true,
+                        ScopeId::Room(rid) => {
+                            viewer.is_some_and(|u| self.user_has_cap(rid, u, ThreadCapability::View))
+                        }
+                    }
+                })
+            })
+            .collect()
     }
 
     pub fn user_has_cap(&self, room_id: &str, username: &str, cap: ThreadCapability) -> bool {
@@ -574,6 +602,8 @@ impl ReducerState {
 
                 nav!(self.ingests_ordered, push_back(ing.id.clone()));
 
+                nav!(self.posts_by_actor, keypath(ing.principal.clone()), push_back(ing.id.clone()));
+
                 nav!(self.actor_last_post_ts, keypath(ing.principal.clone()), setval(ing.ts));
             }
             Event::GrantAdded(ga) => {
@@ -665,6 +695,7 @@ impl Default for ReducerState {
             forum_threads: HashMap::new(),
             actor_last_post_ts: HashMap::new(),
             ingests_ordered: Vec::new(),
+            posts_by_actor: HashMap::new(),
             grants: HashMap::new(),
             room_timeline: HashMap::new(),
             invites: HashMap::new(),

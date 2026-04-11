@@ -36,6 +36,7 @@ pub fn create_app(state: AppState) -> Router {
         .route("/stream", get(api::get_stream))
         .route("/search", get(crate::html::search_page))
         .route("/search/results", get(crate::html::search_results_fragment))
+        .route("/u/:username", get(crate::html::user_profile_page))
         .route("/try", get(crate::html::editor_page))
         .route("/try/check", post(crate::html::editor_check))
         .route("/~", get(crate::html::garden_index))

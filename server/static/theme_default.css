@@ -517,6 +517,12 @@ div.ingest-meta {
 }
 a.post-num { color: var(--meta); font-size: 12px; }
 a.post-num:hover { color: var(--signal); }
+a.post-author { color: var(--meta); font-size: 12px; text-decoration: none; }
+a.post-author:hover { color: var(--signal); text-decoration: underline; }
+
+ul.profile-post-list { list-style: none; padding: 0; margin: 1em 0; }
+ul.profile-post-list li { margin: 0.75em 0; }
+p.profile-post-snippet { margin: 0.25em 0 0 1em; font-size: 13px; }
 div.ont-item-threads { font-size: 13px; margin: 6px 0; }
 
 /* ----------------------------------------------------------------
