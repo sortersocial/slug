@@ -4,13 +4,15 @@
             [test.auth :as auth]
             [test.grants :as grants]
             [test.invites :as invites]
+            [test.room-list :as room-list]
             [test.browser-sse :as browser-sse]))
 
 (defn run-core! []
   (integration/integration)
   (auth/auth-test)
   (grants/grants-test)
-  (invites/invites-test))
+  (invites/invites-test)
+  (room-list/room-list-test))
 
 (defn -main [& args]
   (if (= ["browser-sse"] (vec args))

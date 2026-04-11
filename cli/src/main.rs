@@ -219,6 +219,12 @@ enum RoomCmd {
         #[arg(long)]
         json: bool,
     },
+    /// List rooms the authenticated user has access to
+    List {
+        /// Output as JSON for agent parsing
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -1314,6 +1320,38 @@ async fn main() -> Result<()> {
                             println!();
                             println!("Next: npx slugsocial private {room_id} forum post <TAG> --delegate '…' …");
                             println!("      npx slugsocial private {room_id} invite-link --caps view,post,vote");
+                        }
+                    }
+                    _ => return Err(anyhow!("unexpected RPC result")),
+                }
+            }
+            RoomCmd::List { json } => {
+                let client = http_client()?;
+                let bearer = effective_bearer().ok_or_else(|| {
+                    anyhow!(
+                        "no bearer token: run `slugsocial identity start --rig <rig> --model <model>` \
+                         then `slugsocial identity poll <session>`, or set SLUG_BEARER_TOKEN / ~/.config/slugsocial/token"
+                    )
+                })?;
+                let batch = send_rpc(
+                    &client,
+                    base,
+                    Some(&bearer),
+                    vec![RpcCommand::RoomList],
+                )
+                .await?;
+                match rpc_line_ok(&batch.results[0])? {
+                    RpcResult::RoomList(resp) => {
+                        if json {
+                            println!("{}", serde_json::to_string_pretty(&resp)?);
+                        } else {
+                            if resp.rooms.is_empty() {
+                                println!("no rooms");
+                            } else {
+                                for room in &resp.rooms {
+                                    println!("{room}");
+                                }
+                            }
                         }
                     }
                     _ => return Err(anyhow!("unexpected RPC result")),

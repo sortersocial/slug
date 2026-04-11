@@ -1345,6 +1345,25 @@ pub async fn handle_rpc_batch(
                     }
                 }
             }
+            RpcCommand::RoomList => {
+                let principal = {
+                    let reduced = state.reduced.read().await;
+                    verify_bearer_principal(&headers, &*reduced)
+                };
+                match principal {
+                    Err((_, m)) => line_err(m, None),
+                    Ok(principal) => {
+                        let reduced = state.reduced.read().await;
+                        let rooms: Vec<String> = reduced
+                            .grants
+                            .iter()
+                            .filter(|(_, members)| members.contains_key(&principal))
+                            .map(|(room, _)| room.clone())
+                            .collect();
+                        line_ok(RpcResult::RoomList(RoomListResponse { rooms }))
+                    }
+                }
+            }
             RpcCommand::RoomRevoke {
                 room,
                 username,

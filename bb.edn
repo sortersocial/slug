@@ -47,16 +47,18 @@
                                            "RUST_LOG"      "info"})})))}
 
   test
-  {:doc "Full test suite: integration + auth + grants + invites"
+  {:doc "Full test suite: integration + auth + grants + invites + room-list"
    :requires ([test.integration :as integration]
               [test.auth :as auth]
               [test.grants :as grants]
-              [test.invites :as invites])
+              [test.invites :as invites]
+              [test.room-list :as room-list])
    :task (do
            (integration/integration)
            (auth/auth-test)
            (grants/grants-test)
-           (invites/invites-test))}
+           (invites/invites-test)
+           (room-list/room-list-test))}
 
   walkthrough-fixture
   {:doc "Run local server + mock OAuth + seeded walkthrough data for manual browser demos"

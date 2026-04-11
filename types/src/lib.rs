@@ -261,6 +261,11 @@ pub struct RoomAuditResponse {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct RoomListResponse {
+    pub rooms: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct RpcBatch(pub Vec<RpcCommand>);
 
@@ -342,6 +347,8 @@ pub enum RpcCommand {
     RoomAudit {
         room: String,
     },
+    /// List rooms the authenticated principal has access to.
+    RoomList,
     GetGlobalRank {
         room: String,
         #[serde(default)]
@@ -419,6 +426,7 @@ pub enum RpcResult {
         max_uses: usize,
     },
     RoomAudit(RoomAuditResponse),
+    RoomList(RoomListResponse),
     GrantOk {},
     GlobalRank(GlobalRankResponse),
     Pair(PairResponse),
