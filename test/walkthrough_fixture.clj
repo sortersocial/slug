@@ -40,13 +40,36 @@
             [{"RoomGrant" {"room" room-id
                            "username" "bob"
                            "capabilities" ["view" "post" "vote" "add_item"]}}]))
-    (let [post-resp (oauth/http-post-form
+    (let [wall-text (str "Walkthrough seed — multi-paragraph stress test.\n\n"
+                         "Second paragraph: the garden holds ~/secret/item and ~/secret/other. "
+                         "Votes like ~/secret/item 3:1 ~/secret/other {because} should still parse.\n\n"
+                         "Third block: lorem-style filler so wrapping and vertical rhythm are obvious. "
+                         "We want enough prose that the thread view scrolls and pre blocks show overflow "
+                         "behavior (long lines, slug links, embed URLs) without looking like toy data.\n\n"
+                         "Overflow torture (no spaces — browser must break or scroll):\n"
+                         "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n\n"
+                         "https://open.spotify.com/track/4iV5W9uYEdYUVa79Axb7U9 https://www.youtube.com/watch?v=dQw4w9WgXcQ\n\n"
+                         "~/secret/item {classified}\n"
+                         "~/secret/other {secondary}\n"
+                         "~/secret/item 3:1 ~/secret/other {because}\n")
+          post-resp (oauth/http-post-form
                       (str base-url "/post")
                       {:room room-id
                        :thread_tag "walkthrough-thread"
-                       :text "~/secret/item {classified}\n~/secret/other {secondary}\n~/secret/item 3:1 ~/secret/other {because}\n"}
+                       :text wall-text}
                       :headers {"Authorization" (str "Bearer " alice-token)})]
       (assert! (= 200 (:status post-resp)) "seed post must succeed"))
+    (let [bob-reply (str "Bob here — reply with another long block so the thread has multiple cards.\n\n"
+                         "Paragraph two: repeating slugs ~/secret/item and ~/secret/other for cross-post link styling. "
+                         "If everything wraps cleanly, monospace pre + serif body (in craft theme) should still feel readable.\n\n"
+                         "More overflow: XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX\n")
+          bob-post (oauth/http-post-form
+                     (str base-url "/post")
+                     {:room room-id
+                      :thread_tag "walkthrough-thread"
+                      :text bob-reply}
+                     :headers {"Authorization" (str "Bearer " bob-token)})]
+      (assert! (= 200 (:status bob-post)) "seed reply post must succeed"))
     {:users {:alice {:token alice-token}
              :bob {:token bob-token}}
      :room {:id room-id

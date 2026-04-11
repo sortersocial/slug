@@ -1,116 +1,30 @@
-/* Browser defaults. Nothing. */
+/*
+ * SPARE — lean “retro” theme: browser defaults first.
+ * Only layout, overflow, recency tints, and ontology split-view overrides.
+ */
 
-/* Tight layout (retro loads standalone; match default's constraints) */
-/* light theme */
+:root {
+  color-scheme: dark light;
+}
 
 body {
-  margin: 0;
+  margin: 0 auto;
   max-width: 560px;
-  padding: 0 16px 48px;
+  padding: 0 1rem 3rem;
 }
 
-/* Thread feed recency coloring */
-.age-fresh  a { color: #00ff41; }   /* matrix green: < 1h  */
-.age-recent a { color: #ffcc00; }   /* amber:        < 1d  */
-.age-week   a { color: #ff8c00; }   /* orange:       < 1w  */
-.age-old    a { color: #666; }      /* dim:          >= 1w */
+/* Thread recency (links in feed only) */
+.age-fresh  a { color: #0a0; }
+.age-recent a { color: #a60; }
+.age-week   a { color: #06c; }
+.age-old    a { color: #666; }
 
-/* Auth form */
-form.auth-form { margin-top: 1.5rem; display: flex; flex-direction: column; gap: 0.6rem; width: fit-content; min-width: 220px; }
-form.auth-form label { font-size: 0.8rem; color: #555; }
-input[type="text"] {
-  background: #0a0a0a;
-  border: 1px solid #333;
-  color: #00ff41;
-  font-family: monospace;
-  font-size: 0.9rem;
-  padding: 0.3rem 0.5rem;
-  width: 100%;
-  box-sizing: border-box;
-  outline: none;
-}
-input[type="text"]:focus { border-color: #00ff41; }
-p.auth-hint { color: #555; font-family: monospace; font-size: 0.75rem; margin: 0; }
-p.auth-error { color: #ff4444; font-family: monospace; font-size: 0.8rem; margin: 0; }
-p.auth-success { color: #00ff41; font-family: monospace; font-size: 0.8rem; margin: 0; }
-
-/* Ingest form (poem pattern) */
-.ingest-form-wrap { margin-top: 1.5rem; }
-.ingest-form-wrap summary { cursor: pointer; color: #555; }
-.ingest-form-wrap summary:hover { color: #00ff41; }
-.ingest-form { margin-top: 0.5rem; display: flex; flex-direction: column; gap: 0.5rem; }
-.ingest-form textarea {
-  background: #0a0a0a;
-  border: 1px solid #333;
-  color: #00ff41;
-  font-family: monospace;
-  font-size: 0.85rem;
-  padding: 0.5rem;
-  resize: vertical;
-  width: 100%;
-  box-sizing: border-box;
-}
-.ingest-form textarea:focus { outline: 1px solid #00ff41; }
-.ingest-form-actions { display: flex; align-items: center; gap: 0.5rem; }
-.ingest-form button[type="submit"] {
-  background: #0a0a0a;
-  border: 1px solid #333;
-  color: #00ff41;
-  cursor: pointer;
-  font-family: monospace;
-  font-size: 0.85rem;
-  padding: 0.25rem 0.75rem;
-}
-.ingest-form button[type="submit"]:hover { border-color: #00ff41; }
-.ingest-form button[type="submit"]:disabled { opacity: 0.5; cursor: default; }
-
-.compose {
-  margin: 1rem 0;
-  width: 100%;
-}
-.compose form {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  width: 100%;
-}
-.compose textarea,
-.compose input[type="text"] {
-  background: #0a0a0a;
-  border: 1px solid #333;
-  color: #00ff41;
-  font-family: monospace;
-  font-size: 0.85rem;
-  padding: 0.5rem;
-  width: 100%;
-  min-width: 100%;
-  box-sizing: border-box;
-}
-.compose textarea:focus,
-.compose input[type="text"]:focus {
-  outline: 1px solid #00ff41;
-}
-.form-toggle {
-  background: #0a0a0a;
-  border: 1px solid #333;
-  color: #00ff41;
-  cursor: pointer;
-  font-family: monospace;
-  font-size: 0.85rem;
-  padding: 0.25rem 0.75rem;
-}
-.form-toggle:hover { border-color: #00ff41; }
-.room-links,
-.room-members {
-  font-family: monospace;
-  font-size: 0.85rem;
-}
-.room-members {
-  list-style: none;
-  padding-left: 0;
-}
-.room-members li {
-  margin: 0.25rem 0;
+/* Long lines / slug blocks: wrap instead of horizontal scroll */
+pre {
+  margin: 0 0 0.5rem;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: pre-wrap;
 }
 
 div.ingest-entry,
@@ -120,37 +34,20 @@ pre,
 .ont-vote-entry,
 details.ont-related-votes,
 details.ont-rank-history {
-  width: 100%;
-  min-width: 100%;
-  max-width: 100%;
   box-sizing: border-box;
+  max-width: 100%;
+  min-width: 0;
+  width: 100%;
 }
-
-pre {
-  overflow-wrap: anywhere;
-  word-break: break-word;
-}
-
-/* Ontology view: paper mode */
-body.view-ontology {
-  background: #f5f0e8;
-  color: #1a1a1a;
-  color-scheme: light;
-}
-body.view-ontology a { color: #3a3a8c; }
-body.view-ontology a:visited { color: #6a3a8c; }
-body.view-ontology pre, body.view-ontology code { background: #ede8df; color: #1a1a1a; }
-body.view-ontology .muted { color: #888; }
-body.view-ontology #controls { background: #ede8df; border-top: 1px solid #ccc; }
 
 .rich-embeds {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin: 0 0 8px;
+  gap: 0.5rem;
+  margin: 0 0 0.5rem;
 }
 .rich-embed iframe {
-  border: 1px solid #333;
+  border: 0;
   display: block;
   max-width: 100%;
   width: min(520px, 100%);
@@ -158,21 +55,43 @@ body.view-ontology #controls { background: #ede8df; border-top: 1px solid #ccc; 
 .rich-embed.embed-spotify iframe { height: 152px; }
 .rich-embed.embed-youtube iframe { height: 292px; }
 
+/* Bottom bar: spread does nothing here — hide to stay minimal */
+#spread-control {
+  display: none;
+}
 
-#detail-pane {
-  border-left: 1px solid rgba(128,128,128,0.2);
-  padding: 14px;
-  box-sizing: border-box;
-  z-index: 10;
+/* Ontology “paper” view */
+body.view-ontology {
   background: #f5f0e8;
   color: #1a1a1a;
   color-scheme: light;
 }
+body.view-ontology a { color: #23a; }
+body.view-ontology a:visited { color: #609; }
+body.view-ontology pre,
+body.view-ontology code {
+  background: #ede8df;
+  color: #1a1a1a;
+}
+body.view-ontology .muted { color: #666; }
+body.view-ontology #controls {
+  background: #ede8df;
+  border-top: 1px solid #ccc;
+}
+
+#detail-pane {
+  background: #f5f0e8;
+  border-left: 1px solid #ccc;
+  box-sizing: border-box;
+  color: #1a1a1a;
+  color-scheme: light;
+  padding: 0.875rem;
+  z-index: 10;
+}
 
 .tree-children {
-  border-left: 1px solid rgba(128, 128, 128, 0.25);
-  border-width: 10px;
-  border-style: inset;
-  border-right: none;
   border-bottom: none;
+  border-left: 0.6rem inset #ccc;
+  border-right: none;
+  border-top: none;
 }
