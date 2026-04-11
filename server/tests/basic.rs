@@ -1,7 +1,7 @@
 use slugsocial_server::{
     event_log::EventLog,
     canonical_path::{canonicalize_item, canonicalize_tag},
-    events::{Event, Ingest},
+    events::{Event, GrantAdded, Ingest, RoomCreated},
     ranking::ranked_items,
     reducer::{GroupState, ReducerState, ScopeId},
 };
@@ -786,5 +786,49 @@ fn test_ingests_by_thread_ordering() {
     assert_eq!(thread_ingests[0], "test-300");
     assert_eq!(thread_ingests[1], "test-200");
     assert_eq!(thread_ingests[2], "test-100");
+}
+
+#[test]
+fn posts_by_actor_indexes_and_profile_visibility() {
+    let mut state = ReducerState::default();
+    state.apply_event(Event::RoomCreated(RoomCreated {
+        ts: 1,
+        room_id: "ab12cd/private-room".to_string(),
+        slug: "private-room".to_string(),
+        owner: "alice".to_string(),
+    }));
+    state.apply_event(Event::GrantAdded(GrantAdded {
+        ts: 2,
+        room_id: "ab12cd/private-room".to_string(),
+        username: "bob".to_string(),
+        capabilities: vec![slugsocial_server::events::ThreadCapability::View],
+        granted_by: "alice".to_string(),
+    }));
+
+    let mut ev1 = match ingest_event(10, "~/pub/a {x}\n") {
+        Event::Ingest(i) => i,
+        _ => unreachable!(),
+    };
+    ev1.principal = "tommy".to_string();
+    ev1.thread_tag = "demo".to_string();
+    state.apply_event(Event::Ingest(ev1));
+
+    let mut ev2 = match ingest_event(20, "~/priv/x {secret}\n") {
+        Event::Ingest(i) => i,
+        _ => unreachable!(),
+    };
+    ev2.principal = "tommy".to_string();
+    ev2.room_id = "ab12cd/private-room".to_string();
+    ev2.thread_tag = "secret-thread".to_string();
+    state.apply_event(Event::Ingest(ev2));
+
+    assert_eq!(state.posts_by_actor.get("tommy").map(|q| q.len()), Some(2));
+
+    let anon = state.visible_posts_for_actor("tommy", None);
+    assert_eq!(anon.len(), 1);
+    assert!(state.ingests_by_id[&anon[0]].room_id == "public");
+
+    let bob = state.visible_posts_for_actor("tommy", Some("bob"));
+    assert_eq!(bob.len(), 2);
 }
 

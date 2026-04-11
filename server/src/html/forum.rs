@@ -11,13 +11,14 @@ use crate::{
     api::optional_principal,
     canonical_path::{canonicalize_item, canonicalize_tag},
     events::ThreadCapability,
-    reducer::{ReducerState, ScopeId},
+    identity::parse_username,
+    reducer::{scope_from_room_wire, ReducerState, ScopeId},
     state::AppState,
     timeago,
 };
 
 use super::{
-    authorship_address, bc_segment, bc_threads, cli_panel, layout, now_ms, recency_class,
+    bc_segment, bc_threads, cli_panel, layout, now_ms, profile_href, recency_class,
     render_linkified_with_embeds_in_scope, JsBuilder,
 };
 
@@ -112,6 +113,47 @@ impl ThreadNav {
 
     fn expand_url(&self, tag: &str, idx: usize) -> String {
         format!("{}/{}/{}/expand", self.thread_path_prefix, tag, idx)
+    }
+}
+
+fn thread_nav_for_ingest(ing: &crate::events::Ingest) -> Option<ThreadNav> {
+    let room = ing.room_id.trim();
+    if room.is_empty() || room == "public" {
+        Some(ThreadNav::public())
+    } else {
+        ThreadNav::from_room_id(room)
+    }
+}
+
+fn thread_post_index_in_scope(reduced: &ReducerState, ing: &crate::events::Ingest) -> Option<usize> {
+    let scope = scope_from_room_wire(&ing.room_id);
+    let tag = canonicalize_tag(&ing.thread_tag);
+    reduced
+        .ingests_by_scope_thread
+        .get(&(scope, tag))
+        .and_then(|q| q.iter().rev().position(|id| id == &ing.id))
+}
+
+fn post_header_meta(
+    nav: &ThreadNav,
+    tag: &str,
+    post_idx: usize,
+    principal: &str,
+    ts: i64,
+    now: i64,
+) -> Markup {
+    let post_href = nav.post_url(tag, post_idx);
+    let profile = profile_href(principal);
+    let hover = timeago::rfc3339_utc(ts);
+    let ago = timeago::timeago(now, ts);
+    html! {
+        div class="ingest-meta muted" title=(hover) {
+            a href=(post_href) class="post-num" { "#" (post_idx) }
+            " "
+            a href=(profile) class="post-author" { "@" (principal) }
+            " · "
+            (ago)
+        }
     }
 }
 
@@ -379,17 +421,10 @@ fn render_thread_feed_region_markup(
                 (paginator_top)
                 @for (i, ing) in display_ingests.iter().enumerate() {
                     @let post_idx = offset + i;
-                    @let post_href = nav.post_url(tag, post_idx);
-                    @let hover = timeago::rfc3339_utc(ing.ts);
-                    @let ago = timeago::timeago(now, ing.ts);
                     @let truncated = ing.raw.len() > 2000;
                     @let display_body = if truncated { &ing.raw[..2000] } else { &ing.raw[..] };
                     div class="ingest-entry" data-ingest-id=(ing.id) {
-                        div class="ingest-meta muted" title=(hover) {
-                            a href=(post_href) class="post-num" { "#" (post_idx) }
-                            " · "
-                            (ago)
-                        }
+                        (post_header_meta(nav, tag, post_idx, &ing.principal, ing.ts, now))
                         (render_linkified_with_embeds_in_scope(display_body, nav.garden_root_url()))
                         @if truncated {
                             @let exp = nav.expand_url(tag, post_idx);
@@ -624,17 +659,10 @@ async fn thread_view_inner(
                     (paginator_top)
                     @for (i, ing) in display_ingests.iter().enumerate() {
                         @let post_idx = offset + i;
-                        @let post_href = nav.post_url(&tag, post_idx);
-                        @let hover = timeago::rfc3339_utc(ing.ts);
-                        @let ago = timeago::timeago(now, ing.ts);
                         @let truncated = ing.raw.len() > 2000;
                         @let display_body = if truncated { &ing.raw[..2000] } else { &ing.raw[..] };
                         div class="ingest-entry" data-ingest-id=(ing.id) {
-                            div class="ingest-meta muted" title=(hover) {
-                                a href=(post_href) class="post-num" { "#" (post_idx) }
-                                " · "
-                                (ago)
-                            }
+                            (post_header_meta(&nav, &tag, post_idx, &ing.principal, ing.ts, now))
                             (render_linkified_with_embeds_in_scope(display_body, nav.garden_root_url()))
                             @if truncated {
                                 @let exp = nav.expand_url(&tag, post_idx);
@@ -853,14 +881,8 @@ async fn thread_post_view_inner(
             nav class="breadcrumb" { (bc) }
             h2 { "#" (tag) @if let Some(sub) = &subtitle { ": " (sub) } " / post #" (index) }
             @if let Some(ing) = ing {
-                @let hover = timeago::rfc3339_utc(ing.ts);
-                @let ago = timeago::timeago(now, ing.ts);
                 div class="ingest-entry" data-ingest-id=(ing.id) {
-                    div class="ingest-meta muted" title=(hover) {
-                        span class="address" { (authorship_address(&ing.principal, &ing.delegate)) }
-                        " · "
-                        (ago)
-                    }
+                    (post_header_meta(&nav, &tag, index, &ing.principal, ing.ts, now))
                     (render_linkified_with_embeds_in_scope(&ing.raw, nav.garden_root_url()))
                 }
             } @else {
@@ -925,17 +947,9 @@ async fn thread_post_expand_inner(
         return (StatusCode::NOT_FOUND, "post not found").into_response();
     };
 
-    let post_href = nav.post_url(&tag, index);
-    let hover = timeago::rfc3339_utc(ing.ts);
-    let ago = timeago::timeago(now, ing.ts);
-
     let full_html = html! {
         div class="ingest-entry" data-ingest-id=(ing.id) {
-            div class="ingest-meta muted" title=(hover) {
-                a href=(post_href) class="post-num" { "#" (index) }
-                " · "
-                (ago)
-            }
+            (post_header_meta(&nav, &tag, index, &ing.principal, ing.ts, now))
             (render_linkified_with_embeds_in_scope(&ing.raw, nav.garden_root_url()))
         }
     };
@@ -947,6 +961,97 @@ async fn thread_post_expand_inner(
         )
         .into_response()
         .into_response()
+}
+
+struct ProfilePostRow {
+    thread_tag: String,
+    post_idx: usize,
+    post_href: String,
+    ts: i64,
+    snippet: String,
+}
+
+pub async fn user_profile_page(
+    State(state): State<AppState>,
+    Path(username): Path<String>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> impl IntoResponse {
+    let canon = match parse_username(&username) {
+        Ok(u) => u,
+        Err(_) => return (StatusCode::NOT_FOUND, "not found").into_response(),
+    };
+
+    let (rows, strip) = {
+        let reduced = state.reduced.read().await;
+        let viewer = optional_principal(&headers, &jar, &reduced);
+        let ids = reduced.visible_posts_for_actor(&canon, viewer.as_deref());
+        let mut rows: Vec<ProfilePostRow> = Vec::new();
+        for id in ids {
+            let Some(ing) = reduced.ingests_by_id.get(&id).cloned() else {
+                continue;
+            };
+            let Some(nav) = thread_nav_for_ingest(&ing) else {
+                continue;
+            };
+            let Some(post_idx) = thread_post_index_in_scope(&reduced, &ing) else {
+                continue;
+            };
+            let tag = canonicalize_tag(&ing.thread_tag);
+            let post_href = nav.post_url(&tag, post_idx);
+            let raw_one_line = ing.raw.lines().next().unwrap_or("").trim();
+            let snippet: String = raw_one_line.chars().take(120).collect();
+            rows.push(ProfilePostRow {
+                thread_tag: tag,
+                post_idx,
+                post_href,
+                ts: ing.ts,
+                snippet,
+            });
+        }
+        rows.sort_by(|a, b| b.ts.cmp(&a.ts));
+        let strip = auth_strip(&headers, &jar, &reduced);
+        (rows, strip)
+    };
+
+    let now = now_ms();
+    let page = layout(
+        &format!("@{canon}"),
+        "view-thread",
+        html! {
+            (strip)
+            nav class="breadcrumb" {
+                a href="/" { "slug.social" }
+                (bc_segment(&format!("@{canon}"), &profile_href(&canon), true))
+            }
+            h2 { "@" (canon) }
+            p class="muted" { "posts (newest first)" }
+            @if rows.is_empty() {
+                p class="muted" { "no public posts yet" }
+            } @else {
+                ul class="profile-post-list" {
+                    @for r in &rows {
+                        @let hover = timeago::rfc3339_utc(r.ts);
+                        @let ago = timeago::timeago(now, r.ts);
+                        li {
+                            a href=(r.post_href.as_str()) {
+                                "#" (r.thread_tag)
+                                " / #"
+                                (r.post_idx)
+                            }
+                            span class="muted" title=(hover) { " · " (ago) }
+                            @if !r.snippet.is_empty() {
+                                p class="profile-post-snippet muted" { (r.snippet) }
+                            }
+                        }
+                    }
+                }
+            }
+            (cli_panel(&format!("npx slugsocial public forum list")))
+        },
+        None,
+    );
+    Html(page.into_string()).into_response()
 }
 
 pub async fn thread_post_expand(

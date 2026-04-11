@@ -24,6 +24,12 @@ pub use forum::{
 };
 pub use garden::{garden_index, ontology_path, room_garden_index, room_ontology_path};
 pub use search::{search_page, search_results_fragment};
+pub use forum::user_profile_page;
+
+/// Public profile URL path for a stored username (no `@`).
+pub(crate) fn profile_href(username: &str) -> String {
+    format!("/u/{username}")
+}
 
 // Embed CSS files at compile time
 const THEME_DEFAULT_CSS: &str = include_str!("../../static/theme_default.css");
