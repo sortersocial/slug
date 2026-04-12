@@ -665,7 +665,7 @@ fn render_thread_paginator(nav: &ThreadNav, tag: &str, offset: usize, total: usi
             @if let Some(o) = newer_offset {
                 a href=(nav.thread_page_url(tag, o)) class="post-nav-btn" { "newer →" }
             } @else {
-                span class="post-nav-btn disabled" { "newer →" }
+                a href="#" class="post-nav-btn disabled" { "newer →" }
             }
             @if !on_latest {
                 a href=(nav.thread_page_url(tag, latest_offset)) class="post-nav-btn" { "latest" }
