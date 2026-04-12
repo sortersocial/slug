@@ -19,7 +19,7 @@ use super::access::user_can_view_room;
 use super::feed::{collect_thread_rows_for_scope, render_thread_feed};
 use super::ingest::ingest_entry_markup;
 use super::nav::ThreadNav;
-use super::new_thread::fragment_room_new_thread_form;
+use super::new_thread::fragment_new_thread_slot;
 use super::page::{auth_strip, bc_room};
 use super::paginator::{render_thread_paginator, PAGE_SIZE};
 use super::room_members::room_members_section_markup;
@@ -276,8 +276,8 @@ pub async fn room_page(
             h3 { "threads" }
             (render_thread_feed(Some(&nav), "room-thread-feed", &rows, now))
             @if show_new {
-                div id="room-new-thread-ui-slot" {
-                    (fragment_room_new_thread_form(&nav, true, false))
+                div id="new-thread-ui-slot" {
+                    (fragment_new_thread_slot(&nav, true, false))
                 }
             }
             (cli_panel(&[forum_cli, garden_cli, audit_cli]))

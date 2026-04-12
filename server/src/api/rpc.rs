@@ -63,11 +63,7 @@ async fn broadcast_web_refresh(state: &AppState, room_key: &str, thread_id: &str
         crate::html::thread_feed_region_markup(state, Some(room_key), thread_id, None).await;
 
     let builder = JsBuilder::new().morph_selector(&format!("#{feed_id}"), feed_markup);
-    let builder = if room_key == "public" {
-        builder.qs("#public-new-thread-compose form").reset()
-    } else {
-        builder.qs("#room-new-thread-compose form").reset()
-    };
+    let builder = builder.qs("#new-thread-compose form").reset();
     let builder = builder.if_current_path_matches(&thread_url, |builder| {
         builder.morph_selector("#thread-feed-region", thread_feed_markup)
     });

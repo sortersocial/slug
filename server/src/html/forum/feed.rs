@@ -245,11 +245,13 @@ pub async fn home(
             p class="muted" { "dark = time-ordered · light = vote-ranked" }
             div class="thread-feed-toolbar" {
                 form method="POST" action="/ui" {
-                    input type="hidden" name=(UI_RPC_FIELD) value=(template_json_compact(&HtmlUiAction::ExpandPublicNewThreadForm).expect("static json"));
+                    input type="hidden" name=(UI_RPC_FIELD) value=(template_json_compact(&HtmlUiAction::ExpandNewThreadForm {
+                        room_wire: "public".into(),
+                    }).expect("static json"));
                     button type="submit" class="section-add-btn" { "+" }
                 }
             }
-            div id="public-new-thread-ui-slot" {}
+            div id="new-thread-ui-slot" {}
             (render_thread_feed(Some(&nav), "thread-feed", &public_rows, now))
             (cli_panel(&["npx slugsocial public forum list"]))
         },

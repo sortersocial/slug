@@ -38,10 +38,9 @@ pub enum HtmlUiAction {
     RedactPost {
         post_id: String,
     },
-    /// Morph `#public-new-thread-ui-slot` to the new-thread form (or login hint).
-    ExpandPublicNewThreadForm,
-    /// Morph `#room-new-thread-ui-slot` for the given room wire id.
-    ExpandRoomNewThreadForm {
+    /// Morph `#new-thread-ui-slot` inner to the collapsed compose toggle (or login hint).
+    /// Use `room_wire: "public"` for the public forum home; otherwise a private room id (`short/slug`).
+    ExpandNewThreadForm {
         room_wire: String,
     },
     /// Morph `#room-members-section` — members list open or collapsed (server-rendered).
@@ -50,8 +49,8 @@ pub enum HtmlUiAction {
         #[serde(default)]
         expanded: bool,
     },
-    /// Morph `#room-new-thread-ui-slot` — compose body open or collapsed (server-rendered).
-    SetRoomNewThreadComposeExpanded {
+    /// Morph `#new-thread-ui-slot` inner — compose open or collapsed (`room_wire: "public"` for home).
+    SetNewThreadComposeExpanded {
         room_wire: String,
         #[serde(default)]
         expanded: bool,
@@ -133,15 +132,23 @@ mod tests {
     }
 
     #[test]
-    fn expand_public_unit_variant() {
-        let template = serde_json::json!({ "action": "expand_public_new_thread_form" });
+    fn expand_new_thread_form_public() {
+        let template = serde_json::json!({
+            "action": "expand_new_thread_form",
+            "room_wire": "public",
+        });
         let mut form = HashMap::new();
         form.insert(
             UI_RPC_FIELD.to_string(),
             serde_json::to_string(&template).unwrap(),
         );
         let a = parse_html_ui_from_form(&form).unwrap();
-        assert_eq!(a, HtmlUiAction::ExpandPublicNewThreadForm);
+        assert_eq!(
+            a,
+            HtmlUiAction::ExpandNewThreadForm {
+                room_wire: "public".into(),
+            }
+        );
     }
 
     #[test]
@@ -190,9 +197,9 @@ mod tests {
     }
 
     #[test]
-    fn set_room_new_thread_compose_expanded_true() {
+    fn set_new_thread_compose_expanded_true() {
         let template = serde_json::json!({
-            "action": "set_room_new_thread_compose_expanded",
+            "action": "set_new_thread_compose_expanded",
             "room_wire": "ab/cd",
             "expanded": true,
         });
@@ -204,7 +211,7 @@ mod tests {
         let a = parse_html_ui_from_form(&form).unwrap();
         assert_eq!(
             a,
-            HtmlUiAction::SetRoomNewThreadComposeExpanded {
+            HtmlUiAction::SetNewThreadComposeExpanded {
                 room_wire: "ab/cd".into(),
                 expanded: true,
             }

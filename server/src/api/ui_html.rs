@@ -19,7 +19,7 @@ use crate::{
     },
     canonical_path::canonicalize_tag,
     html::{
-        fragment_public_new_thread_form, fragment_room_new_thread_form, login_to_post_hint_markup,
+        fragment_new_thread_slot, login_to_post_hint_markup,
         parse_html_ui_from_form, room_members_section_markup, thread_feed_html,
         thread_feed_html_for_room, thread_feed_region_markup, thread_ui_collapse_redacted_post,
         thread_ui_expand_post_full, thread_ui_expand_redacted_post, ui_js_warn, user_can_post_room,
@@ -139,23 +139,23 @@ async fn dispatch_ui_action(
                 }
             }
         }
-        HtmlUiAction::ExpandPublicNewThreadForm => {
-            let reduced = state.reduced.read().await;
-            let user = session.map(|s| s.username.as_str());
-            drop(reduced);
-            let markup = if user.is_some() {
-                fragment_public_new_thread_form(true)
-            } else {
-                login_to_post_hint_markup()
-            };
-            JsBuilder::new()
-                .morph_inner_selector("#public-new-thread-ui-slot", markup)
-                .into_response()
-        }
-        HtmlUiAction::ExpandRoomNewThreadForm { room_wire } => {
+        HtmlUiAction::ExpandNewThreadForm { room_wire } => {
             let room_wire = room_wire.trim().to_string();
             if room_wire.is_empty() {
                 return ui_js_warn("missing room").into_response();
+            }
+            if room_wire == "public" {
+                let reduced = state.reduced.read().await;
+                let user = session.map(|s| s.username.as_str());
+                drop(reduced);
+                let markup = if user.is_some() {
+                    fragment_new_thread_slot(&ThreadNav::public(), true, false)
+                } else {
+                    login_to_post_hint_markup()
+                };
+                return JsBuilder::new()
+                    .morph_inner_selector("#new-thread-ui-slot", markup)
+                    .into_response();
             }
             let reduced = state.reduced.read().await;
             let user = session.map(|s| s.username.as_str());
@@ -176,12 +176,12 @@ async fn dispatch_ui_action(
                 return ui_js_warn("bad room").into_response();
             };
             let markup = if can_post {
-                fragment_room_new_thread_form(&nav, true, false)
+                fragment_new_thread_slot(&nav, true, false)
             } else {
                 login_to_post_hint_markup()
             };
             JsBuilder::new()
-                .morph_inner_selector("#room-new-thread-ui-slot", markup)
+                .morph_inner_selector("#new-thread-ui-slot", markup)
                 .into_response()
         }
         HtmlUiAction::SetRoomMembersExpanded { room_wire, expanded } => {
@@ -205,10 +205,27 @@ async fn dispatch_ui_action(
                 .morph_selector("#room-members-section", markup)
                 .into_response()
         }
-        HtmlUiAction::SetRoomNewThreadComposeExpanded { room_wire, expanded } => {
+        HtmlUiAction::SetNewThreadComposeExpanded { room_wire, expanded } => {
             let room_wire = room_wire.trim().to_string();
             if room_wire.is_empty() {
                 return ui_js_warn("missing room").into_response();
+            }
+            if room_wire == "public" {
+                let reduced = state.reduced.read().await;
+                let _user = session.map(|s| s.username.as_str());
+                drop(reduced);
+                let can_post = session.is_some();
+                let nav = ThreadNav::public();
+                let markup = if can_post {
+                    fragment_new_thread_slot(&nav, true, expanded)
+                } else {
+                    login_to_post_hint_markup()
+                };
+                let mut b = JsBuilder::new().morph_inner_selector("#new-thread-ui-slot", markup);
+                if expanded && can_post {
+                    b = b.focus_selector("#new-thread-tag");
+                }
+                return b.into_response();
             }
             let reduced = state.reduced.read().await;
             let user = session.map(|s| s.username.as_str());
@@ -229,13 +246,13 @@ async fn dispatch_ui_action(
                 return ui_js_warn("bad room").into_response();
             };
             let markup = if can_post {
-                fragment_room_new_thread_form(&nav, true, expanded)
+                fragment_new_thread_slot(&nav, true, expanded)
             } else {
                 login_to_post_hint_markup()
             };
-            let mut b = JsBuilder::new().morph_inner_selector("#room-new-thread-ui-slot", markup);
+            let mut b = JsBuilder::new().morph_inner_selector("#new-thread-ui-slot", markup);
             if expanded && can_post {
-                b = b.focus_selector("#room-new-tag");
+                b = b.focus_selector("#new-thread-tag");
             }
             b.into_response()
         }

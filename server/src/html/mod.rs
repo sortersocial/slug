@@ -27,9 +27,9 @@ pub use forum::{
 };
 
 pub(crate) use forum::{
-    fragment_public_new_thread_form, fragment_room_new_thread_form, login_to_post_hint_markup,
-    room_members_section_markup, thread_ui_collapse_redacted_post, thread_ui_expand_post_full,
-    thread_ui_expand_redacted_post, user_can_post_room, user_can_view_room,
+    fragment_new_thread_slot, login_to_post_hint_markup, room_members_section_markup,
+    thread_ui_collapse_redacted_post, thread_ui_expand_post_full, thread_ui_expand_redacted_post,
+    user_can_post_room, user_can_view_room,
 };
 pub use garden::{garden_index, ontology_path, room_garden_index, room_ontology_path};
 pub use search::{search_page, search_results_fragment};
@@ -183,7 +183,7 @@ impl JsBuilder {
         )
     }
 
-    /// Morph **children** of `selector` so the outer element (e.g. `#room-new-thread-ui-slot`) keeps its `id`.
+    /// Morph **children** of `selector` so the outer element (e.g. `#new-thread-ui-slot`) keeps its `id`.
     pub(crate) fn morph_inner_selector(self, selector: &str, markup: Markup) -> Self {
         self.qs(selector).morph_inner(markup)
     }

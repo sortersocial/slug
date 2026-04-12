@@ -20,9 +20,7 @@ pub use profile::user_profile_page;
 pub use views::{room_page, room_thread_view, thread_view};
 
 pub(crate) use access::{user_can_post_room, user_can_view_room};
-pub(crate) use new_thread::{
-    fragment_public_new_thread_form, fragment_room_new_thread_form, login_to_post_hint_markup,
-};
+pub(crate) use new_thread::{fragment_new_thread_slot, login_to_post_hint_markup};
 pub(crate) use room_members::room_members_section_markup;
 pub(crate) use thread_morph::{
     thread_ui_collapse_redacted_post, thread_ui_expand_post_full, thread_ui_expand_redacted_post,

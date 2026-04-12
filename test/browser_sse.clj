@@ -80,19 +80,17 @@
                          room-url (str base-url "/r/" room-short "/" room-slug)
                          thread-url (str room-url "/t/sse-thread")]
                     ;; Object under test: slug_ui.js intercepts POST /ui, evals JS, morphs
-                    ;; #room-new-thread-ui-slot (expand compose), then post_ingest redirects to thread.
+                    ;; #new-thread-ui-slot (expand compose), then post_ingest redirects to thread.
                     (page/navigate alice-pg room-url)
                     (page/wait-for-load-state alice-pg :load)
-                    (is (wait-for-text alice-pg "#room-new-thread-ui-slot"
-                                       "new thread in this room" 30000)
+                    (is (wait-for-text alice-pg "#new-thread-ui-slot" "+" 30000)
                         "collapsed new-thread control in slot (page + slug_ui.js)")
-                    (locator/click (page/locator alice-pg "#room-new-thread-ui-slot button.form-toggle"))
-                    (is (wait-for-text alice-pg "#room-new-thread-ui-slot"
-                                       "hide new thread form" 30000)
+                    (locator/click (page/locator alice-pg "#new-thread-ui-slot button.form-toggle"))
+                    (is (wait-for-text alice-pg "#new-thread-compose" "create thread / post" 30000)
                         "compose expanded via POST /ui morph (slug_ui.js)")
-                    (locator/fill (page/locator alice-pg "#room-new-tag") "sse-thread")
-                    (locator/fill (page/locator alice-pg "#room-new-thread-compose textarea") "seed thread")
-                    (locator/click (page/locator alice-pg "#room-new-thread-form button[type='submit']"))
+                    (locator/fill (page/locator alice-pg "#new-thread-tag") "sse-thread")
+                    (locator/fill (page/locator alice-pg "#new-thread-compose textarea") "seed thread")
+                    (locator/click (page/locator alice-pg "#new-thread-form button[type='submit']"))
                     (page/wait-for-url alice-pg thread-url {:timeout 90000.0})
                     (page/wait-for-load-state alice-pg :load)
                     (is (wait-for-text alice-pg "#thread-feed-region" "seed thread" 45000)
