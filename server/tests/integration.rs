@@ -324,13 +324,13 @@ async fn test_private_room_read_requires_explicit_view_capability() {
         "search should hide private posts without view capability"
     );
 
-    // Feed should likewise hide private posts.
+    // Feed should likewise hide private posts (keyed by delegate on those ingests).
     let feed = rpc_batch(
         &client,
         addr,
         Some(&bearer),
         serde_json::json!([{
-            "GetFeed": { "actor": "testuser", "limit": 20 }
+            "GetFeed": { "delegate": "00000000-0000-0000-0000-000000000000:test:local/test", "limit": 20 }
         }]),
     )
     .await;
@@ -340,6 +340,179 @@ async fn test_private_room_read_requires_explicit_view_capability() {
     assert!(
         feed_posts.is_empty(),
         "feed should hide private posts without view capability"
+    );
+}
+
+#[tokio::test]
+async fn test_feed_since_last_post_is_scoped_to_delegate() {
+    let (addr, _tmp, _log, _handle) = create_test_server().await;
+    let client = reqwest::Client::new();
+    let bearer = test_bearer();
+
+    let d1 = "00000000-0000-0000-0000-0000000000a1:feedtest:local/model-a";
+    let d2 = "00000000-0000-0000-0000-0000000000a2:feedtest:local/model-b";
+
+    let p1 = rpc_batch(
+        &client,
+        addr,
+        Some(&bearer),
+        serde_json::json!([{
+            "Post": {
+                "room": "public",
+                "thread_tag": "feed-delegate-test",
+                "delegate": d1,
+                "text": "#feed-delegate-test\nalpha marker for d1\n",
+                "return_rank_diff": false
+            }
+        }]),
+    )
+    .await;
+    assert_eq!(p1["results"][0]["ok"], true, "first post: {:?}", p1);
+
+    let p2 = rpc_batch(
+        &client,
+        addr,
+        Some(&bearer),
+        serde_json::json!([{
+            "Post": {
+                "room": "public",
+                "thread_tag": "feed-delegate-test",
+                "delegate": d2,
+                "text": "#feed-delegate-test\nbeta marker for d2\n",
+                "return_rank_diff": false
+            }
+        }]),
+    )
+    .await;
+    assert_eq!(p2["results"][0]["ok"], true, "second post: {:?}", p2);
+
+    // Since d1 last posted first, the feed for d1 should include everything after that (here: d2's post).
+    let feed = rpc_batch(
+        &client,
+        addr,
+        Some(&bearer),
+        serde_json::json!([{
+            "GetFeed": { "delegate": d1, "limit": 20 }
+        }]),
+    )
+    .await;
+    let line = &feed["results"][0];
+    assert_eq!(line["ok"], true, "GetFeed failed: {:?}", line);
+    let delegate = line["result"]["Feed"]["delegate"].as_str().unwrap();
+    assert_eq!(delegate, d1);
+    let bodies: String = line["result"]["Feed"]["posts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|p| p["body"].as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        bodies.contains("beta marker for d2"),
+        "expected d2's post after d1's cutoff, got: {bodies}"
+    );
+    assert!(
+        !bodies.contains("alpha marker for d1"),
+        "d1's own prior post should not appear after cutoff, got: {bodies}"
+    );
+
+    let d_other = "00000000-0000-0000-0000-0000000000ff:feedtest:local/other";
+    let steal = rpc_batch(
+        &client,
+        addr,
+        Some(&bearer),
+        serde_json::json!([{
+            "GetFeed": { "delegate": d_other, "limit": 5 }
+        }]),
+    )
+    .await;
+    let steal_line = &steal["results"][0];
+    assert_eq!(steal_line["ok"], false, "expected rejection for unbound delegate: {:?}", steal_line);
+    assert_eq!(steal_line["error"], "not your delegate");
+
+    let no_auth = rpc_batch(
+        &client,
+        addr,
+        None,
+        serde_json::json!([{
+            "GetFeed": { "delegate": d1, "limit": 5 }
+        }]),
+    )
+    .await;
+    let na = &no_auth["results"][0];
+    assert_eq!(na["ok"], false, "GetFeed without bearer: {:?}", na);
+    assert_eq!(na["error"], "missing Authorization header");
+}
+
+#[tokio::test]
+async fn test_feed_without_delegate_uses_principal_last_post_including_delegate() {
+    let (addr, _tmp, _log, _handle) = create_test_server().await;
+    let client = reqwest::Client::new();
+    let bearer = test_bearer();
+
+    let d = "00000000-0000-0000-0000-0000000000b1:principalfeed:local/model";
+    let p1 = rpc_batch(
+        &client,
+        addr,
+        Some(&bearer),
+        serde_json::json!([{
+            "Post": {
+                "room": "public",
+                "thread_tag": "principal-feed-test",
+                "delegate": d,
+                "text": "#principal-feed-test\nfirst delegate post\n",
+                "return_rank_diff": false
+            }
+        }]),
+    )
+    .await;
+    assert_eq!(p1["results"][0]["ok"], true, "{:?}", p1);
+
+    let p2 = rpc_batch(
+        &client,
+        addr,
+        Some(&bearer),
+        serde_json::json!([{
+            "Post": {
+                "room": "public",
+                "thread_tag": "principal-feed-test",
+                "delegate": d,
+                "text": "#principal-feed-test\nsecond delegate post\n",
+                "return_rank_diff": false
+            }
+        }]),
+    )
+    .await;
+    assert_eq!(p2["results"][0]["ok"], true, "{:?}", p2);
+
+    // Argless GetFeed: cutoff is last ingest by this principal (even if every post used --delegate),
+    // so revisiting an old chat with only a token still gets a bounded "since", not full history.
+    let feed = rpc_batch(
+        &client,
+        addr,
+        Some(&bearer),
+        serde_json::json!([{
+            "GetFeed": { "limit": 20 }
+        }]),
+    )
+    .await;
+    let line = &feed["results"][0];
+    assert_eq!(line["ok"], true, "{:?}", line);
+    assert!(
+        line["result"]["Feed"]["delegate"].is_null(),
+        "principal-wide feed omits delegate in JSON: {:?}",
+        line["result"]["Feed"]
+    );
+    assert!(
+        line["result"]["Feed"]["since"].is_number(),
+        "expected since from principal's last post (including delegate ingests), got: {:?}",
+        line["result"]["Feed"]["since"]
+    );
+    let posts = line["result"]["Feed"]["posts"].as_array().unwrap();
+    assert!(
+        posts.is_empty(),
+        "nothing is strictly newer than the latest own post; got {} posts",
+        posts.len()
     );
 }
 

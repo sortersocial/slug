@@ -228,9 +228,10 @@ pub struct VoteRow {
 /// Response for the feed endpoint — all ingests since a cutoff, newest first.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FeedResponse {
-    /// Principal username this feed is scoped to (stored form, no `@`).
-    pub actor: String,
-    /// The lower-bound timestamp used (actor's last ingest, ms). None if actor has never posted.
+    /// When set, feed cutoff is scoped to this agent delegate (`uuid:rig:provider/model`). Omitted when using principal-wide catch-up (`GetFeed` without `delegate`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delegate: Option<String>,
+    /// Lower-bound timestamp (ms): last matching ingest for the chosen scope. None if no prior matching ingest.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub since: Option<i64>,
     pub posts: Vec<FeedPost>,
@@ -401,7 +402,9 @@ pub enum RpcCommand {
         query: String,
     },
     GetFeed {
-        actor: String,
+        /// When omitted or empty, feed uses the bearer principal's last ingest as the cutoff (any delegate or none).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        delegate: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         since: Option<i64>,
         #[serde(default)]
