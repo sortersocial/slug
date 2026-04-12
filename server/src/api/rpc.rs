@@ -29,7 +29,7 @@ use super::helpers::{
     compute_connectivity_stats, is_pair_voted, now_ms, paginate_rankings, parse_parent_specs,
     pick_random_distinct_canonical, resolve_item, vote_touches_path,
 };
-use super::validate::{normalize_room_and_thread, validate_ingest_document};
+use super::validate::validate_ingest_document;
 
 fn empty_content() -> &'static crate::reducer::ContentState {
     static E: OnceLock<crate::reducer::ContentState> = OnceLock::new();
@@ -246,61 +246,6 @@ async fn rpc_post(
     text: String,
     return_rank_diff: bool,
 ) -> Result<RpcResult, RpcErr> {
-    let reduced_arc = state.reduced.clone();
-    let reduced = reduced_arc.read().await;
-
-    let principal = verify_bearer_principal(headers, &reduced).map_err(|(_, m)| (m, None))?;
-
-    let delegate: Option<String> = match delegate_opt {
-        None => None,
-        Some(ref s) if s.trim().is_empty() => None,
-        Some(ref s) => Some(parse_agent(s).map_err(|msg| (format!("invalid delegate format"), Some(msg)))?),
-    };
-
-    let (room_key, _thread_id) = normalize_room_and_thread(&room, &thread_tag);
-    let scope = scope_from_room_wire(&room_key);
-
-    let is_private = !matches!(scope, ScopeId::Public);
-    if is_private && !reduced.rooms.contains(&room_key) {
-        drop(reduced);
-        return Err(("unknown room".into(), Some(format!("room `{}` does not exist", room_key))));
-    }
-
-    let v = validate_ingest_document(&reduced, &text, &scope).map_err(|(st, m, h)| {
-        let _ = st;
-        (m, h)
-    })?;
-
-    if is_private {
-        let mut required: HashSet<ThreadCapability> = HashSet::new();
-        required.insert(ThreadCapability::View);
-        for stmt in &v.doc.statements {
-            match stmt {
-                dsl::Stmt::Vote { .. } => { required.insert(ThreadCapability::Vote); }
-                dsl::Stmt::Item { .. } => { required.insert(ThreadCapability::AddItem); }
-                dsl::Stmt::Prose { .. } => { required.insert(ThreadCapability::Post); }
-            }
-        }
-        let missing: Vec<_> = required.iter()
-            .filter(|cap| !reduced.user_has_cap(&room_key, &principal, **cap))
-            .collect();
-        if !missing.is_empty() {
-            drop(reduced);
-            return Err(("insufficient capabilities for this room".into(), None));
-        }
-    }
-
-    if let Some(ref d) = delegate {
-        match reduced.agent_bindings.get(d) {
-            Some(u) if u != &principal => {
-                drop(reduced);
-                return Err(("delegate already bound to another user".into(), None));
-            }
-            _ => {}
-        }
-    }
-    drop(reduced);
-
     let bearer = parse_bearer(headers).map_err(|(_, m)| (m, None))?;
     let (tx, rx) = oneshot::channel();
     state
@@ -981,29 +926,22 @@ pub async fn handle_rpc_batch(
                 match parse_bearer(&headers) {
                     Err((_, m)) => line_err(m, None),
                     Ok(bearer) => {
-                        let slug = slug.trim().to_lowercase();
-                        if slug.is_empty() || slug.len() > 64 {
-                            line_err("slug must be 1-64 characters", None)
-                        } else if !slug.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
-                            line_err("slug must be lowercase alphanumeric with hyphens", None)
-                        } else {
-                            let (tx, rx) = oneshot::channel();
-                            match state
-                                .write_tx
-                                .send(WriteCmd::RoomCreate {
-                                    slug,
-                                    bearer,
-                                    reply: tx,
-                                })
-                                .await
-                            {
-                                Err(_) => line_err("writer unavailable", None),
-                                Ok(()) => match rx.await {
-                                    Err(_) => line_err("writer dropped", None),
-                                    Ok(Ok(r)) => line_ok(r),
-                                    Ok(Err((msg, hint))) => line_err(msg, hint),
-                                },
-                            }
+                        let (tx, rx) = oneshot::channel();
+                        match state
+                            .write_tx
+                            .send(WriteCmd::RoomCreate {
+                                slug,
+                                bearer,
+                                reply: tx,
+                            })
+                            .await
+                        {
+                            Err(_) => line_err("writer unavailable", None),
+                            Ok(()) => match rx.await {
+                                Err(_) => line_err("writer dropped", None),
+                                Ok(Ok(r)) => line_ok(r),
+                                Ok(Err((msg, hint))) => line_err(msg, hint),
+                            },
                         }
                     }
                 }
@@ -1013,66 +951,27 @@ pub async fn handle_rpc_batch(
                 username,
                 capabilities,
             } => {
-                let principal = {
-                    let reduced = state.reduced.read().await;
-                    verify_bearer_principal(&headers, &*reduced)
-                };
-                match principal {
+                match parse_bearer(&headers) {
                     Err((_, m)) => line_err(m, None),
-                    Ok(principal) => {
-                        let can_manage = {
-                            let reduced = state.reduced.read().await;
-                            reduced.user_has_cap(&room, &principal, ThreadCapability::Manage)
-                        };
-                        if !can_manage {
-                            line_err("requires Manage capability", None)
-                        } else if capabilities.is_empty() {
-                            line_err("capabilities must not be empty", None)
-                        } else {
-                            match parse_username(&username) {
-                                Err(msg) => line_err("invalid username", Some(msg)),
-                                Ok(target) => {
-                                    let user_exists = {
-                                        let reduced = state.reduced.read().await;
-                                        reduced.users_by_provider.values().any(|u| u == &target)
-                                    };
-                                    if !user_exists {
-                                        line_err(format!("user @{target} not found"), None)
-                                    } else {
-                                        let caps: Result<Vec<ThreadCapability>, String> = capabilities
-                                            .iter()
-                                            .map(|c| parse_capability(c.trim()))
-                                            .collect();
-                                        match caps {
-                                            Err(msg) => line_err(msg, None),
-                                            Ok(_) => match parse_bearer(&headers) {
-                                                Err((_, m)) => line_err(m, None),
-                                                Ok(bearer) => {
-                                                    let (tx, rx) = oneshot::channel();
-                                                    match state
-                                                        .write_tx
-                                                        .send(WriteCmd::Grant {
-                                                            room,
-                                                            username,
-                                                            capabilities,
-                                                            bearer,
-                                                            reply: tx,
-                                                        })
-                                                        .await
-                                                    {
-                                                        Err(_) => line_err("writer unavailable", None),
-                                                        Ok(()) => match rx.await {
-                                                            Err(_) => line_err("writer dropped", None),
-                                                            Ok(Ok(r)) => line_ok(r),
-                                                            Ok(Err((msg, hint))) => line_err(msg, hint),
-                                                        },
-                                                    }
-                                                }
-                                            },
-                                        }
-                                    }
-                                }
-                            }
+                    Ok(bearer) => {
+                        let (tx, rx) = oneshot::channel();
+                        match state
+                            .write_tx
+                            .send(WriteCmd::Grant {
+                                room,
+                                username,
+                                capabilities,
+                                bearer,
+                                reply: tx,
+                            })
+                            .await
+                        {
+                            Err(_) => line_err("writer unavailable", None),
+                            Ok(()) => match rx.await {
+                                Err(_) => line_err("writer dropped", None),
+                                Ok(Ok(r)) => line_ok(r),
+                                Ok(Err((msg, hint))) => line_err(msg, hint),
+                            },
                         }
                     }
                 }
@@ -1209,60 +1108,27 @@ pub async fn handle_rpc_batch(
                 username,
                 capability,
             } => {
-                let principal = {
-                    let reduced = state.reduced.read().await;
-                    verify_bearer_principal(&headers, &*reduced)
-                };
-                match principal {
+                match parse_bearer(&headers) {
                     Err((_, m)) => line_err(m, None),
-                    Ok(principal) => {
-                        let can_manage = {
-                            let reduced = state.reduced.read().await;
-                            reduced.user_has_cap(&room, &principal, ThreadCapability::Manage)
-                        };
-                        if !can_manage {
-                            line_err("requires Manage capability", None)
-                        } else {
-                            match parse_username(&username) {
-                                Err(msg) => line_err("invalid username", Some(msg)),
-                                Ok(target) => {
-                                    let user_exists = {
-                                        let reduced = state.reduced.read().await;
-                                        reduced.users_by_provider.values().any(|u| u == &target)
-                                    };
-                                    if !user_exists {
-                                        line_err(format!("user @{target} not found"), None)
-                                    } else {
-                                        match parse_capability(capability.trim()) {
-                                            Err(msg) => line_err(msg, None),
-                                            Ok(_cap) => match parse_bearer(&headers) {
-                                                Err((_, m)) => line_err(m, None),
-                                                Ok(bearer) => {
-                                                    let (tx, rx) = oneshot::channel();
-                                                    match state
-                                                        .write_tx
-                                                        .send(WriteCmd::Revoke {
-                                                            room,
-                                                            username,
-                                                            capability,
-                                                            bearer,
-                                                            reply: tx,
-                                                        })
-                                                        .await
-                                                    {
-                                                        Err(_) => line_err("writer unavailable", None),
-                                                        Ok(()) => match rx.await {
-                                                            Err(_) => line_err("writer dropped", None),
-                                                            Ok(Ok(r)) => line_ok(r),
-                                                            Ok(Err((msg, hint))) => line_err(msg, hint),
-                                                        },
-                                                    }
-                                                }
-                                            },
-                                        }
-                                    }
-                                }
-                            }
+                    Ok(bearer) => {
+                        let (tx, rx) = oneshot::channel();
+                        match state
+                            .write_tx
+                            .send(WriteCmd::Revoke {
+                                room,
+                                username,
+                                capability,
+                                bearer,
+                                reply: tx,
+                            })
+                            .await
+                        {
+                            Err(_) => line_err("writer unavailable", None),
+                            Ok(()) => match rx.await {
+                                Err(_) => line_err("writer dropped", None),
+                                Ok(Ok(r)) => line_ok(r),
+                                Ok(Err((msg, hint))) => line_err(msg, hint),
+                            },
                         }
                     }
                 }

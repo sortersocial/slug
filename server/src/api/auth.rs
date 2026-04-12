@@ -423,19 +423,6 @@ pub async fn post_choose_username(
         return js_form_error_fragment(&form.session, &format!("invalid agent format — {msg}")).into_response();
     }
 
-    let reduced_arc = state.reduced.clone();
-    let reduced = reduced_arc.read().await;
-    let provider_key = (provider.to_lowercase(), provider_id.clone());
-    if reduced.users_by_provider.contains_key(&provider_key) {
-        return js_form_error_fragment(&form.session, "provider already registered").into_response();
-    }
-    if reduced.users_by_provider.values().any(|u| u == &canon_user) {
-        drop(reduced);
-        return js_form_error_fragment(&form.session, "that username is taken — try another")
-            .into_response();
-    }
-    drop(reduced);
-
     let redeem_invite = {
         let sessions_read = sessions.read().await;
         sessions_read.get(&form.session).and_then(|s| s.redeem_invite.clone())
