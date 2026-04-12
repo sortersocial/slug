@@ -139,51 +139,6 @@ async fn dispatch_ui_action(
                 }
             }
         }
-        HtmlUiAction::ExpandNewThreadForm { room_wire } => {
-            let room_wire = room_wire.trim().to_string();
-            if room_wire.is_empty() {
-                return ui_js_warn("missing room").into_response();
-            }
-            if room_wire == "public" {
-                let reduced = state.reduced.read().await;
-                let user = session.map(|s| s.username.as_str());
-                drop(reduced);
-                let markup = if user.is_some() {
-                    fragment_new_thread_slot(&ThreadNav::public(), true, false)
-                } else {
-                    login_to_post_hint_markup()
-                };
-                return JsBuilder::new()
-                    .morph_inner_selector("#new-thread-ui-slot", markup)
-                    .into_response();
-            }
-            let reduced = state.reduced.read().await;
-            let user = session.map(|s| s.username.as_str());
-            if !reduced.rooms.contains(&room_wire) {
-                drop(reduced);
-                return ui_js_warn("room not found").into_response();
-            }
-            if !user_can_view_room(&reduced, &room_wire, user) {
-                drop(reduced);
-                return ui_js_warn("forbidden").into_response();
-            }
-            let can_post = session
-                .as_ref()
-                .map(|s| user_can_post_room(&reduced, &room_wire, &s.username))
-                .unwrap_or(false);
-            drop(reduced);
-            let Some(nav) = ThreadNav::from_room_id(&room_wire) else {
-                return ui_js_warn("bad room").into_response();
-            };
-            let markup = if can_post {
-                fragment_new_thread_slot(&nav, true, false)
-            } else {
-                login_to_post_hint_markup()
-            };
-            JsBuilder::new()
-                .morph_inner_selector("#new-thread-ui-slot", markup)
-                .into_response()
-        }
         HtmlUiAction::SetRoomMembersExpanded { room_wire, expanded } => {
             let room_wire = room_wire.trim().to_string();
             if room_wire.is_empty() {

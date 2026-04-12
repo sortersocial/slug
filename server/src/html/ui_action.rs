@@ -38,11 +38,6 @@ pub enum HtmlUiAction {
     RedactPost {
         post_id: String,
     },
-    /// Morph `#new-thread-ui-slot` inner to the collapsed compose toggle (or login hint).
-    /// Use `room_wire: "public"` for the public forum home; otherwise a private room id (`short/slug`).
-    ExpandNewThreadForm {
-        room_wire: String,
-    },
     /// Morph `#room-members-section` — members list open or collapsed (server-rendered).
     SetRoomMembersExpanded {
         room_wire: String,
@@ -127,26 +122,6 @@ mod tests {
                 text: "body".into(),
                 error_target: Some("e".into()),
                 form_id: Some("f".into()),
-            }
-        );
-    }
-
-    #[test]
-    fn expand_new_thread_form_public() {
-        let template = serde_json::json!({
-            "action": "expand_new_thread_form",
-            "room_wire": "public",
-        });
-        let mut form = HashMap::new();
-        form.insert(
-            UI_RPC_FIELD.to_string(),
-            serde_json::to_string(&template).unwrap(),
-        );
-        let a = parse_html_ui_from_form(&form).unwrap();
-        assert_eq!(
-            a,
-            HtmlUiAction::ExpandNewThreadForm {
-                room_wire: "public".into(),
             }
         );
     }

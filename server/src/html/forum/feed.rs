@@ -14,6 +14,7 @@ use crate::timeago;
 
 use super::ingest::ingest_entry_markup;
 use super::nav::ThreadNav;
+use super::new_thread::{fragment_new_thread_slot, login_to_post_hint_markup};
 use super::page::auth_strip;
 use super::paginator::{render_thread_paginator, PAGE_SIZE};
 use crate::html::{
@@ -217,9 +218,6 @@ pub async fn home(
     let strip = auth_strip(&headers, &jar, &reduced_read);
     drop(reduced_read);
 
-    use crate::html::ui_action::{HtmlUiAction, UI_RPC_FIELD};
-    use crate::form_template::template_json_compact;
-
     let page = layout(
         "slug.social",
         "view-thread",
@@ -243,15 +241,13 @@ pub async fn home(
                 }
             }
             p class="muted" { "dark = time-ordered · light = vote-ranked" }
-            div class="thread-feed-toolbar" {
-                form method="POST" action="/ui" {
-                    input type="hidden" name=(UI_RPC_FIELD) value=(template_json_compact(&HtmlUiAction::ExpandNewThreadForm {
-                        room_wire: "public".into(),
-                    }).expect("static json"));
-                    button type="submit" class="section-add-btn" { "+" }
+            div id="new-thread-ui-slot" {
+                @if user.is_some() {
+                    (fragment_new_thread_slot(&nav, true, false))
+                } @else {
+                    (login_to_post_hint_markup())
                 }
             }
-            div id="new-thread-ui-slot" {}
             (render_thread_feed(Some(&nav), "thread-feed", &public_rows, now))
             (cli_panel(&["npx slugsocial public forum list"]))
         },
