@@ -19,7 +19,7 @@ use crate::{
 };
 
 use super::{
-    authorship_address, bc_path, bc_segment, cli_panel, layout, now_ms, ratio_pct,
+    bc_path, bc_segment, cli_panel, layout, now_ms, ratio_pct,
     render_linkified_with_embeds_in_scope, breadcrumb_path::OntologyPath,
     forum::ThreadNav,
 };
@@ -90,11 +90,10 @@ pub async fn garden_index(State(state): State<AppState>) -> impl IntoResponse {
 
     let page = layout(
         "~/",
-        "view-ontology view-ontology-dark",
+        "view-ontology view-ontology-light",
         html! {
             @let root_path = OntologyPath::root();
             nav class="breadcrumb" { (bc_path(&root_path)) }
-            p class="muted" { "light = vote-ranked · dark = time-ordered" }
             h2 { "paths" }
             @if child_rankings.component_rankings.is_empty() && child_rankings.unranked_items.is_empty() {
                 p class="muted" { "no items yet" }
@@ -209,7 +208,6 @@ struct ItemPageViewModel {
     body: Option<String>,
     sibling_rank: Option<SiblingRank>,
     child_rankings: ChildrenRankings,
-    touching_votes: Vec<crate::reducer::VoteData>,
     rank_history: Vec<RankHistoryEntryView>,
     /// Forum threads that mention or vote on this item.
     threads: Vec<String>,
@@ -342,7 +340,6 @@ fn build_item_page_view_model(
     reduced: &crate::reducer::ReducerState,
     scope: &ScopeId,
     item: &str,
-    vote_limit: usize,
 ) -> ItemPageViewModel {
     let content = reduced
         .content_for_scope(scope)
@@ -350,11 +347,6 @@ fn build_item_page_view_model(
     let item_key = CanonicalItemUrl::parse(item)
         .unwrap_or_else(|| CanonicalItemUrl::parse("~/").unwrap());
     let child_rankings = build_children_rankings(content, &item_key);
-    let touching_votes: Vec<crate::reducer::VoteData> = content
-        .item_votes
-        .get(&item_key)
-        .map(|q| q.iter().take(vote_limit).cloned().collect())
-        .unwrap_or_default();
 
     let rank_history = build_rank_history(reduced, scope, item_key.as_str());
 
@@ -374,7 +366,6 @@ fn build_item_page_view_model(
             .or_else(|| reduced.public().item_bodies.get(&item_key).cloned()),
         sibling_rank: build_sibling_rank(reduced, scope, &item_key),
         child_rankings,
-        touching_votes,
         rank_history,
         threads,
     }
@@ -388,13 +379,13 @@ async fn render_scope_view(
     let scope = nav.scope();
     let model = {
         let reduced = state.reduced.read().await;
-        build_item_page_view_model(&reduced, &scope, path.as_str(), 50)
+        build_item_page_view_model(&reduced, &scope, path.as_str())
     };
     let thread_href = |tag: &str| nav.thread_url(tag);
 
     let page = layout(
         &item_display_path(&model.item),
-        "view-ontology view-ontology-dark",
+        "view-ontology view-ontology-light",
         html! {
             nav class="breadcrumb" { (scoped_bc_path(&path, &nav)) }
             section class="ont-item-shell" {
@@ -418,48 +409,10 @@ async fn render_scope_view(
                 }
             }
 
-            details class="ont-related-votes" {
-                summary {
-                    "related votes "
-                    span class="muted" { (format!("({})", model.touching_votes.len())) }
-                }
-                @if model.touching_votes.is_empty() {
-                    p class="muted" { "no votes touch this item yet" }
-                } @else {
-                    section class="ont-tab-panel ont-tab-panel-votes" {
-                        @let now = now_ms();
-                        @for v in model.touching_votes.iter() {
-                            @let pct = ratio_pct(v.ratio_left, v.ratio_right);
-                            @let hover = timeago::rfc3339_utc(v.ts);
-                            @let ago = timeago::timeago(now, v.ts);
-                            @let left_class = if v.a.as_str() == model.item { "ratio-left current" } else { "ratio-left" };
-                            @let right_class = if v.b.as_str() == model.item { "ratio-right current" } else { "ratio-right" };
-                            div class="ont-vote-entry" {
-                                div class="ont-vote-meta" title=(hover) {
-                                    span class="address" { (authorship_address(&v.principal, &v.delegate)) }
-                                    " · "
-                                    (ago)
-                                }
-                                div class="ont-vote-header" {
-                                    a class="item-link" href=(item_href(v.a.as_str(), &nav)) { code class="vote-left" { (item_code_label(v.a.as_str())) } }
-                                    span class="vote-ratio" { (format!("{}:{}", v.ratio_left, v.ratio_right)) }
-                                    a class="item-link" href=(item_href(v.b.as_str(), &nav)) { code class="vote-right" { (item_code_label(v.b.as_str())) } }
-                                }
-                                div class="ratio-bar" aria-label={(format!("ratio {}:{}", v.ratio_left, v.ratio_right))} {
-                                    div class=(left_class) style={(format!("width: {:.3}%;", pct))} {}
-                                    div class=(right_class) style={(format!("width: {:.3}%;", 100.0 - pct))} {}
-                                }
-                                div class="ont-vote-body" { (v.body) }
-                            }
-                        }
-                    }
-                }
-            }
-
             @if !model.rank_history.is_empty() {
                 details class="ont-rank-history" {
                     summary {
-                        "rank history "
+                        "vote history "
                         span class="muted" { (format!("({} events)", model.rank_history.len())) }
                     }
                     @let now = now_ms();
@@ -609,31 +562,10 @@ mod tests {
              ~/topic/b {beta}\n",
         );
 
-        let model = build_item_page_view_model(&reduced, &ScopeId::Public, "~/topic/a", 50);
+        let model = build_item_page_view_model(&reduced, &ScopeId::Public, "~/topic/a");
         assert_eq!(model.body.as_deref(), Some("alpha"));
         assert!(model.sibling_rank.is_none());
         assert!(model.child_rankings.component_rankings.is_empty());
-    }
-
-    #[test]
-    fn item_page_model_filters_votes_touching_item() {
-        let mut reduced = ReducerState::default();
-        apply_ingest(
-            &mut reduced,
-            1,
-            "@00000000-0000-0000-0000-000000000000:test:local/test\n\
-             ~/topic/a {alpha}\n\
-             ~/topic/b {beta}\n\
-             ~/other/x {x}\n\
-             ~/other/y {y}\n\
-             ~/topic/a 3:1 ~/topic/b {topic vote}\n\
-             ~/other/x 4:1 ~/other/y {other vote}\n",
-        );
-
-        let model = build_item_page_view_model(&reduced, &ScopeId::Public, "~/topic/a", 50);
-        assert_eq!(model.touching_votes.len(), 1);
-        assert_eq!(model.touching_votes[0].a.as_str(), "https://slug.social/~/topic/a");
-        assert_eq!(model.touching_votes[0].b.as_str(), "https://slug.social/~/topic/b");
     }
 
     #[test]
@@ -650,7 +582,7 @@ mod tests {
              ~/topic/a 2:1 ~/topic/b {a beats b}\n",
         );
 
-        let model = build_item_page_view_model(&reduced, &ScopeId::Public, "~/topic/a", 50);
+        let model = build_item_page_view_model(&reduced, &ScopeId::Public, "~/topic/a");
         let rank = model.sibling_rank.expect("expected sibling rank");
         assert_eq!(rank.position, 1);
         assert_eq!(rank.component_size, 2);
@@ -673,7 +605,7 @@ mod tests {
              ~/topic/kid1/leaf {leaf}\n",
         );
 
-        let model = build_item_page_view_model(&reduced, &ScopeId::Public, "~/topic", 50);
+        let model = build_item_page_view_model(&reduced, &ScopeId::Public, "~/topic");
         assert_eq!(model.child_rankings.component_rankings.len(), 1);
         assert_eq!(model.child_rankings.component_rankings[0].pairs, 1);
         let names: Vec<&str> = model.child_rankings.component_rankings[0]

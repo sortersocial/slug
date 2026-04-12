@@ -36,6 +36,7 @@ pub(crate) fn profile_href(username: &str) -> String {
 // Embed CSS files at compile time
 const THEME_DEFAULT_CSS: &str = include_str!("../../static/theme_default.css");
 const THEME_RETRO_CSS: &str = include_str!("../../static/theme_retro.css");
+const THEME_RETRO_CRAFT_CSS: &str = include_str!("../../static/theme_retro_craft.css");
 
 pub async fn serve_theme_css(Path(filename): Path<String>) -> impl IntoResponse {
     // Extract theme name from filename like "theme_default.css" or "theme_retro.css"
@@ -46,6 +47,7 @@ pub async fn serve_theme_css(Path(filename): Path<String>) -> impl IntoResponse 
     let css = match theme {
         Some("default") => THEME_DEFAULT_CSS,
         Some("retro") => THEME_RETRO_CSS,
+        Some("retro_craft") => THEME_RETRO_CRAFT_CSS,
         _ => return (StatusCode::NOT_FOUND, "theme not found").into_response(),
     };
 
@@ -199,7 +201,8 @@ pub(super) fn layout(title: &str, view: &str, body: Markup, views: Option<u64>) 
 script { (maud::PreEscaped(r#"
                     (function() {
                         // Theme switching
-                        const themes = ['default', 'retro'];
+                        const themes = ['default', 'retro', 'retro_craft'];
+                        const themeLabel = { default: 'default', retro: 'retro', retro_craft: 'craft' };
                         const storedTheme = localStorage.getItem('slug-theme') || 'default';
                         const switcher = document.getElementById('theme-switcher');
                         const stylesheet = document.getElementById('theme-stylesheet');
@@ -207,7 +210,7 @@ script { (maud::PreEscaped(r#"
                         function setTheme(name) {
                             stylesheet.href = `/static/theme_${name}.css`;
                             localStorage.setItem('slug-theme', name);
-                            switcher.textContent = name;
+                            switcher.textContent = themeLabel[name] || name;
                             setTimeout(() => setSpread(parseFloat(slider.value)), 50);
                         }
 

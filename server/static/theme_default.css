@@ -1042,6 +1042,38 @@ body.view-ontology {
   --link:     #0000aa;
   --code-fg:  #1a1a1a;
 }
+
+/* Garden / ontology item pages — warm paper (overrides Win95 vars above) */
+body.view-ontology.view-ontology-light {
+  --g0: #f4f0e8;
+  --g1: #ebe8dd;
+  --g2: #f7f3eb;
+  --g3: #fffef9;
+  --g4: #e8e4dc;
+  --g5: #ddd8ce;
+
+  --hi: #ffffff;
+  --lo: #c4bfb4;
+
+  --signal: #1a1814;
+  --prose: #2a2620;
+  --ui: #5c5a54;
+  --meta: #88847a;
+  --link: #1a4a8c;
+  --code-fg: #1a1814;
+
+  background: var(--g0);
+  color: var(--prose);
+}
+body.view-ontology.view-ontology-light #controls {
+  background: var(--g2);
+  border-top: 1px solid var(--lo);
+}
+body.view-ontology.view-ontology-light .ont-item-content pre {
+  background: var(--g1);
+  border: 1px solid var(--lo);
+  color: var(--code-fg);
+}
 body.view-ontology .age-fresh  a { color: #005500; }
 body.view-ontology .age-recent a { color: #003080; }
 body.view-ontology .age-week   a { color: var(--link); }
@@ -1088,4 +1120,45 @@ body.view-ontology-dark .rank-history-cause {
 }
 body.view-ontology-dark .rank-history-vote {
   margin-top: 4px;
+}
+
+body.view-ontology-light details.ont-rank-history {
+  background: var(--g2);
+  border: 1px solid var(--lo);
+  margin: 6px 0;
+  width: 100%;
+  min-width: 100%;
+  max-width: 100%;
+}
+body.view-ontology-light details.ont-rank-history > summary {
+  background: var(--g3);
+  border-bottom: 1px solid var(--lo);
+  color: var(--ui);
+  padding: 6px 10px;
+}
+body.view-ontology-light details.ont-rank-history[open] > summary {
+  color: var(--signal);
+}
+body.view-ontology-light .rank-history-entry {
+  border-bottom: 1px solid var(--lo);
+  padding: 8px 10px;
+}
+body.view-ontology-light .rank-history-entry:last-child {
+  border-bottom: none;
+}
+body.view-ontology-light .rank-history-meta {
+  font-size: 0.85em;
+  margin-bottom: 4px;
+}
+body.view-ontology-light .rank-history-pos {
+  font-weight: bold;
+  color: var(--signal);
+}
+body.view-ontology-light .rank-history-cause {
+  font-size: 0.8em;
+  font-style: italic;
+  padding: 2px 0;
+}
+body.view-ontology-light .rank-history-vote {
+  margin-top: 6px;
 }
