@@ -22,15 +22,13 @@ use breadcrumb_path::OntologyPath;
 pub use auth::{auth_complete_page, auth_signed_in_fragment, choose_username_error_fragment, choose_username_page};
 pub use editor::{editor_check, editor_page};
 pub use forum::{
-    home, room_page, room_thread_post_collapse_deleted, room_thread_post_expand,
-    room_thread_post_expand_deleted, room_thread_post_view, room_thread_view,
-    thread_feed_html, thread_feed_html_for_room, thread_feed_region_markup,
-    thread_post_collapse_deleted, thread_post_expand, thread_post_expand_deleted, thread_post_view,
-    thread_view, ThreadNav,
+    home, room_page, room_thread_post_view, room_thread_view, thread_feed_html,
+    thread_feed_html_for_room, thread_feed_region_markup, thread_post_view, thread_view, ThreadNav,
 };
 
 pub(crate) use forum::{
     fragment_public_new_thread_form, fragment_room_new_thread_form, login_to_post_hint_markup,
+    thread_ui_collapse_redacted_post, thread_ui_expand_post_full, thread_ui_expand_redacted_post,
     user_can_post_room, user_can_view_room,
 };
 pub use garden::{garden_index, ontology_path, room_garden_index, room_ontology_path};
@@ -141,6 +139,16 @@ pub async fn serve_theme_css(Path(filename): Path<String>) -> impl IntoResponse 
 
 pub(crate) fn js_string_literal(s: &str) -> String {
     serde_json::to_string(s).expect("javascript string escaping")
+}
+
+/// `console.warn` as `text/javascript` — for `POST /ui` parse errors and inline morph failures.
+pub(crate) fn ui_js_warn(msg: &str) -> Response {
+    let js = format!("console.warn({});", js_string_literal(msg));
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/javascript; charset=utf-8")
+        .body(Body::from(js))
+        .unwrap()
 }
 
 pub(crate) struct JsBuilder {

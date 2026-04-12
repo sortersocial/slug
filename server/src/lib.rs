@@ -47,32 +47,8 @@ pub fn create_app(state: AppState) -> Router {
             "/r/:room_short/:room_slug/~/*path",
             get(crate::html::room_ontology_path),
         )
-        .route(
-            "/t/:tag/:index/expand",
-            get(crate::html::thread_post_expand),
-        )
-        .route(
-            "/t/:tag/:index/expand-deleted",
-            get(crate::html::thread_post_expand_deleted),
-        )
-        .route(
-            "/t/:tag/:index/collapse-deleted",
-            get(crate::html::thread_post_collapse_deleted),
-        )
         .route("/t/:tag/:index", get(crate::html::thread_post_view))
         .route("/t/:tag", get(crate::html::thread_view))
-        .route(
-            "/r/:room_short/:room_slug/t/:thread_tag/:index/expand",
-            get(crate::html::room_thread_post_expand),
-        )
-        .route(
-            "/r/:room_short/:room_slug/t/:thread_tag/:index/expand-deleted",
-            get(crate::html::room_thread_post_expand_deleted),
-        )
-        .route(
-            "/r/:room_short/:room_slug/t/:thread_tag/:index/collapse-deleted",
-            get(crate::html::room_thread_post_collapse_deleted),
-        )
         .route(
             "/r/:room_short/:room_slug/t/:thread_tag/:index",
             get(crate::html::room_thread_post_view),
