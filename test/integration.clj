@@ -157,10 +157,25 @@
       (bind private-post-json (json/parse-string (:out private-post-result) true))
       (is (:ok private-post-json) "private forum post ok=true")
 
+      (bind private-needs-bearer-hint "needs bearer token, use npx slugsocial identity command")
       (bind show-no-token (common/run-cli cli-bin base-url
                                          ["private" private-room-id "forum" "show" private-thread "--json"]))
       (is (not (zero? (:exit show-no-token)))
                "private forum show without SLUG_BEARER_TOKEN must fail (server hides private rooms without auth)")
+      (bind show-no-token-combined (str (:out show-no-token) (:err show-no-token)))
+      (is (not (str/blank? show-no-token-combined))
+               "private forum show without token must not be completely silent (stdout+stderr)")
+      (is (str/includes? show-no-token-combined private-needs-bearer-hint)
+               "private forum show without token must mention identity / bearer (npx slugsocial hint)")
+
+      (bind show-bad-token (common/run-cli cli-bin base-url
+                                          ["private" private-room-id "forum" "show" private-thread "--json"]
+                                          :extra-env {"SLUG_BEARER_TOKEN" "not-a-valid-slug-token"}))
+      (is (not (zero? (:exit show-bad-token)))
+               "private forum show with invalid bearer must fail (server returns room not found)")
+      (bind show-bad-combined (str (:out show-bad-token) (:err show-bad-token)))
+      (is (str/includes? show-bad-combined private-needs-bearer-hint)
+               "private forum show with bad token must map room-not-found to bearer hint, not empty output")
 
       (bind show-with-token (common/run-cli cli-bin base-url
                                             ["private" private-room-id "forum" "show" private-thread "--json"]

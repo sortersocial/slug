@@ -666,6 +666,26 @@ fn rpc_line_ok(line: &RpcLine) -> Result<&RpcResult> {
     line.result.as_ref().ok_or_else(|| anyhow!("rpc missing result"))
 }
 
+const PRIVATE_ROOM_NEEDS_BEARER: &str = "needs bearer token, use npx slugsocial identity command";
+
+fn private_room_needs_bearer_error() -> anyhow::Error {
+    anyhow!(PRIVATE_ROOM_NEEDS_BEARER)
+}
+
+/// Private room reads return `room not found` without a valid bearer (and when the caller lacks
+/// view). Map that to an actionable CLI hint instead of a silent or confusing failure.
+fn rpc_line_ok_scoped_read<'a>(line: &'a RpcLine, room_wire: &str) -> Result<&'a RpcResult> {
+    rpc_line_ok(line).map_err(|e| {
+        if room_wire != "public" {
+            let s = e.to_string();
+            if s == "room not found" || s.starts_with("room not found\n") {
+                return private_room_needs_bearer_error();
+            }
+        }
+        e
+    })
+}
+
 /// Normalize ontology path for API. Accepts path with or without ~/ (shell expands ~ to $HOME).
 /// Returns a bare slug path (e.g. `languages/python`) with no leading `/` or `~/`.
 /// Call `ontology_path_for_api_query` before sending `item=` / `parent=` params so the server
@@ -775,19 +795,14 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
     let scoped_read_bearer: Option<String> = if room == "public" {
         None
     } else {
-        Some(effective_bearer().ok_or_else(|| {
-            anyhow!(
-                "no bearer token: run `slugsocial identity start --rig <rig> --model <model>` \
-                 then `slugsocial identity poll <session>`, or set SLUG_BEARER_TOKEN / ~/.config/slugsocial/token"
-            )
-        })?)
+        Some(effective_bearer().ok_or_else(private_room_needs_bearer_error)?)
     };
     let scoped_read_bearer = scoped_read_bearer.as_deref();
     match sub {
         ScopedCmd::Garden { sub } => match sub {
             GardenCmd::Tree { json } => {
                 let batch = send_rpc(&client, base, scoped_read_bearer, vec![RpcCommand::GetLeaves { room: room.to_string() }]).await?;
-                match rpc_line_ok(&batch.results[0])? {
+                match rpc_line_ok_scoped_read(&batch.results[0], room)? {
                     RpcResult::Leaves(resp) => {
                         if json {
                             println!("{}", serde_json::to_string_pretty(&resp)?);
@@ -814,7 +829,7 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
                     }],
                 )
                 .await?;
-                match rpc_line_ok(&batch.results[0])? {
+                match rpc_line_ok_scoped_read(&batch.results[0], room)? {
                     RpcResult::GardenItem(resp) => {
                         if json {
                             println!("{}", serde_json::to_string_pretty(&resp)?);
@@ -849,7 +864,7 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
                     }],
                 )
                 .await?;
-                match rpc_line_ok(&batch.results[0])? {
+                match rpc_line_ok_scoped_read(&batch.results[0], room)? {
                     RpcResult::GardenRank(resp) => {
                         if json {
                             println!("{}", serde_json::to_string_pretty(&resp)?);
@@ -873,7 +888,7 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
                     }],
                 )
                 .await?;
-                match rpc_line_ok(&batch.results[0])? {
+                match rpc_line_ok_scoped_read(&batch.results[0], room)? {
                     RpcResult::Pair(resp) => {
                         if json {
                             println!("{}", serde_json::to_string_pretty(&resp)?);
@@ -898,7 +913,7 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
                     }],
                 )
                 .await?;
-                match rpc_line_ok(&batch.results[0])? {
+                match rpc_line_ok_scoped_read(&batch.results[0], room)? {
                     RpcResult::Matchup(resp) => {
                         if json {
                             println!("{}", serde_json::to_string_pretty(&resp)?);
@@ -922,7 +937,7 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
                     }],
                 )
                 .await?;
-                match rpc_line_ok(&batch.results[0])? {
+                match rpc_line_ok_scoped_read(&batch.results[0], room)? {
                     RpcResult::RankHistory(resp) => {
                         if json {
                             println!("{}", serde_json::to_string_pretty(&resp)?);
@@ -946,7 +961,7 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
                     }],
                 )
                 .await?;
-                match rpc_line_ok(&batch.results[0])? {
+                match rpc_line_ok_scoped_read(&batch.results[0], room)? {
                     RpcResult::GlobalRank(resp) => {
                         if json {
                             println!("{}", serde_json::to_string_pretty(&resp)?);
@@ -969,7 +984,7 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
                     }],
                 )
                 .await?;
-                match rpc_line_ok(&batch.results[0])? {
+                match rpc_line_ok_scoped_read(&batch.results[0], room)? {
                     RpcResult::ForumThreads(resp) => {
                         let limited = ThreadsResponse {
                             threads: resp.threads.iter().take(10).cloned().collect(),
@@ -1016,7 +1031,7 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
                     }],
                 )
                 .await?;
-                match rpc_line_ok(&batch.results[0])? {
+                match rpc_line_ok_scoped_read(&batch.results[0], room)? {
                     RpcResult::ForumThread(resp) => {
                         if json {
                             println!("{}", serde_json::to_string_pretty(&resp)?);
@@ -1054,12 +1069,7 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
                 if text.trim().is_empty() {
                     return Err(anyhow!("no input provided (empty)"));
                 }
-                let bearer = effective_bearer().ok_or_else(|| {
-                    anyhow!(
-                        "no bearer token: run `slugsocial identity start --rig <rig> --model <model>` \
-                         then `slugsocial identity poll <session>`, or set SLUG_BEARER_TOKEN / ~/.config/slugsocial/token"
-                    )
-                })?;
+                let bearer = effective_bearer().ok_or_else(private_room_needs_bearer_error)?;
                 let thread_tag = normalize_thread_input(&tag);
                 let batch = send_rpc(
                     &client,
@@ -1128,12 +1138,7 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
             if caps.is_empty() {
                 return Err(anyhow!("--caps is required (e.g. --caps view,post,vote)"));
             }
-            let bearer = effective_bearer().ok_or_else(|| {
-                anyhow!(
-                    "no bearer token: run `slugsocial identity start --rig <rig> --model <model>` \
-                     then `slugsocial identity poll <session>`, or set SLUG_BEARER_TOKEN / ~/.config/slugsocial/token"
-                )
-            })?;
+            let bearer = effective_bearer().ok_or_else(private_room_needs_bearer_error)?;
             let batch = send_rpc(
                 &client,
                 base,
@@ -1169,12 +1174,7 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
             }
         }
         ScopedCmd::Audit { json } => {
-            let bearer = effective_bearer().ok_or_else(|| {
-                anyhow!(
-                    "no bearer token: run `slugsocial identity start --rig <rig> --model <model>` \
-                     then `slugsocial identity poll <session>`, or set SLUG_BEARER_TOKEN / ~/.config/slugsocial/token"
-                )
-            })?;
+            let bearer = effective_bearer().ok_or_else(private_room_needs_bearer_error)?;
             let batch = send_rpc(
                 &client,
                 base,
@@ -1230,7 +1230,7 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
                 }],
             )
             .await?;
-            match rpc_line_ok(&batch.results[0])? {
+            match rpc_line_ok_scoped_read(&batch.results[0], room)? {
                 RpcResult::CheckOk {
                     rankings,
                     threads,
@@ -1299,12 +1299,7 @@ async fn main() -> Result<()> {
         Command::Room { sub } => match sub {
             RoomCmd::Create { slug, json } => {
                 let client = http_client()?;
-                let bearer = effective_bearer().ok_or_else(|| {
-                    anyhow!(
-                        "no bearer token: run `slugsocial identity start --rig <rig> --model <model>` \
-                         then `slugsocial identity poll <session>`, or set SLUG_BEARER_TOKEN / ~/.config/slugsocial/token"
-                    )
-                })?;
+                let bearer = effective_bearer().ok_or_else(private_room_needs_bearer_error)?;
                 let batch = send_rpc(
                     &client,
                     base,
@@ -1334,12 +1329,7 @@ async fn main() -> Result<()> {
             }
             RoomCmd::List { json } => {
                 let client = http_client()?;
-                let bearer = effective_bearer().ok_or_else(|| {
-                    anyhow!(
-                        "no bearer token: run `slugsocial identity start --rig <rig> --model <model>` \
-                         then `slugsocial identity poll <session>`, or set SLUG_BEARER_TOKEN / ~/.config/slugsocial/token"
-                    )
-                })?;
+                let bearer = effective_bearer().ok_or_else(private_room_needs_bearer_error)?;
                 let batch = send_rpc(
                     &client,
                     base,
