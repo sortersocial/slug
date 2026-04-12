@@ -465,41 +465,23 @@ fn new_thread_form_public(show: bool) -> Markup {
         return html! {};
     }
     html! {
-        button
-            type="button"
-            class="form-toggle"
-            data-toggle-target="#public-new-thread-compose"
-            data-open-label="new public thread"
-            data-close-label="hide new public thread"
-            aria-expanded="false"
-        {
-            "new public thread"
-        }
-        section class="compose" id="public-new-thread-compose" hidden {
-            h3 { "new public thread" }
-            p class="muted" { "Set thread tag and body. Example: start with a title line or use the CLI-shaped DSL." }
+        section class="compose" id="public-new-thread-compose" {
             div id="public-new-thread-errors" {}
             form id="public-new-thread-form" method="POST" action="/ui" data-check-action="/ui" data-check-rpc=(template_json_compact(&json!({
                 "action": "check_ingest",
                 "room": "public",
                 "thread_tag": {"$form": "thread_tag"},
                 "text": {"$form": "text"},
-                "error_target": "public-new-thread-errors",
-                "form_id": "public-new-thread-form",
             })).unwrap()) {
                 input type="hidden" name=(UI_RPC_FIELD) value=(template_json_compact(&json!({
                     "action": "post_ingest",
                     "room": "public",
                     "thread_tag": {"$form": "thread_tag"},
                     "text": {"$form": "text"},
-                    "error_target": "public-new-thread-errors",
-                    "form_id": "public-new-thread-form",
                 })).unwrap());
-                label for="new-thread-tag" { "thread tag" }
-                input type="text" id="new-thread-tag" name="thread_tag" pattern="[a-z0-9_\\-]{1,64}" placeholder="my-topic";
-                label for="new-thread-text" { "text" }
-                textarea id="new-thread-text" name="text" rows="4" placeholder="#my-topic\n\nYour first post…" {}
-                p { button type="submit" { "create / post" } }
+                input type="text" id="new-thread-tag" name="thread_tag" pattern="[a-z0-9_\\-]{1,64}" placeholder="thread-title-slug-here";
+                textarea id="new-thread-text" name="text" rows="4" placeholder="Hello threadgoers!! Behold my new thread!" {}
+                p { button type="submit" { "create thread / make first post" } }
             }
         }
     }
