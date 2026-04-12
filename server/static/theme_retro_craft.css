@@ -468,8 +468,6 @@ body.view-ontology #controls {
   }
   section#thread-compose textarea {
     border-radius: 0;
-    border-left: none;
-    border-right: none;
     box-sizing: border-box;
     display: block;
     margin: 0;

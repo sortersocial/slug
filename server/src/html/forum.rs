@@ -1051,13 +1051,6 @@ pub(crate) fn expand_public_new_thread_rpc_value() -> String {
     template_json_compact(&HtmlUiAction::ExpandPublicNewThreadForm).expect("static json")
 }
 
-pub(crate) fn expand_room_new_thread_rpc_value(nav: &ThreadNav) -> String {
-    template_json_compact(&HtmlUiAction::ExpandRoomNewThreadForm {
-        room_wire: nav.room_wire.clone(),
-    })
-    .expect("static json")
-}
-
 pub(crate) fn login_to_post_hint_markup() -> Markup {
     html! {
         p class="muted" { "log in to post" }
