@@ -20,9 +20,10 @@ use crate::{
     canonical_path::canonicalize_tag,
     html::{
         fragment_public_new_thread_form, fragment_room_new_thread_form, login_to_post_hint_markup,
-        parse_html_ui_from_form, thread_feed_html, thread_feed_html_for_room, thread_feed_region_markup,
-        thread_ui_collapse_redacted_post, thread_ui_expand_post_full, thread_ui_expand_redacted_post,
-        ui_js_warn, user_can_post_room, user_can_view_room, HtmlUiAction, JsBuilder, ThreadNav,
+        parse_html_ui_from_form, room_members_section_markup, thread_feed_html,
+        thread_feed_html_for_room, thread_feed_region_markup, thread_ui_collapse_redacted_post,
+        thread_ui_expand_post_full, thread_ui_expand_redacted_post, ui_js_warn, user_can_post_room,
+        user_can_view_room, HtmlUiAction, JsBuilder, ThreadNav,
     },
     reducer::{scope_from_room_wire, ScopeId},
     state::AppState,
@@ -148,7 +149,7 @@ async fn dispatch_ui_action(
                 login_to_post_hint_markup()
             };
             JsBuilder::new()
-                .morph_selector("#public-new-thread-ui-slot", markup)
+                .morph_inner_selector("#public-new-thread-ui-slot", markup)
                 .into_response()
         }
         HtmlUiAction::ExpandRoomNewThreadForm { room_wire } => {
@@ -175,13 +176,68 @@ async fn dispatch_ui_action(
                 return ui_js_warn("bad room").into_response();
             };
             let markup = if can_post {
-                fragment_room_new_thread_form(&nav, true)
+                fragment_room_new_thread_form(&nav, true, false)
             } else {
                 login_to_post_hint_markup()
             };
             JsBuilder::new()
-                .morph_selector("#room-new-thread-ui-slot", markup)
+                .morph_inner_selector("#room-new-thread-ui-slot", markup)
                 .into_response()
+        }
+        HtmlUiAction::SetRoomMembersExpanded { room_wire, expanded } => {
+            let room_wire = room_wire.trim().to_string();
+            if room_wire.is_empty() {
+                return ui_js_warn("missing room").into_response();
+            }
+            let reduced = state.reduced.read().await;
+            let user = session.map(|s| s.username.as_str());
+            if !reduced.rooms.contains(&room_wire) {
+                drop(reduced);
+                return ui_js_warn("room not found").into_response();
+            }
+            if !user_can_view_room(&reduced, &room_wire, user) {
+                drop(reduced);
+                return ui_js_warn("forbidden").into_response();
+            }
+            let markup = room_members_section_markup(&reduced, &room_wire, expanded);
+            drop(reduced);
+            JsBuilder::new()
+                .morph_selector("#room-members-section", markup)
+                .into_response()
+        }
+        HtmlUiAction::SetRoomNewThreadComposeExpanded { room_wire, expanded } => {
+            let room_wire = room_wire.trim().to_string();
+            if room_wire.is_empty() {
+                return ui_js_warn("missing room").into_response();
+            }
+            let reduced = state.reduced.read().await;
+            let user = session.map(|s| s.username.as_str());
+            if !reduced.rooms.contains(&room_wire) {
+                drop(reduced);
+                return ui_js_warn("room not found").into_response();
+            }
+            if !user_can_view_room(&reduced, &room_wire, user) {
+                drop(reduced);
+                return ui_js_warn("forbidden").into_response();
+            }
+            let can_post = session
+                .as_ref()
+                .map(|s| user_can_post_room(&reduced, &room_wire, &s.username))
+                .unwrap_or(false);
+            drop(reduced);
+            let Some(nav) = ThreadNav::from_room_id(&room_wire) else {
+                return ui_js_warn("bad room").into_response();
+            };
+            let markup = if can_post {
+                fragment_room_new_thread_form(&nav, true, expanded)
+            } else {
+                login_to_post_hint_markup()
+            };
+            let mut b = JsBuilder::new().morph_inner_selector("#room-new-thread-ui-slot", markup);
+            if expanded && can_post {
+                b = b.focus_selector("#room-new-tag");
+            }
+            b.into_response()
         }
         HtmlUiAction::ExpandPostFull {
             room,

@@ -40,34 +40,6 @@ pub async fn editor_page(jar: CookieJar, uri: Uri) -> impl IntoResponse {
                 div id="editor-status" class="muted" { "type to check…" }
                 div id="editor-results" {}
             }
-            // Debounced editor: POST to /try/check, eval() the JS response.
-            script { (maud::PreEscaped(r#"
-(function() {
-    var ta = document.getElementById('editor-input');
-    var status = document.getElementById('editor-status');
-    var timer;
-    ta.addEventListener('input', function() {
-        clearTimeout(timer);
-        status.textContent = 'checking…';
-        timer = setTimeout(function() {
-            var text = ta.value.trim();
-            if (text.length < 3) {
-                status.textContent = 'type to check…';
-                document.getElementById('editor-results').innerHTML = '';
-                return;
-            }
-            fetch('/try/check', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-                body: 'text=' + encodeURIComponent(text)
-            })
-            .then(function(r) { return r.text(); })
-            .then(function(js) { eval(js); })
-            .catch(function(e) { status.textContent = 'error: ' + e; });
-        }, 400);
-    });
-})();
-"#)) }
         },
         None,
         theme_from_jar(&jar),

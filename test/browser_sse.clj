@@ -84,6 +84,13 @@
                    (let [[room-short room-slug] (str/split room-id #"/" 2)
                          room-url (str base-url "/r/" room-short "/" room-slug)]
                     (page/navigate alice-pg room-url)
+                    ;; Room new-thread compose is collapsed until POST /ui expands it (slug_ui.js must be loaded).
+                    (assert! (wait-for-text alice-pg "#room-new-thread-ui-slot"
+                                           "new thread in this room" 15000)
+                             "alice sees collapsed new-thread toggle")
+                    (locator/click (page/locator alice-pg "#room-new-thread-ui-slot button.form-toggle"))
+                    (assert! (wait-for-text alice-pg "#room-new-thread-ui-slot" "hide new thread form" 15000)
+                             "alice expands new thread compose via POST /ui")
                     (locator/fill (page/locator alice-pg "#room-new-tag") "sse-thread")
                     (locator/fill (page/locator alice-pg "#room-new-thread-compose textarea") "seed thread")
                     (locator/click (page/locator alice-pg "#room-new-thread-compose button[type='submit']"))

@@ -363,6 +363,75 @@ fn room_members_for_room(reduced: &ReducerState, room_id: &str) -> Vec<RoomMembe
     rows
 }
 
+fn room_members_inner(members: &[RoomMemberRow]) -> Markup {
+    html! {
+        h3 { "members" }
+        ul class="room-members" {
+            @for member in members {
+                li {
+                    span class="room-member-name" { "@" (member.username) }
+                    span class="muted" {
+                        " · "
+                        (member.capabilities.join(", "))
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub(crate) fn set_room_members_expanded_rpc(room_wire: &str, expanded: bool) -> String {
+    template_json_compact(&HtmlUiAction::SetRoomMembersExpanded {
+        room_wire: room_wire.to_string(),
+        expanded,
+    })
+    .expect("static json")
+}
+
+pub(crate) fn set_room_new_thread_compose_expanded_rpc(nav: &ThreadNav, expanded: bool) -> String {
+    template_json_compact(&HtmlUiAction::SetRoomNewThreadComposeExpanded {
+        room_wire: nav.room_wire.clone(),
+        expanded,
+    })
+    .expect("static json")
+}
+
+/// Fragment for `#room-members-section` — expand/collapse is server-driven via `POST /ui`.
+pub(crate) fn room_members_section_markup(
+    reduced: &ReducerState,
+    room_id: &str,
+    members_expanded: bool,
+) -> Markup {
+    let members = room_members_for_room(reduced, room_id);
+    if members.is_empty() {
+        return html! {};
+    }
+    let rpc_open = set_room_members_expanded_rpc(room_id, true);
+    let rpc_close = set_room_members_expanded_rpc(room_id, false);
+    html! {
+        div id="room-members-section" {
+            @if members_expanded {
+                form method="POST" action="/ui" {
+                    input type="hidden" name=(UI_RPC_FIELD) value=(rpc_close);
+                    button type="submit" class="form-toggle" aria-expanded="true" {
+                        "hide members & permissions"
+                    }
+                }
+                section class="room-members-panel" {
+                    (room_members_inner(&members))
+                }
+            } @else {
+                form method="POST" action="/ui" {
+                    input type="hidden" name=(UI_RPC_FIELD) value=(rpc_open);
+                    button type="submit" class="form-toggle" aria-expanded="false" {
+                        "members & permissions"
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// `feed_id` is e.g. `thread-feed` (public bump list, SSE) or `room-thread-feed`.
 fn render_thread_feed(nav: Option<&ThreadNav>, feed_id: &str, rows: &[ThreadRow], now: i64) -> Markup {
     html! {
@@ -886,15 +955,14 @@ pub async fn room_page(
     let scope = ScopeId::Room(room_id.clone());
     let mut rows = collect_thread_rows_for_scope(&reduced, &scope, now);
     let strip = auth_strip(&headers, &jar, &reduced);
-    let members = room_members_for_room(&reduced, &room_id);
     let show_new = user
         .as_ref()
         .map(|u| user_can_post_room(&reduced, &room_id, u))
         .unwrap_or(false);
-    drop(reduced);
     rows.sort_by(|a, b| b.last_ts.cmp(&a.last_ts));
 
     let Some(nav) = ThreadNav::from_room_id(&room_id) else {
+        drop(reduced);
         return (StatusCode::NOT_FOUND, "room not found").into_response();
     };
     let slug_display = room_slug.as_str();
@@ -914,20 +982,7 @@ pub async fn room_page(
                 "room garden · "
                 a href=(nav.garden_root_url()) { "~" }
             }
-            @if !members.is_empty() {
-                h3 { "members" }
-                ul class="room-members" {
-                    @for member in &members {
-                        li {
-                            span class="room-member-name" { "@" (member.username) }
-                            span class="muted" {
-                                " · "
-                                (member.capabilities.join(", "))
-                            }
-                        }
-                    }
-                }
-            }
+            (room_members_section_markup(&reduced, &room_id, false))
             h3 { "threads" }
             (render_thread_feed(Some(&nav), "room-thread-feed", &rows, now))
             @if show_new {
@@ -937,7 +992,9 @@ pub async fn room_page(
                         button type="submit" class="section-add-btn" { "+" }
                     }
                 }
-                div id="room-new-thread-ui-slot" {}
+                div id="room-new-thread-ui-slot" {
+                    (new_thread_form_for_room(&nav, true, false))
+                }
             }
             (cli_panel(&forum_cli))
             (cli_panel(&garden_cli))
@@ -947,47 +1004,58 @@ pub async fn room_page(
         theme_from_jar(&jar),
         &theme_next_from_uri(&uri),
     );
+    drop(reduced);
     Html(page.into_string()).into_response()
 }
 
-fn new_thread_form_for_room(nav: &ThreadNav, show: bool) -> Markup {
+fn new_thread_form_for_room(nav: &ThreadNav, show: bool, compose_expanded: bool) -> Markup {
     if !show {
         return html! {};
     }
+    let rpc_open = set_room_new_thread_compose_expanded_rpc(nav, true);
+    let rpc_close = set_room_new_thread_compose_expanded_rpc(nav, false);
+    // Single root for Idiomorph when morphing `#room-new-thread-ui-slot` (expanded has form + section).
     html! {
-        button
-            type="button"
-            class="form-toggle"
-            data-toggle-target="#room-new-thread-compose"
-            data-open-label="new thread in this room"
-            data-close-label="hide room thread form"
-            aria-expanded="false"
-        {
-            "new thread in this room"
-        }
-        section class="compose" id="room-new-thread-compose" hidden {
-            h3 { "new thread in this room" }
-            div id="room-new-thread-errors" {}
-            form id="room-new-thread-form" method="POST" action="/ui" data-check-action="/ui" data-check-rpc=(template_json_compact(&json!({
-                "action": "check_ingest",
-                "room": nav.room_wire,
-                "thread_tag": {"$form": "thread_tag"},
-                "text": {"$form": "text"},
-                "error_target": "room-new-thread-errors",
-                "form_id": "room-new-thread-form",
-            })).unwrap()) {
-                input type="hidden" name=(UI_RPC_FIELD) value=(template_json_compact(&json!({
-                    "action": "post_ingest",
-                    "room": nav.room_wire,
-                    "thread_tag": {"$form": "thread_tag"},
-                    "text": {"$form": "text"},
-                    "error_target": "room-new-thread-errors",
-                    "form_id": "room-new-thread-form",
-                })).unwrap());
-                label for="room-new-tag" { "thread tag" }
-                input type="text" id="room-new-tag" name="thread_tag" pattern="[a-z0-9_\\-]{1,64}" required;
-                textarea name="text" rows="4" placeholder="First post body…" required {}
-                p { button type="submit" { "post" } }
+        div class="room-new-thread-slot-inner" {
+            @if compose_expanded {
+                form method="POST" action="/ui" {
+                    input type="hidden" name=(UI_RPC_FIELD) value=(rpc_close);
+                    button type="submit" class="form-toggle" aria-expanded="true" {
+                        "hide new thread form"
+                    }
+                }
+                section class="compose" id="room-new-thread-compose" {
+                    h3 { "new thread in this room" }
+                    div id="room-new-thread-errors" {}
+                    form id="room-new-thread-form" method="POST" action="/ui" data-check-action="/ui" data-check-rpc=(template_json_compact(&json!({
+                        "action": "check_ingest",
+                        "room": nav.room_wire,
+                        "thread_tag": {"$form": "thread_tag"},
+                        "text": {"$form": "text"},
+                        "error_target": "room-new-thread-errors",
+                        "form_id": "room-new-thread-form",
+                    })).unwrap()) {
+                        input type="hidden" name=(UI_RPC_FIELD) value=(template_json_compact(&json!({
+                            "action": "post_ingest",
+                            "room": nav.room_wire,
+                            "thread_tag": {"$form": "thread_tag"},
+                            "text": {"$form": "text"},
+                            "error_target": "room-new-thread-errors",
+                            "form_id": "room-new-thread-form",
+                        })).unwrap());
+                        label for="room-new-tag" { "thread tag" }
+                        input type="text" id="room-new-tag" name="thread_tag" pattern="[a-z0-9_\\-]{1,64}" required;
+                        textarea name="text" rows="4" placeholder="First post body…" required {}
+                        p { button type="submit" { "post" } }
+                    }
+                }
+            } @else {
+                form method="POST" action="/ui" {
+                    input type="hidden" name=(UI_RPC_FIELD) value=(rpc_open);
+                    button type="submit" class="form-toggle" aria-expanded="false" {
+                        "new thread in this room"
+                    }
+                }
             }
         }
     }
@@ -1014,8 +1082,8 @@ pub(crate) fn fragment_public_new_thread_form(show: bool) -> Markup {
     new_thread_form_public(show)
 }
 
-pub(crate) fn fragment_room_new_thread_form(nav: &ThreadNav, show: bool) -> Markup {
-    new_thread_form_for_room(nav, show)
+pub(crate) fn fragment_room_new_thread_form(nav: &ThreadNav, show: bool, compose_expanded: bool) -> Markup {
+    new_thread_form_for_room(nav, show, compose_expanded)
 }
 
 async fn thread_post_view_inner(
