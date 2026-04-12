@@ -599,18 +599,38 @@ pub(super) fn render_linkified_with_embeds_in_scope(raw: &str, garden_prefix: &s
     }
 }
 
-/// Small CLI hint panel showing how to look up this page from the terminal.
-pub(super) fn cli_panel(cmd: &str) -> Markup {
+/// CLI strings are embedded in a single-quoted JS literal; they must never need escaping.
+fn assert_cli_panel_cmd_js_single_quote_safe(s: &str) {
+    assert!(
+        !s.contains('\\')
+            && !s.contains('\'')
+            && !s.contains('\n')
+            && !s.contains('\r'),
+        "cli_panel cmd must not contain `\\`, `'`, or newlines (got {s:?})"
+    );
+}
+
+/// Small CLI hint panel: one border and title; each line is hover-highlighted and copies on click.
+pub(super) fn cli_panel<I: AsRef<str>>(cmds: &[I]) -> Markup {
+    if cmds.is_empty() {
+        return html! {};
+    }
+    for cmd in cmds {
+        assert_cli_panel_cmd_js_single_quote_safe(cmd.as_ref());
+    }
     html! {
         div class="cli-panel" {
             span class="cli-panel-label muted" { "cli" }
-            code class="cli-panel-cmd" { (cmd) }
-            button
-                class="cli-panel-copy"
-                title="Copy to clipboard"
-                onclick=(format!(r#"navigator.clipboard.writeText('{}'); this.textContent='✓'; setTimeout(() => this.textContent='copy', 2000);"#, cmd.replace("'", "\\'")))
-            {
-                "copy"
+            div class="cli-panel-cmds" {
+                @for cmd in cmds {
+                    @let s = cmd.as_ref();
+                    button type="button" class="cli-panel-row" title="Copy command" onclick=(format!(
+                        r#"navigator.clipboard.writeText('{}');"#,
+                        s
+                    )) {
+                        code class="cli-panel-cmd" { (s) }
+                    }
+                }
             }
         }
     }

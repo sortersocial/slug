@@ -718,7 +718,7 @@ pub async fn home(
             }
             div id="public-new-thread-ui-slot" {}
             (render_thread_feed(Some(&nav), "thread-feed", &public_rows, now))
-            (cli_panel("npx slugsocial public forum list"))
+            (cli_panel(&["npx slugsocial public forum list"]))
         },
         None,
         theme_from_jar(&jar),
@@ -868,7 +868,7 @@ async fn thread_view_inner(
             div id="thread-live-region" {
                 (compose_form(&nav, &tag, show_compose))
             }
-            (cli_panel(&cli))
+            (cli_panel(std::slice::from_ref(&cli)))
         },
         None,
         theme_from_jar(&jar),
@@ -989,9 +989,7 @@ pub async fn room_page(
                     (new_thread_form_for_room(&nav, true, false))
                 }
             }
-            (cli_panel(&forum_cli))
-            (cli_panel(&garden_cli))
-            (cli_panel(&audit_cli))
+            (cli_panel(&[forum_cli, garden_cli, audit_cli]))
         },
         None,
         theme_from_jar(&jar),
@@ -1413,7 +1411,7 @@ pub async fn user_profile_page(
                     }
                 }
             }
-            (cli_panel(&format!("npx slugsocial public forum list")))
+            (cli_panel(&[format!("npx slugsocial public forum list")]))
         },
         None,
         theme_from_jar(&jar),

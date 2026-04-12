@@ -610,7 +610,7 @@ code {
    CLI PANEL — how to view this page from the terminal
    ---------------------------------------------------------------- */
 div.cli-panel {
-  align-items: baseline;
+  align-items: flex-start;
   background: var(--g1);
   border: var(--bv) solid;
   border-color: var(--lo) var(--hi) var(--hi) var(--lo); /* inset */
@@ -621,11 +621,34 @@ div.cli-panel {
   width: fit-content;
   max-width: 100%;
 }
+.cli-panel-cmds {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+button.cli-panel-row {
+  background: transparent;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  display: block;
+  font: inherit;
+  margin: 0;
+  padding: 2px 4px;
+  text-align: left;
+  width: 100%;
+}
+button.cli-panel-row:hover {
+  background: var(--g3);
+}
 .cli-panel-label {
   font-size: 11px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   flex-shrink: 0;
+  padding-top: 2px;
 }
 .cli-panel-cmd {
   background: none;
