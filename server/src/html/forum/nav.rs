@@ -1,0 +1,78 @@
+use crate::canonical_path::canonicalize_item;
+use crate::reducer::ScopeId;
+
+/// URL helpers for public `/t/…` and private room threads `/r/{short}/{slug}/t/…`.
+#[derive(Clone)]
+pub struct ThreadNav {
+    pub room_wire: String,
+    scope: ScopeId,
+    room_path: String,
+    thread_path_prefix: String,
+    garden_path_prefix: String,
+}
+
+impl ThreadNav {
+    pub(crate) fn public() -> Self {
+        Self {
+            room_wire: "public".into(),
+            scope: ScopeId::Public,
+            room_path: "/t".into(),
+            thread_path_prefix: "/t".into(),
+            garden_path_prefix: "/~".into(),
+        }
+    }
+
+    /// `room_id` wire form `shortid/slug`.
+    pub(crate) fn from_room_id(room_id: &str) -> Option<Self> {
+        let (short, slug) = room_id.split_once('/')?;
+        if short.is_empty() || slug.is_empty() {
+            return None;
+        }
+        Some(Self {
+            room_wire: room_id.to_string(),
+            scope: ScopeId::Room(room_id.to_string()),
+            room_path: format!("/r/{short}/{slug}"),
+            thread_path_prefix: format!("/r/{short}/{slug}/t"),
+            garden_path_prefix: format!("/r/{short}/{slug}/~"),
+        })
+    }
+
+    pub(crate) fn scope(&self) -> ScopeId {
+        self.scope.clone()
+    }
+
+    pub(crate) fn room_url(&self) -> &str {
+        &self.room_path
+    }
+
+    pub(crate) fn thread_url(&self, tag: &str) -> String {
+        format!("{}/{}", self.thread_path_prefix, tag)
+    }
+
+    pub(crate) fn garden_root_url(&self) -> &str {
+        &self.garden_path_prefix
+    }
+
+    pub(crate) fn garden_item_url(&self, item: &str) -> String {
+        if let Some(tail) = crate::path_types::CanonicalItemUrl::parse(item)
+            .and_then(|c| c.tilde_tail().map(str::to_owned))
+        {
+            format!("{}/{}", self.garden_path_prefix, tail)
+        } else {
+            format!("{}/{}", self.garden_path_prefix, canonicalize_item(item))
+        }
+    }
+
+    pub(crate) fn thread_page_url(&self, tag: &str, offset: usize) -> String {
+        let base = self.thread_url(tag);
+        if offset == 0 {
+            base
+        } else {
+            format!("{base}?offset={offset}")
+        }
+    }
+
+    pub(crate) fn post_url(&self, tag: &str, idx: usize) -> String {
+        format!("{}/{}/{}", self.thread_path_prefix, tag, idx)
+    }
+}

@@ -380,22 +380,6 @@ fn room_members_inner(members: &[RoomMemberRow]) -> Markup {
     }
 }
 
-pub(crate) fn set_room_members_expanded_rpc(room_wire: &str, expanded: bool) -> String {
-    template_json_compact(&HtmlUiAction::SetRoomMembersExpanded {
-        room_wire: room_wire.to_string(),
-        expanded,
-    })
-    .expect("static json")
-}
-
-pub(crate) fn set_room_new_thread_compose_expanded_rpc(nav: &ThreadNav, expanded: bool) -> String {
-    template_json_compact(&HtmlUiAction::SetRoomNewThreadComposeExpanded {
-        room_wire: nav.room_wire.clone(),
-        expanded,
-    })
-    .expect("static json")
-}
-
 /// Fragment for `#room-members-section` — expand/collapse is server-driven via `POST /ui`.
 pub(crate) fn room_members_section_markup(
     reduced: &ReducerState,
@@ -406,13 +390,14 @@ pub(crate) fn room_members_section_markup(
     if members.is_empty() {
         return html! {};
     }
-    let rpc_open = set_room_members_expanded_rpc(room_id, true);
-    let rpc_close = set_room_members_expanded_rpc(room_id, false);
     html! {
         div id="room-members-section" {
             @if members_expanded {
                 form method="POST" action="/ui" {
-                    input type="hidden" name=(UI_RPC_FIELD) value=(rpc_close);
+                    input type="hidden" name=(UI_RPC_FIELD) value=(template_json_compact(&HtmlUiAction::SetRoomMembersExpanded {
+                        room_wire: room_id.to_string(),
+                        expanded: false,
+                    }).expect("static json"));
                     button type="submit" class="form-toggle" aria-expanded="true" {
                         "hide members & permissions"
                     }
@@ -422,7 +407,10 @@ pub(crate) fn room_members_section_markup(
                 }
             } @else {
                 form method="POST" action="/ui" {
-                    input type="hidden" name=(UI_RPC_FIELD) value=(rpc_open);
+                    input type="hidden" name=(UI_RPC_FIELD) value=(template_json_compact(&HtmlUiAction::SetRoomMembersExpanded {
+                        room_wire: room_id.to_string(),
+                        expanded: true,
+                    }).expect("static json"));
                     button type="submit" class="form-toggle" aria-expanded="false" {
                         "members & permissions"
                     }
@@ -514,28 +502,24 @@ fn compose_form(nav: &ThreadNav, thread_tag: &str, show: bool) -> Markup {
     if !show {
         return html! {};
     }
-    let rpc_post = template_json_compact(&json!({
-        "action": "post_ingest",
-        "room": nav.room_wire,
-        "thread_tag": thread_tag,
-        "text": {"$form": "text"},
-        "error_target": "thread-compose-errors",
-        "form_id": "thread-compose-form",
-    }))
-    .unwrap();
-    let rpc_check = template_json_compact(&json!({
-        "action": "check_ingest",
-        "room": nav.room_wire,
-        "thread_tag": thread_tag,
-        "text": {"$form": "text"},
-        "error_target": "thread-compose-errors",
-        "form_id": "thread-compose-form",
-    }))
-    .unwrap();
     html! {
         section class="compose" id="thread-compose" {
-            form id="thread-compose-form" method="POST" action="/ui" data-check-action="/ui" data-check-rpc=(rpc_check) {
-                input type="hidden" name=(UI_RPC_FIELD) value=(rpc_post);
+            form id="thread-compose-form" method="POST" action="/ui" data-check-action="/ui" data-check-rpc=(template_json_compact(&json!({
+                "action": "check_ingest",
+                "room": nav.room_wire,
+                "thread_tag": thread_tag,
+                "text": {"$form": "text"},
+                "error_target": "thread-compose-errors",
+                "form_id": "thread-compose-form",
+            })).unwrap()) {
+                input type="hidden" name=(UI_RPC_FIELD) value=(template_json_compact(&json!({
+                    "action": "post_ingest",
+                    "room": nav.room_wire,
+                    "thread_tag": thread_tag,
+                    "text": {"$form": "text"},
+                    "error_target": "thread-compose-errors",
+                    "form_id": "thread-compose-form",
+                })).unwrap());
                 textarea name="text" rows="5" cols="80" placeholder="prose or ~/items and votes…" {}
                 p {
                     button type="submit" { "post" }
@@ -712,7 +696,7 @@ pub async fn home(
             p class="muted" { "dark = time-ordered · light = vote-ranked" }
             div class="thread-feed-toolbar" {
                 form method="POST" action="/ui" {
-                    input type="hidden" name=(UI_RPC_FIELD) value=(expand_public_new_thread_rpc_value());
+                    input type="hidden" name=(UI_RPC_FIELD) value=(template_json_compact(&HtmlUiAction::ExpandPublicNewThreadForm).expect("static json"));
                     button type="submit" class="section-add-btn" { "+" }
                 }
             }
@@ -1002,14 +986,15 @@ fn new_thread_form_for_room(nav: &ThreadNav, show: bool, compose_expanded: bool)
     if !show {
         return html! {};
     }
-    let rpc_open = set_room_new_thread_compose_expanded_rpc(nav, true);
-    let rpc_close = set_room_new_thread_compose_expanded_rpc(nav, false);
     // Single root for Idiomorph when morphing `#room-new-thread-ui-slot` (expanded has form + section).
     html! {
         div class="room-new-thread-slot-inner" {
             @if compose_expanded {
                 form method="POST" action="/ui" {
-                    input type="hidden" name=(UI_RPC_FIELD) value=(rpc_close);
+                    input type="hidden" name=(UI_RPC_FIELD) value=(template_json_compact(&HtmlUiAction::SetRoomNewThreadComposeExpanded {
+                        room_wire: nav.room_wire.clone(),
+                        expanded: false,
+                    }).expect("static json"));
                     button type="submit" class="form-toggle" aria-expanded="true" {
                         "-"
                     }
@@ -1039,7 +1024,10 @@ fn new_thread_form_for_room(nav: &ThreadNav, show: bool, compose_expanded: bool)
                 }
             } @else {
                 form method="POST" action="/ui" {
-                    input type="hidden" name=(UI_RPC_FIELD) value=(rpc_open);
+                    input type="hidden" name=(UI_RPC_FIELD) value=(template_json_compact(&HtmlUiAction::SetRoomNewThreadComposeExpanded {
+                        room_wire: nav.room_wire.clone(),
+                        expanded: true,
+                    }).expect("static json"));
                     button type="submit" class="form-toggle" aria-expanded="false" {
                         "+"
                     }
@@ -1047,10 +1035,6 @@ fn new_thread_form_for_room(nav: &ThreadNav, show: bool, compose_expanded: bool)
             }
         }
     }
-}
-
-pub(crate) fn expand_public_new_thread_rpc_value() -> String {
-    template_json_compact(&HtmlUiAction::ExpandPublicNewThreadForm).expect("static json")
 }
 
 pub(crate) fn login_to_post_hint_markup() -> Markup {

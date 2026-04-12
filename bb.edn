@@ -51,6 +51,11 @@
    :requires ([test.walkthrough-fixture :as walkthrough-fixture])
    :task (walkthrough-fixture/run-fixture)}
 
+  sample-fixture
+  {:doc "macOS: run `sample` on process(es) listening on the fixture TCP port (default 8080). Usage: bb sample-fixture [PORT] [DURATION_SEC] [OUT_DIR]"
+   :requires ([scripts.sample-fixture :as sample-fixture])
+   :task (apply sample-fixture/-main *command-line-args*)}
+
   perf
   {:doc "Performance test: concurrent HTTP requests to detect blocking I/O"
    :requires ([scripts.perf :as perf])
