@@ -15,14 +15,48 @@ pub mod reducer;
 pub mod scope_rank;
 pub mod state;
 pub mod timeago;
+pub mod write_cmd;
+
+use std::collections::HashMap;
+use std::sync::Arc;
 
 use axum::Router;
+use tokio::sync::{broadcast, mpsc, RwLock};
+
+use crate::state::{AppConfig, AppState};
+use crate::write_cmd::WriteCmd;
 use axum::routing::{get, post};
 use tower_http::trace::TraceLayer;
 
-use crate::state::AppState;
-
 pub use reducer::ReducerState;
+
+/// Build application state and start the serialized writer task (required for RPC/auth writes).
+pub fn create_app_state(cfg: AppConfig) -> AppState {
+    let event_log = crate::event_log::EventLog::new(cfg.event_log_path.clone());
+    let (stream_tx, _) = broadcast::channel(64);
+    let (js_tx, _) = broadcast::channel(64);
+    let (write_tx, write_rx) = mpsc::channel::<WriteCmd>(256);
+    let state = AppState {
+        cfg: Arc::new(cfg),
+        event_log: Arc::new(event_log),
+        reduced: Arc::new(RwLock::new(crate::reducer::ReducerState::default())),
+        pending_sessions: Arc::new(RwLock::new(HashMap::new())),
+        invites: Arc::new(RwLock::new(HashMap::new())),
+        stream_tx,
+        js_tx,
+        write_tx,
+    };
+    tokio::spawn(crate::api::write_actor::writer_actor(write_rx, state.clone()));
+    state
+}
+
+/// Spawn the serialized writer. Used by integration tests after seeding reducer state in-process.
+pub fn spawn_writer_actor_for_test(
+    state: AppState,
+    rx: tokio::sync::mpsc::Receiver<WriteCmd>,
+) {
+    tokio::spawn(crate::api::write_actor::writer_actor(rx, state));
+}
 
 pub fn create_app(state: AppState) -> Router {
     Router::new()

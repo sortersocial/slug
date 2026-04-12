@@ -4,6 +4,7 @@ mod rpc;
 mod stream;
 mod validate;
 mod ui_html;
+pub(crate) mod write_actor;
 
 pub use auth::{
     get_join_invite,

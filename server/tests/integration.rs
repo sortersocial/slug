@@ -2,6 +2,7 @@ use sha2::{Digest, Sha256};
 use slugsocial_server::{
     event_log::EventLog,
     events::{Event, TokenIssued, UserRegistered},
+    spawn_writer_actor_for_test,
     state::{AppConfig, AppState},
 };
 use tempfile::TempDir;
@@ -100,8 +101,9 @@ async fn create_test_server_with_state() -> (SocketAddr, TempDir, EventLog, AppS
         event_log_path: log_path.to_string_lossy().to_string(),
     };
 
-    let state = AppState::new(cfg);
+    let (state, write_rx) = AppState::create_for_test(cfg);
     seed_test_token(&state).await;
+    spawn_writer_actor_for_test(state.clone(), write_rx);
     let app = slugsocial_server::create_app(state.clone());
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

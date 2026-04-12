@@ -2,9 +2,9 @@ use axum::Router;
 use tracing_subscriber::EnvFilter;
 
 use slugsocial_server::{
+    create_app, create_app_state,
     event_log::EventLog,
-    create_app,
-    state::{AppConfig, AppState},
+    state::AppConfig,
 };
 
 fn env_var(name: &str) -> Option<String> {
@@ -31,7 +31,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         event_log_path: event_log_path.clone(),
     };
 
-    let state = AppState::new(cfg);
+    let state = create_app_state(cfg);
 
     // Load and reduce existing events.
     let (events, bad) = EventLog::new(event_log_path).load_all().await?;
