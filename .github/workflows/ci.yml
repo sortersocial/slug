@@ -73,7 +73,8 @@ jobs:
         continue-on-error: true
         run: |
           mkdir -p target
-          clj -M:kaocha
+          # Use `clojure` not `clj`: on ubuntu-latest, `clj` requires rlwrap and exits 1 without it.
+          clojure -M:kaocha
 
       - name: Upload Clojure JUnit (artifact)
         uses: actions/upload-artifact@v4
