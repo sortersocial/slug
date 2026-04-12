@@ -21,7 +21,8 @@ use crate::{
     html::{
         fragment_public_new_thread_form, fragment_room_new_thread_form, login_to_post_hint_markup,
         parse_html_ui_from_form, thread_feed_html, thread_feed_html_for_room, thread_feed_region_markup,
-        user_can_post_room, user_can_view_room, HtmlUiAction, JsBuilder, ThreadNav,
+        thread_ui_collapse_redacted_post, thread_ui_expand_post_full, thread_ui_expand_redacted_post,
+        ui_js_warn, user_can_post_room, user_can_view_room, HtmlUiAction, JsBuilder, ThreadNav,
     },
     reducer::{scope_from_room_wire, ScopeId},
     state::AppState,
@@ -181,6 +182,30 @@ async fn dispatch_ui_action(
             JsBuilder::new()
                 .morph_selector("#room-new-thread-ui-slot", markup)
                 .into_response()
+        }
+        HtmlUiAction::ExpandPostFull {
+            room,
+            thread_tag,
+            post_index,
+        } => {
+            let viewer = session.map(|s| s.username.as_str());
+            thread_ui_expand_post_full(state, &room, &thread_tag, post_index, viewer).await
+        }
+        HtmlUiAction::ExpandRedactedPost {
+            room,
+            thread_tag,
+            post_index,
+        } => {
+            let viewer = session.map(|s| s.username.as_str());
+            thread_ui_expand_redacted_post(state, &room, &thread_tag, post_index, viewer).await
+        }
+        HtmlUiAction::CollapseRedactedPost {
+            room,
+            thread_tag,
+            post_index,
+        } => {
+            let viewer = session.map(|s| s.username.as_str());
+            thread_ui_collapse_redacted_post(state, &room, &thread_tag, post_index, viewer).await
         }
     }
 }
@@ -368,12 +393,3 @@ async fn redact_success_response(state: &AppState) -> Response {
         .into_response()
 }
 
-fn ui_js_warn(msg: &str) -> Response {
-    use crate::html::js_string_literal;
-    let js = format!("console.warn({});", js_string_literal(msg));
-    Response::builder()
-        .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, "text/javascript; charset=utf-8")
-        .body(axum::body::Body::from(js))
-        .unwrap()
-}

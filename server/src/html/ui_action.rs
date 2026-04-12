@@ -44,6 +44,24 @@ pub enum HtmlUiAction {
     ExpandRoomNewThreadForm {
         room_wire: String,
     },
+    /// Replace a truncated post card with the full body (same thread index).
+    ExpandPostFull {
+        room: String,
+        thread_tag: String,
+        post_index: usize,
+    },
+    /// Expand a redacted/tombstone post to show stripped body (author view).
+    ExpandRedactedPost {
+        room: String,
+        thread_tag: String,
+        post_index: usize,
+    },
+    /// Collapse an expanded redacted post back to the tombstone card.
+    CollapseRedactedPost {
+        room: String,
+        thread_tag: String,
+        post_index: usize,
+    },
 }
 
 #[derive(Debug, Error)]
@@ -112,5 +130,29 @@ mod tests {
         );
         let a = parse_html_ui_from_form(&form).unwrap();
         assert_eq!(a, HtmlUiAction::ExpandPublicNewThreadForm);
+    }
+
+    #[test]
+    fn expand_post_full_round_trip() {
+        let template = serde_json::json!({
+            "action": "expand_post_full",
+            "room": "public",
+            "thread_tag": "demo",
+            "post_index": 3,
+        });
+        let mut form = HashMap::new();
+        form.insert(
+            UI_RPC_FIELD.to_string(),
+            serde_json::to_string(&template).unwrap(),
+        );
+        let a = parse_html_ui_from_form(&form).unwrap();
+        assert_eq!(
+            a,
+            HtmlUiAction::ExpandPostFull {
+                room: "public".into(),
+                thread_tag: "demo".into(),
+                post_index: 3,
+            }
+        );
     }
 }

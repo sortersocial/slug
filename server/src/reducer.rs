@@ -152,7 +152,12 @@ pub struct RankHistoryEntry {
     pub post_id: String,
 }
 
-/// Durable invite link state (from [`crate::events::InviteMinted`] / [`crate::events::InviteRedeemed`]).
+/// Invite link materialized from log events [`crate::events::InviteMinted`] /
+/// [`crate::events::InviteRedeemed`] when those are replayed.
+///
+/// **`RoomMintInvite` today** stores tokens only in [`crate::state::AppState::invites`] (RAM);
+/// they are not appended to the JSONL log, so they disappear on restart. This struct is for
+/// replay and any future persisted-mint path, not for the current ephemeral RPC mint.
 #[derive(Debug, Clone)]
 pub struct ActiveInviteState {
     pub room_id: String,
@@ -632,8 +637,6 @@ impl ReducerState {
                 let canonical_thread = ing.thread_tag.clone();
                 let scope_thread_key = (scope.clone(), canonical_thread.clone());
 
-                self.ingests_by_id.insert(ing.id.clone(), ing.clone());
-
                 {
                     let content = self.content_for_scope_mut(scope.clone());
                     if Self::apply_ingest_to_content(content, &ing).is_err() {
@@ -644,6 +647,8 @@ impl ReducerState {
                         return;
                     }
                 }
+
+                self.ingests_by_id.insert(ing.id.clone(), ing.clone());
 
                 let ft = self.forum_threads.entry(scope_thread_key.clone()).or_default();
                 let prev_ts = ft.last_activity_ts;

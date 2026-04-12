@@ -454,12 +454,16 @@ fn ranking_repeated_votes_normalized() {
 #[test]
 fn reducer_malformed_ingest_is_skipped_no_panic() {
     let mut state = ReducerState::default();
-    // Completely invalid raw text that will fail dsl::parse_full
-    state.apply_event(ingest_event(1, "this is {{ not valid DSL at all }{"));
-    // State should remain empty — no panic, no items
+    // DSL-looking line that fails parse (unclosed item body), not plain prose
+    state.apply_event(ingest_event(1, "~/t/a { unclosed "));
+    // State should remain empty — no panic, no items, no ingest id leakage
     let content = state.public();
     assert!(content.items.is_empty());
     assert!(content.ranking_group.idx_to_item.is_empty());
+    assert!(
+        state.ingests_by_id.is_empty(),
+        "malformed ingest must not be recorded in ingests_by_id"
+    );
 }
 
 #[test]

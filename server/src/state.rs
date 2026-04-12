@@ -57,7 +57,9 @@ pub struct AppState {
     pub event_log: Arc<EventLog>,
     pub reduced: Arc<RwLock<ReducerState>>,
     pub pending_sessions: Arc<RwLock<HashMap<String, PendingSession>>>,
-    /// Ephemeral invite tokens (`inv_…`) until expiry or exhaustion.
+    /// Ephemeral invite tokens (`inv_…`): in this process only, not written to the event log.
+    /// Minted via `RoomMintInvite`; restarting the server drops any unused links. (Log event
+    /// types `InviteMinted` / `InviteRedeemed` exist for replay and a possible future persisted path.)
     pub invites: Arc<RwLock<HashMap<String, InviteState>>>,
     /// Broadcast channel for SSE live-streaming. Capacity = 64 events.
     pub stream_tx: broadcast::Sender<StreamEvent>,
