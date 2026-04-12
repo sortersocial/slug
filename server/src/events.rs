@@ -23,6 +23,17 @@ pub enum Event {
     InviteRedeemed(InviteRedeemed),
     /// Ingest of a DSL+prose body. Identity and routing live in event metadata.
     Ingest(Ingest),
+    /// Author removed their post from the forum and garden (votes/items from that ingest are undone).
+    PostRedacted(PostRedacted),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PostRedacted {
+    pub ts: i64,
+    /// Ingest id ([`Ingest::id`]) to redact.
+    pub post_id: String,
+    /// Principal who authored the post (must match ingest; stored for auditing).
+    pub principal: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

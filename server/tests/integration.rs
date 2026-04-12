@@ -636,6 +636,131 @@ async fn test_ingest_actor_with_colons_is_detected_and_validated() {
 }
 
 #[tokio::test]
+async fn test_post_redact_removes_garden_and_marks_thread() {
+    let (addr, _tmp, _log, _handle) = create_test_server().await;
+    let client = reqwest::Client::new();
+    let bearer = test_bearer();
+
+    let post_body = rpc_batch(
+        &client,
+        addr,
+        Some(&bearer),
+        serde_json::json!([{
+            "Post": {
+                "room": "public",
+                "thread_tag": "redact-test",
+                "delegate": "00000000-0000-0000-0000-000000000000:test:local/test",
+                "text": "~/del-a {a}\n~/del-b {b}\n~/del-a 2:1 ~/del-b {vote line}\n",
+                "return_rank_diff": false
+            }
+        }]),
+    )
+    .await;
+    let line = &post_body["results"][0];
+    assert_eq!(line["ok"], true, "post ingest: {:?}", line);
+
+    let thread_before = rpc_batch(
+        &client,
+        addr,
+        None,
+        serde_json::json!([{
+            "GetForumThread": {
+                "room": "public",
+                "thread_tag": "redact-test",
+                "offset": null,
+                "limit": null,
+                "since": null,
+                "before": null,
+                "actor": null,
+                "post_id": null
+            }
+        }]),
+    )
+    .await;
+    let items_before = thread_before["results"][0]["result"]["ForumThread"]["items"]
+        .as_array()
+        .unwrap();
+    assert_eq!(items_before.len(), 1);
+    let post_id = items_before[0]["id"].as_str().unwrap().to_string();
+    assert_eq!(items_before[0]["redacted"], serde_json::Value::Bool(false));
+
+    let rank_before = rpc_batch(
+        &client,
+        addr,
+        None,
+        serde_json::json!([{
+            "GetGardenRank": {
+                "room": "public",
+                "parent_path": "~",
+                "depth": 1
+            }
+        }]),
+    )
+    .await;
+    let rank_line = &rank_before["results"][0];
+    assert_eq!(rank_line["ok"], true);
+    let ranking = rank_line["result"]["GardenRank"]["components"][0]["ranking"]
+        .as_array()
+        .unwrap();
+    assert_eq!(ranking.len(), 2);
+
+    let redact = rpc_batch(
+        &client,
+        addr,
+        Some(&bearer),
+        serde_json::json!([{
+            "PostRedact": { "post_id": post_id }
+        }]),
+    )
+    .await;
+    assert_eq!(redact["results"][0]["ok"], true, "redact: {:?}", redact);
+
+    let rank_after = rpc_batch(
+        &client,
+        addr,
+        None,
+        serde_json::json!([{
+            "GetGardenRank": {
+                "room": "public",
+                "parent_path": "~",
+                "depth": 1
+            }
+        }]),
+    )
+    .await;
+    let ra_line = &rank_after["results"][0];
+    assert_eq!(ra_line["ok"], true);
+    let comps = ra_line["result"]["GardenRank"]["components"].as_array().unwrap();
+    assert!(
+        comps.is_empty() || comps[0]["ranking"].as_array().unwrap().is_empty(),
+        "votes from redacted post should be removed: {:?}",
+        ra_line
+    );
+
+    let thread_after = rpc_batch(
+        &client,
+        addr,
+        None,
+        serde_json::json!([{
+            "GetForumThread": {
+                "room": "public",
+                "thread_tag": "redact-test",
+                "offset": null,
+                "limit": null,
+                "since": null,
+                "before": null,
+                "actor": null,
+                "post_id": null
+            }
+        }]),
+    )
+    .await;
+    let item = &thread_after["results"][0]["result"]["ForumThread"]["items"][0];
+    assert_eq!(item["redacted"], serde_json::Value::Bool(true));
+    assert_eq!(item["body"].as_str().unwrap(), "");
+}
+
+#[tokio::test]
 async fn test_vote_endpoint() {
     let (addr, _tmp, _log, _handle) = create_test_server().await;
     let client = reqwest::Client::new();

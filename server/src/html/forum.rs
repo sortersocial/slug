@@ -114,6 +114,14 @@ impl ThreadNav {
     fn expand_url(&self, tag: &str, idx: usize) -> String {
         format!("{}/{}/{}/expand", self.thread_path_prefix, tag, idx)
     }
+
+    fn expand_deleted_url(&self, tag: &str, idx: usize) -> String {
+        format!("{}/{}/{}/expand-deleted", self.thread_path_prefix, tag, idx)
+    }
+
+    fn collapse_deleted_url(&self, tag: &str, idx: usize) -> String {
+        format!("{}/{}/{}/collapse-deleted", self.thread_path_prefix, tag, idx)
+    }
 }
 
 fn thread_nav_for_ingest(ing: &crate::events::Ingest) -> Option<ThreadNav> {
@@ -153,6 +161,97 @@ fn post_header_meta(
             a href=(profile) class="post-author" { "@" (principal) }
             " · "
             (ago)
+        }
+    }
+}
+
+fn post_header_row(
+    nav: &ThreadNav,
+    tag: &str,
+    post_idx: usize,
+    ing: &crate::events::Ingest,
+    _viewer: Option<&str>,
+    now: i64,
+    show_delete: bool,
+) -> Markup {
+    let meta = post_header_meta(nav, tag, post_idx, &ing.principal, ing.ts, now);
+    html! {
+        div class="ingest-header-row" {
+            (meta)
+            @if show_delete {
+                form class="post-delete-form" method="POST" action="/post/redact" {
+                    input type="hidden" name="post_id" value=(ing.id);
+                    button type="submit" class="post-delete-btn" { "delete" }
+                }
+            }
+        }
+    }
+}
+
+fn redacted_header_row(
+    nav: &ThreadNav,
+    tag: &str,
+    post_idx: usize,
+    ing: &crate::events::Ingest,
+    now: i64,
+    expanded: bool,
+) -> Markup {
+    let meta = post_header_meta(nav, tag, post_idx, &ing.principal, ing.ts, now);
+    let exp = nav.expand_deleted_url(tag, post_idx);
+    let coll = nav.collapse_deleted_url(tag, post_idx);
+    html! {
+        div class="ingest-header-row ingest-tombstone-row" {
+            (meta)
+            span class="post-tombstone-inline muted" {
+                "deleted · "
+                @if expanded {
+                    a href="#" class="hide-deleted-link"
+                      onclick=(format!("fetch('{coll}').then(r=>r.text()).then(eval);return false")) {
+                        "[hide deleted content]"
+                    }
+                } @else {
+                    a href="#" class="show-deleted-link"
+                      onclick=(format!("fetch('{exp}').then(r=>r.text()).then(eval);return false")) {
+                        "[show deleted content]"
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn ingest_entry_markup(
+    nav: &ThreadNav,
+    tag: &str,
+    post_idx: usize,
+    ing: &crate::events::Ingest,
+    viewer: Option<&str>,
+    now: i64,
+    reduced: &ReducerState,
+) -> Markup {
+    let redacted = reduced.redacted_posts.contains(&ing.id);
+    let show_delete = viewer == Some(ing.principal.as_str()) && !redacted;
+    if redacted {
+        html! {
+            div class="ingest-entry ingest-redacted" data-ingest-id=(ing.id) {
+                (redacted_header_row(nav, tag, post_idx, ing, now, false))
+            }
+        }
+    } else {
+        let truncated = ing.raw.len() > 2000;
+        let display_body = if truncated { &ing.raw[..2000] } else { &ing.raw[..] };
+        html! {
+            div class="ingest-entry" data-ingest-id=(ing.id) {
+                (post_header_row(nav, tag, post_idx, ing, viewer, now, show_delete))
+                (render_linkified_with_embeds_in_scope(display_body, nav.garden_root_url()))
+                @if truncated {
+                    @let exp = nav.expand_url(tag, post_idx);
+                    a href="#" class="show-full-link"
+                      onclick=(format!("fetch('{exp}').then(r=>r.text()).then(eval);return false")) {
+                        "[show full post]"
+                    }
+                }
+            }
         }
     }
 }
@@ -410,6 +509,8 @@ fn render_thread_feed_region_markup(
     offset: usize,
     total: usize,
     now: i64,
+    viewer: Option<&str>,
+    reduced: &ReducerState,
 ) -> Markup {
     let paginator_top = render_thread_paginator(nav, tag, offset, total, true);
     let paginator_bot = render_thread_paginator(nav, tag, offset, total, false);
@@ -421,19 +522,7 @@ fn render_thread_feed_region_markup(
                 (paginator_top)
                 @for (i, ing) in display_ingests.iter().enumerate() {
                     @let post_idx = offset + i;
-                    @let truncated = ing.raw.len() > 2000;
-                    @let display_body = if truncated { &ing.raw[..2000] } else { &ing.raw[..] };
-                    div class="ingest-entry" data-ingest-id=(ing.id) {
-                        (post_header_meta(nav, tag, post_idx, &ing.principal, ing.ts, now))
-                        (render_linkified_with_embeds_in_scope(display_body, nav.garden_root_url()))
-                        @if truncated {
-                            @let exp = nav.expand_url(tag, post_idx);
-                            a href="#" class="show-full-link"
-                              onclick=(format!("fetch('{exp}').then(r=>r.text()).then(eval);return false")) {
-                                "[show full post]"
-                            }
-                        }
-                    }
+                    (ingest_entry_markup(nav, tag, post_idx, ing, viewer, now, reduced))
                 }
                 (paginator_bot)
             }
@@ -441,7 +530,12 @@ fn render_thread_feed_region_markup(
     }
 }
 
-pub async fn thread_feed_region_markup(state: &AppState, room_id: Option<&str>, tag: &str) -> Markup {
+pub async fn thread_feed_region_markup(
+    state: &AppState,
+    room_id: Option<&str>,
+    tag: &str,
+    viewer: Option<&str>,
+) -> Markup {
     let tag = canonicalize_tag(tag);
     let Some(nav) = (match room_id {
         Some(room_id) => ThreadNav::from_room_id(room_id),
@@ -461,14 +555,21 @@ pub async fn thread_feed_region_markup(state: &AppState, room_id: Option<&str>, 
     let total = all_ids.len();
     let offset = total.saturating_sub(PAGE_SIZE);
     let page_ids: Vec<String> = all_ids.into_iter().skip(offset).take(PAGE_SIZE).collect();
-    let display_ingests = {
-        let reduced = state.reduced.read().await;
-        page_ids
-            .iter()
-            .filter_map(|id| reduced.ingests_by_id.get(id).cloned())
-            .collect::<Vec<_>>()
-    };
-    render_thread_feed_region_markup(&nav, &tag, &display_ingests, offset, total, now_ms())
+    let reduced = state.reduced.read().await;
+    let display_ingests = page_ids
+        .iter()
+        .filter_map(|id| reduced.ingests_by_id.get(id).cloned())
+        .collect::<Vec<_>>();
+    render_thread_feed_region_markup(
+        &nav,
+        &tag,
+        &display_ingests,
+        offset,
+        total,
+        now_ms(),
+        viewer,
+        &reduced,
+    )
 }
 
 /// Home: private rooms (signed-in), then public bump-ordered threads.
@@ -615,9 +716,17 @@ async fn thread_view_inner(
             .unwrap_or(false),
     };
     let strip = auth_strip(&headers, &jar, &reduced);
+    let now = now_ms();
+    let entry_rows: Vec<Markup> = display_ingests
+        .iter()
+        .enumerate()
+        .map(|(i, ing)| {
+            let post_idx = offset + i;
+            ingest_entry_markup(&nav, &tag, post_idx, ing, user.as_deref(), now, &reduced)
+        })
+        .collect();
     drop(reduced);
 
-    let now = now_ms();
     let paginator_top = render_thread_paginator(&nav, &tag, offset, total, true);
     let paginator_bot = render_thread_paginator(&nav, &tag, offset, total, false);
 
@@ -657,21 +766,8 @@ async fn thread_view_inner(
                     p class="muted" { "no activity yet" }
                 } @else {
                     (paginator_top)
-                    @for (i, ing) in display_ingests.iter().enumerate() {
-                        @let post_idx = offset + i;
-                        @let truncated = ing.raw.len() > 2000;
-                        @let display_body = if truncated { &ing.raw[..2000] } else { &ing.raw[..] };
-                        div class="ingest-entry" data-ingest-id=(ing.id) {
-                            (post_header_meta(&nav, &tag, post_idx, &ing.principal, ing.ts, now))
-                            (render_linkified_with_embeds_in_scope(display_body, nav.garden_root_url()))
-                            @if truncated {
-                                @let exp = nav.expand_url(&tag, post_idx);
-                                a href="#" class="show-full-link"
-                                  onclick=(format!("fetch('{exp}').then(r=>r.text()).then(eval);return false")) {
-                                    "[show full post]"
-                                }
-                            }
-                        }
+                    @for row in &entry_rows {
+                        (row)
                     }
                     (paginator_bot)
                 }
@@ -846,19 +942,23 @@ async fn thread_post_view_inner(
     tag: String,
     index_str: String,
     nav: ThreadNav,
+    viewer: Option<String>,
 ) -> impl IntoResponse {
     let tag = canonicalize_tag(&tag);
     let index: usize = index_str.parse().unwrap_or(0);
     let scope = nav.scope();
     let now = now_ms();
-    let (ing, subtitle) = {
+    let (ing, subtitle, body_markup) = {
         let reduced = state.reduced.read().await;
         let ing = reduced
             .ingests_by_scope_thread
             .get(&(scope.clone(), tag.clone()))
             .and_then(|q| q.iter().rev().nth(index))
             .and_then(|id| reduced.ingests_by_id.get(id).cloned());
-        (ing, None::<String>)
+        let body = ing.as_ref().map(|i| {
+            ingest_entry_markup(&nav, &tag, index, i, viewer.as_deref(), now, &reduced)
+        });
+        (ing, None::<String>, body)
     };
 
     let sc = nav.scope();
@@ -880,11 +980,8 @@ async fn thread_post_view_inner(
         html! {
             nav class="breadcrumb" { (bc) }
             h2 { "#" (tag) @if let Some(sub) = &subtitle { ": " (sub) } " / post #" (index) }
-            @if let Some(ing) = ing {
-                div class="ingest-entry" data-ingest-id=(ing.id) {
-                    (post_header_meta(&nav, &tag, index, &ing.principal, ing.ts, now))
-                    (render_linkified_with_embeds_in_scope(&ing.raw, nav.garden_root_url()))
-                }
+            @if let (Some(_ing), Some(bm)) = (&ing, &body_markup) {
+                (bm)
             } @else {
                 p class="muted" { "post not found" }
             }
@@ -897,8 +994,14 @@ async fn thread_post_view_inner(
 pub async fn thread_post_view(
     State(state): State<AppState>,
     Path((tag, index_str)): Path<(String, String)>,
+    headers: HeaderMap,
+    jar: CookieJar,
 ) -> impl IntoResponse {
-    thread_post_view_inner(state, tag, index_str, ThreadNav::public()).await
+    let reduced = state.reduced.read().await;
+    let viewer = optional_principal(&headers, &jar, &reduced);
+    drop(reduced);
+    thread_post_view_inner(state, tag, index_str, ThreadNav::public(), viewer)
+        .await
 }
 
 pub async fn room_thread_post_view(
@@ -918,7 +1021,7 @@ pub async fn room_thread_post_view(
     let Some(nav) = ThreadNav::from_room_id(&room_id) else {
         return (StatusCode::NOT_FOUND, "bad room path").into_response();
     };
-    thread_post_view_inner(state, tag, index_str, nav)
+    thread_post_view_inner(state, tag, index_str, nav, user)
         .await
         .into_response()
 }
@@ -928,36 +1031,150 @@ async fn thread_post_expand_inner(
     tag: String,
     index_str: String,
     nav: ThreadNav,
+    viewer: Option<String>,
 ) -> impl IntoResponse {
     let tag = canonicalize_tag(&tag);
     let index: usize = index_str.parse().unwrap_or(0);
     let now = now_ms();
     let scope = nav.scope();
 
-    let ing = {
-        let reduced = state.reduced.read().await;
-        reduced
-            .ingests_by_scope_thread
-            .get(&(scope.clone(), tag.clone()))
-            .and_then(|q| q.iter().rev().nth(index))
-            .and_then(|id| reduced.ingests_by_id.get(id).cloned())
-    };
-
+    let reduced = state.reduced.read().await;
+    let ing = reduced
+        .ingests_by_scope_thread
+        .get(&(scope.clone(), tag.clone()))
+        .and_then(|q| q.iter().rev().nth(index))
+        .and_then(|id| reduced.ingests_by_id.get(id).cloned());
     let Some(ing) = ing else {
         return (StatusCode::NOT_FOUND, "post not found").into_response();
     };
+    if reduced.redacted_posts.contains(&ing.id) {
+        return (StatusCode::NOT_FOUND, "post not found").into_response();
+    };
+    let ing_id = ing.id.clone();
+    drop(reduced);
 
     let full_html = html! {
-        div class="ingest-entry" data-ingest-id=(ing.id) {
-            (post_header_meta(&nav, &tag, index, &ing.principal, ing.ts, now))
+        div class="ingest-entry" data-ingest-id=(ing_id) {
+            (post_header_row(
+                &nav,
+                &tag,
+                index,
+                &ing,
+                viewer.as_deref(),
+                now,
+                viewer.as_deref() == Some(ing.principal.as_str()),
+            ))
             (render_linkified_with_embeds_in_scope(&ing.raw, nav.garden_root_url()))
         }
     };
 
     JsBuilder::new()
         .morph_selector(
-            &format!("[data-ingest-id=\"{}\"]", ing.id),
+            &format!("[data-ingest-id=\"{}\"]", ing_id),
             full_html,
+        )
+        .into_response()
+        .into_response()
+}
+
+async fn thread_post_expand_deleted_inner(
+    state: AppState,
+    tag: String,
+    index_str: String,
+    nav: ThreadNav,
+    _viewer: Option<String>,
+) -> impl IntoResponse {
+    let tag = canonicalize_tag(&tag);
+    let index: usize = index_str.parse().unwrap_or(0);
+    let now = now_ms();
+    let scope = nav.scope();
+
+    let full_html = {
+        let reduced = state.reduced.read().await;
+        let ing = reduced
+            .ingests_by_scope_thread
+            .get(&(scope.clone(), tag.clone()))
+            .and_then(|q| q.iter().rev().nth(index))
+            .and_then(|id| reduced.ingests_by_id.get(id).cloned());
+        let Some(ing) = ing else {
+            return (StatusCode::NOT_FOUND, "post not found").into_response();
+        };
+        if !reduced.redacted_posts.contains(&ing.id) {
+            return (StatusCode::NOT_FOUND, "post not found").into_response();
+        };
+        html! {
+            div class="ingest-entry ingest-redacted-expanded" data-ingest-id=(ing.id) {
+                (redacted_header_row(&nav, &tag, index, &ing, now, true))
+                (render_linkified_with_embeds_in_scope(&ing.raw, nav.garden_root_url()))
+            }
+        }
+    };
+
+    let ing_id = {
+        let reduced = state.reduced.read().await;
+        reduced
+            .ingests_by_scope_thread
+            .get(&(nav.scope(), tag.clone()))
+            .and_then(|q| q.iter().rev().nth(index))
+            .cloned()
+    };
+    let Some(ing_id) = ing_id else {
+        return (StatusCode::NOT_FOUND, "post not found").into_response();
+    };
+
+    JsBuilder::new()
+        .morph_selector(
+            &format!("[data-ingest-id=\"{}\"]", ing_id),
+            full_html,
+        )
+        .into_response()
+        .into_response()
+}
+
+async fn thread_post_collapse_deleted_inner(
+    state: AppState,
+    tag: String,
+    index_str: String,
+    nav: ThreadNav,
+    viewer: Option<String>,
+) -> impl IntoResponse {
+    let tag = canonicalize_tag(&tag);
+    let index: usize = index_str.parse().unwrap_or(0);
+    let now = now_ms();
+    let scope = nav.scope();
+
+    let collapsed = {
+        let reduced = state.reduced.read().await;
+        let ing = reduced
+            .ingests_by_scope_thread
+            .get(&(scope.clone(), tag.clone()))
+            .and_then(|q| q.iter().rev().nth(index))
+            .and_then(|id| reduced.ingests_by_id.get(id).cloned());
+        let Some(ing) = ing else {
+            return (StatusCode::NOT_FOUND, "post not found").into_response();
+        };
+        if !reduced.redacted_posts.contains(&ing.id) {
+            return (StatusCode::NOT_FOUND, "post not found").into_response();
+        };
+        ingest_entry_markup(&nav, &tag, index, &ing, viewer.as_deref(), now, &reduced)
+    };
+
+    let ing_id = {
+        let reduced = state.reduced.read().await;
+        reduced
+            .ingests_by_scope_thread
+            .get(&(nav.scope(), tag.clone()))
+            .and_then(|q| q.iter().rev().nth(index))
+            .cloned()
+    };
+    let Some(ing_id) = ing_id else {
+        return (StatusCode::NOT_FOUND, "post not found").into_response();
+    };
+
+    JsBuilder::new()
+        .morph_selector(
+            &format!("[data-ingest-id=\"{}\"]", ing_id),
+            collapsed,
         )
         .into_response()
         .into_response()
@@ -988,6 +1205,9 @@ pub async fn user_profile_page(
         let ids = reduced.visible_posts_for_actor(&canon, viewer.as_deref());
         let mut rows: Vec<ProfilePostRow> = Vec::new();
         for id in ids {
+            if reduced.redacted_posts.contains(&id) {
+                continue;
+            }
             let Some(ing) = reduced.ingests_by_id.get(&id).cloned() else {
                 continue;
             };
@@ -1057,8 +1277,14 @@ pub async fn user_profile_page(
 pub async fn thread_post_expand(
     State(state): State<AppState>,
     Path((tag, index_str)): Path<(String, String)>,
+    headers: HeaderMap,
+    jar: CookieJar,
 ) -> impl IntoResponse {
-    thread_post_expand_inner(state, tag, index_str, ThreadNav::public()).await
+    let reduced = state.reduced.read().await;
+    let viewer = optional_principal(&headers, &jar, &reduced);
+    drop(reduced);
+    thread_post_expand_inner(state, tag, index_str, ThreadNav::public(), viewer)
+        .await
 }
 
 pub async fn room_thread_post_expand(
@@ -1074,11 +1300,84 @@ pub async fn room_thread_post_expand(
         drop(reduced);
         return room_not_found_page().into_response();
     }
-    drop(reduced);
     let Some(nav) = ThreadNav::from_room_id(&room_id) else {
+        drop(reduced);
         return (StatusCode::NOT_FOUND, "not found").into_response();
     };
-    thread_post_expand_inner(state, tag, index_str, nav)
+    drop(reduced);
+    thread_post_expand_inner(state, tag, index_str, nav, user)
+        .await
+        .into_response()
+}
+
+pub async fn thread_post_expand_deleted(
+    State(state): State<AppState>,
+    Path((tag, index_str)): Path<(String, String)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> impl IntoResponse {
+    let reduced = state.reduced.read().await;
+    let viewer = optional_principal(&headers, &jar, &reduced);
+    drop(reduced);
+    thread_post_expand_deleted_inner(state, tag, index_str, ThreadNav::public(), viewer)
+        .await
+}
+
+pub async fn room_thread_post_expand_deleted(
+    State(state): State<AppState>,
+    Path((room_short, room_slug, tag, index_str)): Path<(String, String, String, String)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> impl IntoResponse {
+    let room_id = format!("{room_short}/{room_slug}");
+    let reduced = state.reduced.read().await;
+    let user = optional_principal(&headers, &jar, &reduced);
+    if !user_can_view_room(&reduced, &room_id, user.as_deref()) {
+        drop(reduced);
+        return room_not_found_page().into_response();
+    }
+    let Some(nav) = ThreadNav::from_room_id(&room_id) else {
+        drop(reduced);
+        return (StatusCode::NOT_FOUND, "not found").into_response();
+    };
+    drop(reduced);
+    thread_post_expand_deleted_inner(state, tag, index_str, nav, user)
+        .await
+        .into_response()
+}
+
+pub async fn thread_post_collapse_deleted(
+    State(state): State<AppState>,
+    Path((tag, index_str)): Path<(String, String)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> impl IntoResponse {
+    let reduced = state.reduced.read().await;
+    let viewer = optional_principal(&headers, &jar, &reduced);
+    drop(reduced);
+    thread_post_collapse_deleted_inner(state, tag, index_str, ThreadNav::public(), viewer)
+        .await
+}
+
+pub async fn room_thread_post_collapse_deleted(
+    State(state): State<AppState>,
+    Path((room_short, room_slug, tag, index_str)): Path<(String, String, String, String)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+) -> impl IntoResponse {
+    let room_id = format!("{room_short}/{room_slug}");
+    let reduced = state.reduced.read().await;
+    let user = optional_principal(&headers, &jar, &reduced);
+    if !user_can_view_room(&reduced, &room_id, user.as_deref()) {
+        drop(reduced);
+        return room_not_found_page().into_response();
+    }
+    let Some(nav) = ThreadNav::from_room_id(&room_id) else {
+        drop(reduced);
+        return (StatusCode::NOT_FOUND, "not found").into_response();
+    };
+    drop(reduced);
+    thread_post_collapse_deleted_inner(state, tag, index_str, nav, user)
         .await
         .into_response()
 }

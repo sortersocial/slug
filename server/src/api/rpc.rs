@@ -14,7 +14,8 @@ use crate::{
     canonical_path::{canonicalize_item, canonicalize_tag},
     dsl,
     events::{
-        AgentBound, Event, GrantAdded, GrantRevoked, Ingest, RoomCreated, ThreadCapability,
+        AgentBound, Event, GrantAdded, GrantRevoked, Ingest, PostRedacted, RoomCreated,
+        ThreadCapability,
     },
     html::JsBuilder,
     identity::{parse_agent, parse_username},
@@ -57,7 +58,8 @@ async fn broadcast_web_refresh(state: &AppState, room_key: &str, thread_id: &str
         crate::html::thread_feed_html_for_room(state, room_key).await
     };
 
-    let thread_feed_markup = crate::html::thread_feed_region_markup(state, Some(room_key), thread_id).await;
+    let thread_feed_markup =
+        crate::html::thread_feed_region_markup(state, Some(room_key), thread_id, None).await;
 
     let builder = JsBuilder::new().morph_selector(&format!("#{feed_id}"), feed_markup);
     let builder = if room_key == "public" {
@@ -326,6 +328,55 @@ fn build_rank_response_for_content(
         components,
         unranked_items,
     })
+}
+
+pub async fn rpc_post_redact(
+    state: &AppState,
+    headers: &HeaderMap,
+    post_id: String,
+) -> Result<RpcResult, RpcErr> {
+    let reduced_arc = state.reduced.clone();
+    let reduced = reduced_arc.read().await;
+    let principal = verify_bearer_principal(headers, &reduced).map_err(|(_, m)| (m, None))?;
+    let post_id = post_id.trim().to_string();
+    let Some(ing) = reduced.ingests_by_id.get(&post_id).cloned() else {
+        drop(reduced);
+        return Err(("post not found".into(), None));
+    };
+    if ing.principal != principal {
+        drop(reduced);
+        return Err(("not your post".into(), None));
+    }
+    if reduced.redacted_posts.contains(&post_id) {
+        drop(reduced);
+        return Err(("already redacted".into(), None));
+    }
+    let room_key = ing.room_id.trim().to_string();
+    let scope = scope_from_room_wire(&room_key);
+    if matches!(scope, ScopeId::Room(_))
+        && (!reduced.rooms.contains(&room_key)
+            || !reduced.user_has_cap(&room_key, &principal, ThreadCapability::View))
+    {
+        drop(reduced);
+        return Err(("room not found".into(), None));
+    }
+    drop(reduced);
+
+    let ev = Event::PostRedacted(PostRedacted {
+        ts: now_ms(),
+        post_id: post_id.clone(),
+        principal: principal.clone(),
+    });
+    if let Err(err) = state.event_log.append(&ev).await {
+        return Err((format!("{err}"), None));
+    }
+    {
+        let mut reduced = reduced_arc.write().await;
+        reduced.apply_event(ev);
+    }
+    let thread_tag = canonicalize_tag(&ing.thread_tag);
+    broadcast_web_refresh(state, &room_key, &thread_tag).await;
+    Ok(RpcResult::RedactPostOk {})
 }
 
 async fn rpc_post(
@@ -668,19 +719,29 @@ fn rpc_forum_thread_detail(
         });
         return match index.and_then(|idx| reduced.ingests_by_id.get(pid).map(|ing| (idx, ing))) {
             None => Err(("post not found".into(), None)),
-            Some((idx, ing)) => Ok(ThreadDetailResponse {
-                thread: format!("#{}", tag),
-                items: vec![ThreadItem::Post {
-                    id: ing.id.clone(),
-                    index: idx,
-                    ts: ing.ts,
-                    actor: ing.principal.clone(),
-                    body: ing.raw.clone(),
-                    truncated: false,
-                }],
-                total: 1,
-                offset: idx,
-            }),
+            Some((idx, ing)) => {
+                let redacted = reduced.redacted_posts.contains(&ing.id);
+                let redacted_at_ts = if redacted {
+                    reduced.post_redact_ts.get(&ing.id).copied()
+                } else {
+                    None
+                };
+                Ok(ThreadDetailResponse {
+                    thread: format!("#{}", tag),
+                    items: vec![ThreadItem::Post {
+                        id: ing.id.clone(),
+                        index: idx,
+                        ts: ing.ts,
+                        actor: ing.principal.clone(),
+                        body: if redacted { String::new() } else { ing.raw.clone() },
+                        truncated: false,
+                        redacted,
+                        redacted_at_ts,
+                    }],
+                    total: 1,
+                    offset: idx,
+                })
+            }
         };
     }
 
@@ -706,7 +767,15 @@ fn rpc_forum_thread_detail(
         .skip(offset)
         .take(limit)
         .map(|(idx, ing)| {
-            let (body, truncated) = if ing.raw.len() > MAX_BODY {
+            let redacted = reduced.redacted_posts.contains(&ing.id);
+            let redacted_at_ts = if redacted {
+                reduced.post_redact_ts.get(&ing.id).copied()
+            } else {
+                None
+            };
+            let (body, truncated) = if redacted {
+                (String::new(), false)
+            } else if ing.raw.len() > MAX_BODY {
                 (ing.raw[..MAX_BODY].to_string(), true)
             } else {
                 (ing.raw.clone(), false)
@@ -718,6 +787,8 @@ fn rpc_forum_thread_detail(
                 actor: ing.principal.clone(),
                 body,
                 truncated,
+                redacted,
+                redacted_at_ts,
             }
         })
         .collect();
@@ -1734,6 +1805,7 @@ pub async fn handle_rpc_batch(
                                 let posts: Vec<FeedPost> = matching.into_iter()
                                     .take(limit)
                                     .filter_map(|id| reduced.ingests_by_id.get(id))
+                                    .filter(|ing| !reduced.redacted_posts.contains(&ing.id))
                                     .map(|ing| {
                                         let scope = scope_from_room_wire(&ing.room_id);
                                         let thread_post_index = reduced
@@ -1762,6 +1834,12 @@ pub async fn handle_rpc_batch(
                     }
                 }
             },
+            RpcCommand::PostRedact { post_id } => {
+                match rpc_post_redact(&state, &headers, post_id).await {
+                    Ok(r) => line_ok(r),
+                    Err((e, h)) => line_err(e, h),
+                }
+            }
         };
         results.push(line);
     }

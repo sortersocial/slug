@@ -520,6 +520,36 @@ a.post-num:hover { color: var(--signal); }
 a.post-author { color: var(--meta); font-size: 12px; text-decoration: none; }
 a.post-author:hover { color: var(--signal); text-decoration: underline; }
 
+div.ingest-header-row {
+  align-items: center;
+  background: var(--g3);
+  border-bottom: 2px solid var(--lo);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  justify-content: space-between;
+  padding: 3px 10px;
+}
+div.ingest-header-row div.ingest-meta {
+  background: transparent;
+  border-bottom: none;
+  flex: 1 1 auto;
+  padding: 0;
+}
+form.post-delete-form { display: inline; margin: 0; }
+button.post-delete-btn {
+  background: var(--g4);
+  border: var(--bv) solid;
+  border-color: var(--hi) var(--lo) var(--lo) var(--hi);
+  color: var(--ui);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 1px 6px;
+}
+button.post-delete-btn:hover { color: var(--signal); }
+span.post-tombstone-inline { font-size: 12px; white-space: nowrap; }
+div.ingest-redacted pre { display: none; }
+
 ul.profile-post-list { list-style: none; padding: 0; margin: 1em 0; }
 ul.profile-post-list li { margin: 0.75em 0; }
 p.profile-post-snippet { margin: 0.25em 0 0 1em; font-size: 13px; }

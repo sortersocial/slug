@@ -31,6 +31,7 @@ pub fn create_app(state: AppState) -> Router {
         .route("/login", get(api::get_web_login))
         .route("/logout", get(api::get_logout))
         .route("/post", post(api::post_web_ingest))
+        .route("/post/redact", post(api::post_web_redact))
         .route("/post/check", post(api::check_web_ingest))
         .route("/sse", get(api::get_html_stream))
         .route("/stream", get(api::get_stream))
@@ -50,11 +51,27 @@ pub fn create_app(state: AppState) -> Router {
             "/t/:tag/:index/expand",
             get(crate::html::thread_post_expand),
         )
+        .route(
+            "/t/:tag/:index/expand-deleted",
+            get(crate::html::thread_post_expand_deleted),
+        )
+        .route(
+            "/t/:tag/:index/collapse-deleted",
+            get(crate::html::thread_post_collapse_deleted),
+        )
         .route("/t/:tag/:index", get(crate::html::thread_post_view))
         .route("/t/:tag", get(crate::html::thread_view))
         .route(
             "/r/:room_short/:room_slug/t/:thread_tag/:index/expand",
             get(crate::html::room_thread_post_expand),
+        )
+        .route(
+            "/r/:room_short/:room_slug/t/:thread_tag/:index/expand-deleted",
+            get(crate::html::room_thread_post_expand_deleted),
+        )
+        .route(
+            "/r/:room_short/:room_slug/t/:thread_tag/:index/collapse-deleted",
+            get(crate::html::room_thread_post_collapse_deleted),
         )
         .route(
             "/r/:room_short/:room_slug/t/:thread_tag/:index",
