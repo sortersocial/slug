@@ -426,9 +426,6 @@ fn compose_form(nav: &ThreadNav, thread_tag: &str, show: bool) -> Markup {
     }
     html! {
         section class="compose" id="thread-compose" {
-            h3 { "reply" }
-            p class="muted" { "Uses the same ingest DSL as the CLI. You must be logged in." }
-            div id="thread-compose-errors" {}
             form id="thread-compose-form" method="POST" action="/post" data-check-action="/post/check" {
                 input type="hidden" name="room" value=(nav.room_wire.clone());
                 input type="hidden" name="thread_tag" value=(thread_tag);
@@ -439,6 +436,7 @@ fn compose_form(nav: &ThreadNav, thread_tag: &str, show: bool) -> Markup {
                     button type="submit" { "post" }
                 }
             }
+            div id="thread-compose-errors" {}
         }
     }
 }
@@ -756,14 +754,7 @@ async fn thread_view_inner(
         html! {
             (strip)
             nav class="breadcrumb" { (bc) }
-            h2 { "#" (tag) @if let Some(sub) = &subtitle { ": " (sub) } }
             p class="muted" { "top=oldest · bottom=newest" }
-            @if matches!(sc, ScopeId::Room(_)) {
-                p class="muted" {
-                    "room garden · "
-                    a href=(nav.garden_root_url()) { "~" }
-                }
-            }
             div id="thread-feed-region" {
                 @if display_ingests.is_empty() {
                     p class="muted" { "no activity yet" }
