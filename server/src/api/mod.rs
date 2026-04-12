@@ -3,6 +3,7 @@ mod helpers;
 mod rpc;
 mod stream;
 mod validate;
+mod ui_html;
 mod web_post;
 
 pub use auth::{
@@ -33,6 +34,7 @@ pub use stream::{get_html_stream, get_stream};
 
 pub use validate::{normalize_room_and_thread, validate_ingest_document, ValidatedIngest};
 
+pub use ui_html::post_ui_html;
 pub use web_post::{check_web_ingest, post_web_ingest, post_web_redact};
 
 #[cfg(test)]

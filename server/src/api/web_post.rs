@@ -222,8 +222,18 @@ pub async fn post_web_redact(
     jar: CookieJar,
     Form(form): Form<WebRedactForm>,
 ) -> impl IntoResponse {
+    run_post_web_redact(&state, &headers, &jar, form).await
+}
+
+/// Shared with [`crate::api::ui_html::post_ui_html`].
+pub(crate) async fn run_post_web_redact(
+    state: &AppState,
+    headers: &HeaderMap,
+    jar: &CookieJar,
+    form: WebRedactForm,
+) -> Response {
     let reduced = state.reduced.read().await;
-    let Some(_username) = optional_principal(&headers, &jar, &reduced) else {
+    let Some(_username) = optional_principal(headers, jar, &reduced) else {
         drop(reduced);
         return js_redirect("/login").into_response();
     };
@@ -239,8 +249,8 @@ pub async fn post_web_redact(
         return js_redirect("/login").into_response();
     };
 
-    match rpc_post_redact(&state, &headers, form.post_id).await {
-        Ok(RpcResult::RedactPostOk {}) => redact_success_response(&state).await.into_response(),
+    match rpc_post_redact(state, headers, form.post_id).await {
+        Ok(RpcResult::RedactPostOk {}) => redact_success_response(state).await.into_response(),
         Ok(_) => (StatusCode::BAD_REQUEST, "unexpected response").into_response(),
         Err((msg, hint)) => {
             let detail = hint.as_deref().unwrap_or("");
@@ -255,8 +265,18 @@ pub async fn post_web_ingest(
     jar: CookieJar,
     Form(form): Form<WebPostForm>,
 ) -> impl IntoResponse {
+    run_post_web_ingest(&state, &headers, &jar, form).await
+}
+
+/// Shared with [`crate::api::ui_html::post_ui_html`] (`POST /ui`).
+pub(crate) async fn run_post_web_ingest(
+    state: &AppState,
+    headers: &HeaderMap,
+    jar: &CookieJar,
+    form: WebPostForm,
+) -> Response {
     let reduced = state.reduced.read().await;
-    let Some(_username) = optional_principal(&headers, &jar, &reduced) else {
+    let Some(_username) = optional_principal(headers, jar, &reduced) else {
         drop(reduced);
         return js_redirect("/login").into_response();
     };
@@ -282,8 +302,8 @@ pub async fn post_web_ingest(
             .into_response();
     }
 
-    match rpc_post_with_bearer(&state, &bearer, room.clone(), thread_tag.clone(), text).await {
-        Ok(RpcResult::PostOk { .. }) => post_success_response(&state, &form, &headers, &jar)
+    match rpc_post_with_bearer(state, &bearer, room.clone(), thread_tag.clone(), text).await {
+        Ok(RpcResult::PostOk { .. }) => post_success_response(state, &form, headers, jar)
             .await
             .into_response(),
         Ok(_) => form_js_error(&form, "unexpected response", "Post did not return PostOk.").into_response(),
@@ -297,8 +317,18 @@ pub async fn check_web_ingest(
     jar: CookieJar,
     Form(form): Form<WebPostForm>,
 ) -> impl IntoResponse {
+    run_check_web_ingest(&state, &headers, &jar, form).await
+}
+
+/// Shared with [`crate::api::ui_html::post_ui_html`] (`POST /ui`).
+pub(crate) async fn run_check_web_ingest(
+    state: &AppState,
+    headers: &HeaderMap,
+    jar: &CookieJar,
+    form: WebPostForm,
+) -> Response {
     let reduced = state.reduced.read().await;
-    let Some(_username) = optional_principal(&headers, &jar, &reduced) else {
+    let Some(_username) = optional_principal(headers, jar, &reduced) else {
         drop(reduced);
         return js_redirect("/login").into_response();
     };
@@ -324,7 +354,7 @@ pub async fn check_web_ingest(
         return js_clear_errors(&form_error_target(&form)).into_response();
     }
 
-    match rpc_check_with_bearer(&state, &bearer, room, form.text.clone()).await {
+    match rpc_check_with_bearer(state, &bearer, room, form.text.clone()).await {
         Ok(RpcResult::CheckOk { .. }) => js_clear_errors(&form_error_target(&form)).into_response(),
         Ok(_) => form_js_error(&form, "unexpected response", "Check did not return CheckOk.").into_response(),
         Err((msg, hint)) => form_js_error(&form, &msg, hint.as_deref().unwrap_or("")).into_response(),

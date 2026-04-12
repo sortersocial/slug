@@ -11,11 +11,14 @@ use crate::{
     api::optional_principal,
     canonical_path::{canonicalize_item, canonicalize_tag},
     events::ThreadCapability,
+    form_template::template_json_compact,
     identity::parse_username,
     reducer::{scope_from_room_wire, ReducerState, ScopeId},
     state::AppState,
     timeago,
 };
+
+use super::ui_action::{HtmlUiAction, UI_RPC_FIELD};
 
 use super::{
     bc_segment, bc_threads, cli_panel, layout, now_ms, profile_href, recency_class,
@@ -289,7 +292,7 @@ fn rooms_for_user(reduced: &ReducerState, username: &str) -> Vec<String> {
     v
 }
 
-fn user_can_view_room(reduced: &ReducerState, room_id: &str, username: Option<&str>) -> bool {
+pub(crate) fn user_can_view_room(reduced: &ReducerState, room_id: &str, username: Option<&str>) -> bool {
     if !reduced.rooms.contains(room_id) {
         return false;
     }
@@ -299,7 +302,7 @@ fn user_can_view_room(reduced: &ReducerState, room_id: &str, username: Option<&s
     reduced.user_has_cap(room_id, u, ThreadCapability::View)
 }
 
-fn user_can_post_room(reduced: &ReducerState, room_id: &str, username: &str) -> bool {
+pub(crate) fn user_can_post_room(reduced: &ReducerState, room_id: &str, username: &str) -> bool {
     reduced.user_has_cap(room_id, username, ThreadCapability::Post)
 }
 
@@ -591,7 +594,6 @@ pub async fn home(
     let nav = ThreadNav::public();
     let reduced_read = state.reduced.read().await;
     let strip = auth_strip(&headers, &jar, &reduced_read);
-    let show_forms = user.is_some();
     drop(reduced_read);
 
     let page = layout(
@@ -617,8 +619,14 @@ pub async fn home(
                 }
             }
             p class="muted" { "dark = time-ordered · light = vote-ranked" }
+            div class="thread-feed-toolbar" {
+                form method="POST" action="/ui" {
+                    input type="hidden" name=(UI_RPC_FIELD) value=(expand_public_new_thread_rpc_value());
+                    button type="submit" class="section-add-btn" { "+" }
+                }
+            }
+            div id="public-new-thread-ui-slot" {}
             (render_thread_feed(Some(&nav), "thread-feed", &public_rows, now))
-            (new_thread_form_public(show_forms))
             (cli_panel("npx slugsocial public forum list"))
         },
         None,
@@ -901,7 +909,13 @@ pub async fn room_page(
             h3 { "threads" }
             (render_thread_feed(Some(&nav), "room-thread-feed", &rows, now))
             @if show_new {
-                (new_thread_form_for_room(&nav, show_new))
+                div class="thread-feed-toolbar" {
+                    form method="POST" action="/ui" {
+                        input type="hidden" name=(UI_RPC_FIELD) value=(expand_room_new_thread_rpc_value(&nav));
+                        button type="submit" class="section-add-btn" { "+" }
+                    }
+                }
+                div id="room-new-thread-ui-slot" {}
             }
             (cli_panel(&forum_cli))
             (cli_panel(&garden_cli))
@@ -943,6 +957,31 @@ fn new_thread_form_for_room(nav: &ThreadNav, show: bool) -> Markup {
             }
         }
     }
+}
+
+pub(crate) fn expand_public_new_thread_rpc_value() -> String {
+    template_json_compact(&HtmlUiAction::ExpandPublicNewThreadForm).expect("static json")
+}
+
+pub(crate) fn expand_room_new_thread_rpc_value(nav: &ThreadNav) -> String {
+    template_json_compact(&HtmlUiAction::ExpandRoomNewThreadForm {
+        room_wire: nav.room_wire.clone(),
+    })
+    .expect("static json")
+}
+
+pub(crate) fn login_to_post_hint_markup() -> Markup {
+    html! {
+        p class="muted" { "log in to post" }
+    }
+}
+
+pub(crate) fn fragment_public_new_thread_form(show: bool) -> Markup {
+    new_thread_form_public(show)
+}
+
+pub(crate) fn fragment_room_new_thread_form(nav: &ThreadNav, show: bool) -> Markup {
+    new_thread_form_for_room(nav, show)
 }
 
 async fn thread_post_view_inner(

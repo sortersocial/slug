@@ -16,6 +16,7 @@ mod editor;
 mod forum;
 mod garden;
 mod search;
+pub mod ui_action;
 use breadcrumb_path::OntologyPath;
 
 pub use auth::{auth_complete_page, auth_signed_in_fragment, choose_username_error_fragment, choose_username_page};
@@ -27,9 +28,15 @@ pub use forum::{
     thread_post_collapse_deleted, thread_post_expand, thread_post_expand_deleted, thread_post_view,
     thread_view, ThreadNav,
 };
+
+pub(crate) use forum::{
+    fragment_public_new_thread_form, fragment_room_new_thread_form, login_to_post_hint_markup,
+    user_can_post_room, user_can_view_room,
+};
 pub use garden::{garden_index, ontology_path, room_garden_index, room_ontology_path};
 pub use search::{search_page, search_results_fragment};
 pub use forum::user_profile_page;
+pub use ui_action::{parse_html_ui_from_form, HtmlUiAction, HtmlUiParseError, UI_RPC_FIELD};
 
 /// Public profile URL path for a stored username (no `@`).
 pub(crate) fn profile_href(username: &str) -> String {

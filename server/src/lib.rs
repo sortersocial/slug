@@ -3,6 +3,7 @@ pub mod paths;
 pub mod api;
 pub mod canonical_path;
 pub mod dsl;
+pub mod form_template;
 pub mod html;
 pub mod event_log;
 pub mod events;
@@ -33,6 +34,7 @@ pub fn create_app(state: AppState) -> Router {
         .route("/post", post(api::post_web_ingest))
         .route("/post/redact", post(api::post_web_redact))
         .route("/post/check", post(api::check_web_ingest))
+        .route("/ui", post(api::post_ui_html))
         .route("/theme", post(crate::html::post_theme))
         .route("/sse", get(api::get_html_stream))
         .route("/stream", get(api::get_stream))
