@@ -61,7 +61,6 @@ pub fn create_app(state: AppState) -> Router {
         )
         .route("/t/:tag/:index", get(crate::html::thread_post_view))
         .route("/t/:tag", get(crate::html::thread_view))
-        // TODO DELETE THESE AND USE __RPC__ PATTERN
         .route(
             "/r/:room_short/:room_slug/t/:thread_tag/:index/expand",
             get(crate::html::room_thread_post_expand),

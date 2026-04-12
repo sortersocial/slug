@@ -1331,6 +1331,7 @@ pub async fn handle_rpc_batch(
                     }
                 }
             }
+            // Invite links are stored in AppState only (not JSONL); they do not survive restart.
             RpcCommand::RoomMintInvite {
                 room,
                 capabilities,
