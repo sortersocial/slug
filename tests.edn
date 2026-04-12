@@ -1,0 +1,24 @@
+#kaocha/v1
+{:tests
+ [{:id :http-integration
+   :test-paths ["test"]
+   :source-paths ["."]
+   :ns-patterns ["^test\\.integration$"
+                 "^test\\.auth$"
+                 "^test\\.grants$"
+                 "^test\\.invites$"
+                 "^test\\.room-list$"]
+   :kaocha.filter/skip-meta [:skip]
+   :parallel? false}
+  {:id :browser
+   :test-paths ["test"]
+   :source-paths ["."]
+   :ns-patterns ["^test\\.browser-sse$"
+                 "^test\\.browser-ui-morph$"
+                 "^test\\.browser-post-redact$"]
+   :kaocha.filter/skip-meta [:skip]
+   :parallel? false}]
+ :plugins [:kaocha.plugin/junit-xml]
+ :kaocha.plugin.junit-xml/target-file "target/kaocha-junit.xml"
+ :kaocha.plugin.junit-xml/add-location-metadata? true
+ :reporter kaocha.report.progress/report}

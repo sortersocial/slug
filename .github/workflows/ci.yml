@@ -53,42 +53,55 @@ jobs:
 
       - uses: DeLaGuardo/setup-clojure@12.5
         with:
+          cli: "1.12.0.1530"
           bb: "latest"
 
-      - name: Babashka integration (bb test)
-        id: bb-test
-        continue-on-error: true
-        run: bb test 2>&1 | tee bb-test.log
+      - name: Install Chrome (Playwright channel)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y google-chrome-stable
 
-      - name: Upload Babashka test log
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Playwright Chromium
+        run: npx playwright install chromium
+
+      - name: Clojure tests (Kaocha)
+        id: clojure-tests
+        continue-on-error: true
+        run: |
+          mkdir -p target
+          clj -M:kaocha
+
+      - name: Upload Clojure JUnit (artifact)
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: bb-test-log
-          path: bb-test.log
+          name: clojure-junit
+          path: target/kaocha-junit.xml
+          if-no-files-found: ignore
 
-      - name: Babashka run summary
-        if: always()
-        run: |
-          {
-            echo "### Babashka (\`bb test\`)"
-            echo ""
-            echo "Full log is attached as artifact **bb-test-log**."
-            echo ""
-            echo "Tail of the run:"
-            echo ""
-            echo '```'
-            tail -n 120 bb-test.log || true
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Publish Clojure JUnit report
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        if: always() && hashFiles('target/kaocha-junit.xml') != ''
+        continue-on-error: true
+        with:
+          files: target/kaocha-junit.xml
+          check_name: Clojure (Kaocha)
+          comment_mode: off
+          report_individual_runs: true
+          action_fail: false
+          job_summary: true
 
       - name: Require all suites passed
         if: always()
         run: |
           rust_ok="${{ steps.rust-tests.outcome == 'success' && 'yes' || 'no' }}"
-          bb_ok="${{ steps.bb-test.outcome == 'success' && 'yes' || 'no' }}"
+          clj_ok="${{ steps.clojure-tests.outcome == 'success' && 'yes' || 'no' }}"
           echo "Rust tests: $rust_ok"
-          echo "bb test: $bb_ok"
-          if [ "$rust_ok" != "yes" ] || [ "$bb_ok" != "yes" ]; then
+          echo "Clojure (Kaocha): $clj_ok"
+          if [ "$rust_ok" != "yes" ] || [ "$clj_ok" != "yes" ]; then
             exit 1
           fi
