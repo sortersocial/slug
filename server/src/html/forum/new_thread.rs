@@ -15,7 +15,6 @@ const TAG_INPUT_ID: &str = "new-thread-tag";
 fn new_thread_compose_section(room_wire: &str) -> Markup {
     html! {
         section class="compose" id=(COMPOSE_SECTION_ID) {
-            div id=(ERRORS_ID) {}
             form id=(FORM_ID) method="POST" action="/ui" data-check-action="/ui" data-check-rpc=(template_json_compact(&json!({
                 "action": "check_ingest",
                 "room": room_wire,
@@ -36,6 +35,7 @@ fn new_thread_compose_section(room_wire: &str) -> Markup {
                 textarea name="text" rows="4" placeholder="First post body…" required {}
                 p { button type="submit" { "create thread / post" } }
             }
+            div id=(ERRORS_ID) {}
         }
     }
 }
