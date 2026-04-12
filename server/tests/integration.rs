@@ -390,7 +390,7 @@ async fn test_feed_since_last_post_is_scoped_to_delegate() {
     let feed = rpc_batch(
         &client,
         addr,
-        None,
+        Some(&bearer),
         serde_json::json!([{
             "GetFeed": { "delegate": d1, "limit": 20 }
         }]),
@@ -416,22 +416,32 @@ async fn test_feed_since_last_post_is_scoped_to_delegate() {
         "d1's own prior post should not appear after cutoff, got: {bodies}"
     );
 
-    // JSON alias: legacy `"actor"` field name still deserializes as delegate id.
-    let feed_alias = rpc_batch(
+    let d_other = "00000000-0000-0000-0000-0000000000ff:feedtest:local/other";
+    let steal = rpc_batch(
+        &client,
+        addr,
+        Some(&bearer),
+        serde_json::json!([{
+            "GetFeed": { "delegate": d_other, "limit": 5 }
+        }]),
+    )
+    .await;
+    let steal_line = &steal["results"][0];
+    assert_eq!(steal_line["ok"], false, "expected rejection for unbound delegate: {:?}", steal_line);
+    assert_eq!(steal_line["error"], "not your delegate");
+
+    let no_auth = rpc_batch(
         &client,
         addr,
         None,
         serde_json::json!([{
-            "GetFeed": { "actor": d1, "limit": 5 }
+            "GetFeed": { "delegate": d1, "limit": 5 }
         }]),
     )
     .await;
-    assert_eq!(
-        feed_alias["results"][0]["ok"],
-        true,
-        "GetFeed alias failed: {:?}",
-        feed_alias["results"][0]
-    );
+    let na = &no_auth["results"][0];
+    assert_eq!(na["ok"], false, "GetFeed without bearer: {:?}", na);
+    assert_eq!(na["error"], "missing Authorization header");
 }
 
 #[tokio::test]

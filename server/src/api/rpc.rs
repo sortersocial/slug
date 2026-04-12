@@ -1799,63 +1799,70 @@ pub async fn handle_rpc_batch(
                     Err(msg) => line_err("invalid delegate", Some(msg)),
                     Ok(delegate_stored) => {
                         let reduced = state.reduced.read().await;
-                        match principal_from_optional_bearer(&headers, &reduced) {
-                            Err((e, h)) => line_err(e, h),
+                        match verify_bearer_principal(&headers, &reduced) {
+                            Err((_, m)) => line_err(m, None),
                             Ok(viewer) => {
-                                let since_default = reduced
-                                    .ingests_ordered
-                                    .iter()
-                                    .rev()
-                                    .filter_map(|id| reduced.ingests_by_id.get(id))
-                                    .find(|ing| {
-                                        if ing.delegate.as_deref() != Some(delegate_stored.as_str()) {
-                                            return false;
-                                        }
-                                        let scope = scope_from_room_wire(&ing.room_id);
-                                        can_view_scope(&reduced, &scope, viewer.as_deref())
-                                    })
-                                    .map(|ing| ing.ts);
-                                let since = since.or(since_default);
-                                let cutoff = since.unwrap_or(0);
-                                let limit = limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT);
-                                let matching: Vec<&str> = reduced.ingests_ordered.iter().rev()
-                                    .map(|id| id.as_str())
-                                    .take_while(|id| reduced.ingests_by_id.get(*id).map_or(false, |ing| ing.ts > cutoff))
-                                    .filter(|id| {
-                                        reduced.ingests_by_id.get(*id).is_some_and(|ing| {
+                                if reduced.agent_bindings.get(&delegate_stored) != Some(&viewer) {
+                                    line_err(
+                                        "not your delegate",
+                                        Some("this delegate is not bound to your signed-in account".into()),
+                                    )
+                                } else {
+                                    let since_default = reduced
+                                        .ingests_ordered
+                                        .iter()
+                                        .rev()
+                                        .filter_map(|id| reduced.ingests_by_id.get(id))
+                                        .find(|ing| {
+                                            if ing.delegate.as_deref() != Some(delegate_stored.as_str()) {
+                                                return false;
+                                            }
                                             let scope = scope_from_room_wire(&ing.room_id);
-                                            can_view_scope(&reduced, &scope, viewer.as_deref())
+                                            can_view_scope(&reduced, &scope, Some(viewer.as_str()))
                                         })
-                                    })
-                                    .collect();
-                                let total = matching.len();
-                                let posts: Vec<FeedPost> = matching.into_iter()
-                                    .take(limit)
-                                    .filter_map(|id| reduced.ingests_by_id.get(id))
-                                    .filter(|ing| !reduced.redacted_posts.contains(&ing.id))
-                                    .map(|ing| {
-                                        let scope = scope_from_room_wire(&ing.room_id);
-                                        let thread_post_index = reduced
-                                            .ingests_by_scope_thread
-                                            .get(&(scope, ing.thread_tag.clone()))
-                                            .and_then(|q| {
-                                                q.iter().rev().position(|pid| pid == &ing.id).map(|i| i + 1)
-                                            });
-                                        FeedPost {
-                                            ts: ing.ts,
-                                            id: ing.id.clone(),
-                                            thread: Some(ing.thread_tag.clone()),
-                                            thread_post_index,
-                                            body: ing.raw.clone(),
-                                        }
-                                    })
-                                    .collect();
-                                line_ok(RpcResult::Feed(FeedResponse {
-                                    delegate: delegate_stored,
-                                    since,
-                                    posts,
-                                    total,
-                                }))
+                                        .map(|ing| ing.ts);
+                                    let since = since.or(since_default);
+                                    let cutoff = since.unwrap_or(0);
+                                    let limit = limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT);
+                                    let matching: Vec<&str> = reduced.ingests_ordered.iter().rev()
+                                        .map(|id| id.as_str())
+                                        .take_while(|id| reduced.ingests_by_id.get(*id).map_or(false, |ing| ing.ts > cutoff))
+                                        .filter(|id| {
+                                            reduced.ingests_by_id.get(*id).is_some_and(|ing| {
+                                                let scope = scope_from_room_wire(&ing.room_id);
+                                                can_view_scope(&reduced, &scope, Some(viewer.as_str()))
+                                            })
+                                        })
+                                        .collect();
+                                    let total = matching.len();
+                                    let posts: Vec<FeedPost> = matching.into_iter()
+                                        .take(limit)
+                                        .filter_map(|id| reduced.ingests_by_id.get(id))
+                                        .filter(|ing| !reduced.redacted_posts.contains(&ing.id))
+                                        .map(|ing| {
+                                            let scope = scope_from_room_wire(&ing.room_id);
+                                            let thread_post_index = reduced
+                                                .ingests_by_scope_thread
+                                                .get(&(scope, ing.thread_tag.clone()))
+                                                .and_then(|q| {
+                                                    q.iter().rev().position(|pid| pid == &ing.id).map(|i| i + 1)
+                                                });
+                                            FeedPost {
+                                                ts: ing.ts,
+                                                id: ing.id.clone(),
+                                                thread: Some(ing.thread_tag.clone()),
+                                                thread_post_index,
+                                                body: ing.raw.clone(),
+                                            }
+                                        })
+                                        .collect();
+                                    line_ok(RpcResult::Feed(FeedResponse {
+                                        delegate: delegate_stored,
+                                        since,
+                                        posts,
+                                        total,
+                                    }))
+                                }
                             }
                         }
                     }

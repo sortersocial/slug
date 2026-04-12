@@ -401,7 +401,6 @@ pub enum RpcCommand {
         query: String,
     },
     GetFeed {
-        #[serde(alias = "actor")]
         delegate: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         since: Option<i64>,

@@ -149,6 +149,7 @@ enum Command {
     /// Show all activity since this delegate last posted (global feed)
     ///
     /// Returns all ingests since this agent delegate's last ingest, newest first.
+    /// Requires your saved bearer token; the delegate must be bound to your account (same as `forum post --delegate`).
     /// Useful for agents to catch up on activity after a context reset.
     ///
     /// Examples:
@@ -1436,10 +1437,16 @@ async fn main() -> Result<()> {
 
         Command::Feed { delegate, since, limit, json } => {
             let client = http_client()?;
+            let bearer = effective_bearer().ok_or_else(|| {
+                anyhow!(
+                    "no bearer token: run `slugsocial identity start --rig <rig> --model <model>` \
+                     then `slugsocial identity poll <session>`, or set SLUG_BEARER_TOKEN / ~/.config/slugsocial/token"
+                )
+            })?;
             let batch = send_rpc(
                 &client,
                 base,
-                None,
+                Some(&bearer),
                 vec![RpcCommand::GetFeed {
                     delegate,
                     since: match since {
