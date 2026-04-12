@@ -618,7 +618,6 @@ pub async fn home(
                     }
                 }
             }
-            h2 { "public threads" }
             p class="muted" { "dark = time-ordered · light = vote-ranked" }
             (render_thread_feed(Some(&nav), "thread-feed", &public_rows, now))
             (new_thread_form_public(show_forms))
@@ -658,7 +657,7 @@ fn render_thread_paginator(nav: &ThreadNav, tag: &str, offset: usize, total: usi
             @if let Some(o) = older_offset {
                 a href=(nav.thread_page_url(tag, o)) class="post-nav-btn" { "← older" }
             } @else {
-                span class="post-nav-btn disabled" { "← older" }
+                a href="#" class="post-nav-btn disabled" { "← older" }
             }
             span class="post-nav-pos muted" {
                 (offset + 1) "–" (total.min(offset + PAGE_SIZE)) " / " (total)
