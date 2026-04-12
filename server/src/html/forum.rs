@@ -980,12 +980,6 @@ pub async fn room_page(
             h3 { "threads" }
             (render_thread_feed(Some(&nav), "room-thread-feed", &rows, now))
             @if show_new {
-                div class="thread-feed-toolbar" {
-                    form method="POST" action="/ui" {
-                        input type="hidden" name=(UI_RPC_FIELD) value=(expand_room_new_thread_rpc_value(&nav));
-                        button type="submit" class="section-add-btn" { "+" }
-                    }
-                }
                 div id="room-new-thread-ui-slot" {
                     (new_thread_form_for_room(&nav, true, false))
                 }
@@ -1015,11 +1009,10 @@ fn new_thread_form_for_room(nav: &ThreadNav, show: bool, compose_expanded: bool)
                 form method="POST" action="/ui" {
                     input type="hidden" name=(UI_RPC_FIELD) value=(rpc_close);
                     button type="submit" class="form-toggle" aria-expanded="true" {
-                        "hide new thread form"
+                        "-"
                     }
                 }
                 section class="compose" id="room-new-thread-compose" {
-                    h3 { "new thread in this room" }
                     div id="room-new-thread-errors" {}
                     form id="room-new-thread-form" method="POST" action="/ui" data-check-action="/ui" data-check-rpc=(template_json_compact(&json!({
                         "action": "check_ingest",
@@ -1037,8 +1030,7 @@ fn new_thread_form_for_room(nav: &ThreadNav, show: bool, compose_expanded: bool)
                             "error_target": "room-new-thread-errors",
                             "form_id": "room-new-thread-form",
                         })).unwrap());
-                        label for="room-new-tag" { "thread tag" }
-                        input type="text" id="room-new-tag" name="thread_tag" pattern="[a-z0-9_\\-]{1,64}" required;
+                        input type="text" id="room-new-tag" name="thread_tag" pattern="[a-z0-9_\\-]{1,64}" required placeholder="thread-topic-slug-here";
                         textarea name="text" rows="4" placeholder="First post body…" required {}
                         p { button type="submit" { "post" } }
                     }
@@ -1047,7 +1039,7 @@ fn new_thread_form_for_room(nav: &ThreadNav, show: bool, compose_expanded: bool)
                 form method="POST" action="/ui" {
                     input type="hidden" name=(UI_RPC_FIELD) value=(rpc_open);
                     button type="submit" class="form-toggle" aria-expanded="false" {
-                        "new thread in this room"
+                        "+"
                     }
                 }
             }
