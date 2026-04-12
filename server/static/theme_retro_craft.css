@@ -454,3 +454,31 @@ body.view-ontology #controls {
   border-bottom: none;
   border-top: none;
 }
+
+/* Thread reply: drop the compose panel on small screens; textarea spans the viewport */
+@media (max-width: 600px) {
+  section#thread-compose {
+    border: none;
+    margin-left: -1.25rem;
+    margin-right: -1.25rem;
+    margin-top: 1.25rem;
+    max-width: none;
+    padding: 0 0 0.75rem;
+    width: auto;
+  }
+  section#thread-compose textarea {
+    border-radius: 0;
+    border-left: none;
+    border-right: none;
+    box-sizing: border-box;
+    display: block;
+    margin: 0;
+    max-width: none;
+    width: 100%;
+  }
+  section#thread-compose #thread-compose-errors,
+  section#thread-compose form > p {
+    padding-left: 1.25rem;
+    padding-right: 1.25rem;
+  }
+}
