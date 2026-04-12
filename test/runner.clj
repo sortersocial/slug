@@ -1,5 +1,5 @@
 (ns test.runner
-  "JVM entrypoint for the integration test suite."
+  "JVM entrypoint: run the same flows as Kaocha (for scripts / quick runs)."
   (:require [test.integration :as integration]
             [test.auth :as auth]
             [test.grants :as grants]
@@ -10,15 +10,15 @@
             [test.browser-ui-morph :as browser-ui-morph]))
 
 (defn run-core! []
-  (integration/integration)
-  (auth/auth-test)
-  (grants/grants-test)
-  (invites/invites-test)
-  (room-list/room-list-test))
+  (integration/integration-flow!)
+  (auth/auth-flow!)
+  (grants/grants-flow!)
+  (invites/invites-flow!)
+  (room-list/room-list-flow!))
 
 (defn -main [& args]
   (case (vec args)
-    ["browser-sse"] (browser-sse/private-thread-sse-browser-test)
-    ["browser-post-redact"] (browser-post-redact/post-redact-browser-test)
-    ["browser-ui-morph"] (browser-ui-morph/expand-post-full-via-ui-rpc-test)
+    ["browser-sse"] (browser-sse/sse-browser-flow!)
+    ["browser-post-redact"] (browser-post-redact/post-redact-flow!)
+    ["browser-ui-morph"] (browser-ui-morph/ui-morph-flow!)
     (run-core!)))

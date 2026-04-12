@@ -1,7 +1,7 @@
 (ns test.common
   "Shared utilities for slug test rigs: port allocation, server lifecycle,
-   environment helpers, CLI runner, test harness (ANSI + pass/fail counts),
-   standard server env for bb suites, and the letlocals macro."
+   environment helpers, CLI runner, optional legacy counter harness, and the
+   letlocals macro."
   (:require [babashka.process :as p]
             [clojure.string :as str]
             [babashka.fs :as fs]))

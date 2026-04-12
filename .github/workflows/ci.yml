@@ -1,0 +1,108 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  checks: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
+
+      - name: Rust tests (cargo nextest)
+        id: rust-tests
+        continue-on-error: true
+        run: cargo nextest run --workspace --profile ci
+
+      - name: Upload Rust JUnit (artifact)
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rust-junit
+          path: target/nextest/ci/junit.xml
+          if-no-files-found: ignore
+
+      - name: Publish Rust JUnit report
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        if: always() && hashFiles('target/nextest/ci/junit.xml') != ''
+        continue-on-error: true
+        with:
+          files: target/nextest/ci/junit.xml
+          check_name: Rust (cargo nextest)
+          comment_mode: off
+          report_individual_runs: true
+          action_fail: false
+          job_summary: true
+
+      - uses: DeLaGuardo/setup-clojure@12.5
+        with:
+          cli: "1.12.0.1530"
+          bb: "latest"
+
+      - name: Install Chrome (Playwright channel)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y google-chrome-stable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Playwright Chromium
+        run: npx playwright install chromium
+
+      - name: Clojure tests (Kaocha)
+        id: clojure-tests
+        continue-on-error: true
+        run: |
+          mkdir -p target
+          # Use `clojure` not `clj`: on ubuntu-latest, `clj` requires rlwrap and exits 1 without it.
+          clojure -M:kaocha
+
+      - name: Upload Clojure JUnit (artifact)
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: clojure-junit
+          path: target/kaocha-junit.xml
+          if-no-files-found: ignore
+
+      - name: Publish Clojure JUnit report
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        if: always() && hashFiles('target/kaocha-junit.xml') != ''
+        continue-on-error: true
+        with:
+          files: target/kaocha-junit.xml
+          check_name: Clojure (Kaocha)
+          comment_mode: off
+          report_individual_runs: true
+          action_fail: false
+          job_summary: true
+
+      - name: Require all suites passed
+        if: always()
+        run: |
+          rust_ok="${{ steps.rust-tests.outcome == 'success' && 'yes' || 'no' }}"
+          clj_ok="${{ steps.clojure-tests.outcome == 'success' && 'yes' || 'no' }}"
+          echo "Rust tests: $rust_ok"
+          echo "Clojure (Kaocha): $clj_ok"
+          if [ "$rust_ok" != "yes" ] || [ "$clj_ok" != "yes" ]; then
+            exit 1
+          fi

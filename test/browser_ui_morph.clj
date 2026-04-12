@@ -4,16 +4,12 @@
   (:require [babashka.fs :as fs]
             [cheshire.core :as json]
             [clojure.string :as str]
+            [clojure.test :refer [deftest is]]
             [com.blockether.spel.core :as core]
             [com.blockether.spel.locator :as locator]
             [com.blockether.spel.page :as page]
             [test.common :as common]
             [test.oauth :as oauth]))
-
-(def ^:private counts (atom {:pass 0 :fail 0}))
-
-(defn- assert! [pred msg]
-  (common/test-assert! counts pred msg))
 
 (defn- wait-for-text [pg selector expected timeout-ms]
   (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
@@ -25,13 +21,12 @@
             (do (Thread/sleep 200) (recur))
             false))))))
 
-(defn expand-post-full-via-ui-rpc-test [& _args]
+(defn ui-morph-flow! []
   (println "\n━━━ browser UI morph: expand_post_full (__rpc__ + POST /ui) ━━━\n")
-  (reset! counts {:pass 0 :fail 0})
 
   (common/letlocals
    (bind build (common/run-cargo-build-release! ["slugsocial-server"]))
-   (assert! (zero? (:exit build)) "cargo build succeeds")
+   (is (zero? (:exit build)) "cargo build succeeds")
    (bind server-bin "target/release/slugsocial-server")
 
    (bind tmp-dir (str (fs/create-temp-dir {:prefix "slug-browser-ui-morph-"})))
@@ -47,7 +42,7 @@
      (reset! !google (oauth/start-mock-google google-port
                                               :google-users ["google-user-alice"]))
      (reset! !server (common/start-server server-bin server-env))
-     (assert! (common/wait-for-server base-url 10000) "server responds to /healthz")
+     (is (common/wait-for-server base-url 10000) "server responds to /healthz")
 
      (let [alice-token (oauth/fetch-bearer-token! base-url :username "alice")
            thread-tag "ui-morph-long"
@@ -64,21 +59,21 @@
                                 "return_rank_diff" false}}]
                       :headers {"Authorization" (str "Bearer " alice-token)})
            post-json (json/parse-string (:body post-resp) false)
-           _ (assert! (true? (get-in post-json ["results" 0 "ok"])) "seed long post via rpc")]
+           _ (is (true? (get-in post-json ["results" 0 "ok"])) "seed long post via rpc")]
        (core/with-playwright [pw]
          (core/with-browser [browser (core/launch-chromium pw {:headless true :channel "chrome"})]
            (core/with-context [ctx (core/new-context browser)]
              (core/with-page [pg (core/new-page-from-context ctx)]
                (page/navigate pg (str base-url "/login"))
-               (assert! (wait-for-text pg "body" "@alice" 15000) "alice session after login")
+               (is (wait-for-text pg "body" "@alice" 15000) "alice session after login")
                (page/navigate pg (str base-url "/t/" thread-tag))
-               (assert! (wait-for-text pg "#thread-feed-region" "[show full post]" 15000)
+               (is (wait-for-text pg "#thread-feed-region" "[show full post]" 15000)
                         "truncated card shows expand link")
                (let [before (or (locator/text-content (page/locator pg "#thread-feed-region")) "")]
-                 (assert! (not (str/includes? before tail))
+                 (is (not (str/includes? before tail))
                           "tail marker not visible before expand"))
                (locator/click (page/locator pg ".show-full-link"))
-               (assert! (wait-for-text pg "#thread-feed-region" tail 15000)
+               (is (wait-for-text pg "#thread-feed-region" tail 15000)
                         "POST /ui morph reveals full body (tail marker visible)"))))))
 
      (finally
@@ -86,8 +81,10 @@
        (when-some [g @!google] ((:stop-fn g)))
        (fs/delete-tree tmp-dir)))
 
-   (bind {pass :pass fail :fail} @counts)
-   (if (zero? fail)
-     (println (str "\n" common/ansi-green "━━━ " pass " UI morph browser checks passed ━━━" common/ansi-reset "\n"))
-     (do (println (str "\n" common/ansi-red "━━━ " fail " UI morph browser checks FAILED ━━━" common/ansi-reset "\n"))
-         (System/exit 1)))))
+   nil))
+
+(defn expand-post-full-via-ui-rpc-test [& _args]
+  (ui-morph-flow!))
+
+(deftest browser-ui-morph-expand-post-full-check
+  (ui-morph-flow!))

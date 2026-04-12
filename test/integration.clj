@@ -3,36 +3,28 @@
    Boots a server, ingests via CLI, queries back, kills server, restarts from
    the same JSONL, and queries again to prove replay determinism."
   (:require [clojure.string :as str]
+            [clojure.test :refer [deftest is testing]]
             [babashka.fs :as fs]
             [cheshire.core :as json]
             [test.common :as common]
             [test.oauth :as oauth]))
 
 ;; ---------------------------------------------------------------------------
-;; helpers
-;; ---------------------------------------------------------------------------
-
-(def ^:private counts (atom {:pass 0 :fail 0}))
-
-(defn- assert! [pred msg]
-  (common/test-assert! counts pred msg))
-
-;; ---------------------------------------------------------------------------
 ;; letlocals unit tests
 ;; ---------------------------------------------------------------------------
 
 (defn- test-letlocals []
-  (println "━━━ letlocals unit tests ━━━\n")
-  (assert! (= 3  (common/letlocals (bind x 1) (bind y 2) (+ x y)))
-           "letlocals: bind pairs + final expr")
-  (assert! (= 42 (common/letlocals (bind x 42) x))
-           "letlocals: single bind returns sym")
-  (assert! (= 2  (common/letlocals (bind x 1) (bind y (inc x))))
-           "letlocals: last (bind sym expr) returns expr without binding sym")
-  (assert! (= 10 (common/letlocals (bind x 5) (identity x) (* x 2)))
-           "letlocals: bare expr for side effects, last form is return")
-  (assert! (= 6  (common/letlocals (bind a 1) (bind b (+ a 2)) (bind c (+ b 3)) c))
-           "letlocals: chained dependencies"))
+  (testing "letlocals macro"
+    (is (= 3  (common/letlocals (bind x 1) (bind y 2) (+ x y)))
+        "letlocals: bind pairs + final expr")
+    (is (= 42 (common/letlocals (bind x 42) x))
+        "letlocals: single bind returns sym")
+    (is (= 2  (common/letlocals (bind x 1) (bind y (inc x))))
+        "letlocals: last (bind sym expr) returns expr without binding sym")
+    (is (= 10 (common/letlocals (bind x 5) (identity x) (* x 2)))
+        "letlocals: bare expr for side effects, last form is return")
+    (is (= 6  (common/letlocals (bind a 1) (bind b (+ a 2)) (bind c (+ b 3)) c))
+        "letlocals: chained dependencies")))
 
 ;; ---------------------------------------------------------------------------
 ;; the .sorter documents under test
@@ -75,19 +67,18 @@
              "~/disc/c 2:1 ~/disc/d { second component }"]))
 
 ;; ---------------------------------------------------------------------------
-;; main
+;; main flow (linear integration)
 ;; ---------------------------------------------------------------------------
 
-(defn integration [& _args]
+(defn integration-flow! []
   (println "\n━━━ slug integration check ━━━\n")
-  (reset! counts {:pass 0 :fail 0})
   (test-letlocals)
 
   (println "\nbuilding binaries…")
   (common/letlocals
     ;; 1. build
    (bind build (common/run-cargo-build-release! ["slugsocial-server" "slugsocial"]))
-   (assert! (zero? (:exit build)) "cargo build succeeds")
+   (is (zero? (:exit build)) "cargo build succeeds")
 
    (bind server-bin "target/release/slugsocial-server")
    (bind cli-bin    "target/release/slugsocial")
@@ -97,8 +88,8 @@
    (bind google-url (str "http://127.0.0.1:" google-port))
    (bind base-url   (str "http://127.0.0.1:" port))
    (bind event-log  (str tmp-dir "/events.jsonl"))
-   (assert! (fs/exists? server-bin) "server binary exists")
-   (assert! (fs/exists? cli-bin)    "cli binary exists")
+   (is (fs/exists? server-bin) "server binary exists")
+   (is (fs/exists? cli-bin)    "cli binary exists")
 
    (bind !server    (atom nil))
    (bind !server2   (atom nil))
@@ -110,43 +101,43 @@
         ;; 2. mock Google + boot server — first run, empty state
       (println (str "\nstarting mock google on :" google-port))
       (reset! !google (oauth/start-mock-google google-port))
-      (assert! (some? (:stop-fn @!google)) "mock google started")
+      (is (some? (:stop-fn @!google)) "mock google started")
 
       (println (str "\nstarting server on :" port " (data: " tmp-dir ")"))
       (bind server     (common/start-server server-bin server-env))
       (reset! !server server)
       (bind server-pid (.pid (:proc server)))
-      (assert! (common/wait-for-server base-url 10000) "server responds to /healthz")
+      (is (common/wait-for-server base-url 10000) "server responds to /healthz")
 
         ;; 2.5 check endpoint — disconnected components not flattened (before OAuth; no events.jsonl yet)
       (println "\nchecking (dry-run) returns discrete ranking groups…")
       (bind check-result (common/run-cli cli-bin base-url ["public" "check" "--json"] :input check-doc-disconnected))
-      (assert! (zero? (:exit check-result)) "cli check exits 0")
+      (is (zero? (:exit check-result)) "cli check exits 0")
       (bind check-resp   (json/parse-string (:out check-result) true))
-      (assert! (:ok check-resp) "check response ok=true")
-      (assert! (= 1 (count (:rankings check-resp))) "check returns one touched parent scope")
+      (is (:ok check-resp) "check response ok=true")
+      (is (= 1 (count (:rankings check-resp))) "check returns one touched parent scope")
       (bind check-scope  (first (:rankings check-resp)))
-      (assert! (= "https://slug.social/~/disc" (:parent check-scope)) "check scope parent is canonical ~/disc URL")
-      (assert! (= 2 (count (:components check-scope))) "check preserves two disconnected components")
-      (assert! (every? #(= 2 (count (:ranking %))) (:components check-scope))
+      (is (= "https://slug.social/~/disc" (:parent check-scope)) "check scope parent is canonical ~/disc URL")
+      (is (= 2 (count (:components check-scope))) "check preserves two disconnected components")
+      (is (every? #(= 2 (count (:ranking %))) (:components check-scope))
                "each component ranks 2 items")
-      (assert! (empty? (:unranked_items check-scope)) "no unranked items for disconnected check doc")
-      (assert! (not (fs/exists? event-log)) "check does not create events.jsonl")
+      (is (empty? (:unranked_items check-scope)) "no unranked items for disconnected check doc")
+      (is (not (fs/exists? event-log)) "check does not create events.jsonl")
 
       (println "\nOAuth handoff (integration user)…")
       (bind bearer-token (oauth/fetch-bearer-token! base-url :username "intuser"))
-      (assert! (not (str/blank? bearer-token)) "bearer token from OAuth")
+      (is (not (str/blank? bearer-token)) "bearer token from OAuth")
       (bind token-env {"SLUG_BEARER_TOKEN" bearer-token})
 
         ;; 2.6 private room: CLI read RPCs must send bearer (regression — missing header looked like "room not found")
       (println "\nprivate room: create → post thread → forum show via CLI…")
       (bind private-slug "cli-private-read-regression")
       (bind create-room-result (common/run-cli cli-bin base-url ["room" "create" private-slug "--json"] :extra-env token-env))
-      (assert! (zero? (:exit create-room-result))
+      (is (zero? (:exit create-room-result))
                (str "cli room create exits 0 (err: " (:err create-room-result) ")"))
       (bind create-room-json (json/parse-string (:out create-room-result) true))
       (bind private-room-id (:room_id create-room-json))
-      (assert! (and (string? private-room-id) (str/includes? private-room-id "/"))
+      (is (and (string? private-room-id) (str/includes? private-room-id "/"))
                (str "room create returns shortid/slug room_id (got " (pr-str private-room-id) ")"))
       (bind private-thread "private-cli-thread")
       (bind private-marker "private room prose regression marker")
@@ -161,24 +152,24 @@
                             ["private" private-room-id "forum" "post" private-thread "--json"
                              "--delegate" "00000000-0000-0000-0000-000000000000:cli:local/dev"]
                             :input private-doc :extra-env token-env))
-      (assert! (zero? (:exit private-post-result))
+      (is (zero? (:exit private-post-result))
                (str "private forum post exits 0 (err: " (:err private-post-result) ")"))
       (bind private-post-json (json/parse-string (:out private-post-result) true))
-      (assert! (:ok private-post-json) "private forum post ok=true")
+      (is (:ok private-post-json) "private forum post ok=true")
 
       (bind show-no-token (common/run-cli cli-bin base-url
                                          ["private" private-room-id "forum" "show" private-thread "--json"]))
-      (assert! (not (zero? (:exit show-no-token)))
+      (is (not (zero? (:exit show-no-token)))
                "private forum show without SLUG_BEARER_TOKEN must fail (server hides private rooms without auth)")
 
       (bind show-with-token (common/run-cli cli-bin base-url
                                             ["private" private-room-id "forum" "show" private-thread "--json"]
                                             :extra-env token-env))
-      (assert! (zero? (:exit show-with-token))
+      (is (zero? (:exit show-with-token))
                (str "private forum show with bearer exits 0 (err: " (:err show-with-token) ")"))
       (bind show-json (json/parse-string (:out show-with-token) true))
       ;; ThreadItem JSON uses serde snake_case tag values: {:kind "post" :body ...}
-      (assert! (some (fn [row]
+      (is (some (fn [row]
                        (and (= "post" (:kind row))
                             (str/includes? (str (:body row)) private-marker)))
                      (:items show-json))
@@ -187,68 +178,68 @@
         ;; 3. ingest via CLI (bearer required)
       (println "\ningesting .sorter document via CLI…")
       (bind ingest1-result (common/run-cli cli-bin base-url ["public" "forum" "post" "integration-test" "--json" "--delegate" "00000000-0000-0000-0000-000000000000:cli:local/dev"] :input sorter-doc :extra-env token-env))
-      (assert! (zero? (:exit ingest1-result)) "cli ingest exits 0")
+      (is (zero? (:exit ingest1-result)) "cli ingest exits 0")
       (bind ingest1-resp   (json/parse-string (:out ingest1-result) true))
-      (assert! (:ok ingest1-resp) "ingest response ok=true")
-      (assert! (pos? (:events_appended ingest1-resp)) "events_appended > 0")
-      (assert! (some #(= "#integration-test" %) (:threads ingest1-resp))
+      (is (:ok ingest1-resp) "ingest response ok=true")
+      (is (pos? (:events_appended ingest1-resp)) "events_appended > 0")
+      (is (some #(= "#integration-test" %) (:threads ingest1-resp))
                "thread '#integration-test' in response")
 
         ;; 4. query rankings via CLI
       (println "\nquerying garden children via CLI…")
       (bind children-result (common/run-cli cli-bin base-url ["public" "garden" "children" "languages" "--json"]))
-      (assert! (zero? (:exit children-result)) "cli garden children exits 0")
+      (is (zero? (:exit children-result)) "cli garden children exits 0")
       (bind children-resp   (json/parse-string (:out children-result) true))
       (bind ranked          (mapv :item (mapcat :ranking (:components children-resp))))
-      (assert! (= 3 (count ranked))
+      (is (= 3 (count ranked))
                (str "3 items ranked (got " (count ranked) ")"))
-      (assert! (str/ends-with? (first ranked) "languages/rust")
+      (is (str/ends-with? (first ranked) "languages/rust")
                (str "rust is #1 (got " (first ranked) ")"))
-      (assert! (str/ends-with? (last ranked) "languages/go")
+      (is (str/ends-with? (last ranked) "languages/go")
                (str "go is #3 (got " (last ranked) ")"))
 
         ;; 5. verify JSONL written (user_registered + token_issued + room_created + grant_added
         ;;    + private ingest + agent_bound + public ingest)
-      (assert! (fs/exists? event-log) "events.jsonl exists")
+      (is (fs/exists? event-log) "events.jsonl exists")
       (bind event-lines (->> (slurp event-log) str/split-lines (remove str/blank?)))
-      (assert! (= 7 (count event-lines))
+      (is (= 7 (count event-lines))
                (str "7 events in JSONL (incl. private room + first public ingest, got " (count event-lines) ")"))
 
         ;; 6. query forum via CLI
       (println "\nquerying forum via CLI…")
       (bind forum-result (common/run-cli cli-bin base-url ["public" "forum" "list" "--json"]))
-      (assert! (zero? (:exit forum-result)) "cli forum exits 0")
+      (is (zero? (:exit forum-result)) "cli forum exits 0")
       (bind forum-resp   (json/parse-string (:out forum-result) true))
-      (assert! (some (fn [t] (= "#integration-test" (:thread t))) (:threads forum-resp))
+      (is (some (fn [t] (= "#integration-test" (:thread t))) (:threads forum-resp))
                "thread '#integration-test' visible in forum")
 
         ;; 7. query item body via CLI
       (bind body-result (common/run-cli cli-bin base-url ["public" "garden" "body" "languages/rust" "--json"]))
-      (assert! (zero? (:exit body-result)) "cli garden body exits 0")
+      (is (zero? (:exit body-result)) "cli garden body exits 0")
       (bind body-resp   (json/parse-string (:out body-result) true))
-      (assert! (str/includes? (or (:body body-resp) "") "ownership")
+      (is (str/includes? (or (:body body-resp) "") "ownership")
                "rust body contains 'ownership'")
 
         ;; 9. global rank endpoint
       (println "\ntesting global rank endpoint…")
       (bind grank-result (common/run-cli cli-bin base-url ["public" "garden" "rank" "--json"]))
-      (assert! (zero? (:exit grank-result)) "cli garden rank exits 0")
+      (is (zero? (:exit grank-result)) "cli garden rank exits 0")
       (bind grank-resp   (json/parse-string (:out grank-result) true))
-      (assert! (pos? (:ranked_total grank-resp)) "global rank has ranked items")
-      (assert! (not-empty (:items grank-resp)) "global rank returns items")
-      (assert! (str/ends-with? (:item (first (:items grank-resp))) "languages/rust")
+      (is (pos? (:ranked_total grank-resp)) "global rank has ranked items")
+      (is (not-empty (:items grank-resp)) "global rank returns items")
+      (is (str/ends-with? (:item (first (:items grank-resp))) "languages/rust")
                (str "rust is #1 globally (got " (:item (first (:items grank-resp))) ")"))
 
       (bind grank-pct-result (common/run-cli cli-bin base-url ["public" "garden" "rank" "--percent" "--limit" "2" "--json"]))
-      (assert! (zero? (:exit grank-pct-result)) "cli garden rank --percent --limit 2 exits 0")
+      (is (zero? (:exit grank-pct-result)) "cli garden rank --percent --limit 2 exits 0")
       (bind grank-pct-resp   (json/parse-string (:out grank-pct-result) true))
-      (assert! (= 2 (count (:items grank-pct-resp))) "limit=2 returns 2 items")
-      (assert! (= 100.0 (:percent (first (:items grank-pct-resp)))) "top item has 100.0% score")
+      (is (= 2 (count (:items grank-pct-resp))) "limit=2 returns 2 items")
+      (is (= 100.0 (:percent (first (:items grank-pct-resp)))) "top item has 100.0% score")
 
       (bind grank-off-result (common/run-cli cli-bin base-url ["public" "garden" "rank" "--limit" "1" "--offset" "1" "--json"]))
-      (assert! (zero? (:exit grank-off-result)) "cli garden rank --offset 1 exits 0")
+      (is (zero? (:exit grank-off-result)) "cli garden rank --offset 1 exits 0")
       (bind grank-off-resp   (json/parse-string (:out grank-off-result) true))
-      (assert! (= (:item (second (:items grank-pct-resp))) (:item (first (:items grank-off-resp))))
+      (is (= (:item (second (:items grank-pct-resp))) (:item (first (:items grank-off-resp))))
                "offset=1 aligns with page 0 item index 1")
 
         ;; 10. rank history endpoint
@@ -259,24 +250,24 @@
                                         "~/languages/rust 4:1 ~/languages/python { type safety }"
                                         "~/languages/rust 3:1 ~/languages/go { zero-cost abstractions }"]))
       (bind hist-ingest      (common/run-cli cli-bin base-url ["public" "forum" "post" "integration-test" "--json" "--delegate" "00000000-0000-0000-0000-000000000000:cli:local/dev"] :input two-vote-doc :extra-env token-env))
-      (assert! (zero? (:exit hist-ingest))
+      (is (zero? (:exit hist-ingest))
                (str "two-vote ingest exits 0 (err: " (:err hist-ingest) ")"))
 
       (bind event-lines-after-hist (->> (slurp event-log) str/split-lines (remove str/blank?)))
-      (assert! (= 8 (count event-lines-after-hist))
+      (is (= 8 (count event-lines-after-hist))
                (str "8 events in JSONL after second public ingest (got " (count event-lines-after-hist) ")"))
 
       (bind hist-result      (common/run-cli cli-bin base-url ["public" "garden" "history" "languages/rust" "--json"]))
-      (assert! (zero? (:exit hist-result))
+      (is (zero? (:exit hist-result))
                (str "cli garden history exits 0 (err: " (:err hist-result) ")"))
       (bind hist-resp        (json/parse-string (:out hist-result) true))
-      (assert! (= "https://slug.social/~/languages/rust" (:item hist-resp)) "history item path is canonical ~/languages/rust URL")
-      (assert! (>= (count (:history hist-resp)) 2)
+      (is (= "https://slug.social/~/languages/rust" (:item hist-resp)) "history item path is canonical ~/languages/rust URL")
+      (is (>= (count (:history hist-resp)) 2)
                (str "rust has at least 2 history entries (got " (count (:history hist-resp)) ")"))
       (bind hist-last        (last (:history hist-resp)))
-      (assert! (= 2 (count (:caused_by hist-last)))
+      (is (= 2 (count (:caused_by hist-last)))
                (str "last entry has 2 caused_by votes (got " (count (:caused_by hist-last)) ")"))
-      (assert! (= 1 (:scope_rank hist-last))
+      (is (= 1 (:scope_rank hist-last))
                (str "rust still #1 in scope after two-vote ingest (got " (:scope_rank hist-last) ")"))
 
         ;; 11. kill first server, restart from same JSONL — prove replay determinism
@@ -287,16 +278,16 @@
       (println "\nrestarting server from persisted JSONL…")
       (bind server2 (common/start-server server-bin server-env))
       (reset! !server2 server2)
-      (assert! (common/wait-for-server base-url 10000) "restarted server responds to /healthz")
+      (is (common/wait-for-server base-url 10000) "restarted server responds to /healthz")
 
         ;; 12. same query, same result
       (println "\nquerying rankings after replay…")
       (bind replay-result (common/run-cli cli-bin base-url ["public" "garden" "children" "languages" "--json"]))
-      (assert! (zero? (:exit replay-result)) "cli garden children exits 0 after restart")
+      (is (zero? (:exit replay-result)) "cli garden children exits 0 after restart")
       (bind replay-resp   (json/parse-string (:out replay-result) true))
       (bind replay-ranked (mapv :item (mapcat :ranking (:components replay-resp))))
-      (assert! (= 3 (count replay-ranked)) "3 items ranked after replay")
-      (assert! (str/ends-with? (first replay-ranked) "languages/rust")
+      (is (= 3 (count replay-ranked)) "3 items ranked after replay")
+      (is (str/ends-with? (first replay-ranked) "languages/rust")
                (str "rust still #1 after replay (got " (first replay-ranked) ")")))
 
      (finally
@@ -311,5 +302,10 @@
          ((:stop-fn g)))
        (fs/delete-tree tmp-dir)))
 
-   (bind {pass :pass} @counts)
-   (println (str "\n" common/ansi-green "━━━ " pass " checks passed ━━━" common/ansi-reset "\n"))))
+   nil))
+
+(defn integration [& _args]
+  (integration-flow!))
+
+(deftest slug-integration-check
+  (integration-flow!))
