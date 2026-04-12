@@ -10,11 +10,11 @@ use base64::Engine;
 use serde::Deserialize;
 use slug_types::{PendingSessionPollResponse, PendingSessionStartRequest, PendingSessionStartResponse, WhoamiResponse};
 use std::{collections::HashMap, sync::Arc};
-use tokio::sync::RwLock;
+use tokio::sync::{oneshot, RwLock};
 
 use crate::{
     api::helpers::{api_error, now_ms, sha256_hex},
-    events::{Event, GrantAdded, TokenIssued, UserRegistered},
+    events::{Event, TokenIssued},
     html::{
         auth_complete_page, auth_signed_in_fragment, choose_username_error_fragment,
         choose_username_page, theme_cookie_header_from_jar, theme_from_jar, theme_next_from_uri, JsBuilder,
@@ -22,6 +22,7 @@ use crate::{
     identity::{parse_agent, parse_username},
     reducer::ReducerState,
     state::{AppState, PendingSession},
+    write_cmd::WriteCmd,
 };
 
 /// Delegate id for browser users who land via `/join/inv_…` (no CLI agent).
@@ -103,52 +104,6 @@ fn redirect_with_session_cookie(public_url: &str, path_and_query: &str, bearer: 
     res
 }
 
-async fn apply_invite_redemption(state: &AppState, invite_token: &str, grantee_username: &str) -> Result<(), String> {
-    let now = now_ms();
-    let ga = {
-        let mut invites = state.invites.write().await;
-        let Some(inv) = invites.get_mut(invite_token) else {
-            return Err("invite not found".into());
-        };
-        if now > inv.expires_at_ms {
-            invites.remove(invite_token);
-            return Err("invite expired".into());
-        }
-        if inv.current_uses >= inv.max_uses {
-            return Err("invite exhausted".into());
-        }
-        inv.current_uses += 1;
-        Event::GrantAdded(GrantAdded {
-            ts: now,
-            room_id: inv.room_id.clone(),
-            username: grantee_username.to_string(),
-            capabilities: inv.capabilities.clone(),
-            granted_by: inv.inviter.clone(),
-        })
-    };
-
-    match state.event_log.append(&ga).await {
-        Ok(()) => {
-            let mut reduced = state.reduced.write().await;
-            reduced.apply_event(ga);
-            let mut invites = state.invites.write().await;
-            if let Some(inv) = invites.get(invite_token) {
-                if inv.current_uses >= inv.max_uses {
-                    invites.remove(invite_token);
-                }
-            }
-            Ok(())
-        }
-        Err(e) => {
-            let mut invites = state.invites.write().await;
-            if let Some(inv) = invites.get_mut(invite_token) {
-                inv.current_uses = inv.current_uses.saturating_sub(1);
-            }
-            Err(format!("{e}"))
-        }
-    }
-}
-
 fn pending_sessions(state: &AppState) -> Arc<RwLock<HashMap<String, PendingSession>>> {
     state.pending_sessions.clone()
 }
@@ -162,7 +117,7 @@ fn extract_jwt_sub(jwt: &str) -> Option<String> {
     v.get("sub")?.as_str().map(|s| s.to_string())
 }
 
-fn parse_bearer(headers: &HeaderMap) -> Result<String, (StatusCode, String)> {
+pub(crate) fn parse_bearer(headers: &HeaderMap) -> Result<String, (StatusCode, String)> {
     let Some(value) = headers.get(axum::http::header::AUTHORIZATION) else {
         return Err((StatusCode::UNAUTHORIZED, "missing Authorization header".to_string()));
     };
@@ -185,7 +140,7 @@ pub fn verify_bearer_principal(
     verify_token(reduced, &bearer)
 }
 
-fn verify_token(reduced: &crate::reducer::ReducerState, bearer: &str) -> Result<String, (StatusCode, String)> {
+pub(crate) fn verify_token(reduced: &crate::reducer::ReducerState, bearer: &str) -> Result<String, (StatusCode, String)> {
     // slug_<token_id>_<secret>
     let Some(rest) = bearer.strip_prefix("slug_") else {
         return Err((StatusCode::UNAUTHORIZED, "invalid token format".to_string()));
@@ -207,7 +162,7 @@ fn verify_token(reduced: &crate::reducer::ReducerState, bearer: &str) -> Result<
 }
 
 /// `stored_username` must already be in persisted shape (lowercase slug, no `@`).
-fn issue_token_for_user(stored_username: &str) -> (String, TokenIssued) {
+pub(crate) fn issue_token_for_user(stored_username: &str) -> (String, TokenIssued) {
     let username = stored_username.to_string();
     let token_id = {
         let mut id = String::new();
@@ -378,19 +333,29 @@ pub async fn get_auth_callback(
         if let Some(username) = existing {
             let invite_tok = s.redeem_invite.clone();
             let (bearer, token_event) = issue_token_for_user(&username);
-            // append token event
             let ev = Event::TokenIssued(token_event);
-            if let Err(err) = state.event_log.append(&ev).await {
-                return api_error(StatusCode::INTERNAL_SERVER_ERROR, "failed to persist token", Some(format!("{err}"))).into_response();
-            }
+            let (tx, rx) = oneshot::channel();
+            if state
+                .write_tx
+                .send(WriteCmd::OAuthTokenIssue {
+                    token_event: ev,
+                    redeem_invite: invite_tok,
+                    reply: tx,
+                })
+                .await
+                .is_err()
             {
-                let mut reduced = reduced_arc.write().await;
-                reduced.apply_event(ev);
+                return api_error(StatusCode::INTERNAL_SERVER_ERROR, "writer unavailable", None).into_response();
             }
-            if let Some(tok) = invite_tok {
-                if let Err(e) = apply_invite_redemption(&state, &tok, &username).await {
-                    tracing::warn!(error = %e, "invite redemption skipped after oauth");
+            match rx.await {
+                Err(_) => {
+                    return api_error(StatusCode::INTERNAL_SERVER_ERROR, "writer dropped", None).into_response();
                 }
+                Ok(Err(err)) => {
+                    return api_error(StatusCode::INTERNAL_SERVER_ERROR, "failed to persist token", Some(err))
+                        .into_response();
+                }
+                Ok(Ok(())) => {}
             }
             let cookie_bearer = bearer.clone();
             s.complete = Some((username, bearer));
@@ -458,55 +423,37 @@ pub async fn post_choose_username(
         return js_form_error_fragment(&form.session, &format!("invalid agent format — {msg}")).into_response();
     }
 
-    let reduced_arc = state.reduced.clone();
-    let reduced = reduced_arc.read().await;
-    let provider_key = (provider.to_lowercase(), provider_id.clone());
-    if reduced.users_by_provider.contains_key(&provider_key) {
-        return js_form_error_fragment(&form.session, "provider already registered").into_response();
-    }
-    if reduced.users_by_provider.values().any(|u| u == &canon_user) {
-        drop(reduced);
-        return js_form_error_fragment(&form.session, "that username is taken — try another")
-            .into_response();
-    }
-    drop(reduced);
-
-    let ur = Event::UserRegistered(UserRegistered {
-        ts: now_ms(),
-        username: canon_user.clone(),
-        provider: provider.to_lowercase(),
-        provider_id: provider_id.clone(),
-    });
-
-    let (bearer, ti) = issue_token_for_user(&canon_user);
-    let ti_ev = Event::TokenIssued(ti);
-
-    // Persist events.
-    if let Err(err) = state.event_log.append(&ur).await {
-        return api_error(StatusCode::INTERNAL_SERVER_ERROR, "failed to persist user", Some(format!("{err}"))).into_response();
-    }
-    if let Err(err) = state.event_log.append(&ti_ev).await {
-        return api_error(StatusCode::INTERNAL_SERVER_ERROR, "failed to persist token", Some(format!("{err}"))).into_response();
-    }
-
-    // Apply to reducer.
-    {
-        let mut reduced = reduced_arc.write().await;
-        reduced.apply_event(ur.clone());
-        reduced.apply_event(ti_ev.clone());
-    }
-
-    // Redeem invite (if any) before marking the session complete.
-    if let Some(tok) = {
+    let redeem_invite = {
         let sessions_read = sessions.read().await;
         sessions_read.get(&form.session).and_then(|s| s.redeem_invite.clone())
-    } {
-        if let Err(e) = apply_invite_redemption(&state, &tok, &canon_user).await {
-            tracing::warn!(error = %e, "invite redemption skipped after registration");
-        }
+    };
+
+    let (tx, rx) = oneshot::channel();
+    if state
+        .write_tx
+        .send(WriteCmd::Register {
+            username: canon_user.clone(),
+            provider,
+            provider_id,
+            redeem_invite,
+            reply: tx,
+        })
+        .await
+        .is_err()
+    {
+        return api_error(StatusCode::INTERNAL_SERVER_ERROR, "writer unavailable", None).into_response();
     }
 
-    // Mark complete for polling.
+    let bearer = match rx.await {
+        Err(_) => {
+            return api_error(StatusCode::INTERNAL_SERVER_ERROR, "writer dropped", None).into_response();
+        }
+        Ok(Err(msg)) => {
+            return js_form_error_fragment(&form.session, &msg).into_response();
+        }
+        Ok(Ok(b)) => b,
+    };
+
     {
         let mut sessions_write = sessions.write().await;
         let s = sessions_write.get_mut(&form.session).expect("session checked above");

@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{broadcast, mpsc, RwLock};
 
-use crate::{event_log::EventLog, events::ThreadCapability, reducer::ReducerState};
+use crate::{event_log::EventLog, events::ThreadCapability, reducer::ReducerState, write_cmd::WriteCmd};
 
 /// Ephemeral invite link (24h TTL, in-memory only; not written to the event log).
 #[derive(Debug, Clone)]
@@ -65,10 +65,19 @@ pub struct AppState {
     pub stream_tx: broadcast::Sender<StreamEvent>,
     /// Broadcast channel for web SSE JavaScript snippets. Capacity = 64.
     pub js_tx: broadcast::Sender<JsSnippet>,
+    /// All durable writes and reducer mutations are serialized through this channel.
+    pub write_tx: mpsc::Sender<WriteCmd>,
 }
 
 impl AppState {
-    pub fn new(cfg: AppConfig) -> Self {
+    /// Build state with a fresh writer channel; call [`crate::spawn_writer_actor_for_test`] after any in-process seeding.
+    pub fn create_for_test(cfg: AppConfig) -> (Self, mpsc::Receiver<WriteCmd>) {
+        let (write_tx, write_rx) = mpsc::channel(256);
+        (Self::new_for_test(cfg, write_tx), write_rx)
+    }
+
+    /// Prefer [`crate::create_app_state`] so the writer task is started and `write_tx` is wired.
+    pub fn new_for_test(cfg: AppConfig, write_tx: mpsc::Sender<WriteCmd>) -> Self {
         let event_log = EventLog::new(cfg.event_log_path.clone());
         let (stream_tx, _) = broadcast::channel(64);
         let (js_tx, _) = broadcast::channel(64);
@@ -80,6 +89,7 @@ impl AppState {
             invites: Arc::new(RwLock::new(HashMap::new())),
             stream_tx,
             js_tx,
+            write_tx,
         }
     }
 }
