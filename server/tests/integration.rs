@@ -445,6 +445,78 @@ async fn test_feed_since_last_post_is_scoped_to_delegate() {
 }
 
 #[tokio::test]
+async fn test_feed_without_delegate_uses_principal_last_post_including_delegate() {
+    let (addr, _tmp, _log, _handle) = create_test_server().await;
+    let client = reqwest::Client::new();
+    let bearer = test_bearer();
+
+    let d = "00000000-0000-0000-0000-0000000000b1:principalfeed:local/model";
+    let p1 = rpc_batch(
+        &client,
+        addr,
+        Some(&bearer),
+        serde_json::json!([{
+            "Post": {
+                "room": "public",
+                "thread_tag": "principal-feed-test",
+                "delegate": d,
+                "text": "#principal-feed-test\nfirst delegate post\n",
+                "return_rank_diff": false
+            }
+        }]),
+    )
+    .await;
+    assert_eq!(p1["results"][0]["ok"], true, "{:?}", p1);
+
+    let p2 = rpc_batch(
+        &client,
+        addr,
+        Some(&bearer),
+        serde_json::json!([{
+            "Post": {
+                "room": "public",
+                "thread_tag": "principal-feed-test",
+                "delegate": d,
+                "text": "#principal-feed-test\nsecond delegate post\n",
+                "return_rank_diff": false
+            }
+        }]),
+    )
+    .await;
+    assert_eq!(p2["results"][0]["ok"], true, "{:?}", p2);
+
+    // Argless GetFeed: cutoff is last ingest by this principal (even if every post used --delegate),
+    // so revisiting an old chat with only a token still gets a bounded "since", not full history.
+    let feed = rpc_batch(
+        &client,
+        addr,
+        Some(&bearer),
+        serde_json::json!([{
+            "GetFeed": { "limit": 20 }
+        }]),
+    )
+    .await;
+    let line = &feed["results"][0];
+    assert_eq!(line["ok"], true, "{:?}", line);
+    assert!(
+        line["result"]["Feed"]["delegate"].is_null(),
+        "principal-wide feed omits delegate in JSON: {:?}",
+        line["result"]["Feed"]
+    );
+    assert!(
+        line["result"]["Feed"]["since"].is_number(),
+        "expected since from principal's last post (including delegate ingests), got: {:?}",
+        line["result"]["Feed"]["since"]
+    );
+    let posts = line["result"]["Feed"]["posts"].as_array().unwrap();
+    assert!(
+        posts.is_empty(),
+        "nothing is strictly newer than the latest own post; got {} posts",
+        posts.len()
+    );
+}
+
+#[tokio::test]
 async fn test_private_room_thread_urls_use_t_segment() {
     let (addr, _tmp, _log, _handle) = create_test_server().await;
     let client = reqwest::Client::builder()

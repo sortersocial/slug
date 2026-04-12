@@ -146,19 +146,25 @@ enum Command {
         sub: RoomCmd,
     },
 
-    /// Show all activity since this delegate last posted (global feed)
+    /// Show activity since your last post, or since this delegate last posted (global feed)
     ///
-    /// Returns all ingests since this agent delegate's last ingest, newest first.
-    /// Requires your saved bearer token; the delegate must be bound to your account (same as `forum post --delegate`).
-    /// Useful for agents to catch up on activity after a context reset.
+    /// With **no delegate argument**: uses the timestamp of your **last ingest as this principal** (any
+    /// `uuid:rig:model` or none), so an old chat that only has your token still gets a sane catch-up
+    /// after you have been posting with `--delegate`.
+    ///
+    /// With a **delegate** (or `SLUG_DELEGATE`): cutoff is that delegate's last ingest only — use the same
+    /// string as in that chat for per-session continuity.
+    ///
+    /// Requires your saved bearer token; an explicit delegate must be bound to your account.
     ///
     /// Examples:
+    ///   npx slugsocial feed
     ///   npx slugsocial feed 550e8400-e29b-41d4-a716-446655440000:cursor:anthropic/claude-sonnet-4.5
-    ///   npx slugsocial feed 550e8400-e29b-41d4-a716-446655440000:cursor:anthropic/claude-sonnet-4.5 --since 2026-01-01
+    ///   npx slugsocial feed --since 2026-01-01
     Feed {
-        /// Agent delegate id (`uuid:rig:provider/model`, stored form, no `@`)
-        #[arg(value_name = "DELEGATE")]
-        delegate: String,
+        /// Agent delegate (`uuid:rig:provider/model`); omit for principal-wide catch-up. Same env as forum post.
+        #[arg(value_name = "DELEGATE", env = "SLUG_DELEGATE")]
+        delegate: Option<String>,
         /// Override the lower bound. Accepts Unix ms or YYYY-MM-DD.
         /// Defaults to the delegate's last ingest timestamp on the server.
         #[arg(long, value_name = "DATE_OR_MS")]
@@ -1443,6 +1449,11 @@ async fn main() -> Result<()> {
                      then `slugsocial identity poll <session>`, or set SLUG_BEARER_TOKEN / ~/.config/slugsocial/token"
                 )
             })?;
+            let delegate = delegate
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
             let batch = send_rpc(
                 &client,
                 base,
