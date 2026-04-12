@@ -10,3 +10,8 @@ test/playwright/__pycache__/
 .claude/
 
 .cursor-screenshots/
+
+# No JS tooling under top-level scripts/ (use bb / shell)
+scripts/*.js
+scripts/*.mjs
+scripts/*.cjs
