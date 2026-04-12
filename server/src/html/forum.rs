@@ -363,6 +363,38 @@ fn room_members_for_room(reduced: &ReducerState, room_id: &str) -> Vec<RoomMembe
     rows
 }
 
+fn room_members_collapsible(members: &[RoomMemberRow]) -> Markup {
+    if members.is_empty() {
+        return html! {};
+    }
+    html! {
+        button
+            type="button"
+            class="form-toggle"
+            data-toggle-target="#room-members-panel"
+            data-open-label="members & permissions"
+            data-close-label="hide members & permissions"
+            aria-expanded="false"
+        {
+            "members & permissions"
+        }
+        section id="room-members-panel" class="room-members-panel" hidden {
+            h3 { "members" }
+            ul class="room-members" {
+                @for member in members {
+                    li {
+                        span class="room-member-name" { "@" (member.username) }
+                        span class="muted" {
+                            " · "
+                            (member.capabilities.join(", "))
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// `feed_id` is e.g. `thread-feed` (public bump list, SSE) or `room-thread-feed`.
 fn render_thread_feed(nav: Option<&ThreadNav>, feed_id: &str, rows: &[ThreadRow], now: i64) -> Markup {
     html! {
@@ -914,20 +946,7 @@ pub async fn room_page(
                 "room garden · "
                 a href=(nav.garden_root_url()) { "~" }
             }
-            @if !members.is_empty() {
-                h3 { "members" }
-                ul class="room-members" {
-                    @for member in &members {
-                        li {
-                            span class="room-member-name" { "@" (member.username) }
-                            span class="muted" {
-                                " · "
-                                (member.capabilities.join(", "))
-                            }
-                        }
-                    }
-                }
-            }
+            (room_members_collapsible(&members))
             h3 { "threads" }
             (render_thread_feed(Some(&nav), "room-thread-feed", &rows, now))
             @if show_new {
@@ -937,7 +956,9 @@ pub async fn room_page(
                         button type="submit" class="section-add-btn" { "+" }
                     }
                 }
-                div id="room-new-thread-ui-slot" {}
+                div id="room-new-thread-ui-slot" {
+                    (new_thread_form_for_room(&nav, true))
+                }
             }
             (cli_panel(&forum_cli))
             (cli_panel(&garden_cli))
@@ -960,7 +981,7 @@ fn new_thread_form_for_room(nav: &ThreadNav, show: bool) -> Markup {
             class="form-toggle"
             data-toggle-target="#room-new-thread-compose"
             data-open-label="new thread in this room"
-            data-close-label="hide room thread form"
+            data-close-label="hide new thread form"
             aria-expanded="false"
         {
             "new thread in this room"
