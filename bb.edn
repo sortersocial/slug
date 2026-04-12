@@ -60,6 +60,12 @@
            (invites/invites-test)
            (room-list/room-list-test))}
 
+  browser-ui-morph
+  {:doc "Playwright (Spel): POST /ui __rpc__ DOM morph (expand_post_full). Requires: clojure CLI, Chrome, `npx playwright install chromium`."
+   :requires ([babashka.process :as p])
+   :task (let [r @(p/process ["clojure" "-M" "-m" "test.runner" "browser-ui-morph"] {:inherit true})]
+           (when-not (zero? (:exit r)) (System/exit (:exit r))))}
+
   walkthrough-fixture
   {:doc "Run local server + mock OAuth + seeded walkthrough data for manual browser demos"
    :requires ([test.walkthrough-fixture :as walkthrough-fixture])

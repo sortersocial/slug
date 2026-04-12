@@ -1,4 +1,6 @@
 (ns test.browser-post-redact
+  "Tombstone expand/collapse uses POST /ui + __rpc__ (expand_redacted_post / collapse_redacted_post)
+   and returns eval-able JS — covered here via Playwright, not HTTP-only tests."
   (:require [babashka.fs :as fs]
             [cheshire.core :as json]
             [clojure.string :as str]
