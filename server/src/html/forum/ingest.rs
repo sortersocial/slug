@@ -6,7 +6,8 @@ use serde_json::json;
 
 use crate::html::js_string_literal;
 use crate::html::ui_action::{HtmlUiAction, UI_RPC_FIELD};
-use crate::html::{profile_href, render_linkified_with_embeds_in_scope, timeago};
+use crate::html::{profile_href, render_linkified_with_embeds_in_scope};
+use crate::timeago;
 
 use super::nav::ThreadNav;
 
