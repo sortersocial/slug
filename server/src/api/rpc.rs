@@ -27,8 +27,9 @@ use crate::{
 
 use super::auth::verify_bearer_principal;
 use super::helpers::{
-    compute_connectivity_stats, is_pair_voted, item_path_for_api, now_ms, paginate_rankings,
-    parse_parent_specs, pick_random_distinct, resolve_item, vote_touches_path,
+    compute_connectivity_stats, forum_thread_web_url, is_pair_voted, item_path_for_api,
+    item_path_for_api_in_room, now_ms, paginate_rankings, parse_parent_specs, pick_random_distinct,
+    resolve_item, vote_touches_path,
 };
 use super::validate::{normalize_room_and_thread, validate_ingest_document};
 
@@ -148,6 +149,7 @@ fn compute_scope_rank_changes(
     parent: &str,
     before: &crate::scope_rank::ChildrenRankings,
     after: &crate::scope_rank::ChildrenRankings,
+    room_wire: &str,
 ) -> Option<ScopeRankChanges> {
     fn build_positions(rankings: &crate::scope_rank::ChildrenRankings) -> HashMap<String, Option<RankPosition>> {
         let mut map = HashMap::new();
@@ -182,7 +184,7 @@ fn compute_scope_rank_changes(
         };
         if changed {
             changes.push(RankChange {
-                item: item_path_for_api(&item),
+                item: item_path_for_api_in_room(&item, room_wire),
                 before: b,
                 after: a,
             });
@@ -204,7 +206,7 @@ fn compute_scope_rank_changes(
         parent: if parent.is_empty() {
             "/".to_string()
         } else {
-            item_path_for_api(parent)
+            item_path_for_api_in_room(parent, room_wire)
         },
         changes,
     })
@@ -256,6 +258,7 @@ fn build_rank_response_for_content(
     offset: usize,
     limit: Option<usize>,
     want_percent: bool,
+    room_wire: &str,
 ) -> Result<RankResponse, RpcErr> {
     let parent_owned = parent.map(|s| s.to_string());
     let specs = parse_parent_specs(parent_owned.as_ref());
@@ -299,7 +302,7 @@ fn build_rank_response_for_content(
                     .ranked
                     .into_iter()
                     .map(|r| RankRow {
-                        item: item_path_for_api(r.item.as_str()),
+                        item: item_path_for_api_in_room(r.item.as_str(), room_wire),
                         percent: if want_percent {
                             Some((r.score / max_score) * 100.0)
                         } else {
@@ -315,7 +318,7 @@ fn build_rank_response_for_content(
     let prefixed_unranked: Vec<String> = rankings
         .unranked_items
         .into_iter()
-        .map(|s| item_path_for_api(s.as_str()))
+        .map(|s| item_path_for_api_in_room(s.as_str(), room_wire))
         .collect();
 
     let (components, unranked_items) = if offset > 0 || limit.is_some() {
@@ -522,7 +525,7 @@ async fn rpc_post(
             .filter_map(|p| {
                 let before = pre_rankings.get(p)?;
                 let after = crate::scope_rank::build_children_rankings(content, p);
-                compute_scope_rank_changes(p.as_str(), before, &after)
+                compute_scope_rank_changes(p.as_str(), before, &after, &room_key)
             })
             .collect();
         if v.is_empty() { None } else { Some(v) }
@@ -530,14 +533,28 @@ async fn rpc_post(
         None
     };
 
+    let (pair_hint, rank_hint, web_url) = if room_key == "public" {
+        (
+            "npx slugsocial public garden pair".to_string(),
+            "npx slugsocial public garden rank".to_string(),
+            forum_thread_web_url("public", &thread_id),
+        )
+    } else {
+        (
+            format!("npx slugsocial private {room_key} garden pair"),
+            format!("npx slugsocial private {room_key} garden rank"),
+            forum_thread_web_url(&room_key, &thread_id),
+        )
+    };
+
     Ok(RpcResult::PostOk {
         events_appended,
         ranking_changes,
         threads: vec![format!("#{}", thread_id)],
         next: NextMoves {
-            pair: "npx slugsocial public garden pair".to_string(),
-            rank: "npx slugsocial public garden rank".to_string(),
-            web: format!("https://slug.social/t/{}", thread_id),
+            pair: pair_hint,
+            rank: rank_hint,
+            web: web_url,
         },
     })
 }
@@ -609,7 +626,7 @@ async fn rpc_check(
         raw: v.raw_text.clone(),
         principal,
         delegate,
-        room_id: room_key,
+        room_id: room_key.clone(),
         thread_tag: thread_id.clone(),
     });
 
@@ -647,7 +664,7 @@ async fn rpc_check(
                         .ranked
                         .into_iter()
                         .map(|r| RankRow {
-                            item: item_path_for_api(r.item.as_str()),
+                            item: item_path_for_api_in_room(r.item.as_str(), &room_key),
                             score: r.score,
                             percent: None,
                         })
@@ -655,25 +672,35 @@ async fn rpc_check(
                 })
                 .collect();
             CheckScopeRanking {
-                parent: item_path_for_api(parent.as_str()),
+                parent: item_path_for_api_in_room(parent.as_str(), &room_key),
                 components,
                 unranked_items: scoped
                     .unranked_items
                     .into_iter()
-                    .map(|it| item_path_for_api(it.as_str()))
+                    .map(|it| item_path_for_api_in_room(it.as_str(), &room_key))
                     .collect(),
             }
         })
         .collect();
 
+    let check_next = if room_key == "public" {
+        vec![
+            "npx slugsocial public forum post <TAG> --delegate <uuid:rig:model>".to_string(),
+            "npx slugsocial public forum list".to_string(),
+            forum_thread_web_url("public", &thread_id),
+        ]
+    } else {
+        vec![
+            format!("npx slugsocial private {room_key} forum post <TAG> --delegate <uuid:rig:model>"),
+            format!("npx slugsocial private {room_key} forum list"),
+            forum_thread_web_url(&room_key, &thread_id),
+        ]
+    };
+
     Ok(RpcResult::CheckOk {
         rankings,
         threads: vec![format!("#{}", thread_id)],
-        next: vec![
-            "npx slugsocial public forum post <TAG> --delegate <uuid:rig:model>".to_string(),
-            "npx slugsocial public forum list".to_string(),
-            format!("https://slug.social/t/{}", thread_id),
-        ],
+        next: check_next,
     })
 }
 
@@ -690,7 +717,7 @@ fn rpc_list_forum_threads(reduced: &ReducerState, room: &str) -> ThreadsResponse
         .map(|((_, tag), ts)| ThreadSummary {
             thread: format!("#{tag}"),
             last_activity_ts: ts.last_activity_ts,
-            web: format!("https://slug.social/t/{}", tag),
+            web: forum_thread_web_url(room, tag),
         })
         .collect();
     out.sort_by(|a, b| b.last_activity_ts.cmp(&a.last_activity_ts));
@@ -1031,8 +1058,8 @@ async fn rpc_get_pair(state: &AppState, room: String, parent_path: String) -> Re
         .collect();
     let cs = compute_connectivity_stats(&content.ranking_group, &pool);
     Ok(RpcResult::Pair(PairResponse {
-        left: item_path_for_api(&left),
-        right: item_path_for_api(&right),
+        left: item_path_for_api_in_room(&left, &room),
+        right: item_path_for_api_in_room(&right, &room),
         left_body: lb,
         right_body: rb,
         threads: th,
@@ -1088,6 +1115,7 @@ pub async fn handle_rpc_batch(
                     offset.unwrap_or(0),
                     limit,
                     percent.unwrap_or(false),
+                    &room,
                 ) {
                     Ok(r) => line_ok(RpcResult::GardenRank(r)),
                     Err((e, h)) => line_err(e, h),
@@ -1109,7 +1137,7 @@ pub async fn handle_rpc_batch(
                 if !content.items.contains(&item) {
                     line_err(
                         "item not found",
-                        Some(format!("{} does not exist", item_path_for_api(&item_str))),
+                        Some(format!("{} does not exist", item_path_for_api_in_room(&item_str, &room))),
                     )
                 } else {
                     const MAX_ITEM_BODY: usize = 10_000;
@@ -1132,7 +1160,7 @@ pub async fn handle_rpc_batch(
                         .map(|s| s.iter().cloned().collect())
                         .unwrap_or_default();
                     line_ok(RpcResult::GardenItem(ItemResponse {
-                        item: item_str,
+                        item: item_path_for_api_in_room(&item_str, &room),
                         body,
                         truncated,
                         body_len,
@@ -1525,7 +1553,11 @@ pub async fn handle_rpc_batch(
                     let range = (top - bot).max(1e-12);
                     for r in items {
                         let pct = want_percent.then(|| ((r.score - bot) / range * 100.0).clamp(0.0, 100.0));
-                        ranked.push(RankRow { item: item_path_for_api(r.item.as_str()), score: r.score, percent: pct });
+                        ranked.push(RankRow {
+                            item: item_path_for_api_in_room(r.item.as_str(), &room),
+                            score: r.score,
+                            percent: pct,
+                        });
                     }
                 }
 
@@ -1542,7 +1574,7 @@ pub async fn handle_rpc_batch(
                 let page: Vec<RankRow> = ranked
                     .into_iter()
                     .chain(unranked.into_iter().map(|it| RankRow {
-                        item: item_path_for_api(&it),
+                        item: item_path_for_api_in_room(&it, &room),
                         score: 0.0,
                         percent: want_percent.then_some(0.0),
                     }))
@@ -1586,7 +1618,7 @@ pub async fn handle_rpc_batch(
                 if !content.items.contains(&item) {
                     line_err(
                         "item not found",
-                        Some(format!("{} does not exist", item_path_for_api(&item_str))),
+                        Some(format!("{} does not exist", item_path_for_api_in_room(&item_str, &room))),
                     )
                 } else {
                     let votes: Vec<VoteRow> = content
@@ -1597,8 +1629,8 @@ pub async fn handle_rpc_batch(
                                 .take(limit)
                                 .map(|v| VoteRow {
                                     ts: v.ts,
-                                    a: v.a.as_str().to_string(),
-                                    b: v.b.as_str().to_string(),
+                                    a: item_path_for_api_in_room(v.a.as_str(), &room),
+                                    b: item_path_for_api_in_room(v.b.as_str(), &room),
                                     ratio: format!("{}:{}", v.ratio_left, v.ratio_right),
                                     actor: Some(v.principal.clone()),
                                     body: v.body.clone(),
@@ -1608,7 +1640,7 @@ pub async fn handle_rpc_batch(
                         })
                         .unwrap_or_default();
                     line_ok(RpcResult::Matchup(MatchupResponse {
-                        item: item_path_for_api(&item_str),
+                        item: item_path_for_api_in_room(&item_str, &room),
                         votes,
                     }))
                 }
@@ -1635,8 +1667,8 @@ pub async fn handle_rpc_batch(
                                     if a == item_str || b == item_str {
                                         Some(VoteRow {
                                             ts: e.ts,
-                                            a: item_path_for_api(&a),
-                                            b: item_path_for_api(&b),
+                                            a: item_path_for_api_in_room(&a, &room),
+                                            b: item_path_for_api_in_room(&b, &room),
                                             ratio: format!("{}:{}", ratio_left, ratio_right),
                                             actor: reduced.ingests_by_id.get(&e.post_id).map(|ing| ing.principal.clone()),
                                             body: explanation,
@@ -1672,7 +1704,7 @@ pub async fn handle_rpc_batch(
                     }
                 }).collect();
                 line_ok(RpcResult::RankHistory(RankHistoryResponse {
-                    item: item_path_for_api(&item_str),
+                    item: item_path_for_api_in_room(&item_str, &room),
                     history,
                 }))
                 }
@@ -1691,6 +1723,10 @@ pub async fn handle_rpc_batch(
                     .map(|p| p.as_str().to_string())
                     .collect();
                 paths.sort();
+                let paths: Vec<String> = paths
+                    .into_iter()
+                    .map(|p| item_path_for_api_in_room(&p, &room))
+                    .collect();
                 line_ok(RpcResult::Leaves(LeavesResponse { paths }))
                 }
             },
@@ -1707,10 +1743,21 @@ pub async fn handle_rpc_batch(
                         let mut v: Vec<PathSummary> = roots.iter()
                             .map(|path| {
                                 let children = content.item_children.get(path.as_str()).map(|s| s.len()).unwrap_or(0);
+                                let path_label = CanonicalItemUrl::parse(path.as_str())
+                                    .and_then(|c| {
+                                        c.tilde_tail().map(|t| {
+                                            if t.is_empty() {
+                                                "~/".to_string()
+                                            } else {
+                                                format!("~/{}", t)
+                                            }
+                                        })
+                                    })
+                                    .unwrap_or_else(|| path.to_string());
                                 PathSummary {
-                                    path: format!("~/{}", path),
+                                    path: path_label,
                                     children,
-                                    web: format!("https://slug.social/~/{}", path),
+                                    web: item_path_for_api_in_room(path.as_str(), &room),
                                 }
                             }).collect();
                         v.sort_by(|a, b| a.path.cmp(&b.path));
@@ -1743,8 +1790,8 @@ pub async fn handle_rpc_batch(
                     .take(limit)
                     .map(|v| VoteRow {
                         ts: v.ts,
-                        a: v.a.as_str().to_string(),
-                        b: v.b.as_str().to_string(),
+                        a: item_path_for_api_in_room(v.a.as_str(), &room),
+                        b: item_path_for_api_in_room(v.b.as_str(), &room),
                         ratio: format!("{}:{}", v.ratio_left, v.ratio_right),
                         actor: Some(v.principal.clone()),
                         body: v.body.clone(),

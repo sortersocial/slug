@@ -1,6 +1,6 @@
 use axum::{
     extract::{Query, State},
-    http::HeaderMap,
+    http::{HeaderMap, Uri},
     response::{Html, IntoResponse},
 };
 use axum_extra::extract::cookie::CookieJar;
@@ -15,7 +15,7 @@ use crate::{
     timeago,
 };
 
-use super::{authorship_address, bc_segment, cli_panel, layout, now_ms};
+use super::{authorship_address, bc_segment, cli_panel, layout, now_ms, theme_from_jar, theme_next_from_uri};
 
 /// Escape HTML special chars for safe injection.
 fn escape_html(s: &str) -> String {
@@ -396,6 +396,7 @@ pub async fn search_page(
     Query(params): Query<SearchQuery>,
     headers: HeaderMap,
     jar: CookieJar,
+    uri: Uri,
 ) -> impl IntoResponse {
     let query = params.q.clone().unwrap_or_default();
     let results = if query.len() >= 2 {
@@ -420,6 +421,8 @@ pub async fn search_page(
             (cli_panel("npx slugsocial search <query>"))
         },
         None,
+        theme_from_jar(&jar),
+        &theme_next_from_uri(&uri),
     );
     Html(page.into_string())
 }

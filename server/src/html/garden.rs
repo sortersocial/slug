@@ -1,6 +1,6 @@
 use axum::{
     extract::{Path, State},
-    http::{HeaderMap, StatusCode},
+    http::{HeaderMap, StatusCode, Uri},
     response::{Html, IntoResponse},
 };
 use axum_extra::extract::cookie::CookieJar;
@@ -20,7 +20,8 @@ use crate::{
 
 use super::{
     bc_path, bc_segment, cli_panel, layout, now_ms, ratio_pct,
-    render_linkified_with_embeds_in_scope, breadcrumb_path::OntologyPath,
+    render_linkified_with_embeds_in_scope, theme_from_jar, theme_next_from_uri,
+    breadcrumb_path::OntologyPath,
     forum::ThreadNav,
 };
 
@@ -59,14 +60,21 @@ fn scoped_bc_path(path: &OntologyPath, nav: &ThreadNav) -> maud::Markup {
     }
 }
 
-fn room_not_found_page() -> impl IntoResponse {
+fn room_not_found_page(jar: &CookieJar, uri: &Uri) -> impl IntoResponse {
     let body = html! {
         nav class="breadcrumb" { a href="/" { "slug.social" } }
         h1 { "not found" }
         p { "The requested page could not be found." }
         p { a href="/" { "home" } }
     };
-    let page = layout("not found — slug.social", "view-thread", body, None);
+    let page = layout(
+        "not found — slug.social",
+        "view-thread",
+        body,
+        None,
+        theme_from_jar(jar),
+        &theme_next_from_uri(uri),
+    );
     (StatusCode::NOT_FOUND, Html(page.into_string()))
 }
 
@@ -81,7 +89,11 @@ fn user_can_view_room(reduced: &ReducerState, room_id: &str, username: Option<&s
 }
 
 /// Ontology index — root-level paths. Private (UUID) roots are excluded.
-pub async fn garden_index(State(state): State<AppState>) -> impl IntoResponse {
+pub async fn garden_index(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    uri: Uri,
+) -> impl IntoResponse {
     let nav = ThreadNav::public();
     let child_rankings = {
         let reduced = state.reduced.read().await;
@@ -130,6 +142,8 @@ pub async fn garden_index(State(state): State<AppState>) -> impl IntoResponse {
             (cli_panel("npx slugsocial garden tree"))
         },
         None,
+        theme_from_jar(&jar),
+        &theme_next_from_uri(&uri),
     );
     Html(page.into_string())
 }
@@ -138,9 +152,11 @@ pub async fn garden_index(State(state): State<AppState>) -> impl IntoResponse {
 pub async fn ontology_path(
     State(state): State<AppState>,
     Path(path): Path<String>,
+    jar: CookieJar,
+    uri: Uri,
 ) -> impl IntoResponse {
     let path = OntologyPath::from_input(&path);
-    render_scope_view(state, path, ThreadNav::public()).await
+    render_scope_view(state, path, ThreadNav::public(), jar, uri).await
 }
 
 pub async fn room_garden_index(
@@ -148,19 +164,20 @@ pub async fn room_garden_index(
     Path((room_short, room_slug)): Path<(String, String)>,
     headers: HeaderMap,
     jar: CookieJar,
+    uri: Uri,
 ) -> impl IntoResponse {
     let room_id = format!("{room_short}/{room_slug}");
     let reduced = state.reduced.read().await;
     let user = optional_principal(&headers, &jar, &reduced);
     if !user_can_view_room(&reduced, &room_id, user.as_deref()) {
         drop(reduced);
-        return room_not_found_page().into_response();
+        return room_not_found_page(&jar, &uri).into_response();
     }
     drop(reduced);
     let Some(nav) = ThreadNav::from_room_id(&room_id) else {
         return (StatusCode::NOT_FOUND, "bad room path").into_response();
     };
-    render_scope_view(state, OntologyPath::root(), nav).await
+    render_scope_view(state, OntologyPath::root(), nav, jar, uri).await
 }
 
 pub async fn room_ontology_path(
@@ -168,20 +185,21 @@ pub async fn room_ontology_path(
     Path((room_short, room_slug, path)): Path<(String, String, String)>,
     headers: HeaderMap,
     jar: CookieJar,
+    uri: Uri,
 ) -> impl IntoResponse {
     let room_id = format!("{room_short}/{room_slug}");
     let reduced = state.reduced.read().await;
     let user = optional_principal(&headers, &jar, &reduced);
     if !user_can_view_room(&reduced, &room_id, user.as_deref()) {
         drop(reduced);
-        return room_not_found_page().into_response();
+        return room_not_found_page(&jar, &uri).into_response();
     }
     drop(reduced);
     let Some(nav) = ThreadNav::from_room_id(&room_id) else {
         return (StatusCode::NOT_FOUND, "bad room path").into_response();
     };
     let path = OntologyPath::from_input(&path);
-    render_scope_view(state, path, nav).await
+    render_scope_view(state, path, nav, jar, uri).await
 }
 
 #[derive(Debug, Clone)]
@@ -375,6 +393,8 @@ async fn render_scope_view(
     state: AppState,
     path: OntologyPath,
     nav: ThreadNav,
+    jar: CookieJar,
+    uri: Uri,
 ) -> axum::response::Response {
     let scope = nav.scope();
     let model = {
@@ -525,6 +545,8 @@ async fn render_scope_view(
             (cli_panel(&cli))
         },
         None,
+        theme_from_jar(&jar),
+        &theme_next_from_uri(&uri),
     );
 
     Html(page.into_string()).into_response()

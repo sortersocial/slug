@@ -39,6 +39,55 @@ pub fn item_path_for_api(item: &str) -> String {
     }
 }
 
+/// Same as [`item_path_for_api`], but for private rooms ontology items are prefixed with
+/// `/r/{short}/{slug}` so the URL matches the web app (`/r/…/~/…` routes).
+pub fn item_path_for_api_in_room(item: &str, room_wire: &str) -> String {
+    let room = room_wire.trim();
+    if room.is_empty() || room == "public" {
+        return item_path_for_api(item);
+    }
+    let Some((short, slug)) = room.split_once('/') else {
+        return item_path_for_api(item);
+    };
+    if short.is_empty() || slug.is_empty() {
+        return item_path_for_api(item);
+    }
+    let Some(c) = CanonicalItemUrl::parse(item) else {
+        return item_path_for_api(item);
+    };
+    let root = CanonicalItemUrl::ontology_root();
+    let item_norm = c.as_str().trim_end_matches('/');
+    let root_norm = root.as_str().trim_end_matches('/');
+    if let Some(tail) = c.tilde_tail() {
+        return if tail.is_empty() {
+            format!("https://slug.social/r/{short}/{slug}/~")
+        } else {
+            format!("https://slug.social/r/{short}/{slug}/~/{}", tail)
+        };
+    }
+    if item_norm == root_norm {
+        return format!("https://slug.social/r/{short}/{slug}/~");
+    }
+    item_path_for_api(item)
+}
+
+/// Absolute thread URL for forum JSON (`/t/…` vs `/r/…/t/…`).
+pub fn forum_thread_web_url(room_wire: &str, thread_tag: &str) -> String {
+    let room = room_wire.trim();
+    let tag = thread_tag.trim().trim_start_matches('#');
+    if room.is_empty() || room == "public" {
+        format!("https://slug.social/t/{tag}")
+    } else if let Some((short, slug)) = room.split_once('/') {
+        if short.is_empty() || slug.is_empty() {
+            format!("https://slug.social/t/{tag}")
+        } else {
+            format!("https://slug.social/r/{short}/{slug}/t/{tag}")
+        }
+    } else {
+        format!("https://slug.social/t/{tag}")
+    }
+}
+
 /// Resolve an item path as a first-class canonical path.
 pub fn resolve_item(item: &str) -> Result<String, String> {
     let canonical = canonicalize_item(item);
@@ -187,4 +236,53 @@ pub fn compute_connectivity_stats(group: &crate::reducer::GroupState, pool: &[St
 pub fn vote_touches_path(a: &str, b: &str, parent_canon: &str) -> bool {
     let under = |item: &str| item == parent_canon || item.starts_with(&format!("{}/", parent_canon));
     under(a) || under(b)
+}
+
+#[cfg(test)]
+mod wire_url_tests {
+    use super::{forum_thread_web_url, item_path_for_api_in_room};
+
+    #[test]
+    fn public_room_unchanged() {
+        let u = "https://slug.social/~/a/b";
+        assert_eq!(item_path_for_api_in_room(u, "public"), u);
+    }
+
+    #[test]
+    fn private_room_prefixes_ontology() {
+        assert_eq!(
+            item_path_for_api_in_room("https://slug.social/~/topic/x", "9ab12cd/my-room"),
+            "https://slug.social/r/9ab12cd/my-room/~/topic/x"
+        );
+    }
+
+    #[test]
+    fn private_room_ontology_root() {
+        assert_eq!(
+            item_path_for_api_in_room("https://slug.social/~", "9ab12cd/my-room"),
+            "https://slug.social/r/9ab12cd/my-room/~"
+        );
+        assert_eq!(
+            item_path_for_api_in_room("https://slug.social/~/", "9ab12cd/my-room"),
+            "https://slug.social/r/9ab12cd/my-room/~"
+        );
+    }
+
+    #[test]
+    fn external_url_untouched_in_private_room() {
+        let u = "https://example.com/z";
+        assert_eq!(item_path_for_api_in_room(u, "9ab12cd/my-room"), u);
+    }
+
+    #[test]
+    fn forum_web_public_vs_room() {
+        assert_eq!(
+            forum_thread_web_url("public", "debate"),
+            "https://slug.social/t/debate"
+        );
+        assert_eq!(
+            forum_thread_web_url("9ab12cd/my-room", "#debate"),
+            "https://slug.social/r/9ab12cd/my-room/t/debate"
+        );
+    }
 }

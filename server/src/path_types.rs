@@ -8,6 +8,12 @@
 //!
 //! This module adds lightweight newtypes so code can be explicit about what it
 //! expects without changing core storage formats.
+//!
+//! **Storage vs wire:** [`CanonicalItemUrl`] values are shared across scopes
+//! (`https://slug.social/~/…`); which [`crate::reducer::ContentState`] they live in
+//! is determined by scope, not by embedding the room id in the string. For JSON/RPC
+//! and browser links in a private room, use [`crate::api::helpers::item_path_for_api_in_room`]
+//! so ontology items become `https://slug.social/r/{short}/{slug}/~/…`.
 
 use std::borrow::Borrow;
 use std::fmt;

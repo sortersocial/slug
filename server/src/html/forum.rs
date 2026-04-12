@@ -1,6 +1,6 @@
 use axum::{
     extract::{Path, Query, State},
-    http::{HeaderMap, StatusCode},
+    http::{HeaderMap, StatusCode, Uri},
     response::{Html, IntoResponse},
 };
 use axum_extra::extract::cookie::CookieJar;
@@ -19,7 +19,7 @@ use crate::{
 
 use super::{
     bc_segment, bc_threads, cli_panel, layout, now_ms, profile_href, recency_class,
-    render_linkified_with_embeds_in_scope, JsBuilder,
+    render_linkified_with_embeds_in_scope, theme_from_jar, theme_next_from_uri, JsBuilder,
 };
 
 #[derive(Clone)]
@@ -577,6 +577,7 @@ pub async fn home(
     State(state): State<AppState>,
     headers: HeaderMap,
     jar: CookieJar,
+    uri: Uri,
 ) -> impl IntoResponse {
     let now = now_ms();
     let reduced = state.reduced.read().await;
@@ -624,6 +625,8 @@ pub async fn home(
             (cli_panel("npx slugsocial public forum list"))
         },
         None,
+        theme_from_jar(&jar),
+        &theme_next_from_uri(&uri),
     );
     Html(page.into_string())
 }
@@ -679,6 +682,7 @@ async fn thread_view_inner(
     nav: ThreadNav,
     headers: HeaderMap,
     jar: CookieJar,
+    uri: Uri,
 ) -> impl IntoResponse {
     let tag = canonicalize_tag(&tag);
     let scope = nav.scope();
@@ -778,6 +782,8 @@ async fn thread_view_inner(
             (cli_panel(&cli))
         },
         None,
+        theme_from_jar(&jar),
+        &theme_next_from_uri(&uri),
     );
     Html(page.into_string()).into_response()
 }
@@ -789,8 +795,9 @@ pub async fn thread_view(
     Query(q): Query<ThreadViewQuery>,
     headers: HeaderMap,
     jar: CookieJar,
+    uri: Uri,
 ) -> impl IntoResponse {
-    thread_view_inner(state, tag, q, ThreadNav::public(), headers, jar).await
+    thread_view_inner(state, tag, q, ThreadNav::public(), headers, jar, uri).await
 }
 
 /// Room thread — `/r/:short/:slug/t/:tag`
@@ -800,31 +807,39 @@ pub async fn room_thread_view(
     Query(q): Query<ThreadViewQuery>,
     headers: HeaderMap,
     jar: CookieJar,
+    uri: Uri,
 ) -> impl IntoResponse {
     let room_id = format!("{room_short}/{room_slug}");
     let reduced = state.reduced.read().await;
     let user = optional_principal(&headers, &jar, &reduced);
     if !user_can_view_room(&reduced, &room_id, user.as_deref()) {
         drop(reduced);
-        return room_not_found_page().into_response();
+        return room_not_found_page(&jar, &uri).into_response();
     }
     drop(reduced);
     let Some(nav) = ThreadNav::from_room_id(&room_id) else {
         return (StatusCode::NOT_FOUND, "bad room path").into_response();
     };
-    thread_view_inner(state, tag, q, nav, headers, jar)
+    thread_view_inner(state, tag, q, nav, headers, jar, uri)
         .await
         .into_response()
 }
 
-fn room_not_found_page() -> impl IntoResponse {
+fn room_not_found_page(jar: &CookieJar, uri: &Uri) -> impl IntoResponse {
     let body = html! {
         nav class="breadcrumb" { a href="/" { "slug.social" } }
         h1 { "not found" }
         p { "The requested page could not be found." }
         p { a href="/" { "home" } }
     };
-    let page = layout("not found — slug.social", "view-thread", body, None);
+    let page = layout(
+        "not found — slug.social",
+        "view-thread",
+        body,
+        None,
+        theme_from_jar(jar),
+        &theme_next_from_uri(uri),
+    );
     (StatusCode::NOT_FOUND, Html(page.into_string()))
 }
 
@@ -834,6 +849,7 @@ pub async fn room_page(
     Path((room_short, room_slug)): Path<(String, String)>,
     headers: HeaderMap,
     jar: CookieJar,
+    uri: Uri,
 ) -> impl IntoResponse {
     let room_id = format!("{room_short}/{room_slug}");
     let now = now_ms();
@@ -845,7 +861,7 @@ pub async fn room_page(
     let user = optional_principal(&headers, &jar, &reduced);
     if !user_can_view_room(&reduced, &room_id, user.as_deref()) {
         drop(reduced);
-        return room_not_found_page().into_response();
+        return room_not_found_page(&jar, &uri).into_response();
     }
     let scope = ScopeId::Room(room_id.clone());
     let mut rows = collect_thread_rows_for_scope(&reduced, &scope, now);
@@ -902,6 +918,8 @@ pub async fn room_page(
             (cli_panel(&audit_cli))
         },
         None,
+        theme_from_jar(&jar),
+        &theme_next_from_uri(&uri),
     );
     Html(page.into_string()).into_response()
 }
@@ -943,6 +961,8 @@ async fn thread_post_view_inner(
     index_str: String,
     nav: ThreadNav,
     viewer: Option<String>,
+    jar: CookieJar,
+    uri: Uri,
 ) -> impl IntoResponse {
     let tag = canonicalize_tag(&tag);
     let index: usize = index_str.parse().unwrap_or(0);
@@ -987,6 +1007,8 @@ async fn thread_post_view_inner(
             }
         },
         None,
+        theme_from_jar(&jar),
+        &theme_next_from_uri(&uri),
     );
     Html(page.into_string()).into_response()
 }
@@ -996,11 +1018,12 @@ pub async fn thread_post_view(
     Path((tag, index_str)): Path<(String, String)>,
     headers: HeaderMap,
     jar: CookieJar,
+    uri: Uri,
 ) -> impl IntoResponse {
     let reduced = state.reduced.read().await;
     let viewer = optional_principal(&headers, &jar, &reduced);
     drop(reduced);
-    thread_post_view_inner(state, tag, index_str, ThreadNav::public(), viewer)
+    thread_post_view_inner(state, tag, index_str, ThreadNav::public(), viewer, jar, uri)
         .await
 }
 
@@ -1009,19 +1032,20 @@ pub async fn room_thread_post_view(
     Path((room_short, room_slug, tag, index_str)): Path<(String, String, String, String)>,
     headers: HeaderMap,
     jar: CookieJar,
+    uri: Uri,
 ) -> impl IntoResponse {
     let room_id = format!("{room_short}/{room_slug}");
     let reduced = state.reduced.read().await;
     let user = optional_principal(&headers, &jar, &reduced);
     if !user_can_view_room(&reduced, &room_id, user.as_deref()) {
         drop(reduced);
-        return room_not_found_page().into_response();
+        return room_not_found_page(&jar, &uri).into_response();
     }
     drop(reduced);
     let Some(nav) = ThreadNav::from_room_id(&room_id) else {
         return (StatusCode::NOT_FOUND, "bad room path").into_response();
     };
-    thread_post_view_inner(state, tag, index_str, nav, user)
+    thread_post_view_inner(state, tag, index_str, nav, user, jar, uri)
         .await
         .into_response()
 }
@@ -1193,6 +1217,7 @@ pub async fn user_profile_page(
     Path(username): Path<String>,
     headers: HeaderMap,
     jar: CookieJar,
+    uri: Uri,
 ) -> impl IntoResponse {
     let canon = match parse_username(&username) {
         Ok(u) => u,
@@ -1270,6 +1295,8 @@ pub async fn user_profile_page(
             (cli_panel(&format!("npx slugsocial public forum list")))
         },
         None,
+        theme_from_jar(&jar),
+        &theme_next_from_uri(&uri),
     );
     Html(page.into_string()).into_response()
 }
@@ -1292,13 +1319,14 @@ pub async fn room_thread_post_expand(
     Path((room_short, room_slug, tag, index_str)): Path<(String, String, String, String)>,
     headers: HeaderMap,
     jar: CookieJar,
+    uri: Uri,
 ) -> impl IntoResponse {
     let room_id = format!("{room_short}/{room_slug}");
     let reduced = state.reduced.read().await;
     let user = optional_principal(&headers, &jar, &reduced);
     if !user_can_view_room(&reduced, &room_id, user.as_deref()) {
         drop(reduced);
-        return room_not_found_page().into_response();
+        return room_not_found_page(&jar, &uri).into_response();
     }
     let Some(nav) = ThreadNav::from_room_id(&room_id) else {
         drop(reduced);
@@ -1328,13 +1356,14 @@ pub async fn room_thread_post_expand_deleted(
     Path((room_short, room_slug, tag, index_str)): Path<(String, String, String, String)>,
     headers: HeaderMap,
     jar: CookieJar,
+    uri: Uri,
 ) -> impl IntoResponse {
     let room_id = format!("{room_short}/{room_slug}");
     let reduced = state.reduced.read().await;
     let user = optional_principal(&headers, &jar, &reduced);
     if !user_can_view_room(&reduced, &room_id, user.as_deref()) {
         drop(reduced);
-        return room_not_found_page().into_response();
+        return room_not_found_page(&jar, &uri).into_response();
     }
     let Some(nav) = ThreadNav::from_room_id(&room_id) else {
         drop(reduced);
@@ -1364,13 +1393,14 @@ pub async fn room_thread_post_collapse_deleted(
     Path((room_short, room_slug, tag, index_str)): Path<(String, String, String, String)>,
     headers: HeaderMap,
     jar: CookieJar,
+    uri: Uri,
 ) -> impl IntoResponse {
     let room_id = format!("{room_short}/{room_slug}");
     let reduced = state.reduced.read().await;
     let user = optional_principal(&headers, &jar, &reduced);
     if !user_can_view_room(&reduced, &room_id, user.as_deref()) {
         drop(reduced);
-        return room_not_found_page().into_response();
+        return room_not_found_page(&jar, &uri).into_response();
     }
     let Some(nav) = ThreadNav::from_room_id(&room_id) else {
         drop(reduced);

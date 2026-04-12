@@ -1,8 +1,10 @@
 use axum::{
     extract::State,
+    http::Uri,
     response::{Html, IntoResponse},
     Form,
 };
+use axum_extra::extract::cookie::CookieJar;
 use maud::{html, Markup};
 use serde::Deserialize;
 
@@ -13,7 +15,7 @@ use crate::{
     state::AppState,
 };
 
-use super::{bc_segment, layout};
+use super::{bc_segment, layout, theme_from_jar, theme_next_from_uri};
 
 fn bc_try() -> Markup {
     html! {
@@ -23,7 +25,7 @@ fn bc_try() -> Markup {
 }
 
 /// The interactive editor page — `/try`.
-pub async fn editor_page() -> impl IntoResponse {
+pub async fn editor_page(jar: CookieJar, uri: Uri) -> impl IntoResponse {
     let page = layout(
         "try — slug.social",
         "view-thread",
@@ -68,6 +70,8 @@ pub async fn editor_page() -> impl IntoResponse {
 "#)) }
         },
         None,
+        theme_from_jar(&jar),
+        &theme_next_from_uri(&uri),
     );
     Html(page.into_string())
 }

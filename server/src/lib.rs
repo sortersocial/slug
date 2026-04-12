@@ -33,6 +33,7 @@ pub fn create_app(state: AppState) -> Router {
         .route("/post", post(api::post_web_ingest))
         .route("/post/redact", post(api::post_web_redact))
         .route("/post/check", post(api::check_web_ingest))
+        .route("/theme", post(crate::html::post_theme))
         .route("/sse", get(api::get_html_stream))
         .route("/stream", get(api::get_stream))
         .route("/search", get(crate::html::search_page))

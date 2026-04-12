@@ -1,7 +1,7 @@
 use axum::{
     body::Body,
     extract::{Path, Query, State},
-    http::{header, HeaderMap, HeaderValue, StatusCode},
+    http::{header, HeaderMap, HeaderValue, StatusCode, Uri},
     response::{IntoResponse, Redirect, Response},
     Form, Json,
 };
@@ -17,7 +17,7 @@ use crate::{
     events::{Event, GrantAdded, TokenIssued, UserRegistered},
     html::{
         auth_complete_page, auth_signed_in_fragment, choose_username_error_fragment,
-        choose_username_page, JsBuilder,
+        choose_username_page, theme_cookie_header_from_jar, theme_from_jar, theme_next_from_uri, JsBuilder,
     },
     identity::{parse_agent, parse_username},
     reducer::ReducerState,
@@ -48,15 +48,17 @@ fn js_form_error_fragment(session: &str, error: &str) -> Response {
         .into_response()
 }
 
-fn js_signed_in_fragment(bearer: &str) -> Response {
+fn js_signed_in_fragment(bearer: &str, jar: &CookieJar) -> Response {
     let mut response = JsBuilder::new()
         .id("choose-username-form")
         .morph_inner(auth_signed_in_fragment())
         .redirect("/auth/complete")
         .into_response();
-    response
-        .headers_mut()
-        .insert(header::SET_COOKIE, session_cookie_header_value(bearer));
+    let headers = response.headers_mut();
+    headers.append(header::SET_COOKIE, session_cookie_header_value(bearer));
+    if let Some(theme) = theme_cookie_header_from_jar(jar) {
+        headers.append(header::SET_COOKIE, theme);
+    }
     response
 }
 
@@ -69,13 +71,18 @@ pub fn optional_principal(headers: &HeaderMap, jar: &CookieJar, reduced: &Reduce
     verify_token(reduced, c.value()).ok()
 }
 
-fn redirect_with_session_cookie(public_url: &str, path_and_query: &str, bearer: &str) -> Response {
-    Response::builder()
+fn redirect_with_session_cookie(public_url: &str, path_and_query: &str, bearer: &str, jar: &CookieJar) -> Response {
+    let mut res = Response::builder()
         .status(StatusCode::TEMPORARY_REDIRECT)
         .header(header::LOCATION, format!("{public_url}{path_and_query}"))
-        .header(header::SET_COOKIE, session_cookie_header_value(bearer))
         .body(Body::empty())
-        .unwrap()
+        .unwrap();
+    let headers = res.headers_mut();
+    headers.append(header::SET_COOKIE, session_cookie_header_value(bearer));
+    if let Some(theme) = theme_cookie_header_from_jar(jar) {
+        headers.append(header::SET_COOKIE, theme);
+    }
+    res
 }
 
 async fn apply_invite_redemption(state: &AppState, invite_token: &str, grantee_username: &str) -> Result<(), String> {
@@ -286,7 +293,11 @@ pub struct AuthCallbackQuery {
     pub state: String,
 }
 
-pub async fn get_auth_callback(Query(q): Query<AuthCallbackQuery>, State(state): State<AppState>) -> impl IntoResponse {
+pub async fn get_auth_callback(
+    Query(q): Query<AuthCallbackQuery>,
+    State(state): State<AppState>,
+    jar: CookieJar,
+) -> impl IntoResponse {
     let sessions = pending_sessions(&state);
     {
         let sessions_read = sessions.read().await;
@@ -365,7 +376,7 @@ pub async fn get_auth_callback(Query(q): Query<AuthCallbackQuery>, State(state):
             }
             let cookie_bearer = bearer.clone();
             s.complete = Some((username, bearer));
-            return redirect_with_session_cookie(&public_url, "/", &cookie_bearer).into_response();
+            return redirect_with_session_cookie(&public_url, "/", &cookie_bearer, &jar).into_response();
         }
     }
 
@@ -378,14 +389,20 @@ pub struct ChooseUsernameQuery {
     pub error: Option<String>,
 }
 
-pub async fn get_choose_username(Query(q): Query<ChooseUsernameQuery>, State(state): State<AppState>) -> impl IntoResponse {
+pub async fn get_choose_username(
+    Query(q): Query<ChooseUsernameQuery>,
+    State(state): State<AppState>,
+    jar: CookieJar,
+    uri: Uri,
+) -> impl IntoResponse {
     let sessions = pending_sessions(&state);
     let sessions_read = sessions.read().await;
     if !sessions_read.contains_key(&q.session) {
         return api_error(StatusCode::NOT_FOUND, "unknown session", None).into_response();
     }
     drop(sessions_read);
-    choose_username_page(&q.session, q.error.as_deref()).into_response()
+    let next = theme_next_from_uri(&uri);
+    choose_username_page(&q.session, q.error.as_deref(), theme_from_jar(&jar), &next).into_response()
 }
 
 #[derive(Debug, Deserialize)]
@@ -396,6 +413,7 @@ pub struct ChooseUsernameForm {
 
 pub async fn post_choose_username(
     State(state): State<AppState>,
+    jar: CookieJar,
     Form(form): Form<ChooseUsernameForm>,
 ) -> impl IntoResponse {
     let canon_user = match parse_username(&form.username) {
@@ -477,7 +495,7 @@ pub async fn post_choose_username(
         s.complete = Some((canon_user.clone(), bearer.clone()));
     }
 
-    js_signed_in_fragment(&bearer).into_response()
+    js_signed_in_fragment(&bearer, &jar).into_response()
 }
 
 /// Start a browser-only OAuth flow (no CLI polling). Sets session cookie on success.
@@ -569,8 +587,9 @@ pub async fn get_pending_session(
     .into_response()
 }
 
-pub async fn get_auth_complete() -> impl IntoResponse {
-    auth_complete_page()
+pub async fn get_auth_complete(jar: CookieJar, uri: Uri) -> impl IntoResponse {
+    let next = theme_next_from_uri(&uri);
+    auth_complete_page(theme_from_jar(&jar), &next).into_response()
 }
 
 pub async fn get_whoami(State(state): State<AppState>, headers: HeaderMap) -> impl IntoResponse {

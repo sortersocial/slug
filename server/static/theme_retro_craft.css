@@ -35,7 +35,6 @@ h1, h2, h3 {
   font-weight: 600;
   letter-spacing: 0.14em;
   margin: 1.5rem 0 0.5rem;
-  text-transform: uppercase;
 }
 
 a {
@@ -354,7 +353,10 @@ div.cli-panel {
   accent-color: var(--accent);
   width: 72px;
 }
-#theme-switcher,
+#slug-theme-form {
+  display: contents;
+}
+#theme-select,
 #search-btn,
 a#src-link {
   border: 1px solid var(--line);
@@ -365,7 +367,7 @@ a#src-link {
   padding: 0.25rem 0.6rem;
   text-decoration: none;
 }
-#theme-switcher:hover,
+#theme-select:hover,
 #search-btn:hover,
 a#src-link:hover {
   border-color: var(--accent);

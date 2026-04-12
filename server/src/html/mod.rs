@@ -1,10 +1,13 @@
 use axum::{
     body::Body,
     extract::Path,
-    http::{header, StatusCode},
+    http::{header, HeaderValue, StatusCode, Uri},
     response::{IntoResponse, Response},
+    Form,
 };
+use axum_extra::extract::cookie::CookieJar;
 use maud::{html, Markup, DOCTYPE};
+use serde::Deserialize;
 use std::collections::HashSet;
 
 mod auth;
@@ -31,6 +34,75 @@ pub use forum::user_profile_page;
 /// Public profile URL path for a stored username (no `@`).
 pub(crate) fn profile_href(username: &str) -> String {
     format!("/u/{username}")
+}
+
+/// Cookie name for UI theme (must match document.cookie migration in [`layout`]).
+pub const SLUG_THEME_COOKIE: &str = "slug-theme";
+
+/// Normalize a requested theme id to a known stylesheet key.
+pub fn normalize_theme(raw: &str) -> &'static str {
+    match raw {
+        "retro" => "retro",
+        "retro_craft" => "retro_craft",
+        _ => "default",
+    }
+}
+
+/// Resolved theme for rendering and cookie re-issue.
+pub fn theme_from_jar(jar: &CookieJar) -> &'static str {
+    jar.get(SLUG_THEME_COOKIE)
+        .map(|c| normalize_theme(c.value()))
+        .unwrap_or("default")
+}
+
+/// `Path` + optional `?query` for round-tripping after `POST /theme`.
+pub fn theme_next_from_uri(uri: &Uri) -> String {
+    uri.path_and_query()
+        .map(|pq| pq.as_str().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "/".to_string())
+}
+
+/// `Set-Cookie` for a validated theme (ASCII cookie value).
+pub fn theme_cookie_header_value(theme: &str) -> HeaderValue {
+    let t = normalize_theme(theme);
+    let s = format!("{SLUG_THEME_COOKIE}={t}; Path=/; SameSite=Lax; Max-Age=31536000");
+    HeaderValue::from_str(&s).expect("theme cookie must be ASCII")
+}
+
+/// Re-issue theme cookie on responses that also set `slug_session`, so login does not drop theme.
+pub fn theme_cookie_header_from_jar(jar: &CookieJar) -> Option<HeaderValue> {
+    let c = jar.get(SLUG_THEME_COOKIE)?;
+    Some(theme_cookie_header_value(c.value()))
+}
+
+fn sanitize_theme_next(next: Option<&str>) -> String {
+    let s = next.unwrap_or("/").trim();
+    if s.starts_with('/') && !s.starts_with("//") && s.len() < 8192 {
+        s.to_string()
+    } else {
+        "/".to_string()
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ThemeForm {
+    theme: String,
+    next: Option<String>,
+}
+
+/// `POST /theme` — set theme cookie and redirect back (full navigation, no fetch).
+pub async fn post_theme(Form(form): Form<ThemeForm>) -> impl IntoResponse {
+    let theme = normalize_theme(&form.theme);
+    let next = sanitize_theme_next(form.next.as_deref());
+    let loc = HeaderValue::try_from(next.as_str())
+        .unwrap_or_else(|_| HeaderValue::from_static("/"));
+    Response::builder()
+        .status(StatusCode::SEE_OTHER)
+        .header(header::LOCATION, loc)
+        .header(header::SET_COOKIE, theme_cookie_header_value(theme))
+        .body(Body::empty())
+        .expect("theme redirect response")
 }
 
 // Embed CSS files at compile time
@@ -173,7 +245,9 @@ impl JsQueryBuilder {
     }
 }
 
-pub(super) fn layout(title: &str, view: &str, body: Markup, views: Option<u64>) -> Markup {
+pub(super) fn layout(title: &str, view: &str, body: Markup, views: Option<u64>, theme: &str, theme_next: &str) -> Markup {
+    let theme = normalize_theme(theme);
+    let css_href = format!("/static/theme_{theme}.css");
     html! {
         (DOCTYPE)
         html {
@@ -181,7 +255,20 @@ pub(super) fn layout(title: &str, view: &str, body: Markup, views: Option<u64>) 
                 meta charset="utf-8";
                 meta name="viewport" content="width=device-width, initial-scale=1";
                 title { (title) }
-                link rel="stylesheet" href="/static/theme_default.css" id="theme-stylesheet";
+                script { (maud::PreEscaped(r#"
+(function() {
+  try {
+    var ls = localStorage.getItem('slug-theme');
+    if (!ls) return;
+    var m = document.cookie.match(/(?:^|;\s*)slug-theme=([^;]+)/);
+    var c = m ? decodeURIComponent(m[1].replace(/\+/g, ' ')) : '';
+    if (ls === c) { localStorage.removeItem('slug-theme'); return; }
+    document.cookie = 'slug-theme=' + encodeURIComponent(ls) + '; Path=/; SameSite=Lax; Max-Age=31536000';
+    location.reload();
+  } catch (e) {}
+})();
+"#)) }
+                link rel="stylesheet" href=(css_href) id="theme-stylesheet";
                 script src="https://unpkg.com/idiomorph@0.3.0/dist/idiomorph.min.js" {}
             }
             body class=(view) {
@@ -196,32 +283,21 @@ pub(super) fn layout(title: &str, view: &str, body: Markup, views: Option<u64>) 
                         input type="range" id="spread-slider" min="0" max="1" step="0.05" value="1";
                     }
                     a id="search-btn" href="/search" { "search" }
-                    div id="theme-switcher" { "theme" }
+                    form id="slug-theme-form" method="post" action="/theme" {
+                        input type="hidden" name="next" value=(theme_next);
+                        select id="theme-select" name="theme" onchange="this.form.submit()" aria-label="Theme" {
+                            @for (val, label) in [("default", "default"), ("retro", "retro"), ("retro_craft", "craft")] {
+                                @if theme == val {
+                                    option value=(val) selected { (label) }
+                                } @else {
+                                    option value=(val) { (label) }
+                                }
+                            }
+                        }
+                    }
                 }
 script { (maud::PreEscaped(r#"
                     (function() {
-                        // Theme switching
-                        const themes = ['default', 'retro', 'retro_craft'];
-                        const themeLabel = { default: 'default', retro: 'retro', retro_craft: 'craft' };
-                        const storedTheme = localStorage.getItem('slug-theme') || 'default';
-                        const switcher = document.getElementById('theme-switcher');
-                        const stylesheet = document.getElementById('theme-stylesheet');
-
-                        function setTheme(name) {
-                            stylesheet.href = `/static/theme_${name}.css`;
-                            localStorage.setItem('slug-theme', name);
-                            switcher.textContent = themeLabel[name] || name;
-                            setTimeout(() => setSpread(parseFloat(slider.value)), 50);
-                        }
-
-                        setTheme(storedTheme);
-
-                        switcher.addEventListener('click', function() {
-                            const current = themes.indexOf(localStorage.getItem('slug-theme') || 'default');
-                            const next = (current + 1) % themes.length;
-                            setTheme(themes[next]);
-                        });
-
                         // Spread control
                         const slider = document.getElementById('spread-slider');
                         const storedSpread = localStorage.getItem('slug-spread');
@@ -245,6 +321,7 @@ script { (maud::PreEscaped(r#"
                             const f = e.target;
                             if (!f || f.tagName !== 'FORM') return;
                             if ((f.method || 'get').toLowerCase() !== 'post') return;
+                            if (f.id === 'slug-theme-form') return;
                             e.preventDefault();
                             const resp = await fetch(f.action, {
                                 method: 'POST',
