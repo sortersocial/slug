@@ -836,3 +836,98 @@ fn posts_by_actor_indexes_and_profile_visibility() {
     assert_eq!(bob.len(), 2);
 }
 
+// ============================================================================
+// Feed redacted-post filtering regression tests
+// ============================================================================
+
+/// Helper: simulate the feed filtering logic from `GetFeed` in rpc.rs.
+/// Returns (total, posts) where `total` is the count of visible (non-redacted)
+/// matching posts and `posts` is the page of IDs up to `limit`.
+fn feed_query(state: &ReducerState, cutoff: i64, limit: usize) -> (usize, Vec<String>) {
+    let matching: Vec<&str> = state.ingests_ordered.iter().rev()
+        .map(|id| id.as_str())
+        .take_while(|id| state.ingests_by_id.get(*id).map_or(false, |ing| ing.ts > cutoff))
+        .filter(|id| {
+            state.ingests_by_id.get(*id).is_some_and(|ing| {
+                let scope = slugsocial_server::reducer::scope_from_room_wire(&ing.room_id);
+                match scope {
+                    ScopeId::Public => true,
+                    ScopeId::Room(_) => false,
+                }
+            })
+        })
+        .filter(|id| !state.redacted_posts.contains(*id))
+        .collect();
+    let total = matching.len();
+    let posts: Vec<String> = matching.into_iter()
+        .take(limit)
+        .map(|id| id.to_string())
+        .collect();
+    (total, posts)
+}
+
+#[test]
+fn feed_total_excludes_redacted_posts() {
+    use slugsocial_server::events::PostRedacted;
+
+    let mut state = ReducerState::default();
+    // Create 5 posts with increasing timestamps.
+    for ts in 1..=5 {
+        state.apply_event(ingest_event(ts, "~/t/a {a}\n"));
+    }
+    assert_eq!(state.ingests_ordered.len(), 5);
+
+    // Redact posts 2 and 4.
+    state.apply_event(Event::PostRedacted(PostRedacted {
+        ts: 100,
+        post_id: "test-2".to_string(),
+        principal: "test".to_string(),
+    }));
+    state.apply_event(Event::PostRedacted(PostRedacted {
+        ts: 101,
+        post_id: "test-4".to_string(),
+        principal: "test".to_string(),
+    }));
+
+    // Feed with cutoff=0 (all posts), limit=10.
+    let (total, posts) = feed_query(&state, 0, 10);
+    assert_eq!(total, 3, "total must exclude redacted posts");
+    assert_eq!(posts.len(), 3, "returned posts must exclude redacted posts");
+    assert!(!posts.contains(&"test-2".to_string()), "redacted post test-2 must not appear");
+    assert!(!posts.contains(&"test-4".to_string()), "redacted post test-4 must not appear");
+}
+
+#[test]
+fn feed_limit_applied_after_redacted_filter() {
+    use slugsocial_server::events::PostRedacted;
+
+    let mut state = ReducerState::default();
+    // Create 6 posts.
+    for ts in 1..=6 {
+        state.apply_event(ingest_event(ts, "~/t/a {a}\n"));
+    }
+
+    // Redact the 3 most recent posts (test-6, test-5, test-4).
+    for id in ["test-6", "test-5", "test-4"] {
+        state.apply_event(Event::PostRedacted(PostRedacted {
+            ts: 200,
+            post_id: id.to_string(),
+            principal: "test".to_string(),
+        }));
+    }
+
+    // Request limit=2. The 3 most recent are redacted, so the feed should
+    // still return 2 posts from the remaining 3 (test-3, test-2, test-1).
+    // BUG before fix: .take(limit) was applied before the redacted filter,
+    // so .take(2) would grab test-6 and test-5, both redacted, yielding 0 posts.
+    let (total, posts) = feed_query(&state, 0, 2);
+    assert_eq!(total, 3, "total must count only non-redacted posts");
+    assert_eq!(
+        posts.len(), 2,
+        "limit should be applied AFTER filtering redacted posts, not before"
+    );
+    // The 2 most recent non-redacted posts (reverse chronological order).
+    assert_eq!(posts[0], "test-3");
+    assert_eq!(posts[1], "test-2");
+}
+

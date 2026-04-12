@@ -1461,12 +1461,12 @@ pub async fn handle_rpc_batch(
                                                 can_view_scope(&reduced, &scope, Some(viewer.as_str()))
                                             })
                                         })
+                                        .filter(|id| !reduced.redacted_posts.contains(*id))
                                         .collect();
                                     let total = matching.len();
                                     let posts: Vec<FeedPost> = matching.into_iter()
                                         .take(limit)
                                         .filter_map(|id| reduced.ingests_by_id.get(id))
-                                        .filter(|ing| !reduced.redacted_posts.contains(&ing.id))
                                         .map(|ing| {
                                             let scope = scope_from_room_wire(&ing.room_id);
                                             let thread_post_index = reduced
@@ -1522,12 +1522,12 @@ pub async fn handle_rpc_batch(
                                             can_view_scope(&reduced, &scope, Some(viewer.as_str()))
                                         })
                                     })
+                                    .filter(|id| !reduced.redacted_posts.contains(*id))
                                     .collect();
                                 let total = matching.len();
                                 let posts: Vec<FeedPost> = matching.into_iter()
                                     .take(limit)
                                     .filter_map(|id| reduced.ingests_by_id.get(id))
-                                    .filter(|ing| !reduced.redacted_posts.contains(&ing.id))
                                     .map(|ing| {
                                         let scope = scope_from_room_wire(&ing.room_id);
                                         let thread_post_index = reduced
