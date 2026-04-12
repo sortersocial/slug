@@ -66,17 +66,7 @@
                                                             "capabilities" ["view" "post" "vote" "add_item"]}}]
                                              :headers {"Authorization" (str "Bearer " alice-token)})
            grant-json  (json/parse-string (:body grant) false)
-           _           (is (true? (get-in grant-json ["results" 0 "ok"])) "bob granted room access")
-           ;; Seed via RPC (reliable); room POST /ui form + redirect is covered elsewhere.
-           seed-txt    "# sse-thread\n\nseed thread"
-           seed-resp   (oauth/http-post-json (str base-url "/api/v0/rpc")
-                                            [{"Post" {"room" room-id
-                                                      "thread_tag" "sse-thread"
-                                                      "text" seed-txt
-                                                      "return_rank_diff" false}}]
-                                            :headers {"Authorization" (str "Bearer " alice-token)})
-           seed-json   (json/parse-string (:body seed-resp) false)
-           _           (is (true? (get-in seed-json ["results" 0 "ok"])) "seed thread via rpc")]
+           _           (is (true? (get-in grant-json ["results" 0 "ok"])) "bob granted room access")]
        (core/with-playwright [pw]
          (core/with-browser [browser (core/launch-chromium pw {:headless true :channel "chrome"})]
            (core/with-context [alice-ctx (core/new-context browser)]
@@ -87,13 +77,26 @@
                   (login-user! bob-pg base-url "bob")
 
                    (let [[room-short room-slug] (str/split room-id #"/" 2)
-                         thread-url (str base-url "/r/" room-short "/" room-slug "/t/sse-thread")]
-                    ;; Thread body seeded via RPC above (reliable in CI). Room UI expand/new-thread flow
-                    ;; is covered by integration tests and manual flows; here we focus on SSE live updates.
-                    (page/navigate alice-pg thread-url)
+                         room-url (str base-url "/r/" room-short "/" room-slug)
+                         thread-url (str room-url "/t/sse-thread")]
+                    ;; Object under test: slug_ui.js intercepts POST /ui, evals JS, morphs
+                    ;; #room-new-thread-ui-slot (expand compose), then post_ingest redirects to thread.
+                    (page/navigate alice-pg room-url)
+                    (page/wait-for-load-state alice-pg :load)
+                    (is (wait-for-text alice-pg "#room-new-thread-ui-slot"
+                                       "new thread in this room" 30000)
+                        "collapsed new-thread control in slot (page + slug_ui.js)")
+                    (locator/click (page/locator alice-pg "#room-new-thread-ui-slot button.form-toggle"))
+                    (is (wait-for-text alice-pg "#room-new-thread-ui-slot"
+                                       "hide new thread form" 30000)
+                        "compose expanded via POST /ui morph (slug_ui.js)")
+                    (locator/fill (page/locator alice-pg "#room-new-tag") "sse-thread")
+                    (locator/fill (page/locator alice-pg "#room-new-thread-compose textarea") "seed thread")
+                    (locator/click (page/locator alice-pg "#room-new-thread-form button[type='submit']"))
+                    (page/wait-for-url alice-pg thread-url {:timeout 90000.0})
                     (page/wait-for-load-state alice-pg :load)
                     (is (wait-for-text alice-pg "#thread-feed-region" "seed thread" 45000)
-                        "alice sees seeded thread body")
+                        "alice sees first post after form ingest + redirect")
 
                     (page/navigate bob-pg thread-url)
                     (page/wait-for-load-state bob-pg :load)
