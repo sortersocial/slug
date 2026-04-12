@@ -28,8 +28,8 @@ pub use forum::{
 
 pub(crate) use forum::{
     fragment_public_new_thread_form, fragment_room_new_thread_form, login_to_post_hint_markup,
-    thread_ui_collapse_redacted_post, thread_ui_expand_post_full, thread_ui_expand_redacted_post,
-    user_can_post_room, user_can_view_room,
+    room_members_section_markup, thread_ui_collapse_redacted_post, thread_ui_expand_post_full,
+    thread_ui_expand_redacted_post, user_can_post_room, user_can_view_room,
 };
 pub use garden::{garden_index, ontology_path, room_garden_index, room_ontology_path};
 pub use search::{search_page, search_results_fragment};
@@ -110,13 +110,23 @@ pub async fn post_theme(Form(form): Form<ThemeForm>) -> impl IntoResponse {
         .expect("theme redirect response")
 }
 
-// Embed CSS files at compile time
+// Embed CSS and shared UI script at compile time
 const THEME_DEFAULT_CSS: &str = include_str!("../../static/theme_default.css");
 const THEME_RETRO_CSS: &str = include_str!("../../static/theme_retro.css");
 const THEME_RETRO_CRAFT_CSS: &str = include_str!("../../static/theme_retro_craft.css");
+const SLUG_UI_JS: &str = include_str!("../../static/slug_ui.js");
 
-pub async fn serve_theme_css(Path(filename): Path<String>) -> impl IntoResponse {
-    // Extract theme name from filename like "theme_default.css" or "theme_retro.css"
+pub async fn serve_static(Path(filename): Path<String>) -> impl IntoResponse {
+    if filename == "slug_ui.js" {
+        return Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "text/javascript; charset=utf-8")
+            .header(header::CACHE_CONTROL, "public, max-age=3600")
+            .body(SLUG_UI_JS.to_string())
+            .unwrap()
+            .into_response();
+    }
+
     let theme = filename
         .strip_prefix("theme_")
         .and_then(|s| s.strip_suffix(".css"));
@@ -125,7 +135,7 @@ pub async fn serve_theme_css(Path(filename): Path<String>) -> impl IntoResponse 
         Some("default") => THEME_DEFAULT_CSS,
         Some("retro") => THEME_RETRO_CSS,
         Some("retro_craft") => THEME_RETRO_CRAFT_CSS,
-        _ => return (StatusCode::NOT_FOUND, "theme not found").into_response(),
+        _ => return (StatusCode::NOT_FOUND, "static file not found").into_response(),
     };
 
     Response::builder()
@@ -219,6 +229,15 @@ impl JsBuilder {
         self
     }
 
+    /// Focus first matching element (e.g. after morphing open a compose form).
+    pub(crate) fn focus_selector(mut self, selector: &str) -> Self {
+        self.snippets.push(format!(
+            "var __slugF = document.querySelector({}); if (__slugF && __slugF.focus) {{ __slugF.focus(); }}",
+            js_string_literal(selector),
+        ));
+        self
+    }
+
     pub(crate) fn build(self) -> String {
         self.snippets.join(" ")
     }
@@ -270,21 +289,9 @@ pub(super) fn layout(title: &str, view: &str, body: Markup, views: Option<u64>, 
                 meta charset="utf-8";
                 meta name="viewport" content="width=device-width, initial-scale=1";
                 title { (title) }
-                script { (maud::PreEscaped(r#"
-(function() {
-  try {
-    var ls = localStorage.getItem('slug-theme');
-    if (!ls) return;
-    var m = document.cookie.match(/(?:^|;\s*)slug-theme=([^;]+)/);
-    var c = m ? decodeURIComponent(m[1].replace(/\+/g, ' ')) : '';
-    if (ls === c) { localStorage.removeItem('slug-theme'); return; }
-    document.cookie = 'slug-theme=' + encodeURIComponent(ls) + '; Path=/; SameSite=Lax; Max-Age=31536000';
-    location.reload();
-  } catch (e) {}
-})();
-"#)) }
                 link rel="stylesheet" href=(css_href) id="theme-stylesheet";
                 script src="https://unpkg.com/idiomorph@0.3.0/dist/idiomorph.min.js" {}
+                script src="/static/slug_ui.js" defer {}
             }
             body class=(view) {
                 @if let Some(n) = views {
@@ -311,144 +318,6 @@ pub(super) fn layout(title: &str, view: &str, body: Markup, views: Option<u64>, 
                         }
                     }
                 }
-script { (maud::PreEscaped(r#"
-                    (function() {
-                        // Spread control
-                        const slider = document.getElementById('spread-slider');
-                        const storedSpread = localStorage.getItem('slug-spread');
-
-                        function setSpread(value) {
-                            document.documentElement.style.setProperty('--spread', value);
-                            localStorage.setItem('slug-spread', value);
-                        }
-
-                        if (storedSpread !== null) {
-                            slider.value = storedSpread;
-                            setSpread(parseFloat(storedSpread));
-                        }
-
-                        slider.addEventListener('input', function() {
-                            setSpread(parseFloat(this.value));
-                        });
-
-                        // Intercept POST forms and eval the server's JS response body.
-                        document.addEventListener('submit', async (e) => {
-                            const f = e.target;
-                            if (!f || f.tagName !== 'FORM') return;
-                            if ((f.method || 'get').toLowerCase() !== 'post') return;
-                            if (f.id === 'slug-theme-form') return;
-                            e.preventDefault();
-                            const resp = await fetch(f.action, {
-                                method: 'POST',
-                                body: new URLSearchParams(new FormData(f)),
-                                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                                credentials: 'same-origin',
-                            });
-                            const js = await resp.text();
-                            if (js && js.trim()) {
-                                eval(js);
-                            }
-                        });
-
-                        // Small client-side toggles for compose panes.
-                        document.addEventListener('click', (e) => {
-                            const btn = e.target && e.target.closest && e.target.closest('[data-toggle-target]');
-                            if (!btn) return;
-                            const selector = btn.getAttribute('data-toggle-target');
-                            if (!selector) return;
-                            const target = document.querySelector(selector);
-                            if (!target) return;
-                            const willOpen = target.hasAttribute('hidden');
-                            if (willOpen) {
-                                target.removeAttribute('hidden');
-                            } else {
-                                target.setAttribute('hidden', '');
-                            }
-                            btn.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
-                            const openLabel = btn.getAttribute('data-open-label');
-                            const closeLabel = btn.getAttribute('data-close-label');
-                            if (openLabel && closeLabel) {
-                                btn.textContent = willOpen ? closeLabel : openLabel;
-                            }
-                            if (willOpen) {
-                                const firstField = target.querySelector('input[type="text"], textarea');
-                                if (firstField) firstField.focus();
-                            }
-                        });
-
-                        // Debounced forum form validation.
-                        const checkTimers = new WeakMap();
-                        async function runFormCheck(form) {
-                            const action = form.getAttribute('data-check-action');
-                            if (!action) return;
-                            const fd = new URLSearchParams(new FormData(form));
-                            const checkRpc = form.getAttribute('data-check-rpc');
-                            if (checkRpc) {
-                                fd.set('__rpc__', checkRpc);
-                            }
-                            const resp = await fetch(action, {
-                                method: 'POST',
-                                body: fd,
-                                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                                credentials: 'same-origin',
-                            });
-                            const js = await resp.text();
-                            if (js && js.trim()) {
-                                eval(js);
-                            }
-                        }
-                        document.addEventListener('input', (e) => {
-                            const target = e.target;
-                            if (!target || !target.closest) return;
-                            const form = target.closest('form[data-check-action]');
-                            if (!form) return;
-                            if (!(target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return;
-                            const prev = checkTimers.get(form);
-                            if (prev) clearTimeout(prev);
-                            const handle = setTimeout(() => {
-                                runFormCheck(form).catch((err) => console.warn('slug form check failed', err));
-                            }, 250);
-                            checkTimers.set(form, handle);
-                        });
-
-                        // Search: debounced fetch + idiomorph.
-                        (function() {
-                            const si = document.getElementById('search-input');
-                            if (!si) return;
-                            let st;
-                            si.addEventListener('input', () => {
-                                clearTimeout(st);
-                                st = setTimeout(async () => {
-                                    const q = si.value.trim();
-                                    const el = document.getElementById('search-results');
-                                    if (!el) return;
-                                    if (q.length < 2) { el.innerHTML = ''; return; }
-                                    const r = await fetch('/search/results?q=' + encodeURIComponent(q));
-                                    Idiomorph.morph(el, await r.text());
-                                }, 150);
-                            });
-                            // Focus search input on / key
-                            document.addEventListener('keydown', (e) => {
-                                if (e.key === '/' && document.activeElement !== si) {
-                                    e.preventDefault();
-                                    si.focus();
-                                }
-                            });
-                        })();
-
-                        // SSE: evaluate server-pushed JavaScript snippets.
-                        (function connectSSE() {
-                            const ssePath = window.location.pathname + window.location.search;
-                            const es = new EventSource('/sse?path=' + encodeURIComponent(ssePath));
-                            es.onmessage = (e) => {
-                                if (e.data && e.data.trim()) {
-                                    eval(e.data);
-                                }
-                            };
-                            es.onerror = () => { es.close(); setTimeout(connectSSE, 3000); };
-                        })();
-                    })();
-                "#)) }
             }
         }
     }

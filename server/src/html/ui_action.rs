@@ -44,6 +44,18 @@ pub enum HtmlUiAction {
     ExpandRoomNewThreadForm {
         room_wire: String,
     },
+    /// Morph `#room-members-section` — members list open or collapsed (server-rendered).
+    SetRoomMembersExpanded {
+        room_wire: String,
+        #[serde(default)]
+        expanded: bool,
+    },
+    /// Morph `#room-new-thread-ui-slot` — compose body open or collapsed (server-rendered).
+    SetRoomNewThreadComposeExpanded {
+        room_wire: String,
+        #[serde(default)]
+        expanded: bool,
+    },
     /// Replace a truncated post card with the full body (same thread index).
     ExpandPostFull {
         room: String,
@@ -152,6 +164,49 @@ mod tests {
                 room: "public".into(),
                 thread_tag: "demo".into(),
                 post_index: 3,
+            }
+        );
+    }
+
+    #[test]
+    fn set_room_members_expanded_defaults_false() {
+        let template = serde_json::json!({
+            "action": "set_room_members_expanded",
+            "room_wire": "ab/cd",
+        });
+        let mut form = HashMap::new();
+        form.insert(
+            UI_RPC_FIELD.to_string(),
+            serde_json::to_string(&template).unwrap(),
+        );
+        let a = parse_html_ui_from_form(&form).unwrap();
+        assert_eq!(
+            a,
+            HtmlUiAction::SetRoomMembersExpanded {
+                room_wire: "ab/cd".into(),
+                expanded: false,
+            }
+        );
+    }
+
+    #[test]
+    fn set_room_new_thread_compose_expanded_true() {
+        let template = serde_json::json!({
+            "action": "set_room_new_thread_compose_expanded",
+            "room_wire": "ab/cd",
+            "expanded": true,
+        });
+        let mut form = HashMap::new();
+        form.insert(
+            UI_RPC_FIELD.to_string(),
+            serde_json::to_string(&template).unwrap(),
+        );
+        let a = parse_html_ui_from_form(&form).unwrap();
+        assert_eq!(
+            a,
+            HtmlUiAction::SetRoomNewThreadComposeExpanded {
+                room_wire: "ab/cd".into(),
+                expanded: true,
             }
         );
     }
