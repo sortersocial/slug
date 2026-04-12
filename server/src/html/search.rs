@@ -418,7 +418,7 @@ pub async fn search_page(
                     value=(query) autocomplete="off" autofocus;
             }
             (render_search_results(&results, &query))
-            (cli_panel("npx slugsocial search <query>"))
+            (cli_panel(&["npx slugsocial search <query>"]))
         },
         None,
         theme_from_jar(&jar),

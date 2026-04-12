@@ -306,19 +306,41 @@ a.post-nav-btn:hover {
 }
 
 div.cli-panel {
-  align-items: baseline;
+  align-items: flex-start;
   border: 1px dashed var(--line);
   display: flex;
-  flex-wrap: wrap;
   gap: 0.5rem;
   margin: 0.65rem 0;
   padding: 0.45rem 0.65rem;
+}
+.cli-panel-cmds {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  flex: 1;
+  min-width: 0;
+}
+button.cli-panel-row {
+  background: transparent;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  display: block;
+  font: inherit;
+  margin: 0;
+  padding: 0.1rem 0.2rem;
+  text-align: left;
+  width: 100%;
+}
+button.cli-panel-row:hover {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
 }
 .cli-panel-label {
   color: var(--ink-dim);
   font-size: 0.72rem;
   letter-spacing: 0.12em;
   text-transform: uppercase;
+  padding-top: 0.12rem;
 }
 .cli-panel-cmd {
   color: var(--accent);

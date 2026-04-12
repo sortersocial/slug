@@ -139,7 +139,7 @@ pub async fn garden_index(
                     }
                 }
             }
-            (cli_panel("npx slugsocial garden tree"))
+            (cli_panel(&["npx slugsocial garden tree"]))
         },
         None,
         theme_from_jar(&jar),
@@ -542,7 +542,7 @@ async fn render_scope_view(
                 ScopeId::Public => format!("npx slugsocial public garden body {}", path.as_str().trim_start_matches("https://slug.social/~/")),
                 ScopeId::Room(room_id) => format!("npx slugsocial private {room_id} garden body {}", path.as_str().trim_start_matches("https://slug.social/~/")),
             };
-            (cli_panel(&cli))
+            (cli_panel(std::slice::from_ref(&cli)))
         },
         None,
         theme_from_jar(&jar),
