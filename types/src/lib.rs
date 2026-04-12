@@ -1,6 +1,12 @@
 use serde::{Deserialize, Serialize};
 
+pub mod paths;
 pub mod timeago;
+
+pub use paths::{
+    canonicalize_item, canonicalize_tag, item_parent_path, item_path_segments, CanonicalItemUrl,
+    ForumThreadUrl, GardenItemUrl, RelativePath, TildeOntologyPath, TildePath,
+};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ApiError {
@@ -12,7 +18,7 @@ pub struct ApiError {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RankRow {
-    pub item: String,
+    pub item: GardenItemUrl,
     pub score: f64,
     /// Normalized score as a percentage of the top item (0–100). Present when ?percent=true.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -43,7 +49,7 @@ pub struct RankComponent {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RankResponse {
     pub components: Vec<RankComponent>,
-    pub unranked_items: Vec<String>,
+    pub unranked_items: Vec<GardenItemUrl>,
 }
 
 /// Graph connectivity stats for a scope, returned with pair suggestions.
@@ -63,8 +69,8 @@ pub struct ConnectivityStats {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PairResponse {
-    pub left: String,
-    pub right: String,
+    pub left: GardenItemUrl,
+    pub right: GardenItemUrl,
     pub left_body: Option<String>,
     pub right_body: Option<String>,
     /// Thread tags that discuss either item (connective tissue to forum).
@@ -79,7 +85,7 @@ pub struct PairResponse {
 pub struct NextMoves {
     pub pair: String,
     pub rank: String,
-    pub web: String,
+    pub web: ForumThreadUrl,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -90,14 +96,14 @@ pub struct PathsResponse {
 /// Leaf items only (no children). For search / "full path list" — does not scale, works for now.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct LeavesResponse {
-    pub paths: Vec<String>,
+    pub paths: Vec<GardenItemUrl>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PathSummary {
-    pub path: String,
+    pub path: TildeOntologyPath,
     pub children: usize,
-    pub web: String,
+    pub web: GardenItemUrl,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -109,7 +115,7 @@ pub struct ThreadsResponse {
 pub struct ThreadSummary {
     pub thread: String,
     pub last_activity_ts: i64,
-    pub web: String,
+    pub web: ForumThreadUrl,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -178,7 +184,7 @@ pub struct IngestRow {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ItemResponse {
-    pub item: String,
+    pub item: GardenItemUrl,
     pub body: Option<String>,
     /// True when the body was truncated due to size. Fetch with `?full=true` for the complete body.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -201,15 +207,15 @@ pub struct RecentVotesResponse {
 /// Vote history for one item (matchup: wins/losses + thread per vote).
 #[derive(Debug, Serialize, Deserialize)]
 pub struct MatchupResponse {
-    pub item: String,
+    pub item: GardenItemUrl,
     pub votes: Vec<VoteRow>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VoteRow {
     pub ts: i64,
-    pub a: String,
-    pub b: String,
+    pub a: GardenItemUrl,
+    pub b: GardenItemUrl,
     pub ratio: String,
     /// Principal username when present (stored form, no `@`).
     pub actor: Option<String>,
@@ -510,7 +516,7 @@ pub struct RankPosition {
 /// How one item's rank changed after a vote.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RankChange {
-    pub item: String,
+    pub item: GardenItemUrl,
     /// Position before the vote. None = was unranked (no voted connections in this scope).
     pub before: Option<RankPosition>,
     /// Position after the vote. None = became unranked (e.g. component split, unlikely).
@@ -544,7 +550,7 @@ pub struct CheckScopeRanking {
     /// Parent scope path (e.g. "/models" or "/" for root).
     pub parent: String,
     pub components: Vec<RankComponent>,
-    pub unranked_items: Vec<String>,
+    pub unranked_items: Vec<GardenItemUrl>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -567,7 +573,7 @@ pub struct SearchResponse {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SearchItemHit {
-    pub path: String,
+    pub path: GardenItemUrl,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub body: Option<String>,
 }
@@ -614,7 +620,7 @@ pub struct RankHistoryRow {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RankHistoryResponse {
-    pub item: String,
+    pub item: GardenItemUrl,
     pub history: Vec<RankHistoryRow>,
 }
 

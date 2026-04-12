@@ -24,8 +24,7 @@ pub use auth::{
 
 pub use helpers::{
     api_error, compute_connectivity_stats, is_pair_voted, now_ms, paginate_rankings,
-    parse_parent_specs, pick_random_distinct, sha256_hex, resolve_item, vote_touches_path,
-    item_path_for_api,
+    parse_parent_specs, pick_random_distinct, resolve_item, sha256_hex, vote_touches_path,
 };
 
 pub use rpc::handle_rpc_batch;

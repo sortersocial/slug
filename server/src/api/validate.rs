@@ -7,8 +7,9 @@ use crate::{
     path_types::CanonicalItemUrl,
     reducer::{ReducerState, ScopeId},
 };
+use slug_types::paths::GardenItemUrl;
 
-use super::helpers::{item_path_for_api, resolve_item};
+use super::helpers::resolve_item;
 
 #[derive(Debug)]
 pub struct ValidatedIngest {
@@ -22,6 +23,10 @@ pub fn validate_ingest_document(
     text: &str,
     scope: &ScopeId,
 ) -> Result<ValidatedIngest, (StatusCode, String, Option<String>)> {
+    let room_wire = match scope {
+        ScopeId::Public => "public",
+        ScopeId::Room(r) => r.as_str(),
+    };
     let public_content = reduced.public();
     let scoped_content = match scope {
         ScopeId::Public => None,
@@ -61,14 +66,14 @@ pub fn validate_ingest_document(
                 let Some(body_text) = body else {
                     return Err((
                         StatusCode::BAD_REQUEST,
-                        format!("item missing body: {}", item_path_for_api(&item)),
+                        format!("item missing body: {}", GardenItemUrl::from_storage_str(&item, room_wire)),
                         Some("items must be declared with bodies, e.g. `~/path/item { ... }`".to_string()),
                     ));
                 };
                 if body_text.trim().is_empty() {
                     return Err((
                         StatusCode::BAD_REQUEST,
-                        format!("item body is empty: {}", item_path_for_api(&item)),
+                        format!("item body is empty: {}", GardenItemUrl::from_storage_str(&item, room_wire)),
                         Some("write at least one sentence inside `{ ... }`".to_string()),
                     ));
                 }
@@ -101,7 +106,7 @@ pub fn validate_ingest_document(
                         let key = CanonicalItemUrl((*it).clone());
                         !defined_in_doc.contains(*it) && !item_exists(&key)
                     })
-                    .map(|it| item_path_for_api(it))
+                    .map(|it| GardenItemUrl::from_storage_str(it, room_wire).into_inner())
                     .collect();
                 if !missing.is_empty() {
                     return Err((
@@ -119,7 +124,7 @@ pub fn validate_ingest_document(
                         let key = CanonicalItemUrl((*it).clone());
                         !defined_in_doc.contains(*it) && !body_exists(&key)
                     })
-                    .map(|it| item_path_for_api(it))
+                    .map(|it| GardenItemUrl::from_storage_str(it, room_wire).into_inner())
                     .collect();
                 if !missing_body.is_empty() {
                     return Err((

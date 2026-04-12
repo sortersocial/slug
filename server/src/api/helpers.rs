@@ -4,12 +4,12 @@ use axum::{
     Json,
 };
 use sha2::{Digest, Sha256};
+use slug_types::paths::{CanonicalItemUrl, GardenItemUrl};
 use slug_types::*;
 use std::collections::HashMap;
 
 use crate::{
     canonical_path::canonicalize_item,
-    path_types::CanonicalItemUrl,
     ranking::connected_components_from_voted_pairs,
 };
 
@@ -28,64 +28,6 @@ pub fn now_ms() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
     t.as_millis() as i64
-}
-
-/// Serialize a canonical item for JSON: absolute URLs stay as-is; bare paths get a `/` prefix.
-pub fn item_path_for_api(item: &str) -> String {
-    if item.starts_with("http://") || item.starts_with("https://") {
-        item.to_string()
-    } else {
-        format!("/{}", item)
-    }
-}
-
-/// Same as [`item_path_for_api`], but for private rooms ontology items are prefixed with
-/// `/r/{short}/{slug}` so the URL matches the web app (`/r/…/~/…` routes).
-pub fn item_path_for_api_in_room(item: &str, room_wire: &str) -> String {
-    let room = room_wire.trim();
-    if room.is_empty() || room == "public" {
-        return item_path_for_api(item);
-    }
-    let Some((short, slug)) = room.split_once('/') else {
-        return item_path_for_api(item);
-    };
-    if short.is_empty() || slug.is_empty() {
-        return item_path_for_api(item);
-    }
-    let Some(c) = CanonicalItemUrl::parse(item) else {
-        return item_path_for_api(item);
-    };
-    let root = CanonicalItemUrl::ontology_root();
-    let item_norm = c.as_str().trim_end_matches('/');
-    let root_norm = root.as_str().trim_end_matches('/');
-    if let Some(tail) = c.tilde_tail() {
-        return if tail.is_empty() {
-            format!("https://slug.social/r/{short}/{slug}/~")
-        } else {
-            format!("https://slug.social/r/{short}/{slug}/~/{}", tail)
-        };
-    }
-    if item_norm == root_norm {
-        return format!("https://slug.social/r/{short}/{slug}/~");
-    }
-    item_path_for_api(item)
-}
-
-/// Absolute thread URL for forum JSON (`/t/…` vs `/r/…/t/…`).
-pub fn forum_thread_web_url(room_wire: &str, thread_tag: &str) -> String {
-    let room = room_wire.trim();
-    let tag = thread_tag.trim().trim_start_matches('#');
-    if room.is_empty() || room == "public" {
-        format!("https://slug.social/t/{tag}")
-    } else if let Some((short, slug)) = room.split_once('/') {
-        if short.is_empty() || slug.is_empty() {
-            format!("https://slug.social/t/{tag}")
-        } else {
-            format!("https://slug.social/r/{short}/{slug}/t/{tag}")
-        }
-    } else {
-        format!("https://slug.social/t/{tag}")
-    }
 }
 
 /// Resolve an item path as a first-class canonical path.
@@ -109,14 +51,12 @@ pub fn parse_parent_specs(parent: Option<&String>) -> Vec<String> {
 }
 
 /// Apply offset+limit pagination to the flattened component rankings.
-/// Items are flattened in component order (largest component first), then unranked last.
-/// Returns (components, unranked_items) after the window.
 pub fn paginate_rankings(
     components: Vec<RankComponent>,
-    unranked_items: Vec<String>,
+    unranked_items: Vec<GardenItemUrl>,
     offset: usize,
     limit: Option<usize>,
-) -> (Vec<RankComponent>, Vec<String>) {
+) -> (Vec<RankComponent>, Vec<GardenItemUrl>) {
     let mut remaining_skip = offset;
     let mut remaining_take = limit.unwrap_or(usize::MAX);
     let mut out_components: Vec<RankComponent> = Vec::new();
@@ -141,7 +81,7 @@ pub fn paginate_rankings(
         });
     }
 
-    let out_unranked: Vec<String> = if remaining_take > 0 {
+    let out_unranked: Vec<GardenItemUrl> = if remaining_take > 0 {
         unranked_items
             .into_iter()
             .skip(remaining_skip)
@@ -183,11 +123,9 @@ pub fn is_pair_voted(group: &crate::reducer::GroupState, a: &str, b: &str) -> bo
     group.voted_pairs.contains(&(i, j))
 }
 
-/// Compute graph connectivity stats for a set of items within the ranking group.
 pub fn compute_connectivity_stats(group: &crate::reducer::GroupState, pool: &[String]) -> ConnectivityStats {
     let n = pool.len();
 
-    // Map pool items to global indices (items not yet in the group get no index)
     let global_idxs: Vec<Option<usize>> = pool
         .iter()
         .map(|it| {
@@ -197,7 +135,6 @@ pub fn compute_connectivity_stats(group: &crate::reducer::GroupState, pool: &[St
         .collect();
     let present: Vec<usize> = global_idxs.iter().filter_map(|x| *x).collect();
 
-    // Build local index mapping for items that exist in the ranking group
     let global_to_local: HashMap<usize, usize> = present
         .iter()
         .enumerate()
@@ -213,7 +150,6 @@ pub fn compute_connectivity_stats(group: &crate::reducer::GroupState, pool: &[St
         }),
     );
 
-    // Items not in the ranking group at all are also isolates
     let items_not_in_group = global_idxs.iter().filter(|x| x.is_none()).count();
 
     let num_components = comps.len() + isolates.len() + items_not_in_group;
@@ -236,53 +172,4 @@ pub fn compute_connectivity_stats(group: &crate::reducer::GroupState, pool: &[St
 pub fn vote_touches_path(a: &str, b: &str, parent_canon: &str) -> bool {
     let under = |item: &str| item == parent_canon || item.starts_with(&format!("{}/", parent_canon));
     under(a) || under(b)
-}
-
-#[cfg(test)]
-mod wire_url_tests {
-    use super::{forum_thread_web_url, item_path_for_api_in_room};
-
-    #[test]
-    fn public_room_unchanged() {
-        let u = "https://slug.social/~/a/b";
-        assert_eq!(item_path_for_api_in_room(u, "public"), u);
-    }
-
-    #[test]
-    fn private_room_prefixes_ontology() {
-        assert_eq!(
-            item_path_for_api_in_room("https://slug.social/~/topic/x", "9ab12cd/my-room"),
-            "https://slug.social/r/9ab12cd/my-room/~/topic/x"
-        );
-    }
-
-    #[test]
-    fn private_room_ontology_root() {
-        assert_eq!(
-            item_path_for_api_in_room("https://slug.social/~", "9ab12cd/my-room"),
-            "https://slug.social/r/9ab12cd/my-room/~"
-        );
-        assert_eq!(
-            item_path_for_api_in_room("https://slug.social/~/", "9ab12cd/my-room"),
-            "https://slug.social/r/9ab12cd/my-room/~"
-        );
-    }
-
-    #[test]
-    fn external_url_untouched_in_private_room() {
-        let u = "https://example.com/z";
-        assert_eq!(item_path_for_api_in_room(u, "9ab12cd/my-room"), u);
-    }
-
-    #[test]
-    fn forum_web_public_vs_room() {
-        assert_eq!(
-            forum_thread_web_url("public", "debate"),
-            "https://slug.social/t/debate"
-        );
-        assert_eq!(
-            forum_thread_web_url("9ab12cd/my-room", "#debate"),
-            "https://slug.social/r/9ab12cd/my-room/t/debate"
-        );
-    }
 }

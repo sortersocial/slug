@@ -8,6 +8,7 @@ use axum::{
     Json,
 };
 use rand::seq::SliceRandom;
+use slug_types::paths::{ForumThreadUrl, GardenItemUrl, TildeOntologyPath};
 use slug_types::*;
 
 use crate::{
@@ -27,9 +28,8 @@ use crate::{
 
 use super::auth::verify_bearer_principal;
 use super::helpers::{
-    compute_connectivity_stats, forum_thread_web_url, is_pair_voted, item_path_for_api,
-    item_path_for_api_in_room, now_ms, paginate_rankings, parse_parent_specs, pick_random_distinct,
-    resolve_item, vote_touches_path,
+    compute_connectivity_stats, is_pair_voted, now_ms, paginate_rankings, parse_parent_specs,
+    pick_random_distinct, resolve_item, vote_touches_path,
 };
 use super::validate::{normalize_room_and_thread, validate_ingest_document};
 
@@ -184,7 +184,7 @@ fn compute_scope_rank_changes(
         };
         if changed {
             changes.push(RankChange {
-                item: item_path_for_api_in_room(&item, room_wire),
+                item: GardenItemUrl::from_storage_str(&item, room_wire),
                 before: b,
                 after: a,
             });
@@ -206,7 +206,7 @@ fn compute_scope_rank_changes(
         parent: if parent.is_empty() {
             "/".to_string()
         } else {
-            item_path_for_api_in_room(parent, room_wire)
+            GardenItemUrl::from_storage_str(parent, room_wire).into_inner()
         },
         changes,
     })
@@ -302,7 +302,7 @@ fn build_rank_response_for_content(
                     .ranked
                     .into_iter()
                     .map(|r| RankRow {
-                        item: item_path_for_api_in_room(r.item.as_str(), room_wire),
+                        item: GardenItemUrl::from_stored(&r.item, room_wire),
                         percent: if want_percent {
                             Some((r.score / max_score) * 100.0)
                         } else {
@@ -315,10 +315,10 @@ fn build_rank_response_for_content(
         })
         .collect();
 
-    let prefixed_unranked: Vec<String> = rankings
+    let prefixed_unranked: Vec<GardenItemUrl> = rankings
         .unranked_items
         .into_iter()
-        .map(|s| item_path_for_api_in_room(s.as_str(), room_wire))
+        .map(|s| GardenItemUrl::from_stored(&s, room_wire))
         .collect();
 
     let (components, unranked_items) = if offset > 0 || limit.is_some() {
@@ -537,13 +537,13 @@ async fn rpc_post(
         (
             "npx slugsocial public garden pair".to_string(),
             "npx slugsocial public garden rank".to_string(),
-            forum_thread_web_url("public", &thread_id),
+            ForumThreadUrl::from_room_tag("public", &thread_id),
         )
     } else {
         (
             format!("npx slugsocial private {room_key} garden pair"),
             format!("npx slugsocial private {room_key} garden rank"),
-            forum_thread_web_url(&room_key, &thread_id),
+            ForumThreadUrl::from_room_tag(&room_key, &thread_id),
         )
     };
 
@@ -664,7 +664,7 @@ async fn rpc_check(
                         .ranked
                         .into_iter()
                         .map(|r| RankRow {
-                            item: item_path_for_api_in_room(r.item.as_str(), &room_key),
+                            item: GardenItemUrl::from_stored(&r.item, &room_key),
                             score: r.score,
                             percent: None,
                         })
@@ -672,12 +672,12 @@ async fn rpc_check(
                 })
                 .collect();
             CheckScopeRanking {
-                parent: item_path_for_api_in_room(parent.as_str(), &room_key),
+                parent: GardenItemUrl::from_stored(parent, &room_key).into_inner(),
                 components,
                 unranked_items: scoped
                     .unranked_items
                     .into_iter()
-                    .map(|it| item_path_for_api_in_room(it.as_str(), &room_key))
+                    .map(|it| GardenItemUrl::from_stored(&it, &room_key))
                     .collect(),
             }
         })
@@ -687,13 +687,13 @@ async fn rpc_check(
         vec![
             "npx slugsocial public forum post <TAG> --delegate <uuid:rig:model>".to_string(),
             "npx slugsocial public forum list".to_string(),
-            forum_thread_web_url("public", &thread_id),
+            ForumThreadUrl::from_room_tag("public", &thread_id).into_inner(),
         ]
     } else {
         vec![
             format!("npx slugsocial private {room_key} forum post <TAG> --delegate <uuid:rig:model>"),
             format!("npx slugsocial private {room_key} forum list"),
-            forum_thread_web_url(&room_key, &thread_id),
+            ForumThreadUrl::from_room_tag(&room_key, &thread_id).into_inner(),
         ]
     };
 
@@ -717,7 +717,7 @@ fn rpc_list_forum_threads(reduced: &ReducerState, room: &str) -> ThreadsResponse
         .map(|((_, tag), ts)| ThreadSummary {
             thread: format!("#{tag}"),
             last_activity_ts: ts.last_activity_ts,
-            web: forum_thread_web_url(room, tag),
+            web: ForumThreadUrl::from_room_tag(room, tag),
         })
         .collect();
     out.sort_by(|a, b| b.last_activity_ts.cmp(&a.last_activity_ts));
@@ -885,7 +885,7 @@ fn rpc_search(reduced: &ReducerState, q: &str, limit: usize, principal: Option<&
         }
         if score > 0 {
             scored_items.push((score, SearchItemHit {
-                path: item_path_for_api(item.as_str()),
+                path: GardenItemUrl::from_storage_str(item.as_str(), "public"),
                 body: content.item_bodies.get(item).map(|b| snippet_around(b, &words, 120)),
             }));
         }
@@ -1058,8 +1058,8 @@ async fn rpc_get_pair(state: &AppState, room: String, parent_path: String) -> Re
         .collect();
     let cs = compute_connectivity_stats(&content.ranking_group, &pool);
     Ok(RpcResult::Pair(PairResponse {
-        left: item_path_for_api_in_room(&left, &room),
-        right: item_path_for_api_in_room(&right, &room),
+        left: GardenItemUrl::from_storage_str(&left, &room),
+        right: GardenItemUrl::from_storage_str(&right, &room),
         left_body: lb,
         right_body: rb,
         threads: th,
@@ -1137,7 +1137,7 @@ pub async fn handle_rpc_batch(
                 if !content.items.contains(&item) {
                     line_err(
                         "item not found",
-                        Some(format!("{} does not exist", item_path_for_api_in_room(&item_str, &room))),
+                        Some(format!("{} does not exist", GardenItemUrl::from_storage_str(&item_str, &room))),
                     )
                 } else {
                     const MAX_ITEM_BODY: usize = 10_000;
@@ -1160,7 +1160,7 @@ pub async fn handle_rpc_batch(
                         .map(|s| s.iter().cloned().collect())
                         .unwrap_or_default();
                     line_ok(RpcResult::GardenItem(ItemResponse {
-                        item: item_path_for_api_in_room(&item_str, &room),
+                        item: GardenItemUrl::from_storage_str(&item_str, &room),
                         body,
                         truncated,
                         body_len,
@@ -1554,7 +1554,7 @@ pub async fn handle_rpc_batch(
                     for r in items {
                         let pct = want_percent.then(|| ((r.score - bot) / range * 100.0).clamp(0.0, 100.0));
                         ranked.push(RankRow {
-                            item: item_path_for_api_in_room(r.item.as_str(), &room),
+                            item: GardenItemUrl::from_storage_str(r.item.as_str(), &room),
                             score: r.score,
                             percent: pct,
                         });
@@ -1574,7 +1574,7 @@ pub async fn handle_rpc_batch(
                 let page: Vec<RankRow> = ranked
                     .into_iter()
                     .chain(unranked.into_iter().map(|it| RankRow {
-                        item: item_path_for_api_in_room(&it, &room),
+                        item: GardenItemUrl::from_storage_str(&it, &room),
                         score: 0.0,
                         percent: want_percent.then_some(0.0),
                     }))
@@ -1618,7 +1618,7 @@ pub async fn handle_rpc_batch(
                 if !content.items.contains(&item) {
                     line_err(
                         "item not found",
-                        Some(format!("{} does not exist", item_path_for_api_in_room(&item_str, &room))),
+                        Some(format!("{} does not exist", GardenItemUrl::from_storage_str(&item_str, &room))),
                     )
                 } else {
                     let votes: Vec<VoteRow> = content
@@ -1629,8 +1629,8 @@ pub async fn handle_rpc_batch(
                                 .take(limit)
                                 .map(|v| VoteRow {
                                     ts: v.ts,
-                                    a: item_path_for_api_in_room(v.a.as_str(), &room),
-                                    b: item_path_for_api_in_room(v.b.as_str(), &room),
+                                    a: GardenItemUrl::from_stored(&v.a, &room),
+                                    b: GardenItemUrl::from_stored(&v.b, &room),
                                     ratio: format!("{}:{}", v.ratio_left, v.ratio_right),
                                     actor: Some(v.principal.clone()),
                                     body: v.body.clone(),
@@ -1640,7 +1640,7 @@ pub async fn handle_rpc_batch(
                         })
                         .unwrap_or_default();
                     line_ok(RpcResult::Matchup(MatchupResponse {
-                        item: item_path_for_api_in_room(&item_str, &room),
+                        item: GardenItemUrl::from_storage_str(&item_str, &room),
                         votes,
                     }))
                 }
@@ -1667,8 +1667,8 @@ pub async fn handle_rpc_batch(
                                     if a == item_str || b == item_str {
                                         Some(VoteRow {
                                             ts: e.ts,
-                                            a: item_path_for_api_in_room(&a, &room),
-                                            b: item_path_for_api_in_room(&b, &room),
+                                            a: GardenItemUrl::from_storage_str(&a, &room),
+                                            b: GardenItemUrl::from_storage_str(&b, &room),
                                             ratio: format!("{}:{}", ratio_left, ratio_right),
                                             actor: reduced.ingests_by_id.get(&e.post_id).map(|ing| ing.principal.clone()),
                                             body: explanation,
@@ -1704,7 +1704,7 @@ pub async fn handle_rpc_batch(
                     }
                 }).collect();
                 line_ok(RpcResult::RankHistory(RankHistoryResponse {
-                    item: item_path_for_api_in_room(&item_str, &room),
+                    item: GardenItemUrl::from_storage_str(&item_str, &room),
                     history,
                 }))
                 }
@@ -1716,17 +1716,13 @@ pub async fn handle_rpc_batch(
                 } else {
                 let content = content_for_room(&reduced, &room);
                 let parents: HashSet<&str> = content.item_children.keys().map(|s| s.as_str()).collect();
-                let mut paths: Vec<String> = content
+                let mut paths: Vec<GardenItemUrl> = content
                     .items
                     .iter()
                     .filter(|p| !parents.contains(p.as_str()))
-                    .map(|p| p.as_str().to_string())
+                    .map(|p| GardenItemUrl::from_stored(p, &room))
                     .collect();
-                paths.sort();
-                let paths: Vec<String> = paths
-                    .into_iter()
-                    .map(|p| item_path_for_api_in_room(&p, &room))
-                    .collect();
+                paths.sort_by(|a, b| a.as_str().cmp(b.as_str()));
                 line_ok(RpcResult::Leaves(LeavesResponse { paths }))
                 }
             },
@@ -1743,24 +1739,13 @@ pub async fn handle_rpc_batch(
                         let mut v: Vec<PathSummary> = roots.iter()
                             .map(|path| {
                                 let children = content.item_children.get(path.as_str()).map(|s| s.len()).unwrap_or(0);
-                                let path_label = CanonicalItemUrl::parse(path.as_str())
-                                    .and_then(|c| {
-                                        c.tilde_tail().map(|t| {
-                                            if t.is_empty() {
-                                                "~/".to_string()
-                                            } else {
-                                                format!("~/{}", t)
-                                            }
-                                        })
-                                    })
-                                    .unwrap_or_else(|| path.to_string());
                                 PathSummary {
-                                    path: path_label,
+                                    path: TildeOntologyPath::from_stored(path),
                                     children,
-                                    web: item_path_for_api_in_room(path.as_str(), &room),
+                                    web: GardenItemUrl::from_stored(path, &room),
                                 }
                             }).collect();
-                        v.sort_by(|a, b| a.path.cmp(&b.path));
+                        v.sort_by(|a, b| a.path.as_str().cmp(b.path.as_str()));
                         v
                     })
                     .unwrap_or_default();
@@ -1790,8 +1775,8 @@ pub async fn handle_rpc_batch(
                     .take(limit)
                     .map(|v| VoteRow {
                         ts: v.ts,
-                        a: item_path_for_api_in_room(v.a.as_str(), &room),
-                        b: item_path_for_api_in_room(v.b.as_str(), &room),
+                        a: GardenItemUrl::from_stored(&v.a, &room),
+                        b: GardenItemUrl::from_stored(&v.b, &room),
                         ratio: format!("{}:{}", v.ratio_left, v.ratio_right),
                         actor: Some(v.principal.clone()),
                         body: v.body.clone(),

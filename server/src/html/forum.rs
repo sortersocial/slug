@@ -697,7 +697,7 @@ async fn thread_view_inner(
     let offset = q.offset.unwrap_or(0);
     let page_ids: Vec<String> = all_ids.into_iter().skip(offset).take(PAGE_SIZE).collect();
 
-    let (display_ingests, subtitle) = {
+    let (display_ingests, _subtitle) = {
         let reduced = state.reduced.read().await;
         let ingests = page_ids
             .iter()
