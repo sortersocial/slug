@@ -5,7 +5,8 @@
             [test.grants :as grants]
             [test.invites :as invites]
             [test.room-list :as room-list]
-            [test.browser-sse :as browser-sse]))
+            [test.browser-sse :as browser-sse]
+            [test.browser-post-redact :as browser-post-redact]))
 
 (defn run-core! []
   (integration/integration)
@@ -15,6 +16,7 @@
   (room-list/room-list-test))
 
 (defn -main [& args]
-  (if (= ["browser-sse"] (vec args))
-    (browser-sse/private-thread-sse-browser-test)
+  (case (vec args)
+    ["browser-sse"] (browser-sse/private-thread-sse-browser-test)
+    ["browser-post-redact"] (browser-post-redact/post-redact-browser-test)
     (run-core!)))

@@ -142,6 +142,12 @@ pub enum ThreadItem {
         actor: String,
         body: String,
         truncated: bool,
+        /// Author redacted this post; body is empty and garden contributions were removed.
+        #[serde(default)]
+        redacted: bool,
+        /// When the redaction was recorded (ms), if redacted.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        redacted_at_ts: Option<i64>,
     },
     System {
         ts: i64,
@@ -395,6 +401,10 @@ pub enum RpcCommand {
         #[serde(default)]
         limit: Option<usize>,
     },
+    /// Remove the author's post from the garden and replace the body with a tombstone in the thread.
+    PostRedact {
+        post_id: String,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -437,6 +447,7 @@ pub enum RpcResult {
     RecentVotes(RecentVotesResponse),
     Search(SearchResponse),
     Feed(FeedResponse),
+    RedactPostOk {},
 }
 
 #[derive(Debug, Serialize, Deserialize)]

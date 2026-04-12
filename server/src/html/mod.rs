@@ -18,9 +18,11 @@ use breadcrumb_path::OntologyPath;
 pub use auth::{auth_complete_page, auth_signed_in_fragment, choose_username_error_fragment, choose_username_page};
 pub use editor::{editor_check, editor_page};
 pub use forum::{
-    home, room_page, room_thread_post_expand, room_thread_post_view, room_thread_view,
+    home, room_page, room_thread_post_collapse_deleted, room_thread_post_expand,
+    room_thread_post_expand_deleted, room_thread_post_view, room_thread_view,
     thread_feed_html, thread_feed_html_for_room, thread_feed_region_markup,
-    thread_post_expand, thread_post_view, thread_view, ThreadNav,
+    thread_post_collapse_deleted, thread_post_expand, thread_post_expand_deleted, thread_post_view,
+    thread_view, ThreadNav,
 };
 pub use garden::{garden_index, ontology_path, room_garden_index, room_ontology_path};
 pub use search::{search_page, search_results_fragment};

@@ -13,7 +13,7 @@ use crate::{
     api::{
         auth::{optional_principal, SLUG_SESSION_COOKIE},
         handle_rpc_batch,
-        rpc::rpc_post_with_bearer,
+        rpc::{rpc_post_redact, rpc_post_with_bearer},
     },
     canonical_path::canonicalize_tag,
     html::{thread_feed_html, thread_feed_html_for_room, thread_feed_region_markup, JsBuilder},
@@ -30,6 +30,11 @@ pub struct WebPostForm {
     pub error_target: Option<String>,
     #[serde(default)]
     pub form_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WebRedactForm {
+    pub post_id: String,
 }
 
 fn post_redirect_location(room: &str, thread_tag: &str) -> String {
@@ -153,6 +158,8 @@ async fn rpc_check_with_bearer(
 fn post_success_response<'a>(
     state: &'a AppState,
     form: &'a WebPostForm,
+    headers: &'a HeaderMap,
+    jar: &'a CookieJar,
 ) -> impl std::future::Future<Output = Response> + 'a {
     async move {
         let error_target = form_error_target(form);
@@ -161,6 +168,10 @@ fn post_success_response<'a>(
         let thread_location = post_redirect_location(&room, &thread_tag);
         let form_id = form.form_id.as_deref().unwrap_or_default();
         let scope = scope_from_room_wire(&room);
+        let viewer = {
+            let reduced = state.reduced.read().await;
+            optional_principal(headers, jar, &reduced)
+        };
         let feed_markup = match &scope {
             ScopeId::Public => thread_feed_html(state).await,
             ScopeId::Room(_) => thread_feed_html_for_room(state, &room).await,
@@ -172,6 +183,7 @@ fn post_success_response<'a>(
                 ScopeId::Room(_) => Some(room.as_str()),
             },
             &thread_tag,
+            viewer.as_deref(),
         )
         .await;
         let feed_selector = match &scope {
@@ -194,6 +206,46 @@ fn post_success_response<'a>(
             .if_current_path_not_matches(&thread_location, |builder| builder.redirect(&thread_location));
 
         builder.into_response()
+    }
+}
+
+async fn redact_success_response(state: &AppState) -> Response {
+    let feed_markup = thread_feed_html(state).await;
+    JsBuilder::new()
+        .morph_selector("#thread-feed", feed_markup)
+        .into_response()
+}
+
+pub async fn post_web_redact(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    Form(form): Form<WebRedactForm>,
+) -> impl IntoResponse {
+    let reduced = state.reduced.read().await;
+    let Some(_username) = optional_principal(&headers, &jar, &reduced) else {
+        drop(reduced);
+        return js_redirect("/login").into_response();
+    };
+    drop(reduced);
+
+    let bearer = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.strip_prefix("Bearer ").map(|t| t.trim().to_string()))
+        .or_else(|| jar.get(SLUG_SESSION_COOKIE).map(|c| c.value().to_string()));
+
+    let Some(_bearer) = bearer else {
+        return js_redirect("/login").into_response();
+    };
+
+    match rpc_post_redact(&state, &headers, form.post_id).await {
+        Ok(RpcResult::RedactPostOk {}) => redact_success_response(&state).await.into_response(),
+        Ok(_) => (StatusCode::BAD_REQUEST, "unexpected response").into_response(),
+        Err((msg, hint)) => {
+            let detail = hint.as_deref().unwrap_or("");
+            js_error("#errors", &msg, detail).into_response()
+        }
     }
 }
 
@@ -231,7 +283,9 @@ pub async fn post_web_ingest(
     }
 
     match rpc_post_with_bearer(&state, &bearer, room.clone(), thread_tag.clone(), text).await {
-        Ok(RpcResult::PostOk { .. }) => post_success_response(&state, &form).await.into_response(),
+        Ok(RpcResult::PostOk { .. }) => post_success_response(&state, &form, &headers, &jar)
+            .await
+            .into_response(),
         Ok(_) => form_js_error(&form, "unexpected response", "Post did not return PostOk.").into_response(),
         Err((msg, hint)) => form_js_error(&form, &msg, hint.as_deref().unwrap_or("")).into_response(),
     }
