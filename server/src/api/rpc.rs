@@ -29,7 +29,7 @@ use crate::{
 use super::auth::verify_bearer_principal;
 use super::helpers::{
     compute_connectivity_stats, is_pair_voted, now_ms, paginate_rankings, parse_parent_specs,
-    pick_random_distinct, resolve_item, vote_touches_path,
+    pick_random_distinct_canonical, resolve_item, vote_touches_path,
 };
 use super::validate::{normalize_room_and_thread, validate_ingest_document};
 
@@ -146,21 +146,21 @@ fn authorize_room_read(reduced: &ReducerState, headers: &HeaderMap, room: &str) 
 }
 
 fn compute_scope_rank_changes(
-    parent: &str,
+    parent: &CanonicalItemUrl,
     before: &crate::scope_rank::ChildrenRankings,
     after: &crate::scope_rank::ChildrenRankings,
     room_wire: &str,
 ) -> Option<ScopeRankChanges> {
-    fn build_positions(rankings: &crate::scope_rank::ChildrenRankings) -> HashMap<String, Option<RankPosition>> {
+    fn build_positions(rankings: &crate::scope_rank::ChildrenRankings) -> HashMap<CanonicalItemUrl, Option<RankPosition>> {
         let mut map = HashMap::new();
         for comp in &rankings.component_rankings {
             let total = comp.ranked.len();
             for (i, item) in comp.ranked.iter().enumerate() {
-                map.insert(item.item.as_str().to_string(), Some(RankPosition { rank: i + 1, of: total }));
+                map.insert(item.item.clone(), Some(RankPosition { rank: i + 1, of: total }));
             }
         }
         for item in &rankings.unranked_items {
-            map.insert(item.as_str().to_string(), None);
+            map.insert(item.clone(), None);
         }
         map
     }
@@ -168,7 +168,7 @@ fn compute_scope_rank_changes(
     let before_pos = build_positions(before);
     let after_pos = build_positions(after);
 
-    let all_items: std::collections::BTreeSet<String> = before_pos.keys().cloned()
+    let all_items: std::collections::BTreeSet<CanonicalItemUrl> = before_pos.keys().cloned()
         .chain(after_pos.keys().cloned())
         .collect();
 
@@ -184,7 +184,7 @@ fn compute_scope_rank_changes(
         };
         if changed {
             changes.push(RankChange {
-                item: GardenItemUrl::from_storage_str(&item, room_wire),
+                item: GardenItemUrl::from_stored(&item, room_wire),
                 before: b,
                 after: a,
             });
@@ -203,11 +203,7 @@ fn compute_scope_rank_changes(
     });
 
     Some(ScopeRankChanges {
-        parent: if parent.is_empty() {
-            "/".to_string()
-        } else {
-            GardenItemUrl::from_storage_str(parent, room_wire).into_inner()
-        },
+        parent: GardenItemUrl::from_stored(parent, room_wire).into_inner(),
         changes,
     })
 }
@@ -473,8 +469,8 @@ async fn rpc_post(
         for s in &v.doc.statements {
             if let dsl::Stmt::Vote { item1, item2, .. } = s {
                 if let (Ok(a), Ok(b)) = (resolve_item(item1), resolve_item(item2)) {
-                    if let Some(p) = CanonicalItemUrl::parse(&a).and_then(|c| c.parent()) { parents.insert(p); }
-                    if let Some(p) = CanonicalItemUrl::parse(&b).and_then(|c| c.parent()) { parents.insert(p); }
+                    if let Some(p) = a.parent() { parents.insert(p); }
+                    if let Some(p) = b.parent() { parents.insert(p); }
                 }
             }
         }
@@ -525,7 +521,7 @@ async fn rpc_post(
             .filter_map(|p| {
                 let before = pre_rankings.get(p)?;
                 let after = crate::scope_rank::build_children_rankings(content, p);
-                compute_scope_rank_changes(p.as_str(), before, &after, &room_key)
+                compute_scope_rank_changes(p, before, &after, &room_key)
             })
             .collect();
         if v.is_empty() { None } else { Some(v) }
@@ -638,8 +634,8 @@ async fn rpc_check(
         for s in &v.doc.statements {
             if let dsl::Stmt::Vote { item1, item2, .. } = s {
                 if let (Ok(a), Ok(b)) = (resolve_item(item1), resolve_item(item2)) {
-                    if let Some(p) = CanonicalItemUrl::parse(&a).and_then(|c| c.parent()) { parents.insert(p); }
-                    if let Some(p) = CanonicalItemUrl::parse(&b).and_then(|c| c.parent()) { parents.insert(p); }
+                    if let Some(p) = a.parent() { parents.insert(p); }
+                    if let Some(p) = b.parent() { parents.insert(p); }
                 }
             }
         }
@@ -961,7 +957,7 @@ fn rpc_search(reduced: &ReducerState, q: &str, limit: usize, principal: Option<&
 async fn rpc_get_pair(state: &AppState, room: String, parent_path: String) -> Result<RpcResult, RpcErr> {
     let scope = scope_from_room_wire(&room);
     let reduced_arc = state.reduced.clone();
-    let pool: Vec<String> = {
+    let pool: Vec<CanonicalItemUrl> = {
         let reduced = reduced_arc.read().await;
         let content = content_for_room(&reduced, &room);
         let tmp = if parent_path.trim().is_empty() {
@@ -970,12 +966,11 @@ async fn rpc_get_pair(state: &AppState, room: String, parent_path: String) -> Re
             Some(parent_path.clone())
         };
         let specs = parse_parent_specs(tmp.as_ref());
-        let raw_pool: Vec<CanonicalItemUrl> = if specs.is_empty() {
+        if specs.is_empty() {
             content.ranking_group.idx_to_item.clone()
         } else {
             crate::scope_rank::resolve_scope(content, &specs)
-        };
-        raw_pool.into_iter().map(|it| it.0).collect()
+        }
     };
     if pool.len() < 2 {
         return Err((
@@ -983,31 +978,30 @@ async fn rpc_get_pair(state: &AppState, room: String, parent_path: String) -> Re
             Some("add items via ingest".into()),
         ));
     }
-    let selected: Option<(String, String)> = {
+    let selected: Option<(CanonicalItemUrl, CanonicalItemUrl)> = {
         let mut reduced = reduced_arc.write().await;
         let content = reduced.content.entry(scope.clone()).or_default();
         let group = &mut content.ranking_group;
         if group.idx_to_item.is_empty() {
-            pick_random_distinct(&pool)
+            pick_random_distinct_canonical(&pool)
         } else {
             let mut rng = rand::thread_rng();
-            let idxs: Vec<usize> = pool.iter()
-                .filter_map(|it| {
-                    let key = CanonicalItemUrl(it.clone());
-                    group.item_to_idx.get(&key).copied()
-                })
+            let idxs: Vec<usize> = pool
+                .iter()
+                .filter_map(|it| group.item_to_idx.get(it).copied())
                 .collect();
             let ranked = ranked_items_subset(group, &idxs, 10000, 1e-8);
-            let ranked_set: HashSet<String> = ranked.iter().map(|r| r.item.as_str().to_string()).collect();
-            let unsorted: Vec<String> = pool.iter()
+            let ranked_set: HashSet<CanonicalItemUrl> = ranked.iter().map(|r| r.item.clone()).collect();
+            let unsorted: Vec<CanonicalItemUrl> = pool
+                .iter()
                 .filter(|it| !ranked_set.contains(*it))
                 .cloned()
                 .collect();
-            let mut pick: Option<(String, String)> = None;
+            let mut pick: Option<(CanonicalItemUrl, CanonicalItemUrl)> = None;
             if !unsorted.is_empty() {
                 if let Some(left) = unsorted.choose(&mut rng).cloned() {
-                    let mut candidates: Vec<String> = if !ranked.is_empty() {
-                        ranked.iter().map(|r| r.item.as_str().to_string()).collect()
+                    let mut candidates: Vec<CanonicalItemUrl> = if !ranked.is_empty() {
+                        ranked.iter().map(|r| r.item.clone()).collect()
                     } else {
                         pool.clone()
                     };
@@ -1021,21 +1015,21 @@ async fn rpc_get_pair(state: &AppState, room: String, parent_path: String) -> Re
                     let a = ranked[i].item.as_str();
                     let b = ranked[i + 1].item.as_str();
                     if a != b && !is_pair_voted(group, a, b) {
-                        pick = Some((a.to_string(), b.to_string()));
+                        pick = Some((ranked[i].item.clone(), ranked[i + 1].item.clone()));
                         break;
                     }
                 }
                 if pick.is_none() {
                     for _ in 0..64 {
                         let (Some(a), Some(b)) = (pool.choose(&mut rng).cloned(), pool.choose(&mut rng).cloned()) else { break; };
-                        if a != b && !is_pair_voted(group, &a, &b) {
+                        if a != b && !is_pair_voted(group, a.as_str(), b.as_str()) {
                             pick = Some((a, b));
                             break;
                         }
                     }
                 }
             }
-            pick.or_else(|| pick_random_distinct(&pool))
+            pick.or_else(|| pick_random_distinct_canonical(&pool))
         }
     };
     let Some((left, right)) = selected else {
@@ -1043,8 +1037,8 @@ async fn rpc_get_pair(state: &AppState, room: String, parent_path: String) -> Re
     };
     let reduced = reduced_arc.read().await;
     let content = content_for_room(&reduced, &room);
-    let left_key = CanonicalItemUrl(left.clone());
-    let right_key = CanonicalItemUrl(right.clone());
+    let left_key = left.clone();
+    let right_key = right.clone();
     let lb = content.item_bodies.get(&left_key).cloned();
     let rb = content.item_bodies.get(&right_key).cloned();
     let th: Vec<String> = content
@@ -1058,8 +1052,8 @@ async fn rpc_get_pair(state: &AppState, room: String, parent_path: String) -> Re
         .collect();
     let cs = compute_connectivity_stats(&content.ranking_group, &pool);
     Ok(RpcResult::Pair(PairResponse {
-        left: GardenItemUrl::from_storage_str(&left, &room),
-        right: GardenItemUrl::from_storage_str(&right, &room),
+        left: GardenItemUrl::from_stored(&left, &room),
+        right: GardenItemUrl::from_stored(&right, &room),
         left_body: lb,
         right_body: rb,
         threads: th,
@@ -1554,7 +1548,7 @@ pub async fn handle_rpc_batch(
                     for r in items {
                         let pct = want_percent.then(|| ((r.score - bot) / range * 100.0).clamp(0.0, 100.0));
                         ranked.push(RankRow {
-                            item: GardenItemUrl::from_storage_str(r.item.as_str(), &room),
+                            item: GardenItemUrl::from_stored(&r.item, &room),
                             score: r.score,
                             percent: pct,
                         });
@@ -1562,11 +1556,11 @@ pub async fn handle_rpc_batch(
                 }
 
                 let ranked_total = ranked.len();
-                let mut unranked: Vec<String> = content
+                let mut unranked: Vec<CanonicalItemUrl> = content
                     .items
                     .iter()
                     .filter(|it| !group.item_to_idx.contains_key(*it))
-                    .map(|it| it.as_str().to_string())
+                    .cloned()
                     .collect();
                 unranked.sort();
                 let unranked_total = unranked.len();
@@ -1574,7 +1568,7 @@ pub async fn handle_rpc_batch(
                 let page: Vec<RankRow> = ranked
                     .into_iter()
                     .chain(unranked.into_iter().map(|it| RankRow {
-                        item: GardenItemUrl::from_storage_str(&it, &room),
+                        item: GardenItemUrl::from_stored(&it, &room),
                         score: 0.0,
                         percent: want_percent.then_some(0.0),
                     }))
@@ -1722,7 +1716,7 @@ pub async fn handle_rpc_batch(
                     .filter(|p| !parents.contains(p.as_str()))
                     .map(|p| GardenItemUrl::from_stored(p, &room))
                     .collect();
-                paths.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+                paths.sort();
                 line_ok(RpcResult::Leaves(LeavesResponse { paths }))
                 }
             },

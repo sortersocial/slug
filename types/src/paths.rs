@@ -3,6 +3,7 @@
 
 use std::borrow::Borrow;
 use std::fmt;
+use std::ops::Deref;
 
 use serde::{Deserialize, Serialize};
 
@@ -319,6 +320,14 @@ impl fmt::Display for GardenItemUrl {
     }
 }
 
+impl Deref for GardenItemUrl {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 fn garden_href_string(item: &str, room_wire: &str) -> String {
     let room = room_wire.trim();
     if room.is_empty() || room == "public" {
@@ -386,6 +395,14 @@ impl fmt::Display for ForumThreadUrl {
     }
 }
 
+impl Deref for ForumThreadUrl {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 /// `~/a/b` style path for list UIs (paths index `path` field).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -409,6 +426,14 @@ impl TildeOntologyPath {
 impl fmt::Display for TildeOntologyPath {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(f)
+    }
+}
+
+impl Deref for TildeOntologyPath {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 
@@ -450,6 +475,13 @@ mod tests {
     fn tilde_segments_non_ontology_is_empty() {
         let c = CanonicalItemUrl::parse("https://example.com/foo").unwrap();
         assert_eq!(c.tilde_segments(), Vec::<&str>::new());
+    }
+
+    #[test]
+    fn garden_item_url_deref_to_str() {
+        let g = GardenItemUrl::from_storage_str("https://slug.social/~/x", "public");
+        let s: &str = &*g;
+        assert_eq!(s, "https://slug.social/~/x");
     }
 
     #[test]

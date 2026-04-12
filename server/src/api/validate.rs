@@ -52,7 +52,7 @@ pub fn validate_ingest_document(
     };
 
     let ts = super::helpers::now_ms();
-    let mut defined_in_doc: HashSet<String> = HashSet::new();
+    let mut defined_in_doc: HashSet<CanonicalItemUrl> = HashSet::new();
 
     for s in &doc.statements {
         match s {
@@ -66,14 +66,14 @@ pub fn validate_ingest_document(
                 let Some(body_text) = body else {
                     return Err((
                         StatusCode::BAD_REQUEST,
-                        format!("item missing body: {}", GardenItemUrl::from_storage_str(&item, room_wire)),
+                        format!("item missing body: {}", GardenItemUrl::from_stored(&item, room_wire)),
                         Some("items must be declared with bodies, e.g. `~/path/item { ... }`".to_string()),
                     ));
                 };
                 if body_text.trim().is_empty() {
                     return Err((
                         StatusCode::BAD_REQUEST,
-                        format!("item body is empty: {}", GardenItemUrl::from_storage_str(&item, room_wire)),
+                        format!("item body is empty: {}", GardenItemUrl::from_stored(&item, room_wire)),
                         Some("write at least one sentence inside `{ ... }`".to_string()),
                     ));
                 }
@@ -102,11 +102,8 @@ pub fn validate_ingest_document(
                 };
                 let missing: Vec<String> = [&a, &b]
                     .into_iter()
-                    .filter(|it| {
-                        let key = CanonicalItemUrl((*it).clone());
-                        !defined_in_doc.contains(*it) && !item_exists(&key)
-                    })
-                    .map(|it| GardenItemUrl::from_storage_str(it, room_wire).into_inner())
+                    .filter(|it| !defined_in_doc.contains(*it) && !item_exists(it))
+                    .map(|it| GardenItemUrl::from_stored(it, room_wire).into_inner())
                     .collect();
                 if !missing.is_empty() {
                     return Err((
@@ -120,11 +117,8 @@ pub fn validate_ingest_document(
                 }
                 let missing_body: Vec<String> = [&a, &b]
                     .into_iter()
-                    .filter(|it| {
-                        let key = CanonicalItemUrl((*it).clone());
-                        !defined_in_doc.contains(*it) && !body_exists(&key)
-                    })
-                    .map(|it| GardenItemUrl::from_storage_str(it, room_wire).into_inner())
+                    .filter(|it| !defined_in_doc.contains(*it) && !body_exists(it))
+                    .map(|it| GardenItemUrl::from_stored(it, room_wire).into_inner())
                     .collect();
                 if !missing_body.is_empty() {
                     return Err((

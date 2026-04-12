@@ -130,8 +130,8 @@ pub async fn editor_check(
                 for s in &v.doc.statements {
                     if let crate::dsl::Stmt::Vote { item1, item2, .. } = s {
                         if let (Ok(a), Ok(b)) = (resolve_item(item1), resolve_item(item2)) {
-                            if let Some(p) = crate::path_types::CanonicalItemUrl::parse(&a).and_then(|c| c.parent()) { parents.insert(p); }
-                            if let Some(p) = crate::path_types::CanonicalItemUrl::parse(&b).and_then(|c| c.parent()) { parents.insert(p); }
+                            if let Some(p) = a.parent() { parents.insert(p); }
+                            if let Some(p) = b.parent() { parents.insert(p); }
                         }
                     }
                 }

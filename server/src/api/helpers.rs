@@ -30,13 +30,13 @@ pub fn now_ms() -> i64 {
     t.as_millis() as i64
 }
 
-/// Resolve an item path as a first-class canonical path.
-pub fn resolve_item(item: &str) -> Result<String, String> {
+/// Resolve DSL/user input to a stored canonical item id.
+pub fn resolve_item(item: &str) -> Result<CanonicalItemUrl, String> {
     let canonical = canonicalize_item(item);
     if canonical.is_empty() {
         return Err(format!("empty item path: `{}`", item));
     }
-    Ok(canonical)
+    Ok(CanonicalItemUrl(canonical))
 }
 
 pub fn parse_parent_specs(parent: Option<&String>) -> Vec<String> {
@@ -94,7 +94,7 @@ pub fn paginate_rankings(
     (out_components, out_unranked)
 }
 
-pub fn pick_random_distinct(items: &[String]) -> Option<(String, String)> {
+pub fn pick_random_distinct_canonical(items: &[CanonicalItemUrl]) -> Option<(CanonicalItemUrl, CanonicalItemUrl)> {
     use rand::seq::SliceRandom;
     if items.len() < 2 {
         return None;
@@ -123,15 +123,12 @@ pub fn is_pair_voted(group: &crate::reducer::GroupState, a: &str, b: &str) -> bo
     group.voted_pairs.contains(&(i, j))
 }
 
-pub fn compute_connectivity_stats(group: &crate::reducer::GroupState, pool: &[String]) -> ConnectivityStats {
+pub fn compute_connectivity_stats(group: &crate::reducer::GroupState, pool: &[CanonicalItemUrl]) -> ConnectivityStats {
     let n = pool.len();
 
     let global_idxs: Vec<Option<usize>> = pool
         .iter()
-        .map(|it| {
-            let key = CanonicalItemUrl(it.clone());
-            group.item_to_idx.get(&key).copied()
-        })
+        .map(|it| group.item_to_idx.get(it).copied())
         .collect();
     let present: Vec<usize> = global_idxs.iter().filter_map(|x| *x).collect();
 
