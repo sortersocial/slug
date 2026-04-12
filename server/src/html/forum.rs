@@ -17,6 +17,7 @@ use crate::{
     state::AppState,
     timeago,
 };
+use serde_json::json;
 
 use super::ui_action::{HtmlUiAction, UI_RPC_FIELD};
 
@@ -182,8 +183,8 @@ fn post_header_row(
         div class="ingest-header-row" {
             (meta)
             @if show_delete {
-                form class="post-delete-form" method="POST" action="/post/redact" {
-                    input type="hidden" name="post_id" value=(ing.id);
+                form class="post-delete-form" method="POST" action="/ui" {
+                    input type="hidden" name=(UI_RPC_FIELD) value=(template_json_compact(&HtmlUiAction::RedactPost { post_id: ing.id.clone() }).unwrap());
                     button type="submit" class="post-delete-btn" { "delete" }
                 }
             }
@@ -427,13 +428,28 @@ fn compose_form(nav: &ThreadNav, thread_tag: &str, show: bool) -> Markup {
     if !show {
         return html! {};
     }
+    let rpc_post = template_json_compact(&json!({
+        "action": "post_ingest",
+        "room": nav.room_wire,
+        "thread_tag": thread_tag,
+        "text": {"$form": "text"},
+        "error_target": "thread-compose-errors",
+        "form_id": "thread-compose-form",
+    }))
+    .unwrap();
+    let rpc_check = template_json_compact(&json!({
+        "action": "check_ingest",
+        "room": nav.room_wire,
+        "thread_tag": thread_tag,
+        "text": {"$form": "text"},
+        "error_target": "thread-compose-errors",
+        "form_id": "thread-compose-form",
+    }))
+    .unwrap();
     html! {
         section class="compose" id="thread-compose" {
-            form id="thread-compose-form" method="POST" action="/post" data-check-action="/post/check" {
-                input type="hidden" name="room" value=(nav.room_wire.clone());
-                input type="hidden" name="thread_tag" value=(thread_tag);
-                input type="hidden" name="error_target" value="thread-compose-errors";
-                input type="hidden" name="form_id" value="thread-compose-form";
+            form id="thread-compose-form" method="POST" action="/ui" data-check-action="/ui" data-check-rpc=(rpc_check) {
+                input type="hidden" name=(UI_RPC_FIELD) value=(rpc_post);
                 textarea name="text" rows="5" cols="80" placeholder="prose or ~/items and votes…" {}
                 p {
                     button type="submit" { "post" }
@@ -463,10 +479,22 @@ fn new_thread_form_public(show: bool) -> Markup {
             h3 { "new public thread" }
             p class="muted" { "Set thread tag and body. Example: start with a title line or use the CLI-shaped DSL." }
             div id="public-new-thread-errors" {}
-            form id="public-new-thread-form" method="POST" action="/post" data-check-action="/post/check" {
-                input type="hidden" name="room" value="public";
-                input type="hidden" name="error_target" value="public-new-thread-errors";
-                input type="hidden" name="form_id" value="public-new-thread-form";
+            form id="public-new-thread-form" method="POST" action="/ui" data-check-action="/ui" data-check-rpc=(template_json_compact(&json!({
+                "action": "check_ingest",
+                "room": "public",
+                "thread_tag": {"$form": "thread_tag"},
+                "text": {"$form": "text"},
+                "error_target": "public-new-thread-errors",
+                "form_id": "public-new-thread-form",
+            })).unwrap()) {
+                input type="hidden" name=(UI_RPC_FIELD) value=(template_json_compact(&json!({
+                    "action": "post_ingest",
+                    "room": "public",
+                    "thread_tag": {"$form": "thread_tag"},
+                    "text": {"$form": "text"},
+                    "error_target": "public-new-thread-errors",
+                    "form_id": "public-new-thread-form",
+                })).unwrap());
                 label for="new-thread-tag" { "thread tag" }
                 input type="text" id="new-thread-tag" name="thread_tag" pattern="[a-z0-9_\\-]{1,64}" placeholder="my-topic";
                 label for="new-thread-text" { "text" }
@@ -946,10 +974,22 @@ fn new_thread_form_for_room(nav: &ThreadNav, show: bool) -> Markup {
         section class="compose" id="room-new-thread-compose" hidden {
             h3 { "new thread in this room" }
             div id="room-new-thread-errors" {}
-            form id="room-new-thread-form" method="POST" action="/post" data-check-action="/post/check" {
-                input type="hidden" name="room" value=(nav.room_wire.clone());
-                input type="hidden" name="error_target" value="room-new-thread-errors";
-                input type="hidden" name="form_id" value="room-new-thread-form";
+            form id="room-new-thread-form" method="POST" action="/ui" data-check-action="/ui" data-check-rpc=(template_json_compact(&json!({
+                "action": "check_ingest",
+                "room": nav.room_wire,
+                "thread_tag": {"$form": "thread_tag"},
+                "text": {"$form": "text"},
+                "error_target": "room-new-thread-errors",
+                "form_id": "room-new-thread-form",
+            })).unwrap()) {
+                input type="hidden" name=(UI_RPC_FIELD) value=(template_json_compact(&json!({
+                    "action": "post_ingest",
+                    "room": nav.room_wire,
+                    "thread_tag": {"$form": "thread_tag"},
+                    "text": {"$form": "text"},
+                    "error_target": "room-new-thread-errors",
+                    "form_id": "room-new-thread-form",
+                })).unwrap());
                 label for="room-new-tag" { "thread tag" }
                 input type="text" id="room-new-tag" name="thread_tag" pattern="[a-z0-9_\\-]{1,64}" required;
                 textarea name="text" rows="4" placeholder="First post body…" required {}

@@ -373,9 +373,14 @@ script { (maud::PreEscaped(r#"
                         async function runFormCheck(form) {
                             const action = form.getAttribute('data-check-action');
                             if (!action) return;
+                            const fd = new URLSearchParams(new FormData(form));
+                            const checkRpc = form.getAttribute('data-check-rpc');
+                            if (checkRpc) {
+                                fd.set('__rpc__', checkRpc);
+                            }
                             const resp = await fetch(action, {
                                 method: 'POST',
-                                body: new URLSearchParams(new FormData(form)),
+                                body: fd,
                                 headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
                                 credentials: 'same-origin',
                             });

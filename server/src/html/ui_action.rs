@@ -14,7 +14,7 @@ pub const UI_RPC_FIELD: &str = "__rpc__";
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum HtmlUiAction {
-    /// Same semantics as `POST /post` (forum ingest).
+    /// Forum ingest via `POST /ui`.
     PostIngest {
         room: String,
         thread_tag: String,
@@ -24,7 +24,7 @@ pub enum HtmlUiAction {
         #[serde(default)]
         form_id: Option<String>,
     },
-    /// Same as `POST /post/check`.
+    /// DSL check / validation via `POST /ui`.
     CheckIngest {
         room: String,
         thread_tag: String,
@@ -34,7 +34,7 @@ pub enum HtmlUiAction {
         #[serde(default)]
         form_id: Option<String>,
     },
-    /// Same as `POST /post/redact`.
+    /// Author redacts own post via `POST /ui`.
     RedactPost {
         post_id: String,
     },

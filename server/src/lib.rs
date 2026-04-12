@@ -31,9 +31,6 @@ pub fn create_app(state: AppState) -> Router {
         .route("/", get(crate::html::home))
         .route("/login", get(api::get_web_login))
         .route("/logout", get(api::get_logout))
-        .route("/post", post(api::post_web_ingest))
-        .route("/post/redact", post(api::post_web_redact))
-        .route("/post/check", post(api::check_web_ingest))
         .route("/ui", post(api::post_ui_html))
         .route("/theme", post(crate::html::post_theme))
         .route("/sse", get(api::get_html_stream))
@@ -64,6 +61,7 @@ pub fn create_app(state: AppState) -> Router {
         )
         .route("/t/:tag/:index", get(crate::html::thread_post_view))
         .route("/t/:tag", get(crate::html::thread_view))
+        // TODO DELETE THESE AND USE __RPC__ PATTERN
         .route(
             "/r/:room_short/:room_slug/t/:thread_tag/:index/expand",
             get(crate::html::room_thread_post_expand),

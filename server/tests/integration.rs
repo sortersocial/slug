@@ -21,6 +21,30 @@ fn test_bearer() -> String {
     format!("slug_{token_id}_{secret}")
 }
 
+/// Compact JSON for `POST /ui` (`HtmlUiAction::PostIngest`).
+fn ui_post_ingest_rpc(room: &str, thread_tag: &str, text: &str) -> String {
+    serde_json::json!({
+        "action": "post_ingest",
+        "room": room,
+        "thread_tag": thread_tag,
+        "text": text,
+    })
+    .to_string()
+}
+
+/// Compact JSON for `POST /ui` (`HtmlUiAction::CheckIngest`).
+fn ui_check_ingest_rpc(room: &str, thread_tag: &str, text: &str, error_target: &str) -> String {
+    serde_json::json!({
+        "action": "check_ingest",
+        "room": room,
+        "thread_tag": thread_tag,
+        "text": text,
+        "error_target": error_target,
+        "form_id": "thread-compose-form",
+    })
+    .to_string()
+}
+
 /// `commands` is a JSON array of RPC commands (`RpcBatch` is a transparent `Vec`).
 async fn rpc_batch(
     client: &reqwest::Client,
@@ -343,14 +367,11 @@ async fn test_private_room_thread_urls_use_t_segment() {
         .to_string();
     let (room_short, room_slug) = room_id.split_once('/').unwrap();
 
+    let rpc = ui_post_ingest_rpc(&room_id, "main-thread", "private post via web");
     let post = client
-        .post(format!("http://{addr}/post"))
+        .post(format!("http://{addr}/ui"))
         .header("Authorization", format!("Bearer {bearer}"))
-        .form(&[
-            ("room", room_id.as_str()),
-            ("thread_tag", "main-thread"),
-            ("text", "private post via web"),
-        ])
+        .form(&[("__rpc__", rpc.as_str())])
         .send()
         .await
         .unwrap();
@@ -404,14 +425,15 @@ async fn test_private_room_post_links_use_private_garden_routes() {
         .to_string();
     let (room_short, room_slug) = room_id.split_once('/').unwrap();
 
+    let rpc = ui_post_ingest_rpc(
+        &room_id,
+        "garden-thread",
+        "~/secret/item {classified}\n~/secret/other {other body}\n~/secret/item 3:1 ~/secret/other {because}\n",
+    );
     let post = client
-        .post(format!("http://{addr}/post"))
+        .post(format!("http://{addr}/ui"))
         .header("Authorization", format!("Bearer {bearer}"))
-        .form(&[
-            ("room", room_id.as_str()),
-            ("thread_tag", "garden-thread"),
-            ("text", "~/secret/item {classified}\n~/secret/other {other body}\n~/secret/item 3:1 ~/secret/other {because}\n"),
-        ])
+        .form(&[("__rpc__", rpc.as_str())])
         .send()
         .await
         .unwrap();
@@ -449,15 +471,11 @@ async fn test_post_check_returns_targeted_js_error_for_missing_thread_tag() {
         .unwrap();
     let bearer = test_bearer();
 
+    let rpc = ui_check_ingest_rpc("public", "", "hello", "thread-compose-errors");
     let resp = client
-        .post(format!("http://{addr}/post/check"))
+        .post(format!("http://{addr}/ui"))
         .header("Authorization", format!("Bearer {bearer}"))
-        .form(&[
-            ("room", "public"),
-            ("thread_tag", ""),
-            ("text", "hello"),
-            ("error_target", "thread-compose-errors"),
-        ])
+        .form(&[("__rpc__", rpc.as_str())])
         .send()
         .await
         .unwrap();
@@ -553,14 +571,11 @@ async fn test_sse_stream_emits_evalable_js_after_post() {
         .unwrap();
     assert!(sse_resp.status().is_success());
 
+    let rpc = ui_post_ingest_rpc(&room_id, "live-thread", "hello over sse");
     let _post = client
-        .post(format!("http://{addr}/post"))
+        .post(format!("http://{addr}/ui"))
         .header("Authorization", format!("Bearer {bearer}"))
-        .form(&[
-            ("room", room_id.as_str()),
-            ("thread_tag", "live-thread"),
-            ("text", "hello over sse"),
-        ])
+        .form(&[("__rpc__", rpc.as_str())])
         .send()
         .await
         .unwrap();

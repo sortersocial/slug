@@ -71,6 +71,24 @@ pub fn optional_principal(headers: &HeaderMap, jar: &CookieJar, reduced: &Reduce
     verify_token(reduced, c.value()).ok()
 }
 
+/// Browser session: principal + bearer token string (same shape as CLI session cookie).
+#[derive(Debug, Clone)]
+pub struct WebSession {
+    pub username: String,
+    pub bearer: String,
+}
+
+/// Resolve username and bearer together for `POST /ui` dispatch (one read of headers + jar).
+pub fn resolve_web_session(headers: &HeaderMap, jar: &CookieJar, reduced: &ReducerState) -> Option<WebSession> {
+    let username = optional_principal(headers, jar, reduced)?;
+    let bearer = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.strip_prefix("Bearer ").map(|t| t.trim().to_string()))
+        .or_else(|| jar.get(SLUG_SESSION_COOKIE).map(|c| c.value().to_string()))?;
+    Some(WebSession { username, bearer })
+}
+
 fn redirect_with_session_cookie(public_url: &str, path_and_query: &str, bearer: &str, jar: &CookieJar) -> Response {
     let mut res = Response::builder()
         .status(StatusCode::TEMPORARY_REDIRECT)

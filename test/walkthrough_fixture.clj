@@ -52,22 +52,28 @@
                          "~/secret/item {classified}\n"
                          "~/secret/other {secondary}\n"
                          "~/secret/item 3:1 ~/secret/other {because}\n")
+          rpc (json/generate-string
+                {:action "post_ingest"
+                 :room room-id
+                 :thread_tag "walkthrough-thread"
+                 :text wall-text})
           post-resp (oauth/http-post-form
-                      (str base-url "/post")
-                      {:room room-id
-                       :thread_tag "walkthrough-thread"
-                       :text wall-text}
+                      (str base-url "/ui")
+                      {:__rpc__ rpc}
                       :headers {"Authorization" (str "Bearer " alice-token)})]
       (assert! (= 200 (:status post-resp)) "seed post must succeed"))
     (let [bob-reply (str "Bob here — reply with another long block so the thread has multiple cards.\n\n"
                          "Paragraph two: repeating slugs ~/secret/item and ~/secret/other for cross-post link styling. "
                          "If everything wraps cleanly, monospace pre + serif body (in craft theme) should still feel readable.\n\n"
                          "More overflow: XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX\n")
+          bob-rpc (json/generate-string
+                    {:action "post_ingest"
+                     :room room-id
+                     :thread_tag "walkthrough-thread"
+                     :text bob-reply})
           bob-post (oauth/http-post-form
-                     (str base-url "/post")
-                     {:room room-id
-                      :thread_tag "walkthrough-thread"
-                      :text bob-reply}
+                     (str base-url "/ui")
+                     {:__rpc__ bob-rpc}
                      :headers {"Authorization" (str "Bearer " bob-token)})]
       (assert! (= 200 (:status bob-post)) "seed reply post must succeed"))
     {:users {:alice {:token alice-token}
