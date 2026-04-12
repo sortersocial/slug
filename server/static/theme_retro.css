@@ -32,7 +32,6 @@ pre,
 .ont-item-shell,
 .ont-group-shell,
 .ont-vote-entry,
-details.ont-related-votes,
 details.ont-rank-history {
   box-sizing: border-box;
   max-width: 100%;
@@ -60,11 +59,14 @@ details.ont-rank-history {
   display: none;
 }
 
-/* Ontology “paper” view */
+/* Ontology / garden — paper (light) */
 body.view-ontology {
   background: #f5f0e8;
   color: #1a1a1a;
   color-scheme: light;
+}
+body.view-ontology.view-ontology-light {
+  background: #f4f0e8;
 }
 body.view-ontology a { color: #23a; }
 body.view-ontology a:visited { color: #609; }

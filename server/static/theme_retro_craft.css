@@ -372,12 +372,15 @@ a#src-link:hover {
   color: var(--accent);
 }
 
-/* Ontology — light paper in the shell */
+/* Ontology / garden — light paper in the shell */
 body.view-ontology-dark .ont-item-shell,
 body.view-ontology-dark .ont-group-shell,
 body.view-ontology-dark .ont-vote-entry,
-body.view-ontology-dark details.ont-related-votes,
-body.view-ontology-dark details.ont-rank-history {
+body.view-ontology-dark details.ont-rank-history,
+body.view-ontology-light .ont-item-shell,
+body.view-ontology-light .ont-group-shell,
+body.view-ontology-light .ont-vote-entry,
+body.view-ontology-light details.ont-rank-history {
   background: #f7f3eb;
   border: 1px solid #c8c4bc;
   color: #1a1814;
@@ -387,23 +390,29 @@ body.view-ontology-dark details.ont-rank-history {
 }
 body.view-ontology-dark .ont-item-meta,
 body.view-ontology-dark .ont-group-meta,
-body.view-ontology-dark .ont-vote-meta {
+body.view-ontology-dark .ont-vote-meta,
+body.view-ontology-light .ont-item-meta,
+body.view-ontology-light .ont-group-meta,
+body.view-ontology-light .ont-vote-meta {
   border-bottom: 1px solid #c8c4bc;
   color: #5c574e;
   font-family: ui-monospace, monospace;
   font-size: 0.78rem;
   padding: 0.4rem 0.6rem;
 }
-body.view-ontology-dark .ont-item-title {
+body.view-ontology-dark .ont-item-title,
+body.view-ontology-light .ont-item-title {
   color: #1a1814;
   font-weight: 600;
 }
-body.view-ontology-dark .ont-item-content pre {
+body.view-ontology-dark .ont-item-content pre,
+body.view-ontology-light .ont-item-content pre {
   background: #ebe6dc;
   border-left-color: var(--accent);
   color: #1a1814;
 }
-body.view-ontology-dark .ont-tab {
+body.view-ontology-dark .ont-tab,
+body.view-ontology-light .ont-tab {
   border: 1px solid #c8c4bc;
   color: #5c574e;
   cursor: pointer;
@@ -411,7 +420,8 @@ body.view-ontology-dark .ont-tab {
   padding: 0.3rem 0.65rem;
   text-decoration: none;
 }
-body.view-ontology-dark .ont-tab.is-active {
+body.view-ontology-dark .ont-tab.is-active,
+body.view-ontology-light .ont-tab.is-active {
   background: #ebe6dc;
   color: #1a1814;
 }
