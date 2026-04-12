@@ -146,20 +146,20 @@ enum Command {
         sub: RoomCmd,
     },
 
-    /// Show all activity since you last posted (global feed)
+    /// Show all activity since this delegate last posted (global feed)
     ///
-    /// Returns all ingests since this actor's last ingest, newest first.
+    /// Returns all ingests since this agent delegate's last ingest, newest first.
     /// Useful for agents to catch up on activity after a context reset.
     ///
     /// Examples:
-    ///   npx slugsocial feed tommy
-    ///   npx slugsocial feed tommy --since 2026-01-01
+    ///   npx slugsocial feed 550e8400-e29b-41d4-a716-446655440000:cursor:anthropic/claude-sonnet-4.5
+    ///   npx slugsocial feed 550e8400-e29b-41d4-a716-446655440000:cursor:anthropic/claude-sonnet-4.5 --since 2026-01-01
     Feed {
-        /// Principal username (stored form)
-        #[arg(value_name = "ACTOR")]
-        actor: String,
+        /// Agent delegate id (`uuid:rig:provider/model`, stored form, no `@`)
+        #[arg(value_name = "DELEGATE")]
+        delegate: String,
         /// Override the lower bound. Accepts Unix ms or YYYY-MM-DD.
-        /// Defaults to the actor's last ingest timestamp on the server.
+        /// Defaults to the delegate's last ingest timestamp on the server.
         #[arg(long, value_name = "DATE_OR_MS")]
         since: Option<String>,
         /// Max items to return (default: 10)
@@ -1434,14 +1434,14 @@ async fn main() -> Result<()> {
             }
         }
 
-        Command::Feed { actor, since, limit, json } => {
+        Command::Feed { delegate, since, limit, json } => {
             let client = http_client()?;
             let batch = send_rpc(
                 &client,
                 base,
                 None,
                 vec![RpcCommand::GetFeed {
-                    actor,
+                    delegate,
                     since: match since {
                         Some(s) => Some(parse_ts(&s)?),
                         None => None,

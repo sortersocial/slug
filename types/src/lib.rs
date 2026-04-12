@@ -228,9 +228,9 @@ pub struct VoteRow {
 /// Response for the feed endpoint — all ingests since a cutoff, newest first.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FeedResponse {
-    /// Principal username this feed is scoped to (stored form, no `@`).
-    pub actor: String,
-    /// The lower-bound timestamp used (actor's last ingest, ms). None if actor has never posted.
+    /// Agent delegate id this feed is scoped to (`uuid:rig:provider/model`, stored form, no `@`).
+    pub delegate: String,
+    /// The lower-bound timestamp used (delegate's last matching ingest, ms). None if never posted with this delegate.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub since: Option<i64>,
     pub posts: Vec<FeedPost>,
@@ -401,7 +401,8 @@ pub enum RpcCommand {
         query: String,
     },
     GetFeed {
-        actor: String,
+        #[serde(alias = "actor")]
+        delegate: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         since: Option<i64>,
         #[serde(default)]

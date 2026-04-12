@@ -324,13 +324,13 @@ async fn test_private_room_read_requires_explicit_view_capability() {
         "search should hide private posts without view capability"
     );
 
-    // Feed should likewise hide private posts.
+    // Feed should likewise hide private posts (keyed by delegate on those ingests).
     let feed = rpc_batch(
         &client,
         addr,
         Some(&bearer),
         serde_json::json!([{
-            "GetFeed": { "actor": "testuser", "limit": 20 }
+            "GetFeed": { "delegate": "00000000-0000-0000-0000-000000000000:test:local/test", "limit": 20 }
         }]),
     )
     .await;
@@ -340,6 +340,97 @@ async fn test_private_room_read_requires_explicit_view_capability() {
     assert!(
         feed_posts.is_empty(),
         "feed should hide private posts without view capability"
+    );
+}
+
+#[tokio::test]
+async fn test_feed_since_last_post_is_scoped_to_delegate() {
+    let (addr, _tmp, _log, _handle) = create_test_server().await;
+    let client = reqwest::Client::new();
+    let bearer = test_bearer();
+
+    let d1 = "00000000-0000-0000-0000-0000000000a1:feedtest:local/model-a";
+    let d2 = "00000000-0000-0000-0000-0000000000a2:feedtest:local/model-b";
+
+    let p1 = rpc_batch(
+        &client,
+        addr,
+        Some(&bearer),
+        serde_json::json!([{
+            "Post": {
+                "room": "public",
+                "thread_tag": "feed-delegate-test",
+                "delegate": d1,
+                "text": "#feed-delegate-test\nalpha marker for d1\n",
+                "return_rank_diff": false
+            }
+        }]),
+    )
+    .await;
+    assert_eq!(p1["results"][0]["ok"], true, "first post: {:?}", p1);
+
+    let p2 = rpc_batch(
+        &client,
+        addr,
+        Some(&bearer),
+        serde_json::json!([{
+            "Post": {
+                "room": "public",
+                "thread_tag": "feed-delegate-test",
+                "delegate": d2,
+                "text": "#feed-delegate-test\nbeta marker for d2\n",
+                "return_rank_diff": false
+            }
+        }]),
+    )
+    .await;
+    assert_eq!(p2["results"][0]["ok"], true, "second post: {:?}", p2);
+
+    // Since d1 last posted first, the feed for d1 should include everything after that (here: d2's post).
+    let feed = rpc_batch(
+        &client,
+        addr,
+        None,
+        serde_json::json!([{
+            "GetFeed": { "delegate": d1, "limit": 20 }
+        }]),
+    )
+    .await;
+    let line = &feed["results"][0];
+    assert_eq!(line["ok"], true, "GetFeed failed: {:?}", line);
+    let delegate = line["result"]["Feed"]["delegate"].as_str().unwrap();
+    assert_eq!(delegate, d1);
+    let bodies: String = line["result"]["Feed"]["posts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|p| p["body"].as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        bodies.contains("beta marker for d2"),
+        "expected d2's post after d1's cutoff, got: {bodies}"
+    );
+    assert!(
+        !bodies.contains("alpha marker for d1"),
+        "d1's own prior post should not appear after cutoff, got: {bodies}"
+    );
+
+    // JSON alias: legacy `"actor"` field name still deserializes as delegate id.
+    let feed_alias = rpc_batch(
+        &client,
+        addr,
+        None,
+        serde_json::json!([{
+            "GetFeed": { "actor": d1, "limit": 5 }
+        }]),
+    )
+    .await;
+    assert_eq!(
+        feed_alias["results"][0]["ok"],
+        true,
+        "GetFeed alias failed: {:?}",
+        feed_alias["results"][0]
     );
 }
 

@@ -1789,15 +1789,15 @@ pub async fn handle_rpc_batch(
                 }
             },
             RpcCommand::GetFeed {
-                actor,
+                delegate,
                 since,
                 limit,
             } => {
                 const DEFAULT_LIMIT: usize = 50;
                 const MAX_LIMIT: usize = 200;
-                match parse_username(&actor) {
-                    Err(msg) => line_err("invalid actor", Some(msg)),
-                    Ok(actor_stored) => {
+                match parse_agent(&delegate) {
+                    Err(msg) => line_err("invalid delegate", Some(msg)),
+                    Ok(delegate_stored) => {
                         let reduced = state.reduced.read().await;
                         match principal_from_optional_bearer(&headers, &reduced) {
                             Err((e, h)) => line_err(e, h),
@@ -1808,7 +1808,7 @@ pub async fn handle_rpc_batch(
                                     .rev()
                                     .filter_map(|id| reduced.ingests_by_id.get(id))
                                     .find(|ing| {
-                                        if ing.principal != actor_stored {
+                                        if ing.delegate.as_deref() != Some(delegate_stored.as_str()) {
                                             return false;
                                         }
                                         let scope = scope_from_room_wire(&ing.room_id);
@@ -1851,7 +1851,7 @@ pub async fn handle_rpc_batch(
                                     })
                                     .collect();
                                 line_ok(RpcResult::Feed(FeedResponse {
-                                    actor: actor_stored,
+                                    delegate: delegate_stored,
                                     since,
                                     posts,
                                     total,
