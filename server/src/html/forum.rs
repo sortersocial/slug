@@ -467,12 +467,7 @@ fn new_thread_form_public(show: bool) -> Markup {
     html! {
         section class="compose" id="public-new-thread-compose" {
             div id="public-new-thread-errors" {}
-            form id="public-new-thread-form" method="POST" action="/ui" data-check-action="/ui" data-check-rpc=(template_json_compact(&json!({
-                "action": "check_ingest",
-                "room": "public",
-                "thread_tag": {"$form": "thread_tag"},
-                "text": {"$form": "text"},
-            })).unwrap()) {
+            form id="public-new-thread-form" method="POST" action="/ui" {
                 input type="hidden" name=(UI_RPC_FIELD) value=(template_json_compact(&json!({
                     "action": "post_ingest",
                     "room": "public",
