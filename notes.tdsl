@@ -28,3 +28,5 @@ need consistent + in corener of section header that morphs/expands in add form. 
 my json-encoded plan is not being used for the forms. i want that same plan for the morphable/expandable + signs that produce forms. form target encoded... there was a plan.md with this. plan2.md...
 
 new public thread form needs fewer words
+
+new thread errors don't propogate properly. no #errors div, it used to be more precise? maybe it should be more precise?
