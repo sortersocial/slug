@@ -965,18 +965,23 @@ pub async fn room_page(
         drop(reduced);
         return (StatusCode::NOT_FOUND, "room not found").into_response();
     };
-    let slug_display = room_slug.as_str();
+    // Precompute markup that needs `&ReducerState`, then release the lock before `layout`.
+    // `tokio::sync::RwLock` queues new readers behind a waiting writer; holding the read
+    // guard across HTML/stringify could stall other navigations when an ingest needs a write lock.
+    let members_markup = room_members_section_markup(&reduced, &room_id, false);
     let forum_cli = format!("npx slugsocial private {room_id} forum list");
     let garden_cli = format!("npx slugsocial private {room_id} garden tree");
     let audit_cli = format!("npx slugsocial private {room_id} audit");
+    drop(reduced);
 
+    let slug_display = room_slug.as_str();
     let page = layout(
         &format!("room {slug_display} — slug.social"),
         "view-thread",
         html! {
             (strip)
             nav class="breadcrumb" { (bc_room(&nav, slug_display, None)) }
-            (room_members_section_markup(&reduced, &room_id, false))
+            (members_markup)
             h3 { "threads" }
             (render_thread_feed(Some(&nav), "room-thread-feed", &rows, now))
             @if show_new {
@@ -992,7 +997,6 @@ pub async fn room_page(
         theme_from_jar(&jar),
         &theme_next_from_uri(&uri),
     );
-    drop(reduced);
     Html(page.into_string()).into_response()
 }
 
