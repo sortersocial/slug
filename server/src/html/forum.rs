@@ -1014,44 +1014,47 @@ fn new_thread_form_for_room(nav: &ThreadNav, show: bool, compose_expanded: bool)
     }
     let rpc_open = set_room_new_thread_compose_expanded_rpc(nav, true);
     let rpc_close = set_room_new_thread_compose_expanded_rpc(nav, false);
+    // Single root for Idiomorph when morphing `#room-new-thread-ui-slot` (expanded has form + section).
     html! {
-        @if compose_expanded {
-            form method="POST" action="/ui" {
-                input type="hidden" name=(UI_RPC_FIELD) value=(rpc_close);
-                button type="submit" class="form-toggle" aria-expanded="true" {
-                    "hide new thread form"
+        div class="room-new-thread-slot-inner" {
+            @if compose_expanded {
+                form method="POST" action="/ui" {
+                    input type="hidden" name=(UI_RPC_FIELD) value=(rpc_close);
+                    button type="submit" class="form-toggle" aria-expanded="true" {
+                        "hide new thread form"
+                    }
                 }
-            }
-            section class="compose" id="room-new-thread-compose" {
-                h3 { "new thread in this room" }
-                div id="room-new-thread-errors" {}
-                form id="room-new-thread-form" method="POST" action="/ui" data-check-action="/ui" data-check-rpc=(template_json_compact(&json!({
-                    "action": "check_ingest",
-                    "room": nav.room_wire,
-                    "thread_tag": {"$form": "thread_tag"},
-                    "text": {"$form": "text"},
-                    "error_target": "room-new-thread-errors",
-                    "form_id": "room-new-thread-form",
-                })).unwrap()) {
-                    input type="hidden" name=(UI_RPC_FIELD) value=(template_json_compact(&json!({
-                        "action": "post_ingest",
+                section class="compose" id="room-new-thread-compose" {
+                    h3 { "new thread in this room" }
+                    div id="room-new-thread-errors" {}
+                    form id="room-new-thread-form" method="POST" action="/ui" data-check-action="/ui" data-check-rpc=(template_json_compact(&json!({
+                        "action": "check_ingest",
                         "room": nav.room_wire,
                         "thread_tag": {"$form": "thread_tag"},
                         "text": {"$form": "text"},
                         "error_target": "room-new-thread-errors",
                         "form_id": "room-new-thread-form",
-                    })).unwrap());
-                    label for="room-new-tag" { "thread tag" }
-                    input type="text" id="room-new-tag" name="thread_tag" pattern="[a-z0-9_\\-]{1,64}" required;
-                    textarea name="text" rows="4" placeholder="First post body…" required {}
-                    p { button type="submit" { "post" } }
+                    })).unwrap()) {
+                        input type="hidden" name=(UI_RPC_FIELD) value=(template_json_compact(&json!({
+                            "action": "post_ingest",
+                            "room": nav.room_wire,
+                            "thread_tag": {"$form": "thread_tag"},
+                            "text": {"$form": "text"},
+                            "error_target": "room-new-thread-errors",
+                            "form_id": "room-new-thread-form",
+                        })).unwrap());
+                        label for="room-new-tag" { "thread tag" }
+                        input type="text" id="room-new-tag" name="thread_tag" pattern="[a-z0-9_\\-]{1,64}" required;
+                        textarea name="text" rows="4" placeholder="First post body…" required {}
+                        p { button type="submit" { "post" } }
+                    }
                 }
-            }
-        } @else {
-            form method="POST" action="/ui" {
-                input type="hidden" name=(UI_RPC_FIELD) value=(rpc_open);
-                button type="submit" class="form-toggle" aria-expanded="false" {
-                    "new thread in this room"
+            } @else {
+                form method="POST" action="/ui" {
+                    input type="hidden" name=(UI_RPC_FIELD) value=(rpc_open);
+                    button type="submit" class="form-toggle" aria-expanded="false" {
+                        "new thread in this room"
+                    }
                 }
             }
         }

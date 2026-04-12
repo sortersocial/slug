@@ -183,6 +183,11 @@ impl JsBuilder {
         )
     }
 
+    /// Morph **children** of `selector` so the outer element (e.g. `#room-new-thread-ui-slot`) keeps its `id`.
+    pub(crate) fn morph_inner_selector(self, selector: &str, markup: Markup) -> Self {
+        self.qs(selector).morph_inner(markup)
+    }
+
     pub(crate) fn morph_expr(mut self, expr: &str, markup: Markup, morph_style: Option<&str>) -> Self {
         let html = js_string_literal(&markup.into_string());
         let opts = morph_style
@@ -291,7 +296,6 @@ pub(super) fn layout(title: &str, view: &str, body: Markup, views: Option<u64>, 
                 title { (title) }
                 link rel="stylesheet" href=(css_href) id="theme-stylesheet";
                 script src="https://unpkg.com/idiomorph@0.3.0/dist/idiomorph.min.js" {}
-                script src="/static/slug_ui.js" defer {}
             }
             body class=(view) {
                 @if let Some(n) = views {
@@ -318,6 +322,7 @@ pub(super) fn layout(title: &str, view: &str, body: Markup, views: Option<u64>, 
                         }
                     }
                 }
+                script src="/static/slug_ui.js" {}
             }
         }
     }

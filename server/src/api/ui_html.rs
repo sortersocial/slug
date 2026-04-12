@@ -149,7 +149,7 @@ async fn dispatch_ui_action(
                 login_to_post_hint_markup()
             };
             JsBuilder::new()
-                .morph_selector("#public-new-thread-ui-slot", markup)
+                .morph_inner_selector("#public-new-thread-ui-slot", markup)
                 .into_response()
         }
         HtmlUiAction::ExpandRoomNewThreadForm { room_wire } => {
@@ -181,7 +181,7 @@ async fn dispatch_ui_action(
                 login_to_post_hint_markup()
             };
             JsBuilder::new()
-                .morph_selector("#room-new-thread-ui-slot", markup)
+                .morph_inner_selector("#room-new-thread-ui-slot", markup)
                 .into_response()
         }
         HtmlUiAction::SetRoomMembersExpanded { room_wire, expanded } => {
@@ -233,7 +233,7 @@ async fn dispatch_ui_action(
             } else {
                 login_to_post_hint_markup()
             };
-            let mut b = JsBuilder::new().morph_selector("#room-new-thread-ui-slot", markup);
+            let mut b = JsBuilder::new().morph_inner_selector("#room-new-thread-ui-slot", markup);
             if expanded && can_post {
                 b = b.focus_selector("#room-new-tag");
             }
