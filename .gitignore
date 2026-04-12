@@ -3,6 +3,7 @@ target/
 repomix-output.xml
 psalms_kjv.txt
 dev-data/
+fixture-data/
 .worktrees/
 .specstory/
 .specstory/

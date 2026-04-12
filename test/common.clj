@@ -107,6 +107,16 @@
    (.close ss)
    port))
 
+(defn pick-port-prefer
+  "Use `preferred` if it can be bound, otherwise an ephemeral port (same as `pick-port`)."
+  [preferred]
+  (try
+    (let [ss (java.net.ServerSocket. preferred)]
+      (.close ss)
+      preferred)
+    (catch java.io.IOException _
+      (pick-port))))
+
 (defn wait-for-server
   "Poll /healthz until it returns 'ok', up to `timeout-ms`."
   [base-url timeout-ms]

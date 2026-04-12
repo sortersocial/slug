@@ -47,7 +47,7 @@
                                            "RUST_LOG"      "info"})})))}
 
   fixture
-  {:doc "Run local server + mock OAuth + seeded walkthrough data for manual browser demos"
+  {:doc "Run local server via cargo-watch + mock OAuth + seeded walkthrough data (persistent ./fixture-data/, prefers PORT 8080). Requires cargo-watch."
    :requires ([test.walkthrough-fixture :as walkthrough-fixture])
    :task (walkthrough-fixture/run-fixture)}
 

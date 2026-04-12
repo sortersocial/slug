@@ -1,10 +1,17 @@
 (ns test.walkthrough-fixture
   "Launch a local slug server with mock OAuth and seed browser-friendly demo data."
   (:require [babashka.fs :as fs]
+            [babashka.process :as p]
             [cheshire.core :as json]
             [clojure.string :as str]
             [test.common :as common]
             [test.oauth :as oauth]))
+
+(def ^:private fixture-data-dir "fixture-data")
+;; Prefer the same port as `bb dev` / `bb watch`; fall back if something else is listening.
+(def ^:private preferred-slug-port 8080)
+;; First `cargo watch` compile can exceed a release-binary startup; allow several minutes.
+(def ^:private health-wait-ms 300000)
 
 (defn- assert! [pred msg]
   (when-not pred
@@ -85,43 +92,82 @@
             :thread_url (str base-url "/r/" room-short "/" room-slug "/t/walkthrough-thread")
             :garden_url (str base-url "/r/" room-short "/" room-slug "/~/secret/item")}}))
 
+(defn- rebase-fixture-summary [saved current-base-url current-google-url current-data-dir]
+  (let [inner (:summary saved)
+        room (:room inner)
+        rs (:short room)
+        lg (:slug room)]
+    (assoc saved
+           :base_url current-base-url
+           :mock_google_url current-google-url
+           :data_dir (str current-data-dir)
+           :summary (assoc inner
+                           :room (assoc room
+                                         :url (str current-base-url "/r/" rs "/" lg)
+                                         :thread_url (str current-base-url "/r/" rs "/" lg "/t/walkthrough-thread")
+                                         :garden_url (str current-base-url "/r/" rs "/" lg "/~/secret/item"))))))
+
+(defn- fixture-log-present? [data-dir]
+  (let [p (fs/path data-dir "events.jsonl")]
+    (and (fs/exists? p) (pos? (fs/size p)))))
+
+(defn- load-or-seed-summary!
+  [base-url google-url data-dir summary-path]
+  (if (and (fixture-log-present? data-dir) (fs/exists? summary-path))
+    (let [saved (json/parse-string (slurp summary-path) true)
+          rebased (rebase-fixture-summary saved base-url google-url data-dir)]
+      (spit summary-path (json/generate-string rebased {:pretty true}))
+      (println "")
+      (println "reusing fixture-data/ (delete the directory for a fresh seed)")
+      rebased)
+    (let [seeded (seed-demo! base-url)
+          s {:base_url base-url
+             :mock_google_url google-url
+             :data_dir (str data-dir)
+             :summary seeded}]
+      (spit summary-path (json/generate-string s {:pretty true}))
+      s)))
+
 (defn run-fixture [& _args]
-  (let [build (common/run-cargo-build-release! ["slugsocial-server"])
-        _ (assert! (zero? (:exit build)) "cargo build --release failed")
-        server-bin "target/release/slugsocial-server"
-        tmp-dir (str (fs/create-temp-dir {:prefix "slug-walkthrough-"}))
-        slug-port (common/pick-port)
+  (let [data-dir (str (fs/absolutize (fs/path (fs/cwd) fixture-data-dir)))
+        slug-port (common/pick-port-prefer preferred-slug-port)
         google-port (common/pick-port)
         base-url (str "http://127.0.0.1:" slug-port)
         google-url (str "http://127.0.0.1:" google-port)
-        stable-dir "/tmp/slug-walkthrough-fixture"
-        summary-path (str stable-dir "/summary.json")
+        summary-path (str (fs/path data-dir "summary.json"))
         !server (atom nil)
         !google (atom nil)
-        server-env (common/slug-server-env tmp-dir base-url google-url slug-port)]
+        server-env (merge (common/slug-server-env data-dir base-url google-url slug-port)
+                          {"RUST_LOG" "info"})
+        watch-cmd [(common/cargo-bin) "watch"
+                   "-x" "run -p slugsocial-server"
+                   "-w" "server/src"
+                   "-w" "server/static"
+                   "-w" "types/src"]]
     (try
-      (fs/create-dirs stable-dir)
+      (fs/create-dirs data-dir)
       (reset! !google
               (oauth/start-mock-google google-port
                                        :google-users ["google-user-alice" "google-user-bob"]))
-      (reset! !server (common/start-server server-bin server-env))
-      (assert! (common/wait-for-server base-url 10000) "server did not become healthy")
-      (let [seeded (seed-demo! base-url)
-            summary {:base_url base-url
-                     :mock_google_url google-url
-                     :data_dir tmp-dir
-                     :summary seeded}]
-        (spit summary-path (json/generate-string summary {:pretty true}))
+      (println "")
+      (println "starting cargo-watch (first compile may take a while)…")
+      (flush)
+      (reset! !server (p/process watch-cmd {:inherit true :env server-env}))
+      (assert! (common/wait-for-server base-url health-wait-ms) "server did not become healthy")
+      (let [summary (load-or-seed-summary! base-url google-url data-dir summary-path)]
         (println "")
         (println "walkthrough fixture ready")
         (println (str "  base url:      " base-url))
         (println (str "  room page:     " (get-in summary [:summary :room :url])))
         (println (str "  thread page:   " (get-in summary [:summary :room :thread_url])))
         (println (str "  garden page:   " (get-in summary [:summary :room :garden_url])))
+        (println (str "  data dir:      " data-dir))
         (println (str "  summary json:  " summary-path))
         (println "")
         (println "seeded users")
         (println "  alice / bob via mock OAuth")
+        (println "")
+        (println "editing server/src or server/static reloads the server; data persists in fixture-data/")
         (println "")
         (println "press Ctrl-C to stop")
         (flush)
@@ -129,5 +175,4 @@
           (Thread/sleep 1000)))
       (finally
         (when-some [s @!server] (common/kill-server s))
-        (when-some [g @!google] ((:stop-fn g)))
-        (fs/delete-tree tmp-dir)))))
+        (when-some [g @!google] ((:stop-fn g)))))))

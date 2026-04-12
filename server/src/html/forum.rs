@@ -976,12 +976,6 @@ pub async fn room_page(
         html! {
             (strip)
             nav class="breadcrumb" { (bc_room(&nav, slug_display, None)) }
-            h2 { (slug_display) }
-            p class="muted" { (room_id) }
-            p class="muted room-links" {
-                "room garden · "
-                a href=(nav.garden_root_url()) { "~" }
-            }
             (room_members_section_markup(&reduced, &room_id, false))
             h3 { "threads" }
             (render_thread_feed(Some(&nav), "room-thread-feed", &rows, now))
