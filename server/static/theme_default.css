@@ -256,6 +256,12 @@ section.compose textarea:focus {
 .room-members {
   margin-bottom: 10px;
 }
+.room-members-panel {
+  margin-bottom: 10px;
+}
+.room-members-panel h3 {
+  margin-top: 0;
+}
 .room-member-name {
   color: var(--signal);
   font-family: monospace;

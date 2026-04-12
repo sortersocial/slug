@@ -27,7 +27,7 @@ pub use reducer::ReducerState;
 pub fn create_app(state: AppState) -> Router {
     Router::new()
         .route("/healthz", get(|| async { "ok" }))
-        .route("/static/:filename", get(crate::html::serve_theme_css))
+        .route("/static/:filename", get(crate::html::serve_static))
         .route("/", get(crate::html::home))
         .route("/login", get(api::get_web_login))
         .route("/logout", get(api::get_logout))

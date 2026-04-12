@@ -88,6 +88,8 @@
 
                    (let [[room-short room-slug] (str/split room-id #"/" 2)
                          thread-url (str base-url "/r/" room-short "/" room-slug "/t/sse-thread")]
+                    ;; Thread body seeded via RPC above (reliable in CI). Room UI expand/new-thread flow
+                    ;; is covered by integration tests and manual flows; here we focus on SSE live updates.
                     (page/navigate alice-pg thread-url)
                     (page/wait-for-load-state alice-pg :load)
                     (is (wait-for-text alice-pg "#thread-feed-region" "seed thread" 45000)
