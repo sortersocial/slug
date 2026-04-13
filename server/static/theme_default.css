@@ -34,6 +34,11 @@
 
   /* Code tint */
   --code-fg: #c8dda0;
+
+  /* Semantic font stacks */
+  --font-prose: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+  --font-ui:    system-ui, -apple-system, sans-serif;
+  --font-code:  ui-monospace, "Cascadia Code", "SF Mono", Menlo, monospace;
 }
 
 /* ----------------------------------------------------------------
@@ -45,7 +50,7 @@ html, body { margin: 0; padding: 0; }
 body {
   background: var(--g0);
   color: var(--prose);
-  font-family: system-ui, -apple-system, sans-serif;
+  font-family: var(--font-ui);
   font-size: 14px;
   line-height: 1.6;
   margin: 0 auto;
@@ -189,7 +194,7 @@ form.ingest-form textarea {
   border: var(--bv) solid;
   border-color: var(--lo) var(--hi) var(--hi) var(--lo); /* INSET */
   color: var(--signal);
-  font-family: monospace;
+  font-family: var(--font-prose);
   font-size: 12px;
   min-width: 320px;
   outline: none;
@@ -227,7 +232,7 @@ section.compose textarea {
   border: var(--bv) solid;
   border-color: var(--lo) var(--hi) var(--hi) var(--lo);
   color: var(--signal);
-  font-family: monospace;
+  font-family: var(--font-prose);
   font-size: 12px;
   outline: none;
   padding: 6px 8px;
@@ -264,7 +269,7 @@ section.compose textarea:focus {
 }
 .room-member-name {
   color: var(--signal);
-  font-family: monospace;
+  font-family: var(--font-code);
 }
 .room-links {
   margin-top: 0;
@@ -568,9 +573,9 @@ pre {
   background: var(--g1);
   border: var(--bv) solid;
   border-color: var(--lo) var(--hi) var(--hi) var(--lo); /* INSET */
-  color: var(--code-fg);
-  font-family: monospace;
-  font-size: 12px;
+  color: var(--prose);
+  font-family: var(--font-prose);
+  font-size: 14px;
   margin: 0 0 6px;
   overflow-x: auto;
   overflow-wrap: anywhere;
@@ -601,7 +606,7 @@ code {
   border: 2px solid;
   border-color: var(--lo) var(--hi) var(--hi) var(--lo); /* INSET */
   color: var(--code-fg);
-  font-family: monospace;
+  font-family: var(--font-code);
   font-size: 12px;
   padding: 1px 4px;
 }
@@ -654,7 +659,7 @@ button.cli-panel-row:hover {
   background: none;
   border: none;
   color: var(--code-fg);
-  font-family: monospace;
+  font-family: var(--font-code);
   font-size: 12px;
   padding: 0;
   user-select: all;
@@ -664,9 +669,9 @@ button.cli-panel-row:hover {
    SCORE / ADDRESS / UTILITY
    ---------------------------------------------------------------- */
 .muted   { color: var(--meta); }
-.address { color: var(--ui); font-family: monospace; font-size: 12px; }
+.address { color: var(--ui); font-family: var(--font-code); font-size: 12px; }
 .score   { color: var(--meta); font-size: 12px; margin-left: auto; }
-span.address { font-family: monospace; }
+span.address { font-family: var(--font-code); }
 p.muted  { color: var(--meta); margin: 4px 0 8px; }
 a.item-link code { border: none; background: none; padding: 0; }
 
@@ -777,7 +782,7 @@ body.view-ontology-dark .ont-vote-meta {
 }
 body.view-ontology-dark .ont-item-title {
   color: var(--signal);
-  font-family: monospace;
+  font-family: var(--font-code);
   font-size: 12px;
   font-weight: bold;
 }
@@ -930,7 +935,7 @@ body.view-ontology-light .ont-vote-meta {
 }
 body.view-ontology-light .ont-item-title {
   color: var(--signal);
-  font-family: monospace;
+  font-family: var(--font-code);
   font-size: 12px;
   font-weight: bold;
 }

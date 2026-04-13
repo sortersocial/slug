@@ -10,6 +10,11 @@
   --accent: #c4a574;
   --line: #2c2824;
   --code-bg: #1c1814;
+
+  /* Semantic font stacks */
+  --font-prose: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+  --font-ui:    system-ui, -apple-system, sans-serif;
+  --font-code:  ui-monospace, "Cascadia Code", "SF Mono", Menlo, monospace;
 }
 
 *, *::before, *::after {
@@ -19,7 +24,7 @@
 body {
   background: var(--paper);
   color: var(--ink);
-  font-family: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+  font-family: var(--font-prose);
   font-size: 17px;
   line-height: 1.55;
   margin: 0 auto;
@@ -30,7 +35,7 @@ body {
 
 h1, h2, h3 {
   color: var(--ink);
-  font-family: system-ui, sans-serif;
+  font-family: var(--font-ui);
   font-size: 0.75rem;
   font-weight: 600;
   letter-spacing: 0.14em;
@@ -48,7 +53,7 @@ a:hover {
 
 nav.breadcrumb {
   color: var(--ink-dim);
-  font-family: ui-monospace, "Cascadia Code", monospace;
+  font-family: var(--font-ui);
   font-size: 0.8rem;
   margin: 0.5rem 0 1rem;
 }
@@ -62,7 +67,7 @@ nav.breadcrumb .bc-sep { opacity: 0.5; }
 
 .muted, .ingest-meta, p.muted {
   color: var(--ink-dim);
-  font-family: ui-monospace, monospace;
+  font-family: var(--font-ui);
   font-size: 0.78rem;
 }
 
@@ -110,7 +115,7 @@ div.ingest-meta {
 }
 a.post-num {
   color: var(--ink-dim);
-  font-family: ui-monospace, monospace;
+  font-family: var(--font-ui);
   font-size: 0.78rem;
   text-decoration: none;
 }
@@ -121,8 +126,8 @@ pre {
   border: none;
   border-left: 3px solid var(--accent);
   color: #d8d2c8;
-  font-family: ui-monospace, "Cascadia Code", monospace;
-  font-size: 0.82rem;
+  font-family: var(--font-prose);
+  font-size: 0.95rem;
   line-height: 1.45;
   margin: 0;
   max-width: 100%;
@@ -143,7 +148,7 @@ pre a.pre-link:hover {
 code {
   background: var(--code-bg);
   color: #e0dbd4;
-  font-family: inherit;
+  font-family: var(--font-code);
   font-size: 0.9em;
   padding: 0.1em 0.25em;
 }
@@ -180,7 +185,7 @@ form.auth-form {
 }
 form.auth-form label {
   color: var(--ink-dim);
-  font-family: ui-monospace, monospace;
+  font-family: var(--font-ui);
   font-size: 0.72rem;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -190,7 +195,7 @@ textarea {
   background: var(--code-bg);
   border: 1px solid var(--line);
   color: var(--ink);
-  font-family: ui-monospace, monospace;
+  font-family: var(--font-prose);
   font-size: 0.85rem;
   padding: 0.45rem 0.55rem;
   width: 100%;
@@ -206,7 +211,7 @@ button[type="submit"],
   border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line));
   color: var(--ink);
   cursor: pointer;
-  font-family: ui-monospace, monospace;
+  font-family: var(--font-ui);
   font-size: 0.82rem;
   padding: 0.35rem 0.85rem;
 }
@@ -230,7 +235,7 @@ div.component {
 div.item-card-header,
 div.vote-header {
   border-bottom: 1px solid var(--line);
-  font-family: ui-monospace, monospace;
+  font-family: var(--font-ui);
   font-size: 0.78rem;
   padding: 0.4rem 0.65rem;
 }
@@ -278,7 +283,7 @@ ol.ranking li {
 ol.ranking li::before {
   color: var(--ink-dim);
   content: counter(rank) ".";
-  font-family: ui-monospace, monospace;
+  font-family: var(--font-ui);
   font-size: 0.75rem;
   left: 0.35rem;
   position: absolute;
@@ -291,7 +296,7 @@ div.thread-paginator {
   flex-wrap: wrap;
   gap: 0.5rem 0.75rem;
   margin: 0.65rem 0;
-  font-family: ui-monospace, monospace;
+  font-family: var(--font-ui);
   font-size: 0.8rem;
 }
 a.post-nav-btn {
@@ -344,7 +349,7 @@ button.cli-panel-row:hover {
 }
 .cli-panel-cmd {
   color: var(--accent);
-  font-family: ui-monospace, monospace;
+  font-family: var(--font-code);
   font-size: 0.82rem;
 }
 
@@ -367,7 +372,7 @@ button.cli-panel-row:hover {
   align-items: center;
   color: var(--ink-dim);
   display: flex;
-  font-family: ui-monospace, monospace;
+  font-family: var(--font-ui);
   font-size: 0.75rem;
   gap: 0.4rem;
 }
@@ -384,7 +389,7 @@ a#src-link {
   border: 1px solid var(--line);
   color: var(--ink-dim);
   cursor: pointer;
-  font-family: ui-monospace, monospace;
+  font-family: var(--font-ui);
   font-size: 0.78rem;
   padding: 0.25rem 0.6rem;
   text-decoration: none;
@@ -420,7 +425,7 @@ body.view-ontology-light .ont-group-meta,
 body.view-ontology-light .ont-vote-meta {
   border-bottom: 1px solid #c8c4bc;
   color: #5c574e;
-  font-family: ui-monospace, monospace;
+  font-family: var(--font-ui);
   font-size: 0.78rem;
   padding: 0.4rem 0.6rem;
 }
