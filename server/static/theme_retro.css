@@ -7,9 +7,12 @@
   color-scheme: dark light;
 }
 
+*, *::before, *::after { box-sizing: border-box; }
+
 body {
   margin: 0 auto;
   max-width: 560px;
+  overflow-x: hidden;
   padding: 0 1rem 3rem;
 }
 
@@ -22,6 +25,7 @@ body {
 /* Long lines / slug blocks: wrap instead of horizontal scroll */
 pre {
   margin: 0 0 0.5rem;
+  overflow-x: auto;
   overflow-wrap: anywhere;
   word-break: break-word;
   white-space: pre-wrap;
@@ -54,7 +58,21 @@ details.ont-rank-history {
 .rich-embed.embed-spotify iframe { height: 152px; }
 .rich-embed.embed-youtube iframe { height: 292px; }
 
-/* Bottom bar: spread does nothing here — hide to stay minimal */
+/* Bottom bar: fixed, consistent with default + craft */
+#controls {
+  align-items: center;
+  background: Canvas;
+  border-top: 1px solid;
+  bottom: 0;
+  display: flex;
+  gap: 0.75rem;
+  left: 0;
+  padding: 0.35rem 1rem;
+  position: fixed;
+  right: 0;
+  z-index: 100;
+}
+/* Spread does nothing here — hide to stay minimal */
 #spread-control {
   display: none;
 }
