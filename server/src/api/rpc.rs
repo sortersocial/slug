@@ -771,6 +771,50 @@ async fn rpc_get_pair(state: &AppState, room: String, parent_path: String) -> Re
     }))
 }
 
+/// GET /api/v0/events.jsonl — download the raw event log.
+/// Requires the caller to be authenticated (bearer token or session cookie).
+pub async fn get_events_jsonl(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    jar: axum_extra::extract::cookie::CookieJar,
+) -> impl IntoResponse {
+    use axum::http::{header, StatusCode};
+    use axum::body::Body;
+
+    let reduced = state.reduced.read().await;
+    if super::optional_principal(&headers, &jar, &reduced).is_none() {
+        return axum::response::Response::builder()
+            .status(StatusCode::UNAUTHORIZED)
+            .body(Body::from("authentication required"))
+            .unwrap()
+            .into_response();
+    }
+    drop(reduced);
+
+    let path = state.event_log.path().to_path_buf();
+    let bytes = match tokio::fs::read(&path).await {
+        Ok(b) => b,
+        Err(_) => {
+            return axum::response::Response::builder()
+                .status(StatusCode::NOT_FOUND)
+                .body(Body::from("event log not found"))
+                .unwrap()
+                .into_response();
+        }
+    };
+
+    axum::response::Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/x-ndjson")
+        .header(
+            header::CONTENT_DISPOSITION,
+            "attachment; filename=\"events.jsonl\"",
+        )
+        .body(Body::from(bytes))
+        .unwrap()
+        .into_response()
+}
+
 pub async fn handle_rpc_batch(
     State(state): State<AppState>,
     headers: HeaderMap,

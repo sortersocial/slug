@@ -102,6 +102,7 @@ pub fn create_app(state: AppState) -> Router {
         .route("/api/v0/pending-session/:id", get(api::get_pending_session))
         .route("/api/v0/whoami", get(api::get_whoami))
         .route("/api/v0/rpc", post(api::handle_rpc_batch))
+        .route("/api/v0/events.jsonl", get(api::get_events_jsonl))
         .with_state(state)
         .layer(TraceLayer::new_for_http())
 }
