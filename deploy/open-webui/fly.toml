@@ -1,0 +1,59 @@
+# Open WebUI on Fly.io — OpenRouter only (no Ollama).
+# Runtime RAM: RAG_EMBEDDING_ENGINE + AUDIO_STT_ENGINE use your OpenRouter HTTP API so local
+# SentenceTransformers / Whisper weights are not loaded into memory (torch may still exist on disk in the image).
+# Replace `app` with your Fly app name, then:
+#   fly volumes create open_webui_data --region <same-as-primary_region> --size 3
+#   fly secrets set OPENAI_API_KEY=sk-or-... WEBUI_SECRET_KEY=$(openssl rand -hex 32)
+#   fly secrets set WEBUI_URL=https://<app>.fly.dev
+# Optional (recommended): headless admin, signup disabled automatically:
+#   fly secrets set WEBUI_ADMIN_EMAIL=you@example.com WEBUI_ADMIN_PASSWORD='...'
+#   fly deploy
+
+app = "open-webui"
+primary_region = "iad"
+
+[build]
+  image = "ghcr.io/open-webui/open-webui:main"
+
+[env]
+  OPENAI_API_BASE_URL = "https://openrouter.ai/api/v1"
+  ENABLE_OLLAMA_API = "false"
+  # One worker so we do not duplicate in-RAM state (see Open WebUI scaling docs).
+  UVICORN_WORKERS = "1"
+  # Remote embeddings via OpenAI-compatible API (OpenRouter) — avoids ~500MB+ local embedding model in RAM.
+  RAG_EMBEDDING_ENGINE = "openai"
+  # Remote speech-to-text when using voice — avoids loading faster-whisper into RAM.
+  AUDIO_STT_ENGINE = "openai"
+  # Speeds up model list with OpenRouter’s large catalog (small in-memory cache).
+  ENABLE_BASE_MODELS_CACHE = "true"
+
+[[mounts]]
+  source = "open_webui_data"
+  destination = "/app/backend/data"
+
+[[services]]
+  internal_port = 8080
+  protocol = "tcp"
+
+  [[services.ports]]
+    port = 80
+    handlers = ["http"]
+    force_https = true
+
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"]
+
+  [services.concurrency]
+    type = "connections"
+    hard_limit = 250
+    soft_limit = 200
+
+  [[services.http_checks]]
+    interval = "15s"
+    timeout = "5s"
+    grace_period = "60s"
+    method = "GET"
+    path = "/health"
+    protocol = "http"
+    tls_skip_verify = false
