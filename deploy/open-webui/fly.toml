@@ -1,16 +1,22 @@
 # Open WebUI on Fly.io — OpenRouter only (no Ollama).
 # Runtime RAM: RAG_EMBEDDING_ENGINE + AUDIO_STT_ENGINE use your OpenRouter HTTP API so local
 # SentenceTransformers / Whisper weights are not loaded into memory (torch may still exist on disk in the image).
-# Replace `app` with your Fly app name, then:
-#   fly volumes create open_webui_data --region <same-as-primary_region> --size 3
-#   fly secrets set OPENAI_API_KEY=sk-or-... WEBUI_SECRET_KEY=$(openssl rand -hex 32)
-#   fly secrets set WEBUI_URL=https://<app>.fly.dev
+# App name must be globally unique on Fly (`open-webui` is already taken — pick your own).
+# One-time:
+#   fly volumes create open_webui_data -a <app> --region <same-as-primary_region> --size 3
+#   fly secrets set -a <app> OPENAI_API_KEY=sk-or-... WEBUI_SECRET_KEY=$(openssl rand -hex 32)
+#   fly secrets set -a <app> WEBUI_URL=https://<app>.fly.dev
 # Optional (recommended): headless admin, signup disabled automatically:
 #   fly secrets set WEBUI_ADMIN_EMAIL=you@example.com WEBUI_ADMIN_PASSWORD='...'
 #   fly deploy
 
-app = "open-webui"
+app = "slug-open-webui"
 primary_region = "iad"
+# Open WebUI’s Python import + migrations can spike RAM; shared 256MB OOMs. Use ≥4GB VM.
+swap_size_mb = 1024
+
+[[vm]]
+  size = "performance-2x"
 
 [build]
   image = "ghcr.io/open-webui/open-webui:main"
@@ -18,6 +24,13 @@ primary_region = "iad"
 [env]
   OPENAI_API_BASE_URL = "https://openrouter.ai/api/v1"
   ENABLE_OLLAMA_API = "false"
+  # HTTPS on Fly: session cookies must be marked Secure or chat/WebSocket requests lose auth (see Open WebUI connection-error docs).
+  WEBUI_SESSION_COOKIE_SECURE = "true"
+  WEBUI_AUTH_COOKIE_SECURE = "true"
+  WEBUI_SESSION_COOKIE_SAME_SITE = "lax"
+  WEBUI_AUTH_COOKIE_SAME_SITE = "lax"
+  # Must match the URL you use in the browser (semicolon-list if you add more hosts later).
+  CORS_ALLOW_ORIGIN = "https://slug-open-webui.fly.dev"
   # One worker so we do not duplicate in-RAM state (see Open WebUI scaling docs).
   UVICORN_WORKERS = "1"
   # Remote embeddings via OpenAI-compatible API (OpenRouter) — avoids ~500MB+ local embedding model in RAM.
@@ -51,7 +64,7 @@ primary_region = "iad"
 
   [[services.http_checks]]
     interval = "15s"
-    timeout = "5s"
+    timeout = "10s"
     grace_period = "60s"
     method = "GET"
     path = "/health"
