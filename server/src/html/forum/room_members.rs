@@ -5,6 +5,8 @@ use maud::{html, Markup};
 
 use crate::html::ui_action::{HtmlUiAction, UI_RPC_FIELD};
 
+use super::access::user_can_manage_room;
+
 #[derive(Clone)]
 pub(super) struct RoomMemberRow {
     pub(super) username: String,
@@ -72,11 +74,13 @@ pub(crate) fn room_members_section_markup(
     reduced: &ReducerState,
     room_id: &str,
     members_expanded: bool,
+    viewer: Option<&str>,
 ) -> Markup {
     let members = room_members_for_room(reduced, room_id);
     if members.is_empty() {
         return html! {};
     }
+    let can_delete = viewer.is_some_and(|u| user_can_manage_room(reduced, room_id, u));
     html! {
         div id="room-members-section" {
             @if members_expanded {
@@ -91,6 +95,16 @@ pub(crate) fn room_members_section_markup(
                 }
                 section class="room-members-panel" {
                     (room_members_inner(&members))
+                    @if can_delete {
+                        form method="POST" action="/ui" onsubmit="return confirm('Delete this room permanently? This cannot be undone.');" {
+                            input type="hidden" name=(UI_RPC_FIELD) value=(template_json_compact(&HtmlUiAction::DeleteRoom {
+                                room: room_id.to_string(),
+                            }).expect("static json"));
+                            p class="room-delete-actions" {
+                                button type="submit" class="danger" data-testid="delete-room" { "delete room" }
+                            }
+                        }
+                    }
                 }
             } @else {
                 form method="POST" action="/ui" {

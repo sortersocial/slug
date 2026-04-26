@@ -7,7 +7,7 @@ use tokio::sync::mpsc;
 
 use crate::{
     dsl,
-    events::{AgentBound, Event, GrantAdded, Ingest, PostRedacted, UserRegistered},
+    events::{AgentBound, Event, GrantAdded, Ingest, PostRedacted, RoomDeleted, UserRegistered},
     html::JsBuilder,
     identity::parse_agent,
     path_types::CanonicalItemUrl,
@@ -520,6 +520,44 @@ pub async fn writer_actor(mut rx: mpsc::Receiver<WriteCmd>, state: AppState) {
                     reduced.apply_event(tc_ev);
                     reduced.apply_event(ga_ev);
                     Ok(RpcResult::RoomCreated { room_id })
+                }
+                .await;
+                let _ = reply.send(out);
+            }
+
+            WriteCmd::RoomDelete { room, bearer, reply } => {
+                let out = async {
+                    use crate::events::ThreadCapability;
+
+                    let mut reduced = state.reduced.write().await;
+                    let principal =
+                        verify_token(&reduced, &bearer).map_err(|(_, m)| (m, None))?;
+                    let room = room.trim().to_string();
+                    if !reduced.rooms.contains(&room) {
+                        return Err(("unknown room".into(), None));
+                    }
+                    if !reduced.user_has_cap(&room, &principal, ThreadCapability::Manage) {
+                        return Err(("requires Manage capability".into(), None));
+                    }
+                    let ev = Event::RoomDeleted(RoomDeleted {
+                        ts: now_ms(),
+                        room_id: room.clone(),
+                        deleted_by: principal,
+                    });
+                    state
+                        .event_log
+                        .append(&ev)
+                        .await
+                        .map_err(|e| (format!("{e}"), None))?;
+                    reduced.apply_event(ev);
+                    drop(reduced);
+
+                    {
+                        let mut inv = state.invites.write().await;
+                        inv.retain(|_, v| v.room_id != room);
+                    }
+
+                    Ok(RpcResult::RoomDeletedOk {})
                 }
                 .await;
                 let _ = reply.send(out);
