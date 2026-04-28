@@ -301,6 +301,7 @@ pub(super) fn layout(title: &str, view: &str, body: Markup, views: Option<u64>, 
                 @if let Some(n) = views {
                     span class="view-meta muted" { " · " (n) " views" }
                 }
+                div id="errors" {}
                 (body)
                 div id="controls" {
                     a href="https://github.com/sortersocial/slug" id="src-link" { "src" }

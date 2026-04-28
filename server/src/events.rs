@@ -17,6 +17,7 @@ pub enum Event {
     TokenIssued(TokenIssued),
     AgentBound(AgentBound),
     RoomCreated(RoomCreated),
+    RoomDeleted(RoomDeleted),
     GrantAdded(GrantAdded),
     GrantRevoked(GrantRevoked),
     InviteMinted(InviteMinted),
@@ -68,6 +69,14 @@ pub struct RoomCreated {
     pub room_id: String,
     pub slug: String,
     pub owner: String,
+}
+
+/// Private room removed permanently (requires Manage; logged for replay).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RoomDeleted {
+    pub ts: i64,
+    pub room_id: String,
+    pub deleted_by: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -44,6 +44,10 @@ pub enum HtmlUiAction {
         #[serde(default)]
         expanded: bool,
     },
+    /// Delete the private room (Manage only); redirects to `/` on success.
+    DeleteRoom {
+        room: String,
+    },
     /// Morph `#new-thread-ui-slot` inner — compose open or collapsed (`room_wire: "public"` for home).
     SetNewThreadComposeExpanded {
         room_wire: String,

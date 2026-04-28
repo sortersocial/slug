@@ -173,6 +173,9 @@ pub enum RoomTimelineKind {
         owner: String,
         slug: String,
     },
+    RoomDeleted {
+        deleted_by: String,
+    },
     GrantAdded {
         username: String,
         granted_by: String,
@@ -597,6 +600,39 @@ impl ReducerState {
         self.content.insert(scope, cs);
     }
 
+    /// Drop all reducer state keyed by a private room id (forum, garden scope, invites, grants).
+    fn purge_private_room(&mut self, room_id: &str) {
+        let scope = ScopeId::Room(room_id.to_string());
+        self.rooms.remove(room_id);
+        self.grants.remove(room_id);
+        self.room_timeline.remove(room_id);
+        self.invites.retain(|_, inv| inv.room_id != room_id);
+        self.content.remove(&scope);
+        self.forum_threads.retain(|(s, _), _| s != &scope);
+        self.ingests_by_scope_thread.retain(|(s, _), _| s != &scope);
+
+        let mut to_drop: Vec<String> = self
+            .ingests_by_id
+            .iter()
+            .filter(|(_, ing)| ing.room_id.trim() == room_id)
+            .map(|(id, _)| id.clone())
+            .collect();
+        to_drop.sort();
+        to_drop.dedup();
+        for id in to_drop {
+            if let Some(ing) = self.ingests_by_id.remove(&id) {
+                self.posts_by_actor
+                    .entry(ing.principal)
+                    .and_modify(|q| {
+                        q.retain(|x| x != &id);
+                    });
+            }
+            self.ingests_ordered.retain(|x| x != &id);
+            self.redacted_posts.remove(&id);
+            self.post_redact_ts.remove(&id);
+        }
+    }
+
     pub fn apply_event(&mut self, event: Event) {
         match event {
             Event::UserRegistered(ur) => {
@@ -629,6 +665,21 @@ impl ReducerState {
                             slug: rc.slug.clone(),
                         },
                     });
+            }
+            Event::RoomDeleted(rd) => {
+                let room_id = rd.room_id.clone();
+                if self.rooms.contains(&room_id) {
+                    self.room_timeline
+                        .entry(room_id.clone())
+                        .or_default()
+                        .push(RoomTimelineEntry {
+                            ts: rd.ts,
+                            kind: RoomTimelineKind::RoomDeleted {
+                                deleted_by: rd.deleted_by.clone(),
+                            },
+                        });
+                }
+                self.purge_private_room(&room_id);
             }
             Event::Ingest(mut ing) => {
                 ing.thread_tag = canonicalize_tag(&ing.thread_tag);

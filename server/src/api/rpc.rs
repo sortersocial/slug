@@ -237,6 +237,26 @@ pub async fn rpc_post_redact(
         .map_err(|_| ("writer dropped".into(), None))?
 }
 
+pub async fn rpc_room_delete(
+    state: &AppState,
+    headers: &HeaderMap,
+    room: String,
+) -> Result<RpcResult, RpcErr> {
+    let bearer = parse_bearer(headers).map_err(|(_, m)| (m, None))?;
+    let (tx, rx) = oneshot::channel();
+    state
+        .write_tx
+        .send(WriteCmd::RoomDelete {
+            room: room.trim().to_string(),
+            bearer,
+            reply: tx,
+        })
+        .await
+        .map_err(|_| ("writer unavailable".into(), None))?;
+    rx.await
+        .map_err(|_| ("writer dropped".into(), None))?
+}
+
 async fn rpc_post(
     state: &AppState,
     headers: &HeaderMap,
@@ -1103,6 +1123,10 @@ pub async fn handle_rpc_batch(
                     }
                 }
             }
+            RpcCommand::RoomDelete { room } => match rpc_room_delete(&state, &headers, room).await {
+                Ok(r) => line_ok(r),
+                Err((e, h)) => line_err(e, h),
+            },
             RpcCommand::RoomRevoke {
                 room,
                 username,

@@ -14,3 +14,7 @@ pub(crate) fn user_can_view_room(reduced: &ReducerState, room_id: &str, username
 pub(crate) fn user_can_post_room(reduced: &ReducerState, room_id: &str, username: &str) -> bool {
     reduced.user_has_cap(room_id, username, ThreadCapability::Post)
 }
+
+pub(crate) fn user_can_manage_room(reduced: &ReducerState, room_id: &str, username: &str) -> bool {
+    reduced.user_has_cap(room_id, username, ThreadCapability::Manage)
+}

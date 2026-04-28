@@ -362,6 +362,10 @@ pub enum RpcCommand {
     },
     /// List rooms the authenticated principal has access to.
     RoomList,
+    /// Permanently delete a private room and all of its forum and garden data (requires Manage).
+    RoomDelete {
+        room: String,
+    },
     GetGlobalRank {
         room: String,
         #[serde(default)]
@@ -446,6 +450,7 @@ pub enum RpcResult {
     },
     RoomAudit(RoomAuditResponse),
     RoomList(RoomListResponse),
+    RoomDeletedOk {},
     GrantOk {},
     GlobalRank(GlobalRankResponse),
     Pair(PairResponse),

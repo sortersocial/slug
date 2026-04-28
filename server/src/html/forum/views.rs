@@ -259,7 +259,8 @@ pub async fn room_page(
         drop(reduced);
         return (StatusCode::NOT_FOUND, "room not found").into_response();
     };
-    let members_markup = room_members_section_markup(&reduced, &room_id, false);
+    let members_markup =
+        room_members_section_markup(&reduced, &room_id, false, user.as_deref());
     let forum_cli = format!("npx slugsocial private {room_id} forum list");
     let garden_cli = format!("npx slugsocial private {room_id} garden tree");
     let audit_cli = format!("npx slugsocial private {room_id} audit");

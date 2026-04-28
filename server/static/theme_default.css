@@ -271,6 +271,16 @@ section.compose textarea:focus {
   color: var(--signal);
   font-family: var(--font-code);
 }
+.room-delete-actions {
+  margin-top: 12px;
+}
+button.danger {
+  border-color: var(--hi) var(--lo) var(--lo) var(--hi);
+  color: var(--signal);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 4px 10px;
+}
 .room-links {
   margin-top: 0;
 }

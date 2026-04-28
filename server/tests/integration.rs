@@ -150,6 +150,73 @@ async fn test_room_create_rpc() {
     );
 }
 
+#[tokio::test]
+async fn test_room_delete_rpc() {
+    let (addr, _tmp, _log, _handle) = create_test_server().await;
+    let client = reqwest::Client::new();
+    let bearer = test_bearer();
+
+    let create = rpc_batch(
+        &client,
+        addr,
+        Some(&bearer),
+        serde_json::json!([{
+            "RoomCreate": { "slug": "rpc-delete-me" }
+        }]),
+    )
+    .await;
+    let room_id = create["results"][0]["result"]["RoomCreated"]["room_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let del = rpc_batch(
+        &client,
+        addr,
+        Some(&bearer),
+        serde_json::json!([{
+            "RoomDelete": { "room": room_id }
+        }]),
+    )
+    .await;
+    assert_eq!(del["results"][0]["ok"], true, "{:?}", del["results"][0]);
+    assert!(
+        del["results"][0]["result"]["RoomDeletedOk"].is_object(),
+        "expected RoomDeletedOk: {:?}",
+        del["results"][0]
+    );
+
+    let list = rpc_batch(&client, addr, Some(&bearer), serde_json::json!(["RoomList"])).await;
+    let rooms = list["results"][0]["result"]["RoomList"]["rooms"]
+        .as_array()
+        .unwrap();
+    assert!(
+        !rooms.iter().any(|r| r.as_str() == Some(room_id.as_str())),
+        "deleted room should not appear in RoomList"
+    );
+
+    let thread = rpc_batch(
+        &client,
+        addr,
+        Some(&bearer),
+        serde_json::json!([{
+            "GetForumThread": {
+                "room": room_id,
+                "thread_tag": "x",
+                "offset": null,
+                "limit": null,
+                "since": null,
+                "before": null,
+                "actor": null,
+                "post_id": null
+            }
+        }]),
+    )
+    .await;
+    assert_eq!(thread["results"][0]["ok"], false);
+    assert_eq!(thread["results"][0]["error"], "room not found");
+}
+
 /// Private room reads use `authorize_room_read`, which returns "room not found" when no bearer is sent
 /// (same as unknown room). The CLI must attach the saved token for `private … forum show` etc.
 #[tokio::test]

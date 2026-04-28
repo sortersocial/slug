@@ -15,7 +15,7 @@ use crate::{
     api::{
         auth::{resolve_web_session, WebSession},
         handle_rpc_batch,
-        rpc::{rpc_post_redact, rpc_post_with_bearer},
+        rpc::{rpc_post_redact, rpc_post_with_bearer, rpc_room_delete},
     },
     canonical_path::canonicalize_tag,
     html::{
@@ -154,11 +154,29 @@ async fn dispatch_ui_action(
                 drop(reduced);
                 return ui_js_warn("forbidden").into_response();
             }
-            let markup = room_members_section_markup(&reduced, &room_wire, expanded);
+            let markup = room_members_section_markup(&reduced, &room_wire, expanded, user);
             drop(reduced);
             JsBuilder::new()
                 .morph_selector("#room-members-section", markup)
                 .into_response()
+        }
+        HtmlUiAction::DeleteRoom { room } => {
+            let Some(session) = session else {
+                return js_redirect("/login").into_response();
+            };
+            let room = room.trim().to_string();
+            if room.is_empty() {
+                return ui_js_warn("missing room").into_response();
+            }
+            let h = headers_from_bearer(&session.bearer);
+            match rpc_room_delete(state, &h, room).await {
+                Ok(RpcResult::RoomDeletedOk {}) => js_redirect("/").into_response(),
+                Ok(_) => (StatusCode::BAD_REQUEST, "unexpected response").into_response(),
+                Err((msg, hint)) => {
+                    let detail = hint.as_deref().unwrap_or("");
+                    js_error("#errors", &msg, detail).into_response()
+                }
+            }
         }
         HtmlUiAction::SetNewThreadComposeExpanded { room_wire, expanded } => {
             let room_wire = room_wire.trim().to_string();
