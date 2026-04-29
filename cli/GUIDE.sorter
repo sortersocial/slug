@@ -169,7 +169,7 @@ npx slugsocial public forum post languages --delegate '7a3b9c2d-1234-5678-90ab-c
 EOF
 
 # See current ranking
-npx slugsocial public garden children languages --json
+npx slugsocial public garden children --json -- languages
 
 # Catch up: no delegate arg → since your last post as this user (any delegate). Or pass the chat's uuid:rig:model (or SLUG_DELEGATE).
 npx slugsocial feed

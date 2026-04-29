@@ -277,7 +277,7 @@ enum GardenCmd {
     /// Use --full to retrieve the complete body.
     Body {
         /// Ontology path without shell `~` (e.g. `languages/python`). The CLI sends `~/…` to the API.
-        #[arg(value_name = "PATH")]
+        #[arg(value_name = "PATH", allow_hyphen_values = true)]
         path: String,
         /// Output as JSON for agent parsing
         #[arg(long)]
@@ -292,21 +292,22 @@ enum GardenCmd {
     /// One path = rank items under that parent.
     /// Multiple paths = merge those scopes (e.g. garden children models ai-models).
     Children {
-        /// Path(s); no ~ prefix. Multiple PATH merge scopes.
-        #[arg(value_name = "PATH", num_args = 1..)]
-        paths: Vec<String>,
         /// How many levels deep to resolve (default 1 = direct children only).
         #[arg(long, value_name = "N")]
         depth: Option<usize>,
         /// Output as JSON for agent parsing
         #[arg(long)]
         json: bool,
+        /// Path(s); no ~ prefix. Multiple PATH merge scopes. Use `-/host/...` for external items.
+        /// After optional flags, pass `--` then paths (required so values starting with `-` parse correctly).
+        #[arg(value_name = "PATH", num_args = 1.., allow_hyphen_values = true)]
+        paths: Vec<String>,
     },
 
     /// Suggest a comparison pair under a path + relevant threads where it's discussed.
     Pair {
         /// Parent path without shell `~` (e.g. `conn` or `models/ai`). The CLI sends `~/…` to the API.
-        #[arg(value_name = "PATH")]
+        #[arg(value_name = "PATH", allow_hyphen_values = true)]
         path: String,
         /// Output as JSON for agent parsing
         #[arg(long)]
@@ -316,7 +317,7 @@ enum GardenCmd {
     /// Vote history for an item (wins/losses) with thread per vote.
     Matchup {
         /// Item path without shell `~` (e.g. `sorts/insertion`). The CLI sends `~/…` to the API.
-        #[arg(value_name = "PATH")]
+        #[arg(value_name = "PATH", allow_hyphen_values = true)]
         path: String,
         /// Output as JSON for agent parsing
         #[arg(long)]
@@ -348,7 +349,7 @@ enum GardenCmd {
     /// Rank history for an item — how its position changed over time and why.
     History {
         /// Item path without shell `~` (e.g. `hist/rust`). The CLI sends `~/…` to the API.
-        #[arg(value_name = "PATH")]
+        #[arg(value_name = "PATH", allow_hyphen_values = true)]
         path: String,
         /// Output as JSON for agent parsing
         #[arg(long)]
@@ -701,6 +702,8 @@ fn normalize_ontology_path_input(path: &str) -> Result<String, String> {
 
     let without_sigils = if p.starts_with("~/") {
         p.strip_prefix("~/").unwrap_or(p).trim_start_matches('/')
+    } else if p.starts_with("-/") {
+        p
     } else if p.starts_with('/') {
         // Shell may expand ~/x to $HOME/x; treat path under HOME as ontology path.
         if let Ok(home) = std::env::var("HOME") {
@@ -723,10 +726,12 @@ fn normalize_ontology_path_input(path: &str) -> Result<String, String> {
     Ok(without_sigils.to_string())
 }
 
-/// Query-string form for ontology items: `~/` + normalized path, or full URL unchanged.
+/// Query-string form for ontology items: `~/` + normalized path, `-/` + external tail, or full URL unchanged.
 fn ontology_path_for_api_query(normalized: &str) -> String {
     let p = normalized.trim();
     if p.starts_with("http://") || p.starts_with("https://") {
+        p.to_string()
+    } else if p.starts_with("-/") {
         p.to_string()
     } else {
         format!("~/{}", p.trim_start_matches('/'))

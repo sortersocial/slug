@@ -33,6 +33,38 @@ fn vote_doc(tag: &str, a: &str, b: &str, left: i32, right: i32) -> String {
 // ============================================================================
 
 #[test]
+fn reducer_external_namespace_ranking() {
+    let mut state = ReducerState::default();
+    state.apply_event(ingest_event(
+        1,
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n\
+         -/github.com/iss/1 { one }\n\
+         -/github.com/iss/2 { two }\n\
+         -/github.com/iss/1 2:1 -/github.com/iss/2 { because }\n",
+    ));
+
+    let content = state.public();
+    let g = &content.ranking_group;
+    assert_eq!(g.idx_to_item.len(), 2);
+
+    let parent = slugsocial_server::path_types::CanonicalItemUrl::parse("https://github.com/iss").unwrap();
+    let children = slugsocial_server::scope_rank::build_children_rankings(content, &parent);
+    assert_eq!(children.component_rankings.len(), 1);
+    let names: Vec<&str> = children.component_rankings[0]
+        .ranked
+        .iter()
+        .map(|r| r.item.as_str())
+        .collect();
+    assert_eq!(
+        names,
+        vec![
+            "https://github.com/iss/1",
+            "https://github.com/iss/2"
+        ]
+    );
+}
+
+#[test]
 fn reducer_and_ranking_linear_chain() {
     // Prefer /a over /b over /c.
     let mut state = ReducerState::default();

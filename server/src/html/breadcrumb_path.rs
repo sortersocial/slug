@@ -3,7 +3,7 @@ use crate::path_types::CanonicalItemUrl;
 /// Semantic view of an ontology path for rendering and routing decisions.
 pub(super) struct OntologyPath {
     canonical: CanonicalItemUrl,
-    /// Breadcrumb segments: for `~/a/b` this is `["~", "a", "b"]`.
+    /// Breadcrumb segments: for `~/a/b` this is `["a", "b"]` (leading `~` rendered separately).
     segments: Vec<String>,
 }
 
@@ -52,6 +52,61 @@ impl OntologyPath {
         } else {
             "/~"
         }
+    }
+
+    pub(super) fn segments(&self) -> &[String] {
+        &self.segments
+    }
+
+    pub(super) fn as_str(&self) -> &str {
+        self.canonical.as_str()
+    }
+}
+
+/// External `https://host/…` items addressed as `/-/host/…` in the URL bar.
+pub(super) struct ExternalOntologyPath {
+    canonical: CanonicalItemUrl,
+    /// e.g. `["github.com", "org", "repo", "issues"]`
+    segments: Vec<String>,
+}
+
+impl ExternalOntologyPath {
+    pub(super) fn from_input(path: &str) -> Self {
+        let p = path.trim_start_matches('/');
+        let raw = if p.starts_with("http://") || p.starts_with("https://") {
+            p.to_string()
+        } else if p.is_empty() {
+            "-/.".to_string()
+        } else {
+            format!("-/{}", p.trim_start_matches('/'))
+        };
+        let Some(canonical) = CanonicalItemUrl::parse(&raw) else {
+            return Self::from_canonical(CanonicalItemUrl("https://.".to_string()));
+        };
+        Self::from_canonical(canonical)
+    }
+
+    pub(super) fn from_canonical(canonical: CanonicalItemUrl) -> Self {
+        let s = canonical.as_str();
+        let rest = s
+            .strip_prefix("https://")
+            .or_else(|| s.strip_prefix("http://"))
+            .unwrap_or("");
+        let segments: Vec<String> = rest
+            .split('/')
+            .filter(|x| !x.is_empty())
+            .map(|x| x.to_string())
+            .collect();
+        let segments = if segments == ["."] {
+            vec![]
+        } else {
+            segments
+        };
+        Self { canonical, segments }
+    }
+
+    pub(super) fn is_root(&self) -> bool {
+        self.segments.len() <= 1
     }
 
     pub(super) fn segments(&self) -> &[String] {

@@ -19,16 +19,16 @@ use crate::{
 };
 
 use super::{
-    bc_path, bc_segment, cli_panel, layout, now_ms, ratio_pct,
+    bc_path, bc_path_external, bc_segment, cli_panel, layout, now_ms, ratio_pct,
     render_linkified_with_embeds_in_scope, theme_from_jar, theme_next_from_uri,
-    breadcrumb_path::OntologyPath,
+    breadcrumb_path::{ExternalOntologyPath, OntologyPath},
     forum::ThreadNav,
 };
 
-/// Display path for an item: `~/languages/rust` form.
+/// Display path for an item: `~/…` or `-/…` form.
 fn item_display_path(item: &str) -> String {
     CanonicalItemUrl::parse(item)
-        .and_then(|c| c.tilde_tail().map(|t| format!("~/{}", t)))
+        .map(|c| c.display_path())
         .unwrap_or_else(|| canonicalize_item(item))
 }
 
@@ -39,6 +39,51 @@ fn item_href(item: &str, nav: &ThreadNav) -> String {
 
 fn item_code_label(item: &str) -> String {
     item_display_path(item)
+}
+
+fn scoped_bc_path_external(path: &ExternalOntologyPath, nav: &ThreadNav) -> maud::Markup {
+    match nav.scope() {
+        ScopeId::Public => bc_path_external(path),
+        ScopeId::Room(rid) => {
+            let slug = rid.split_once('/').map(|(_, s)| s).unwrap_or(rid.as_str());
+            let ext_root = format!("{}-", nav.garden_root_url().trim_end_matches('~'));
+            html! {
+                a href="/" { "slug.social" }
+                (bc_segment(&format!("room:{slug}"), nav.room_url(), false))
+                (bc_segment("-", &ext_root, path.is_root()))
+                @for (i, seg) in path.segments().iter().enumerate() {
+                    @let href = format!("{}/{}", ext_root, path.segments()[..=i].join("/"));
+                    @let is_last = i == path.segments().len() - 1;
+                    (bc_segment(seg, &href, is_last))
+                }
+            }
+        }
+    }
+}
+
+enum GardenBrowsePath {
+    Tilde(OntologyPath),
+    External(ExternalOntologyPath),
+}
+
+impl GardenBrowsePath {
+    fn canonical_url(&self) -> &str {
+        match self {
+            GardenBrowsePath::Tilde(p) => p.as_str(),
+            GardenBrowsePath::External(p) => p.as_str(),
+        }
+    }
+
+    fn is_external(&self) -> bool {
+        matches!(self, GardenBrowsePath::External(_))
+    }
+}
+
+fn scoped_bc_path_for(path: &GardenBrowsePath, nav: &ThreadNav) -> maud::Markup {
+    match path {
+        GardenBrowsePath::Tilde(p) => scoped_bc_path(p, nav),
+        GardenBrowsePath::External(p) => scoped_bc_path_external(p, nav),
+    }
 }
 
 fn scoped_bc_path(path: &OntologyPath, nav: &ThreadNav) -> maud::Markup {
@@ -156,7 +201,93 @@ pub async fn ontology_path(
     uri: Uri,
 ) -> impl IntoResponse {
     let path = OntologyPath::from_input(&path);
-    render_scope_view(state, path, ThreadNav::public(), jar, uri).await
+    render_scope_view(
+        state,
+        GardenBrowsePath::Tilde(path),
+        ThreadNav::public(),
+        jar,
+        uri,
+    )
+    .await
+}
+
+/// External ontology index (`/-/`).
+pub async fn external_garden_index(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    uri: Uri,
+) -> impl IntoResponse {
+    let nav = ThreadNav::public();
+    let ext_path = ExternalOntologyPath::from_input("");
+    let parent = CanonicalItemUrl::parse("https://.").unwrap();
+    let child_rankings = {
+        let reduced = state.reduced.read().await;
+        build_children_rankings(reduced.public(), &parent)
+    };
+
+    let page = layout(
+        "-/",
+        "view-ontology view-ontology-light",
+        html! {
+            nav class="breadcrumb" { (bc_path_external(&ext_path)) }
+            h2 { "external paths" }
+            p class="muted" { "Items outside slug.social use the " code { "-/" } " prefix (same role as " code { "~/" } ")." }
+            @if child_rankings.component_rankings.is_empty() && child_rankings.unranked_items.is_empty() {
+                p class="muted" { "no external items indexed yet" }
+            } @else {
+                @for (ci, comp) in child_rankings.component_rankings.iter().enumerate() {
+                    div class="ont-group-shell" {
+                        div class="ont-group-meta" {
+                            (format!("ordering {} items={} pairs={}", ci + 1, comp.ranked.len(), comp.pairs))
+                        }
+                        ol class="ont-ranking-list" {
+                            @for r in comp.ranked.iter() {
+                                @let href = item_href(r.item.as_str(), &nav);
+                                li {
+                                    a href=(href) { (item_display_path(r.item.as_str())) }
+                                }
+                            }
+                        }
+                    }
+                }
+                @if !child_rankings.unranked_items.is_empty() {
+                    div class="ont-group-shell ont-group-unsorted" {
+                        div class="ont-group-meta" { "unranked" }
+                        ul class="ont-group-list" {
+                            @for name in &child_rankings.unranked_items {
+                                li {
+                                    @let href = item_href(name.as_str(), &nav);
+                                    a href=(href) { (item_display_path(name.as_str())) }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        None,
+        theme_from_jar(&jar),
+        &theme_next_from_uri(&uri),
+    );
+    Html(page.into_string())
+}
+
+/// Single public handler for all `/-/…` routes.
+pub async fn external_ontology_path(
+    State(state): State<AppState>,
+    Path(path): Path<String>,
+    jar: CookieJar,
+    uri: Uri,
+) -> impl IntoResponse {
+    let path = ExternalOntologyPath::from_input(&path);
+    render_scope_view(
+        state,
+        GardenBrowsePath::External(path),
+        ThreadNav::public(),
+        jar,
+        uri,
+    )
+    .await
 }
 
 pub async fn room_garden_index(
@@ -177,7 +308,110 @@ pub async fn room_garden_index(
     let Some(nav) = ThreadNav::from_room_id(&room_id) else {
         return (StatusCode::NOT_FOUND, "bad room path").into_response();
     };
-    render_scope_view(state, OntologyPath::root(), nav, jar, uri).await
+    render_scope_view(
+        state,
+        GardenBrowsePath::Tilde(OntologyPath::root()),
+        nav,
+        jar,
+        uri,
+    )
+    .await
+}
+
+pub async fn room_external_garden_index(
+    State(state): State<AppState>,
+    Path((room_short, room_slug)): Path<(String, String)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    uri: Uri,
+) -> impl IntoResponse {
+    let room_id = format!("{room_short}/{room_slug}");
+    let reduced = state.reduced.read().await;
+    let user = optional_principal(&headers, &jar, &reduced);
+    if !user_can_view_room(&reduced, &room_id, user.as_deref()) {
+        drop(reduced);
+        return room_not_found_page(&jar, &uri).into_response();
+    }
+    drop(reduced);
+    let Some(nav) = ThreadNav::from_room_id(&room_id) else {
+        return (StatusCode::NOT_FOUND, "bad room path").into_response();
+    };
+    let ext_path = ExternalOntologyPath::from_input("");
+    let parent = CanonicalItemUrl::parse("https://.").unwrap();
+    let child_rankings = {
+        let reduced = state.reduced.read().await;
+        let content = reduced
+            .content_for_scope(&nav.scope())
+            .unwrap_or_else(|| reduced.public());
+        build_children_rankings(content, &parent)
+    };
+
+    let page = layout(
+        "-/",
+        "view-ontology view-ontology-light",
+        html! {
+            nav class="breadcrumb" { (scoped_bc_path_external(&ext_path, &nav)) }
+            h2 { "external paths" }
+            @if child_rankings.component_rankings.is_empty() && child_rankings.unranked_items.is_empty() {
+                p class="muted" { "no external items indexed yet" }
+            } @else {
+                @for (ci, comp) in child_rankings.component_rankings.iter().enumerate() {
+                    div class="ont-group-shell" {
+                        div class="ont-group-meta" {
+                            (format!("ordering {} items={} pairs={}", ci + 1, comp.ranked.len(), comp.pairs))
+                        }
+                        ol class="ont-ranking-list" {
+                            @for r in comp.ranked.iter() {
+                                @let href = item_href(r.item.as_str(), &nav);
+                                li {
+                                    a href=(href) { (item_display_path(r.item.as_str())) }
+                                }
+                            }
+                        }
+                    }
+                }
+                @if !child_rankings.unranked_items.is_empty() {
+                    div class="ont-group-shell ont-group-unsorted" {
+                        div class="ont-group-meta" { "unranked" }
+                        ul class="ont-group-list" {
+                            @for name in &child_rankings.unranked_items {
+                                li {
+                                    @let href = item_href(name.as_str(), &nav);
+                                    a href=(href) { (item_display_path(name.as_str())) }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        None,
+        theme_from_jar(&jar),
+        &theme_next_from_uri(&uri),
+    );
+    Html(page.into_string()).into_response()
+}
+
+pub async fn room_external_ontology_path(
+    State(state): State<AppState>,
+    Path((room_short, room_slug, path)): Path<(String, String, String)>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    uri: Uri,
+) -> impl IntoResponse {
+    let room_id = format!("{room_short}/{room_slug}");
+    let reduced = state.reduced.read().await;
+    let user = optional_principal(&headers, &jar, &reduced);
+    if !user_can_view_room(&reduced, &room_id, user.as_deref()) {
+        drop(reduced);
+        return room_not_found_page(&jar, &uri).into_response();
+    }
+    drop(reduced);
+    let Some(nav) = ThreadNav::from_room_id(&room_id) else {
+        return (StatusCode::NOT_FOUND, "bad room path").into_response();
+    };
+    let path = ExternalOntologyPath::from_input(&path);
+    render_scope_view(state, GardenBrowsePath::External(path), nav, jar, uri).await
 }
 
 pub async fn room_ontology_path(
@@ -199,7 +433,7 @@ pub async fn room_ontology_path(
         return (StatusCode::NOT_FOUND, "bad room path").into_response();
     };
     let path = OntologyPath::from_input(&path);
-    render_scope_view(state, path, nav, jar, uri).await
+    render_scope_view(state, GardenBrowsePath::Tilde(path), nav, jar, uri).await
 }
 
 #[derive(Debug, Clone)]
@@ -391,7 +625,7 @@ fn build_item_page_view_model(
 
 async fn render_scope_view(
     state: AppState,
-    path: OntologyPath,
+    browse: GardenBrowsePath,
     nav: ThreadNav,
     jar: CookieJar,
     uri: Uri,
@@ -399,15 +633,17 @@ async fn render_scope_view(
     let scope = nav.scope();
     let model = {
         let reduced = state.reduced.read().await;
-        build_item_page_view_model(&reduced, &scope, path.as_str())
+        build_item_page_view_model(&reduced, &scope, browse.canonical_url())
     };
     let thread_href = |tag: &str| nav.thread_url(tag);
+    let external_empty_body = browse.is_external() && model.body.is_none();
+    let cli_path_arg = item_display_path(&model.item);
 
     let page = layout(
         &item_display_path(&model.item),
         "view-ontology view-ontology-light",
         html! {
-            nav class="breadcrumb" { (scoped_bc_path(&path, &nav)) }
+            nav class="breadcrumb" { (scoped_bc_path_for(&browse, &nav)) }
             section class="ont-item-shell" {
                 header class="ont-item-meta" {
                     span class="ont-item-title" { (item_display_path(&model.item)) }
@@ -423,6 +659,13 @@ async fn render_scope_view(
                 @if let Some(body) = &model.body {
                     div class="ont-item-content" {
                         (render_linkified_with_embeds_in_scope(body, nav.garden_root_url()))
+                    }
+                } @else if external_empty_body {
+                    div class="ont-item-content ont-external-empty" {
+                        p { "This is an external scope." }
+                        p class="muted" {
+                            button type="button" disabled { "Kick off an Agent Run to import and rank items" }
+                        }
                     }
                 } @else {
                     div class="ont-item-content" { p class="muted" { "no body yet" } }
@@ -539,8 +782,8 @@ async fn render_scope_view(
                 }
             }
             @let cli = match &scope {
-                ScopeId::Public => format!("npx slugsocial public garden body {}", path.as_str().trim_start_matches("https://slug.social/~/")),
-                ScopeId::Room(room_id) => format!("npx slugsocial private {room_id} garden body {}", path.as_str().trim_start_matches("https://slug.social/~/")),
+                ScopeId::Public => format!("npx slugsocial public garden body {}", cli_path_arg),
+                ScopeId::Room(room_id) => format!("npx slugsocial private {room_id} garden body {}", cli_path_arg),
             };
             (cli_panel(std::slice::from_ref(&cli)))
         },

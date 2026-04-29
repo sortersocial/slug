@@ -17,7 +17,7 @@ mod forum;
 mod garden;
 mod search;
 pub mod ui_action;
-use breadcrumb_path::OntologyPath;
+use breadcrumb_path::{ExternalOntologyPath, OntologyPath};
 
 pub use auth::{auth_complete_page, auth_signed_in_fragment, choose_username_error_fragment, choose_username_page};
 pub use editor::{editor_check, editor_page};
@@ -31,7 +31,10 @@ pub(crate) use forum::{
     thread_ui_collapse_redacted_post, thread_ui_expand_post_full, thread_ui_expand_redacted_post,
     user_can_post_room, user_can_view_room,
 };
-pub use garden::{garden_index, ontology_path, room_garden_index, room_ontology_path};
+pub use garden::{
+    external_garden_index, external_ontology_path, garden_index, ontology_path, room_external_garden_index,
+    room_external_ontology_path, room_garden_index, room_ontology_path,
+};
 pub use search::{search_page, search_results_fragment};
 pub use forum::user_profile_page;
 pub use ui_action::{parse_html_ui_from_form, HtmlUiAction, HtmlUiParseError, UI_RPC_FIELD};
@@ -354,6 +357,19 @@ pub(super) fn bc_segment(label: &str, href: &str, is_current: bool) -> Markup {
             a href=(href) class="bc-current" { (label) }
         } @else {
             a href=(href) { (label) }
+        }
+    }
+}
+
+/// Breadcrumb for external ontology `/-/host/...`
+fn bc_path_external(path: &ExternalOntologyPath) -> Markup {
+    html! {
+        a href="/" { "slug.social" }
+        (bc_segment("-", "/-", path.is_root()))
+        @for (i, seg) in path.segments().iter().enumerate() {
+            @let href = format!("/-/{}", path.segments()[..=i].join("/"));
+            @let is_last = i == path.segments().len() - 1;
+            (bc_segment(seg, &href, is_last))
         }
     }
 }

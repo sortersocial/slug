@@ -53,6 +53,16 @@
              ""
              "~/languages/go 2:1 ~/languages/python { Go deploys as a single binary, simpler ops }"]))
 
+(def external-sorter-doc
+  (str/join "\n"
+            [actor-1
+             "#integration-test"
+             ""
+             "-/github.com/iss/1 { issue one }"
+             "-/github.com/iss/2 { issue two }"
+             ""
+             "-/github.com/iss/1 2:1 -/github.com/iss/2 { triage order }"]))
+
 (def check-doc-disconnected
   (str/join "\n"
             [actor-1
@@ -202,7 +212,7 @@
 
         ;; 4. query rankings via CLI
       (println "\nquerying garden children via CLI…")
-      (bind children-result (common/run-cli cli-bin base-url ["public" "garden" "children" "languages" "--json"]))
+      (bind children-result (common/run-cli cli-bin base-url ["public" "garden" "children" "--json" "--" "languages"]))
       (is (zero? (:exit children-result)) "cli garden children exits 0")
       (bind children-resp   (json/parse-string (:out children-result) true))
       (bind ranked          (mapv :item (mapcat :ranking (:components children-resp))))
@@ -219,6 +229,25 @@
       (bind event-lines (->> (slurp event-log) str/split-lines (remove str/blank?)))
       (is (= 7 (count event-lines))
                (str "7 events in JSONL (incl. private room + first public ingest, got " (count event-lines) ")"))
+
+      (println "\ningesting external -/ namespace .sorter via CLI…")
+      (bind ext-ingest-result (common/run-cli cli-bin base-url ["public" "forum" "post" "integration-test" "--json" "--delegate" "00000000-0000-0000-0000-000000000000:cli:local/dev"] :input external-sorter-doc :extra-env token-env))
+      (is (zero? (:exit ext-ingest-result)) "external namespace cli ingest exits 0")
+      (bind ext-ingest-resp (json/parse-string (:out ext-ingest-result) true))
+      (is (:ok ext-ingest-resp) "external ingest ok=true")
+
+      (println "\nquerying garden children for external parent via CLI…")
+      (bind ext-children-result (common/run-cli cli-bin base-url ["public" "garden" "children" "--json" "--" "-/github.com/iss"]))
+      (is (zero? (:exit ext-children-result)) "cli garden children -/github.com/iss exits 0")
+      (bind ext-children-resp (json/parse-string (:out ext-children-result) true))
+      (bind ext-ranked (mapv :item (mapcat :ranking (:components ext-children-resp))))
+      (is (= 2 (count ext-ranked)) (str "2 external issues ranked (got " (count ext-ranked) ")"))
+      (is (str/ends-with? (first ext-ranked) "github.com/iss/1")
+               (str "iss/1 is #1 (got " (first ext-ranked) ")"))
+
+      (bind event-lines-after-ext (->> (slurp event-log) str/split-lines (remove str/blank?)))
+      (is (= 8 (count event-lines-after-ext))
+               (str "8 events in JSONL after external ingest (got " (count event-lines-after-ext) ")"))
 
         ;; 6. query forum via CLI
       (println "\nquerying forum via CLI…")
@@ -269,8 +298,8 @@
                (str "two-vote ingest exits 0 (err: " (:err hist-ingest) ")"))
 
       (bind event-lines-after-hist (->> (slurp event-log) str/split-lines (remove str/blank?)))
-      (is (= 8 (count event-lines-after-hist))
-               (str "8 events in JSONL after second public ingest (got " (count event-lines-after-hist) ")"))
+      (is (= 9 (count event-lines-after-hist))
+               (str "9 events in JSONL after second public ingest (got " (count event-lines-after-hist) ")"))
 
       (bind hist-result      (common/run-cli cli-bin base-url ["public" "garden" "history" "languages/rust" "--json"]))
       (is (zero? (:exit hist-result))
@@ -297,7 +326,7 @@
 
         ;; 12. same query, same result
       (println "\nquerying rankings after replay…")
-      (bind replay-result (common/run-cli cli-bin base-url ["public" "garden" "children" "languages" "--json"]))
+      (bind replay-result (common/run-cli cli-bin base-url ["public" "garden" "children" "--json" "--" "languages"]))
       (is (zero? (:exit replay-result)) "cli garden children exits 0 after restart")
       (bind replay-resp   (json/parse-string (:out replay-result) true))
       (bind replay-ranked (mapv :item (mapcat :ranking (:components replay-resp))))
