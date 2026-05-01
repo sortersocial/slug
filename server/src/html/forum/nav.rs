@@ -54,10 +54,16 @@ impl ThreadNav {
     }
 
     pub(crate) fn garden_item_url(&self, item: &str) -> String {
-        if let Some(tail) = crate::path_types::CanonicalItemUrl::parse(item)
-            .and_then(|c| c.tilde_tail().map(str::to_owned))
-        {
+        let Some(c) = crate::path_types::CanonicalItemUrl::parse(item) else {
+            return format!("{}/{}", self.garden_path_prefix, canonicalize_item(item));
+        };
+        if let Some(tail) = c.tilde_tail().map(str::to_owned) {
             format!("{}/{}", self.garden_path_prefix, tail)
+        } else if c.as_str().starts_with("http://") || c.as_str().starts_with("https://") {
+            let disp = c.display_path();
+            let rest = disp.strip_prefix("-/").unwrap_or(disp.as_str());
+            let ext_prefix = format!("{}-", self.garden_path_prefix.trim_end_matches('~'));
+            format!("{}/{}", ext_prefix, rest)
         } else {
             format!("{}/{}", self.garden_path_prefix, canonicalize_item(item))
         }

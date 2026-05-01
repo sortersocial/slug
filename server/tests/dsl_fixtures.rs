@@ -53,4 +53,19 @@ fn parses_big_book_fixture_with_attached_bodies() {
     assert_eq!(votes, 0, "fixture has no votes; it's a big text import");
 }
 
+#[test]
+fn parses_external_dash_vote_line() {
+    let doc = dsl::parse_full("-/domain.com/a 2:1 -/domain.com/b { reason }").unwrap();
+    assert_eq!(
+        doc.statements,
+        vec![dsl::Stmt::Vote {
+            item1: "-/domain.com/a".to_string(),
+            item2: "-/domain.com/b".to_string(),
+            ratio_left: 2,
+            ratio_right: 1,
+            explanation: "reason".to_string(),
+        }]
+    );
+}
+
 

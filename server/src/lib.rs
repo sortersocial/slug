@@ -3,6 +3,7 @@ pub mod paths;
 pub mod api;
 pub mod canonical_path;
 pub mod dsl;
+pub mod external_resolver;
 pub mod form_template;
 pub mod html;
 pub mod event_log;
@@ -76,10 +77,20 @@ pub fn create_app(state: AppState) -> Router {
         .route("/try/check", post(crate::html::editor_check))
         .route("/~", get(crate::html::garden_index))
         .route("/~/*path", get(crate::html::ontology_path))
+        .route("/-", get(crate::html::external_garden_index))
+        .route("/-/*path", get(crate::html::external_ontology_path))
         .route("/r/:room_short/:room_slug/~", get(crate::html::room_garden_index))
         .route(
             "/r/:room_short/:room_slug/~/*path",
             get(crate::html::room_ontology_path),
+        )
+        .route(
+            "/r/:room_short/:room_slug/-",
+            get(crate::html::room_external_garden_index),
+        )
+        .route(
+            "/r/:room_short/:room_slug/-/*path",
+            get(crate::html::room_external_ontology_path),
         )
         .route("/t/:tag/:index", get(crate::html::thread_post_view))
         .route("/t/:tag", get(crate::html::thread_view))

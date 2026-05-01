@@ -23,6 +23,36 @@ pub fn canonicalize_item(input: &str) -> String {
         return String::new();
     }
 
+    // External scope: `-/host/path` is the universal alias for `https://host/path`.
+    if let Some(rest) = s.strip_prefix("-/") {
+        let (host, tail) = rest
+            .split_once('/')
+            .map_or((rest, ""), |(h, t)| (h, t));
+        let host = host.trim().to_lowercase();
+        if host.is_empty() {
+            return String::new();
+        }
+        return if tail.is_empty() {
+            format!("https://{}", host)
+        } else {
+            let path = tail
+                .trim_start_matches('/')
+                .trim_end_matches('/')
+                .split('/')
+                .filter_map(|seg| {
+                    let t = seg.trim();
+                    if t.is_empty() {
+                        None
+                    } else {
+                        Some(t.to_lowercase())
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("/");
+            format!("https://{}/{}", host, path)
+        };
+    }
+
     if let Some(rest) = s.strip_prefix("https://") {
         let (host, tail) = rest.split_once('/').map_or((rest, ""), |(h, t)| (h, t));
         let host = host.trim().to_lowercase();
@@ -101,6 +131,31 @@ pub fn item_parent_path(input: &str) -> Option<String> {
     Some(segs[..segs.len() - 1].join("/"))
 }
 
+fn external_display_dash_prefix(host_and_path: &str) -> String {
+    let (host, path) = host_and_path
+        .split_once('/')
+        .map_or((host_and_path, ""), |(h, p)| (h, p));
+    let host = host.trim().to_lowercase();
+    let path = path
+        .trim_end_matches('/')
+        .split('/')
+        .filter_map(|seg| {
+            let t = seg.trim();
+            if t.is_empty() {
+                None
+            } else {
+                Some(t.to_lowercase())
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("/");
+    if path.is_empty() {
+        format!("-/{}", host)
+    } else {
+        format!("-/{}", format!("{}/{}", host, path))
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Storage + input path newtypes
 // ---------------------------------------------------------------------------
@@ -142,15 +197,59 @@ impl CanonicalItemUrl {
     }
 
     pub fn parent(&self) -> Option<Self> {
-        if self.tilde_tail().map(|t| t.is_empty()).unwrap_or(true) {
+        if self.tilde_tail().is_some() {
+            if self.tilde_tail().map(|t| t.is_empty()).unwrap_or(true) {
+                return None;
+            }
+            let last_slash = self.0.rfind('/')?;
+            let parent_str = &self.0[..last_slash];
+            if parent_str.is_empty() {
+                None
+            } else {
+                Some(Self(parent_str.to_string()))
+            }
+        } else if let Some(rest) = self.0.strip_prefix("https://") {
+            Self::parent_http_url("https://", rest)
+        } else if let Some(rest) = self.0.strip_prefix("http://") {
+            Self::parent_http_url("http://", rest)
+        } else {
+            None
+        }
+    }
+
+    fn parent_http_url(scheme: &'static str, rest: &str) -> Option<Self> {
+        let (host, path) = rest.split_once('/').map_or((rest, ""), |(h, p)| (h, p));
+        let host = host.trim();
+        let path = path.trim_end_matches('/');
+        if path.is_empty() {
             return None;
         }
-        let last_slash = self.0.rfind('/')?;
-        let parent_str = &self.0[..last_slash];
-        if parent_str.is_empty() {
-            None
+        let parent_path = path.rsplit_once('/').map(|(p, _)| p).unwrap_or("");
+        if parent_path.is_empty() {
+            Some(Self(format!("{scheme}{}", host)))
         } else {
-            Some(Self(parent_str.to_string()))
+            Some(Self(format!("{scheme}{}/{}", host, parent_path)))
+        }
+    }
+
+    /// `-/` representation for external `https://…` items, `~/…` for slug ontology, else unchanged.
+    pub fn display_path(&self) -> String {
+        if let Some(tail) = self.0.strip_prefix("https://slug.social/~/") {
+            format!("~/{}", tail)
+        } else if let Some(tail) = self.0.strip_prefix("https://") {
+            if tail.starts_with("slug.social") {
+                self.0.clone()
+            } else {
+                external_display_dash_prefix(tail)
+            }
+        } else if let Some(tail) = self.0.strip_prefix("http://") {
+            if tail.starts_with("slug.social") {
+                self.0.clone()
+            } else {
+                external_display_dash_prefix(tail)
+            }
+        } else {
+            self.0.clone()
         }
     }
 
@@ -355,6 +454,12 @@ fn garden_href_string(item: &str, room_wire: &str) -> String {
     if item_norm == root_norm {
         return format!("https://slug.social/r/{short}/{slug}/~");
     }
+    // External http(s) items use the same `/-/…` namespace under the room garden.
+    if c.as_str().starts_with("https://") || c.as_str().starts_with("http://") {
+        let tail = c.display_path();
+        let tail = tail.strip_prefix("-/").unwrap_or(tail.as_str());
+        return format!("https://slug.social/r/{short}/{slug}/-/{tail}");
+    }
     api_path_or_url(item)
 }
 
@@ -410,12 +515,7 @@ pub struct TildeOntologyPath(pub String);
 
 impl TildeOntologyPath {
     pub fn from_stored(c: &CanonicalItemUrl) -> Self {
-        let s = match c.tilde_tail() {
-            Some(tail) if !tail.is_empty() => format!("~/{}", tail),
-            Some(_) => "~/".to_string(),
-            None => c.to_string(),
-        };
-        Self(s)
+        Self(c.display_path())
     }
 
     pub fn as_str(&self) -> &str {
@@ -511,9 +611,12 @@ mod tests {
     }
 
     #[test]
-    fn garden_external_url_untouched_in_private_room() {
+    fn garden_external_url_room_scoped_under_dash_namespace() {
         let u = "https://example.com/z";
-        assert_eq!(GardenItemUrl::from_storage_str(u, "9ab12cd/my-room").as_str(), u);
+        assert_eq!(
+            GardenItemUrl::from_storage_str(u, "9ab12cd/my-room").as_str(),
+            "https://slug.social/r/9ab12cd/my-room/-/example.com/z"
+        );
     }
 
     #[test]
@@ -525,6 +628,53 @@ mod tests {
         assert_eq!(
             ForumThreadUrl::from_room_tag("9ab12cd/my-room", "#debate").as_str(),
             "https://slug.social/r/9ab12cd/my-room/t/debate"
+        );
+    }
+
+    #[test]
+    fn canonicalize_item_dash_namespace_https() {
+        assert_eq!(
+            canonicalize_item("-/github.com/A/B"),
+            "https://github.com/a/b"
+        );
+        assert_eq!(canonicalize_item("-/Example.COM"), "https://example.com");
+        assert_eq!(
+            canonicalize_item("-/example.com/foo/bar/"),
+            "https://example.com/foo/bar"
+        );
+    }
+
+    #[test]
+    fn canonical_item_url_parent_external_strips_last_segment() {
+        let c = CanonicalItemUrl::parse("https://spotify.com/track/1").unwrap();
+        assert_eq!(
+            c.parent().unwrap().as_str(),
+            "https://spotify.com/track"
+        );
+        assert_eq!(
+            CanonicalItemUrl::parse("https://github.com/iss/1")
+                .unwrap()
+                .parent()
+                .unwrap()
+                .as_str(),
+            "https://github.com/iss"
+        );
+        assert!(CanonicalItemUrl::parse("https://github.com").unwrap().parent().is_none());
+    }
+
+    #[test]
+    fn display_path_roundtrips_dash_and_tilde() {
+        let ext = CanonicalItemUrl::parse("https://GitHub.com/org/Issue").unwrap();
+        assert_eq!(ext.display_path(), "-/github.com/org/issue");
+        let tilde = CanonicalItemUrl::parse("~/Rust/Doc").unwrap();
+        assert_eq!(tilde.display_path(), "~/rust/doc");
+    }
+
+    #[test]
+    fn item_parent_path_external() {
+        assert_eq!(
+            item_parent_path("-/github.com/org/repo/issues/1").as_deref(),
+            Some("https://github.com/org/repo/issues")
         );
     }
 }

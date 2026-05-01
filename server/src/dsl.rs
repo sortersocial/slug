@@ -181,8 +181,24 @@ fn mask_all(mut masker: BlockMasker, text: &str) -> (BlockMasker, String) {
     (masker, t)
 }
 
+fn is_external_item_path_rest(name: &str) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+    name.chars().all(|c| {
+        c.is_ascii_alphanumeric()
+            || matches!(
+                c,
+                '_' | '-' | '/' | '.' | '?' | '=' | '&' | '%' | ':' | '#' | '+' | '@' | '~'
+            )
+    })
+}
+
 fn is_item_name(s: &str) -> bool {
     let mut name = s.trim();
+    if let Some(rest) = name.strip_prefix("-/") {
+        return is_external_item_path_rest(rest);
+    }
     if let Some(rest) = name.strip_prefix("~/") {
         name = rest;
     } else if let Some(rest) = name.strip_prefix('/') {
@@ -251,6 +267,35 @@ fn parse_item_name_at(s: &str, i: usize) -> Option<(String, usize)> {
             return None;
         }
         return Some((s[i..j].to_string(), j));
+    }
+
+    // External ontology: "-/" HOST "/..." (mirrors ~/ lexer)
+    if bytes.get(i..i + 2) == Some(b"-/") {
+        let mut j = i + 2;
+        while j < bytes.len() {
+            if bytes[j..].starts_with(b"__BLOCK_") {
+                break;
+            }
+            let c = bytes[j] as char;
+            if c.is_ascii_alphanumeric()
+                || matches!(
+                    c,
+                    '_' | '-' | '/' | '.' | '?' | '=' | '&' | '%' | ':' | '#' | '+' | '@' | '~'
+                )
+            {
+                j += 1;
+                continue;
+            }
+            break;
+        }
+        if j <= i + 2 {
+            return None;
+        }
+        let raw = &s[i..j];
+        if !is_item_name(raw) {
+            return None;
+        }
+        return Some((raw.to_string(), j));
     }
 
     // ITEM_REF: "~/" ITEM_NAME  OR  https?:// URL
@@ -445,6 +490,13 @@ fn parse_line(masked_line: &str, masker: &BlockMasker) -> Result<Vec<Stmt>, DslE
                 Err(DslError::Parse("not a DSL line".to_string()))
             }
         }
+        '-' => {
+            if stripped.starts_with("-/") {
+                Ok(vec![parse_item_statement(stripped, masker)?])
+            } else {
+                Err(DslError::Parse("not a DSL line".to_string()))
+            }
+        }
         '!' => {
             // Reserved / future use in Python filter; treat as parse error for now.
             Err(DslError::Parse("unsupported DSL command: !".to_string()))
@@ -473,9 +525,13 @@ pub fn parse_full(text: &str) -> Result<Document, DslError> {
     for line in masked.split('\n') {
         let stripped = line.trim_start();
         if !stripped.is_empty()
-            && (":/!~".contains(stripped.chars().next().unwrap())
-                || (stripped.starts_with("https://") || stripped.starts_with("http://"))
-            )
+            && (stripped.starts_with("-/")
+                || {
+                    let c = stripped.chars().next().unwrap();
+                    ":/!~".contains(c)
+                }
+                || stripped.starts_with("https://")
+                || stripped.starts_with("http://"))
         {
             // Flush prose buffer first
             flush_prose(&mut prose_buffer, &mut statements, &masker);
