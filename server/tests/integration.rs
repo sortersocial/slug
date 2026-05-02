@@ -1322,6 +1322,11 @@ async fn test_rank_history() {
     assert_eq!(entry["scope_rank_delta"], 0, "delta is 0 on first appearance");
     let caused_by = entry["caused_by"].as_array().unwrap();
     assert_eq!(caused_by.len(), 2, "both votes in the ingest touched rust");
+    assert_eq!(
+        entry["thread_post_index"],
+        0,
+        "rank history links use same 0-based index as /t/hist-test/0"
+    );
 
     ingest(
         "00000000-0000-0000-0000-000000000002:rig:test/model",
@@ -1349,6 +1354,16 @@ async fn test_rank_history() {
     assert_eq!(caused_by2.len(), 1);
     assert!(caused_by2[0]["a"].as_str().unwrap().ends_with("python") ||
             caused_by2[0]["b"].as_str().unwrap().ends_with("python"));
+    assert_eq!(
+        hist2[0]["thread_post_index"],
+        0,
+        "first hist-test post is chronological index 0"
+    );
+    assert_eq!(
+        hist2[1]["thread_post_index"],
+        1,
+        "second ingest is chronological index 1"
+    );
 
     let hist_rust2 = rpc_batch(
         &client,

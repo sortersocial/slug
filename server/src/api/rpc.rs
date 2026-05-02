@@ -1337,8 +1337,7 @@ pub async fn handle_rpc_batch(
                         .ingests_by_scope_thread
                         .get(&(scope.clone(), e.thread.clone()))
                         .and_then(|q| q.iter().rev().position(|id| id == &e.post_id))
-                        .map(|i| i + 1)
-                        .unwrap_or(0);
+                        .expect("rank history post_id must be in ingests_by_scope_thread for (scope, thread)");
                     RankHistoryRow {
                         ts: e.ts,
                         scope_rank: e.scope_rank,

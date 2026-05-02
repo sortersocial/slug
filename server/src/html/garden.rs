@@ -450,6 +450,7 @@ struct RankHistoryEntryView {
     scope_total: usize,
     scope_rank_delta: i32,
     thread: String,
+    /// 0-based index as [`crate::html::forum::ingest::thread_post_index_in_scope`] / `/t/tag/N`.
     thread_post_index: usize,
     caused_by: Vec<crate::reducer::VoteData>,
 }
@@ -573,11 +574,11 @@ fn build_rank_history(
             })
             .unwrap_or_default();
 
-        let thread_post_index = reduced.ingests_by_scope_thread
+        let thread_post_index = reduced
+            .ingests_by_scope_thread
             .get(&(scope.clone(), e.thread.clone()))
             .and_then(|q| q.iter().rev().position(|id| id == &e.post_id))
-            .map(|i| i + 1)
-            .unwrap_or(0);
+            .expect("rank history post_id must be in ingests_by_scope_thread for (scope, thread)");
 
         RankHistoryEntryView {
             ts: e.ts,
@@ -704,11 +705,9 @@ async fn render_scope_view(
                                 span class="muted" { (ago) (label) }
                                 " · "
                                 a href=(thread_href(&e.thread)) { "#" (e.thread) }
-                                @if e.thread_post_index > 0 {
-                                    " "
-                                    a href=(format!("{}/{}", thread_href(&e.thread), e.thread_post_index)) {
-                                        span class="muted" { "post #" (e.thread_post_index) }
-                                    }
+                                " "
+                                a href=(format!("{}/{}", thread_href(&e.thread), e.thread_post_index)) {
+                                    span class="muted" { "post #" (e.thread_post_index) }
                                 }
                             }
                             @if e.caused_by.is_empty() {

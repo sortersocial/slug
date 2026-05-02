@@ -253,7 +253,7 @@ pub struct FeedPost {
     /// Primary thread tag (without #), if the ingest declared one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thread: Option<String>,
-    /// 1-indexed chronological position of this post within the thread.
+    /// 1-based display ordinal for this post within the thread (feed only; URLs use 0-based paths).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thread_post_index: Option<usize>,
     /// Full raw body of the ingest document.
@@ -628,7 +628,7 @@ pub struct RankHistoryRow {
     pub score: f64,
     /// Thread tag of the ingest that triggered this rank change.
     pub thread: String,
-    /// 1-indexed chronological position of this post within the thread.
+    /// 0-indexed chronological position of this post within the thread (same as `/t/tag/N` routes).
     pub thread_post_index: usize,
     /// Votes from this ingest that directly touched this item. Empty when change was transitive.
     pub caused_by: Vec<VoteRow>,
