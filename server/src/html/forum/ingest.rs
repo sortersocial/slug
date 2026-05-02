@@ -3,6 +3,7 @@ use crate::form_template::template_json_compact;
 use crate::reducer::{scope_from_room_wire, ReducerState};
 use maud::{html, Markup};
 use serde_json::json;
+use slug_types::MAX_FORUM_POST_PREVIEW_CHARS;
 
 use crate::html::js_string_literal;
 use crate::html::ui_action::{HtmlUiAction, UI_RPC_FIELD};
@@ -147,23 +148,51 @@ pub(super) fn ingest_entry_markup(
             }
         }
     } else {
-        let truncated = ing.raw.len() > 2000;
-        let display_body = if truncated { &ing.raw[..2000] } else { &ing.raw[..] };
+        let char_len = ing.raw.chars().count();
+        let truncated = char_len > MAX_FORUM_POST_PREVIEW_CHARS;
+        let display_body = if truncated {
+            let byte_end = ing
+                .raw
+                .char_indices()
+                .nth(MAX_FORUM_POST_PREVIEW_CHARS)
+                .map(|(i, _)| i)
+                .unwrap_or(ing.raw.len());
+            &ing.raw[..byte_end]
+        } else {
+            &ing.raw[..]
+        };
+        let entry_class = if truncated {
+            "ingest-entry ingest-entry-truncated"
+        } else {
+            "ingest-entry"
+        };
         html! {
-            div class="ingest-entry" data-ingest-id=(ing.id) {
+            div class=(entry_class) data-ingest-id=(ing.id) {
                 (post_header_row(nav, tag, post_idx, ing, viewer, now, show_delete))
                 (render_linkified_with_embeds_in_scope(display_body, nav.garden_root_url()))
                 @if truncated {
-                    @let rpc_full = template_json_compact(&json!({
-                        "action": "expand_post_full",
-                        "room": nav.room_wire,
-                        "thread_tag": tag,
-                        "post_index": post_idx,
-                    })).unwrap();
-                    @let onclick_full = thread_ui_fetch_onclick(&rpc_full);
-                    a href="#" class="show-full-link"
-                      onclick=(onclick_full) {
-                        "[show full post]"
+                    div class="post-truncation-banner" role="note" {
+                        p.post-truncation-title { "Long post — preview ends here" }
+                        p class="post-truncation-meta muted" {
+                            "Showing first "
+                            (MAX_FORUM_POST_PREVIEW_CHARS)
+                            " of "
+                            (char_len)
+                            " characters (body continues below the fold)."
+                        }
+                        @let rpc_full = template_json_compact(&json!({
+                            "action": "expand_post_full",
+                            "room": nav.room_wire,
+                            "thread_tag": tag,
+                            "post_index": post_idx,
+                        })).unwrap();
+                        @let onclick_full = thread_ui_fetch_onclick(&rpc_full);
+                        p.post-truncation-action {
+                            a href="#" class="show-full-link"
+                              onclick=(onclick_full) {
+                                "[show full post]"
+                            }
+                        }
                     }
                 }
             }

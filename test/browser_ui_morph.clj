@@ -46,10 +46,10 @@
 
      (let [alice-token (oauth/fetch-bearer-token! base-url :username "alice")
            thread-tag "ui-morph-long"
-           ;; Truncation kicks in when ing.raw len > 2000 (forum markup).
+           ;; Truncation kicks in when char count > 20,000 (forum markup).
            tail "END_UI_MORPH_TAIL_MARKER"
            long-body (str "# " thread-tag "\n\n"
-                          (str/join (repeat 400 "abcdefghij"))
+                          (str/join (repeat 3000 "abcdefghij"))
                           tail)
            post-resp (oauth/http-post-json
                       (str base-url "/api/v0/rpc")

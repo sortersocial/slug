@@ -514,7 +514,6 @@ fn rpc_forum_thread_detail(
         .collect();
 
     let total = filtered.len();
-    const MAX_BODY: usize = 2000;
     let items: Vec<ThreadItem> = filtered
         .into_iter()
         .skip(offset)
@@ -528,10 +527,19 @@ fn rpc_forum_thread_detail(
             };
             let (body, truncated) = if redacted {
                 (String::new(), false)
-            } else if ing.raw.len() > MAX_BODY {
-                (ing.raw[..MAX_BODY].to_string(), true)
             } else {
-                (ing.raw.clone(), false)
+                let char_len = ing.raw.chars().count();
+                if char_len > MAX_FORUM_POST_PREVIEW_CHARS {
+                    let byte_end = ing
+                        .raw
+                        .char_indices()
+                        .nth(MAX_FORUM_POST_PREVIEW_CHARS)
+                        .map(|(i, _)| i)
+                        .unwrap_or(ing.raw.len());
+                    (ing.raw[..byte_end].to_string(), true)
+                } else {
+                    (ing.raw.clone(), false)
+                }
             };
             ThreadItem::Post {
                 id: ing.id.clone(),
