@@ -8,6 +8,9 @@ pub use paths::{
     ForumThreadUrl, GardenItemUrl, RelativePath, TildeOntologyPath, TildePath,
 };
 
+/// Max characters returned for a garden item body unless `full=true` / `--full` (API + CLI).
+pub const MAX_ITEM_BODY_PREVIEW_CHARS: usize = 100_000;
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ApiError {
     pub ok: bool,
@@ -187,6 +190,7 @@ pub struct ItemResponse {
     pub item: GardenItemUrl,
     pub body: Option<String>,
     /// True when the body was truncated due to size. Fetch with `?full=true` for the complete body.
+    /// The limit is `MAX_ITEM_BODY_PREVIEW_CHARS` in the `slug_types` crate.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub truncated: bool,
     /// Total character length of the full body (present when truncated=true).

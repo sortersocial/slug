@@ -273,7 +273,7 @@ enum GardenCmd {
 
     /// Body text for an item plus threads that mention it (connective tissue to forum).
     ///
-    /// Bodies longer than 10,000 characters are truncated by default.
+    /// Bodies longer than 100,000 characters are truncated by default.
     /// Use --full to retrieve the complete body.
     Body {
         /// Ontology path without shell `~` (e.g. `languages/python`). The CLI sends `~/…` to the API.
@@ -282,7 +282,7 @@ enum GardenCmd {
         /// Output as JSON for agent parsing
         #[arg(long)]
         json: bool,
-        /// Return the full body without truncation (default: bodies >10k chars are truncated)
+        /// Return the full body without truncation (default: bodies >100k chars are truncated)
         #[arg(long)]
         full: bool,
     },
@@ -365,7 +365,23 @@ fn print_item_response(resp: &ItemResponse) {
         println!("(no body)");
     }
     if resp.truncated {
-        eprintln!("[truncated: showing first 10,000 of {} chars — use --full for complete body]", resp.body_len);
+        let w = 72_usize;
+        let bar = "=".repeat(w);
+        eprintln!();
+        eprintln!("{bar}");
+        eprintln!(
+            "*** BODY TRUNCATED ***  first {} of {} characters shown",
+            MAX_ITEM_BODY_PREVIEW_CHARS, resp.body_len
+        );
+        eprintln!("The text above ends abruptly — more content exists on the server.");
+        eprintln!("Re-run this command with `--full` to print the complete body.");
+        eprintln!("{bar}");
+        eprintln!();
+        println!();
+        println!(
+            "^^^ OUTPUT CUT ABOVE ({}/{} chars) — use --full for the rest ^^^",
+            MAX_ITEM_BODY_PREVIEW_CHARS, resp.body_len
+        );
     }
     if !resp.threads.is_empty() {
         println!();
