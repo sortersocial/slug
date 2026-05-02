@@ -132,8 +132,22 @@ p.post-truncation-action {
   margin: 0;
 }
 div.ingest-meta {
+  align-items: center;
   border-bottom: 1px solid var(--line);
-  padding: 0.35rem 0.65rem;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  padding-left: 0.35rem;
+}
+span.ingest-meta-primary {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+form.post-delete-form {
+  display: block;
+  flex-shrink: 0;
+  margin: 0;
+  margin-left: auto;
 }
 a.post-num {
   color: var(--ink-dim);

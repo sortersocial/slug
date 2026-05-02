@@ -552,11 +552,20 @@ pre a.pre-link {
 }
 
 div.ingest-meta {
+  align-items: center;
   background: var(--g3);
   border-bottom: 2px solid var(--lo);
   color: var(--meta);
+  display: flex;
+  flex-wrap: wrap;
   font-size: 12px;
+  gap: 6px 10px;
+  justify-content: space-between;
   padding: 3px 10px;
+}
+span.ingest-meta-primary {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 a.post-num { color: var(--meta); font-size: 12px; }
 a.post-num:hover { color: var(--signal); }
@@ -579,7 +588,12 @@ div.ingest-header-row div.ingest-meta {
   flex: 1 1 auto;
   padding: 0;
 }
-form.post-delete-form { display: inline; margin: 0; }
+form.post-delete-form {
+  display: block;
+  flex-shrink: 0;
+  margin: 0;
+  margin-left: auto;
+}
 button.post-delete-btn {
   background: var(--g4);
   border: var(--bv) solid;
