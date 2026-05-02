@@ -864,14 +864,17 @@ pub async fn handle_rpc_batch(
                         Some(format!("{} does not exist", GardenItemUrl::from_storage_str(&item_str, &room))),
                     )
                 } else {
-                    const MAX_ITEM_BODY: usize = 10_000;
                     let want_full = full.unwrap_or(false);
                     let (body, truncated, body_len) = match content.item_bodies.get(&item) {
                         None => (None, false, 0),
                         Some(raw) => {
                             let char_len = raw.chars().count();
-                            if !want_full && char_len > MAX_ITEM_BODY {
-                                let byte_end = raw.char_indices().nth(MAX_ITEM_BODY).map(|(i, _)| i).unwrap_or(raw.len());
+                            if !want_full && char_len > MAX_ITEM_BODY_PREVIEW_CHARS {
+                                let byte_end = raw
+                                    .char_indices()
+                                    .nth(MAX_ITEM_BODY_PREVIEW_CHARS)
+                                    .map(|(i, _)| i)
+                                    .unwrap_or(raw.len());
                                 (Some(raw[..byte_end].to_string()), true, char_len)
                             } else {
                                 (Some(raw.clone()), false, 0)
