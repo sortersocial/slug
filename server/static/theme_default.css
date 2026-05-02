@@ -522,6 +522,28 @@ div.ingest-entry {
   min-width: 100%;
   max-width: 100%;
 }
+div.ingest-entry-truncated {
+  border-left: 4px solid var(--signal);
+}
+div.post-truncation-banner {
+  background: var(--g3);
+  border-top: 2px dashed var(--lo);
+  padding: 8px 10px 10px;
+}
+p.post-truncation-title {
+  color: var(--signal);
+  font-size: 13px;
+  font-weight: bold;
+  margin: 0 0 4px;
+}
+p.post-truncation-meta {
+  font-size: 12px;
+  line-height: 1.35;
+  margin: 0 0 8px;
+}
+p.post-truncation-action {
+  margin: 0;
+}
 /* Slug links in pre: always link-colored, no underline */
 pre a.pre-link {
   color: var(--link);

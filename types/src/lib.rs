@@ -11,6 +11,9 @@ pub use paths::{
 /// Max characters returned for a garden item body unless `full=true` / `--full` (API + CLI).
 pub const MAX_ITEM_BODY_PREVIEW_CHARS: usize = 100_000;
 
+/// Max characters shown for a forum post in HTML and thread RPC until expanded (`expand_post_full`).
+pub const MAX_FORUM_POST_PREVIEW_CHARS: usize = 20_000;
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ApiError {
     pub ok: bool,

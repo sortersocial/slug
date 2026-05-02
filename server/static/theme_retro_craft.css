@@ -109,6 +109,28 @@ div.ingest-entry {
   min-width: 0;
   width: 100%;
 }
+div.ingest-entry-truncated {
+  border-left: 4px solid var(--accent);
+}
+div.post-truncation-banner {
+  background: rgba(0, 0, 0, 0.15);
+  border-top: 2px dashed var(--line);
+  padding: 0.5rem 0.65rem 0.65rem;
+}
+p.post-truncation-title {
+  color: var(--accent);
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin: 0 0 0.35rem;
+}
+p.post-truncation-meta {
+  font-size: 0.78rem;
+  line-height: 1.35;
+  margin: 0 0 0.5rem;
+}
+p.post-truncation-action {
+  margin: 0;
+}
 div.ingest-meta {
   border-bottom: 1px solid var(--line);
   padding: 0.35rem 0.65rem;
