@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 
-use crate::path_types::CanonicalItemUrl;
+use crate::path_types::ItemId;
 use crate::reducer::GroupState;
 
 #[derive(Debug, Clone)]
 pub struct RankedItem {
-    pub item: CanonicalItemUrl,
+    pub item: ItemId,
     pub score: f64,
 }
 
@@ -239,7 +239,7 @@ pub fn group_summary_scores(
     group: &mut GroupState,
     max_iters: usize,
     tol: f64,
-) -> HashMap<CanonicalItemUrl, f64> {
+) -> HashMap<ItemId, f64> {
     ranked_items(group, max_iters, tol)
         .into_iter()
         .map(|r| (r.item, r.score))
@@ -256,11 +256,11 @@ mod tests {
     }
 
     fn vote(ts: i64, a: &str, b: &str, l: i32, r: i32) -> VoteData {
-        use crate::path_types::CanonicalItemUrl;
+        use crate::path_types::ItemId;
         VoteData {
             ts,
-            a: CanonicalItemUrl(a.to_string()),
-            b: CanonicalItemUrl(b.to_string()),
+            a: ItemId::parse(a).unwrap(),
+            b: ItemId::parse(b).unwrap(),
             ratio_left: l,
             ratio_right: r,
             body: "because".to_string(),

@@ -10,7 +10,7 @@ use crate::{
     events::{AgentBound, Event, GrantAdded, Ingest, PostRedacted, RoomDeleted, UserRegistered},
     html::JsBuilder,
     identity::parse_agent,
-    path_types::CanonicalItemUrl,
+    path_types::ItemId,
     reducer::{scope_from_room_wire, ReducerState, ScopeId},
     state::AppState,
     write_cmd::WriteCmd,
@@ -90,7 +90,7 @@ async fn broadcast_web_refresh(state: &AppState, room_key: &str, thread_id: &str
 }
 
 fn compute_scope_rank_changes(
-    parent: &CanonicalItemUrl,
+    parent: &ItemId,
     before: &crate::scope_rank::ChildrenRankings,
     after: &crate::scope_rank::ChildrenRankings,
     room_wire: &str,
@@ -99,7 +99,7 @@ fn compute_scope_rank_changes(
     use std::collections::BTreeSet;
     fn build_positions(
         rankings: &crate::scope_rank::ChildrenRankings,
-    ) -> HashMap<CanonicalItemUrl, Option<RankPosition>> {
+    ) -> HashMap<ItemId, Option<RankPosition>> {
         let mut map = HashMap::new();
         for comp in &rankings.component_rankings {
             let total = comp.ranked.len();
@@ -116,7 +116,7 @@ fn compute_scope_rank_changes(
     let before_pos = build_positions(before);
     let after_pos = build_positions(after);
 
-    let all_items: BTreeSet<CanonicalItemUrl> = before_pos
+    let all_items: BTreeSet<ItemId> = before_pos
         .keys()
         .cloned()
         .chain(after_pos.keys().cloned())
@@ -287,8 +287,8 @@ pub async fn writer_actor(mut rx: mpsc::Receiver<WriteCmd>, state: AppState) {
                         .map(|d| reduced.agent_bindings.get(d).is_none())
                         .unwrap_or(false);
 
-                    let voted_parent_scopes: Vec<CanonicalItemUrl> = {
-                        let mut parents: HashSet<CanonicalItemUrl> = HashSet::new();
+                    let voted_parent_scopes: Vec<ItemId> = {
+                        let mut parents: HashSet<ItemId> = HashSet::new();
                         for s in &v.doc.statements {
                             if let dsl::Stmt::Vote { item1, item2, .. } = s {
                                 if let (Ok(a), Ok(b)) = (resolve_item(item1), resolve_item(item2)) {
@@ -301,12 +301,12 @@ pub async fn writer_actor(mut rx: mpsc::Receiver<WriteCmd>, state: AppState) {
                                 }
                             }
                         }
-                        let mut out: Vec<CanonicalItemUrl> = parents.into_iter().collect();
+                        let mut out: Vec<ItemId> = parents.into_iter().collect();
                         out.sort();
                         out
                     };
 
-                    let pre_rankings: HashMap<CanonicalItemUrl, crate::scope_rank::ChildrenRankings> =
+                    let pre_rankings: HashMap<ItemId, crate::scope_rank::ChildrenRankings> =
                         if !voted_parent_scopes.is_empty() {
                             let content = content_for_room(&reduced, &room_key);
                             voted_parent_scopes

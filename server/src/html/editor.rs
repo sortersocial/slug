@@ -97,7 +97,7 @@ pub async fn editor_check(
             simulated.apply_event(event);
 
             // Collect voted parent scopes.
-            let voted_parents: Vec<crate::path_types::CanonicalItemUrl> = {
+            let voted_parents: Vec<crate::path_types::ItemId> = {
                 let mut parents = std::collections::HashSet::new();
                 for s in &v.doc.statements {
                     if let crate::dsl::Stmt::Vote { item1, item2, .. } = s {
@@ -107,7 +107,7 @@ pub async fn editor_check(
                         }
                     }
                 }
-                let mut out: Vec<crate::path_types::CanonicalItemUrl> = parents.into_iter().collect();
+                let mut out: Vec<crate::path_types::ItemId> = parents.into_iter().collect();
                 out.sort();
                 out
             };

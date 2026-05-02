@@ -1,8 +1,8 @@
-use crate::path_types::{tilde_http_path_to_canonical, CanonicalItemUrl};
+use crate::path_types::{tilde_http_path_to_item_id, ItemId};
 
 /// Semantic view of an ontology path for rendering and routing decisions.
 pub(super) struct OntologyPath {
-    canonical: CanonicalItemUrl,
+    canonical: ItemId,
     /// Breadcrumb segments: for `~/a/b` this is `["a", "b"]` (leading `~` rendered separately).
     segments: Vec<String>,
 }
@@ -11,11 +11,11 @@ impl OntologyPath {
     /// Path is the `*path` segment from `/~/*path` (e.g. `topic/a`). Always treat it as under `~/`
     /// so it canonicalizes to `https://slug.social/~/…`, not the non-tilde site path.
     pub(super) fn from_input(path: &str) -> Self {
-        let canonical = tilde_http_path_to_canonical(path);
+        let canonical = tilde_http_path_to_item_id(path);
         Self::from_canonical(canonical)
     }
 
-    pub(super) fn from_canonical(canonical: CanonicalItemUrl) -> Self {
+    pub(super) fn from_canonical(canonical: ItemId) -> Self {
         // tilde_segments() returns ["~", "a", "b"] but bc_path() renders "~" itself,
         // so we skip the leading "~" segment here.
         let segments = canonical
@@ -28,7 +28,7 @@ impl OntologyPath {
     }
 
     pub(super) fn root() -> Self {
-        Self::from_canonical(CanonicalItemUrl::ontology_root())
+        Self::from_canonical(ItemId::ontology_root())
     }
 
     pub(super) fn is_root(&self) -> bool {
@@ -56,7 +56,7 @@ impl OntologyPath {
 
 /// External `https://host/…` items addressed as `/-/host/…` in the URL bar.
 pub(super) struct ExternalOntologyPath {
-    canonical: CanonicalItemUrl,
+    canonical: ItemId,
     /// e.g. `["github.com", "org", "repo", "issues"]`
     segments: Vec<String>,
 }
@@ -71,13 +71,13 @@ impl ExternalOntologyPath {
         } else {
             format!("-/{}", p.trim_start_matches('/'))
         };
-        let Some(canonical) = CanonicalItemUrl::parse(&raw) else {
-            return Self::from_canonical(CanonicalItemUrl("https://.".to_string()));
+        let Some(canonical) = ItemId::parse(&raw) else {
+            return Self::from_canonical(ItemId::opaque("https://.".to_string()));
         };
         Self::from_canonical(canonical)
     }
 
-    pub(super) fn from_canonical(canonical: CanonicalItemUrl) -> Self {
+    pub(super) fn from_canonical(canonical: ItemId) -> Self {
         let s = canonical.as_str();
         let rest = s
             .strip_prefix("https://")

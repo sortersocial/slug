@@ -17,7 +17,7 @@ use crate::{
     dsl,
     events::{Event, Ingest, ThreadCapability},
     identity::{parse_agent, parse_username},
-    path_types::CanonicalItemUrl,
+    path_types::ItemId,
     ranking::{connected_components_from_voted_pairs, ranked_items_subset},
     reducer::{scope_from_room_wire, ReducerState, ScopeId},
     state::{AppState, InviteState},
@@ -150,7 +150,7 @@ fn build_rank_response_for_content(
 
     if !is_global && !specs.is_empty() {
         let none_exist = specs.iter().all(|spec| {
-            let Some(canon) = CanonicalItemUrl::parse(spec) else { return true };
+            let Some(canon) = ItemId::parse(spec) else { return true };
             !content.items.contains(&canon) && !content.item_children.contains_key(&canon)
         });
         if none_exist {
@@ -163,10 +163,10 @@ fn build_rank_response_for_content(
 
     let depth = depth.max(1);
     let rankings = if is_global {
-        let all_items: Vec<CanonicalItemUrl> = content.items.iter().cloned().collect();
+        let all_items: Vec<ItemId> = content.items.iter().cloned().collect();
         crate::scope_rank::build_rankings_for_item_set(content, &all_items)
     } else if specs.is_empty() {
-        crate::scope_rank::build_children_rankings(content, &CanonicalItemUrl::ontology_root())
+        crate::scope_rank::build_children_rankings(content, &ItemId::ontology_root())
     } else if depth > 1 {
         let items = crate::scope_rank::resolve_scope_recursive(content, &specs, depth);
         crate::scope_rank::build_rankings_for_item_set(content, &items)
@@ -359,8 +359,8 @@ async fn rpc_check(
     let mut simulated = { reduced_arc.read().await.clone() };
     simulated.apply_event(event);
 
-    let voted_parents: Vec<CanonicalItemUrl> = {
-        let mut parents: HashSet<CanonicalItemUrl> = HashSet::new();
+    let voted_parents: Vec<ItemId> = {
+        let mut parents: HashSet<ItemId> = HashSet::new();
         for s in &v.doc.statements {
             if let dsl::Stmt::Vote { item1, item2, .. } = s {
                 if let (Ok(a), Ok(b)) = (resolve_item(item1), resolve_item(item2)) {
@@ -369,7 +369,7 @@ async fn rpc_check(
                 }
             }
         }
-        let mut out: Vec<CanonicalItemUrl> = parents.into_iter().collect();
+        let mut out: Vec<ItemId> = parents.into_iter().collect();
         out.sort();
         out
     };
@@ -695,7 +695,7 @@ fn rpc_search(reduced: &ReducerState, q: &str, limit: usize, principal: Option<&
 async fn rpc_get_pair(state: &AppState, room: String, parent_path: String) -> Result<RpcResult, RpcErr> {
     let scope = scope_from_room_wire(&room);
     let reduced_arc = state.reduced.clone();
-    let pool: Vec<CanonicalItemUrl> = {
+    let pool: Vec<ItemId> = {
         let reduced = reduced_arc.read().await;
         let content = content_for_room(&reduced, &room);
         let tmp = if parent_path.trim().is_empty() {
@@ -716,7 +716,7 @@ async fn rpc_get_pair(state: &AppState, room: String, parent_path: String) -> Re
             Some("add items via ingest".into()),
         ));
     }
-    let selected: Option<(CanonicalItemUrl, CanonicalItemUrl)> = {
+    let selected: Option<(ItemId, ItemId)> = {
         let mut reduced = reduced_arc.write().await;
         let content = reduced.content.entry(scope.clone()).or_default();
         let group = &mut content.ranking_group;
@@ -729,16 +729,16 @@ async fn rpc_get_pair(state: &AppState, room: String, parent_path: String) -> Re
                 .filter_map(|it| group.item_to_idx.get(it).copied())
                 .collect();
             let ranked = ranked_items_subset(group, &idxs, 10000, 1e-8);
-            let ranked_set: HashSet<CanonicalItemUrl> = ranked.iter().map(|r| r.item.clone()).collect();
-            let unsorted: Vec<CanonicalItemUrl> = pool
+            let ranked_set: HashSet<ItemId> = ranked.iter().map(|r| r.item.clone()).collect();
+            let unsorted: Vec<ItemId> = pool
                 .iter()
                 .filter(|it| !ranked_set.contains(*it))
                 .cloned()
                 .collect();
-            let mut pick: Option<(CanonicalItemUrl, CanonicalItemUrl)> = None;
+            let mut pick: Option<(ItemId, ItemId)> = None;
             if !unsorted.is_empty() {
                 if let Some(left) = unsorted.choose(&mut rng).cloned() {
-                    let mut candidates: Vec<CanonicalItemUrl> = if !ranked.is_empty() {
+                    let mut candidates: Vec<ItemId> = if !ranked.is_empty() {
                         ranked.iter().map(|r| r.item.clone()).collect()
                     } else {
                         pool.clone()
@@ -865,7 +865,7 @@ pub async fn handle_rpc_batch(
                 } else {
                 let content = content_for_room(&reduced, &room);
                 let item_str = canonicalize_item(&item_path);
-                let item = CanonicalItemUrl(item_str.clone());
+                let item = ItemId::parse(&item_str).unwrap_or_else(|| ItemId::opaque(item_str.clone()));
                 if !content.items.contains(&item) {
                     line_err(
                         "item not found",
@@ -1212,7 +1212,7 @@ pub async fn handle_rpc_batch(
                 }
 
                 let ranked_total = ranked.len();
-                let mut unranked: Vec<CanonicalItemUrl> = content
+                let mut unranked: Vec<ItemId> = content
                     .items
                     .iter()
                     .filter(|it| !group.item_to_idx.contains_key(*it))
@@ -1263,7 +1263,7 @@ pub async fn handle_rpc_batch(
                 } else {
                 let content = content_for_room(&reduced, &room);
                 let item_str = canonicalize_item(&item_path);
-                let item = CanonicalItemUrl(item_str.clone());
+                let item = ItemId::parse(&item_str).unwrap_or_else(|| ItemId::opaque(item_str.clone()));
                 let limit = limit.unwrap_or(50).clamp(1, 200);
                 if !content.items.contains(&item) {
                     line_err(
@@ -1304,7 +1304,7 @@ pub async fn handle_rpc_batch(
                 let content = content_for_room(&reduced, &room);
                 let scope = scope_from_room_wire(&room);
                 let item_str = canonicalize_item(&item_path);
-                let item = CanonicalItemUrl(item_str.clone());
+                let item = ItemId::parse(&item_str).unwrap_or_else(|| ItemId::opaque(item_str.clone()));
                 let entries = content.rank_history.get(&item).cloned().unwrap_or_default();
                 let history: Vec<RankHistoryRow> = entries.iter().map(|e| {
                     let caused_by: Vec<VoteRow> = reduced.ingests_by_id.get(&e.post_id)
@@ -1361,7 +1361,11 @@ pub async fn handle_rpc_batch(
                     line_err(e, h)
                 } else {
                 let content = content_for_room(&reduced, &room);
-                let parents: HashSet<&str> = content.item_children.keys().map(|s| s.as_str()).collect();
+                let parents: HashSet<String> = content
+                    .item_children
+                    .keys()
+                    .map(|k| k.to_storage_string())
+                    .collect();
                 let mut paths: Vec<GardenItemUrl> = content
                     .items
                     .iter()
@@ -1380,11 +1384,11 @@ pub async fn handle_rpc_batch(
                 let content = content_for_room(&reduced, &room);
                 let out: Vec<PathSummary> = content
                     .item_children
-                    .get(&CanonicalItemUrl::ontology_root())
+                    .get(&ItemId::ontology_root())
                     .map(|roots| {
                         let mut v: Vec<PathSummary> = roots.iter()
                             .map(|path| {
-                                let children = content.item_children.get(path.as_str()).map(|s| s.len()).unwrap_or(0);
+                                let children = content.item_children.get(path).map(|s| s.len()).unwrap_or(0);
                                 PathSummary {
                                     path: TildeOntologyPath::from_stored(path),
                                     children,

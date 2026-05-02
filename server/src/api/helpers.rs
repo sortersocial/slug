@@ -4,7 +4,8 @@ use axum::{
     Json,
 };
 use sha2::{Digest, Sha256};
-use slug_types::paths::{CanonicalItemUrl, GardenItemUrl};
+use slug_types::paths::GardenItemUrl;
+use slug_types::ItemId;
 use slug_types::*;
 use std::collections::HashMap;
 
@@ -31,12 +32,12 @@ pub fn now_ms() -> i64 {
 }
 
 /// Resolve DSL/user input to a stored canonical item id.
-pub fn resolve_item(item: &str) -> Result<CanonicalItemUrl, String> {
+pub fn resolve_item(item: &str) -> Result<ItemId, String> {
     let canonical = canonicalize_item(item);
     if canonical.is_empty() {
         return Err(format!("empty item path: `{}`", item));
     }
-    Ok(CanonicalItemUrl(canonical))
+    ItemId::parse(&canonical).ok_or_else(|| format!("invalid item path: `{}`", item))
 }
 
 pub fn parse_parent_specs(parent: Option<&String>) -> Vec<String> {
@@ -94,7 +95,7 @@ pub fn paginate_rankings(
     (out_components, out_unranked)
 }
 
-pub fn pick_random_distinct_canonical(items: &[CanonicalItemUrl]) -> Option<(CanonicalItemUrl, CanonicalItemUrl)> {
+pub fn pick_random_distinct_canonical(items: &[ItemId]) -> Option<(ItemId, ItemId)> {
     use rand::seq::SliceRandom;
     if items.len() < 2 {
         return None;
@@ -115,15 +116,15 @@ pub fn pick_random_distinct_canonical(items: &[CanonicalItemUrl]) -> Option<(Can
 }
 
 pub fn is_pair_voted(group: &crate::reducer::GroupState, a: &str, b: &str) -> bool {
-    let a_key = CanonicalItemUrl(a.to_string());
-    let b_key = CanonicalItemUrl(b.to_string());
+    let a_key = ItemId::parse(a).unwrap_or_else(|| ItemId::opaque(a.to_string()));
+    let b_key = ItemId::parse(b).unwrap_or_else(|| ItemId::opaque(b.to_string()));
     let Some(&a_idx) = group.item_to_idx.get(&a_key) else { return false; };
     let Some(&b_idx) = group.item_to_idx.get(&b_key) else { return false; };
     let (i, j) = if a_idx < b_idx { (a_idx, b_idx) } else { (b_idx, a_idx) };
     group.voted_pairs.contains(&(i, j))
 }
 
-pub fn compute_connectivity_stats(group: &crate::reducer::GroupState, pool: &[CanonicalItemUrl]) -> ConnectivityStats {
+pub fn compute_connectivity_stats(group: &crate::reducer::GroupState, pool: &[ItemId]) -> ConnectivityStats {
     let n = pool.len();
 
     let global_idxs: Vec<Option<usize>> = pool

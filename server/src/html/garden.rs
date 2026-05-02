@@ -10,7 +10,7 @@ use crate::{
     api::optional_principal,
     canonical_path::canonicalize_item,
     events::ThreadCapability,
-    path_types::CanonicalItemUrl,
+    path_types::ItemId,
     reducer::{ContentState, ReducerState, ScopeId},
     ranking::{connected_components_from_voted_pairs, ranked_items_subset},
     scope_rank::{build_children_rankings, ChildrenRankings},
@@ -27,7 +27,7 @@ use super::{
 
 /// Display path for an item: `~/…` or `-/…` form.
 fn item_display_path(item: &str) -> String {
-    CanonicalItemUrl::parse(item)
+    ItemId::parse(item)
         .map(|c| c.display_path())
         .unwrap_or_else(|| canonicalize_item(item))
 }
@@ -159,7 +159,7 @@ pub async fn garden_index(
     let nav = ThreadNav::public();
     let child_rankings = {
         let reduced = state.reduced.read().await;
-        build_children_rankings(reduced.public(), &CanonicalItemUrl::ontology_root())
+        build_children_rankings(reduced.public(), &ItemId::ontology_root())
     };
 
     let page = layout(
@@ -236,7 +236,7 @@ pub async fn external_garden_index(
 ) -> impl IntoResponse {
     let nav = ThreadNav::public();
     let ext_path = ExternalOntologyPath::from_input("");
-    let parent = CanonicalItemUrl::parse("https://.").unwrap();
+    let parent = ItemId::parse("https://.").unwrap();
     let child_rankings = {
         let reduced = state.reduced.read().await;
         build_children_rankings(reduced.public(), &parent)
@@ -365,7 +365,7 @@ pub async fn room_external_garden_index(
         return room_not_found_page(&jar, &uri).into_response();
     }
     let ext_path = ExternalOntologyPath::from_input("");
-    let parent = CanonicalItemUrl::parse("https://.").unwrap();
+    let parent = ItemId::parse("https://.").unwrap();
     let child_rankings = build_children_rankings(
         content_for_garden_view(&reduced, &nav.scope()),
         &parent,
@@ -509,13 +509,13 @@ struct ItemPageViewModel {
 fn build_sibling_rank(
     reduced: &crate::reducer::ReducerState,
     scope: &ScopeId,
-    item: &CanonicalItemUrl,
+    item: &ItemId,
 ) -> Option<SiblingRank> {
     let item = item.clone().normalized_storage();
     let content = content_for_garden_view(reduced, scope);
     let group = &content.ranking_group;
     let parent = item.parent()?.normalized_storage();
-    let siblings: Vec<CanonicalItemUrl> = content
+    let siblings: Vec<ItemId> = content
         .item_children
         .get(&parent)
         .map(|s| s.iter().cloned().collect())
@@ -574,7 +574,7 @@ fn build_rank_history(
     item: &str,
 ) -> Vec<RankHistoryEntryView> {
     let content = content_for_garden_view(reduced, scope);
-    let item_key = CanonicalItemUrl(item.to_string());
+    let item_key = ItemId::parse(item).unwrap_or_else(|| ItemId::opaque(item.to_string()));
     let entries = match content.rank_history.get(&item_key) {
         None => return vec![],
         Some(e) => e,
@@ -592,8 +592,8 @@ fn build_rank_history(
                         if a_str == item || b_str == item {
                             Some(crate::reducer::VoteData {
                                 ts: e.ts,
-                                a: CanonicalItemUrl(a_str),
-                                b: CanonicalItemUrl(b_str),
+                                a: ItemId::parse(&a_str).unwrap_or_else(|| ItemId::opaque(a_str)),
+                                b: ItemId::parse(&b_str).unwrap_or_else(|| ItemId::opaque(b_str)),
                                 ratio_left, ratio_right,
                                 body: explanation,
                                 principal: reduced.ingests_by_id.get(&e.post_id)
@@ -629,8 +629,8 @@ fn build_item_page_view_model(
     item: &str,
 ) -> ItemPageViewModel {
     let content = content_for_garden_view(reduced, scope);
-    let item_key = CanonicalItemUrl::parse(item)
-        .unwrap_or_else(|| CanonicalItemUrl::parse("~/").unwrap())
+    let item_key = ItemId::parse(item)
+        .unwrap_or_else(|| ItemId::parse("~/").unwrap())
         .normalized_storage();
     let item_has_parent = item_key.parent().is_some();
     let child_rankings = build_children_rankings(content, &item_key);
@@ -925,10 +925,10 @@ mod tests {
             .map(|r| r.item.as_str())
             .collect();
         assert_eq!(names, vec!["https://slug.social/~/topic/a", "https://slug.social/~/topic/b"]);
-        use crate::path_types::CanonicalItemUrl;
+        use crate::path_types::ItemId;
         assert!(
-            model.child_rankings.unranked_items.contains(&CanonicalItemUrl("https://slug.social/~/topic/kid1".to_string()))
-                || model.child_rankings.unranked_items.contains(&CanonicalItemUrl("https://slug.social/~/topic/kid2".to_string()))
+            model.child_rankings.unranked_items.contains(&ItemId::parse("https://slug.social/~/topic/kid1").unwrap())
+                || model.child_rankings.unranked_items.contains(&ItemId::parse("https://slug.social/~/topic/kid2").unwrap())
         );
     }
 
@@ -941,8 +941,8 @@ mod tests {
             "9ab12cd/my-room",
             "@00000000-0000-0000-0000-000000000000:test:local/test\n~/t1 {a}\n~/t2 {b}\n",
         );
-        use crate::path_types::CanonicalItemUrl;
-        let root = CanonicalItemUrl::ontology_root();
+        use crate::path_types::ItemId;
+        let root = ItemId::ontology_root();
         let model = build_item_page_view_model(
             &reduced,
             &ScopeId::Room("9ab12cd/my-room".to_string()),
@@ -971,8 +971,8 @@ mod tests {
             "@00000000-0000-0000-0000-000000000000:test:local/test\n\
              ~/a {a}\n~/b {b}\n~/a 2:1 ~/b {because}\n",
         );
-        use crate::path_types::CanonicalItemUrl;
-        let root = CanonicalItemUrl::ontology_root();
+        use crate::path_types::ItemId;
+        let root = ItemId::ontology_root();
         let model = build_item_page_view_model(
             &reduced,
             &ScopeId::Room("9ab12cd/my-room".to_string()),

@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use crate::{
     canonical_path::canonicalize_tag,
     dsl,
-    path_types::CanonicalItemUrl,
+    path_types::ItemId,
     reducer::{ReducerState, ScopeId},
 };
 use slug_types::paths::GardenItemUrl;
@@ -32,11 +32,11 @@ pub fn validate_ingest_document(
         ScopeId::Public => None,
         _ => reduced.content_for_scope(scope),
     };
-    let item_exists = |key: &CanonicalItemUrl| {
+    let item_exists = |key: &ItemId| {
         scoped_content.map(|c| c.items.contains(key)).unwrap_or(false)
             || public_content.items.contains(key)
     };
-    let body_exists = |key: &CanonicalItemUrl| {
+    let body_exists = |key: &ItemId| {
         scoped_content.map(|c| c.item_bodies.contains_key(key)).unwrap_or(false)
             || public_content.item_bodies.contains_key(key)
     };
@@ -52,7 +52,7 @@ pub fn validate_ingest_document(
     };
 
     let ts = super::helpers::now_ms();
-    let mut defined_in_doc: HashSet<CanonicalItemUrl> = HashSet::new();
+    let mut defined_in_doc: HashSet<ItemId> = HashSet::new();
 
     for s in &doc.statements {
         match s {

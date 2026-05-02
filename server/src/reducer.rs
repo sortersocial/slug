@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::canonical_path::canonicalize_tag;
 use crate::dsl;
 use crate::events::{Event, Ingest, ThreadCapability};
-use crate::path_types::CanonicalItemUrl;
+use crate::path_types::ItemId;
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ScopeId {
@@ -27,8 +27,8 @@ pub fn scope_from_room_wire(room: &str) -> ScopeId {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct VoteData {
     pub ts: i64,
-    pub a: CanonicalItemUrl,
-    pub b: CanonicalItemUrl,
+    pub a: ItemId,
+    pub b: ItemId,
     pub ratio_left: i32,
     pub ratio_right: i32,
     pub body: String,
@@ -40,8 +40,8 @@ pub struct VoteData {
 
 #[derive(Debug, Clone)]
 pub struct GroupState {
-    pub item_to_idx: HashMap<CanonicalItemUrl, usize>,
-    pub idx_to_item: Vec<CanonicalItemUrl>,
+    pub item_to_idx: HashMap<ItemId, usize>,
+    pub idx_to_item: Vec<ItemId>,
 
     /// Aggregated directed edge weights: (src_idx, dst_idx) -> weight.
     pub edges: HashMap<(usize, usize), f64>,
@@ -72,7 +72,7 @@ impl GroupState {
         }
     }
 
-    fn ensure_item(&mut self, item: &CanonicalItemUrl) -> usize {
+    fn ensure_item(&mut self, item: &ItemId) -> usize {
         if let Some(&idx) = self.item_to_idx.get(item) {
             return idx;
         }
@@ -85,11 +85,11 @@ impl GroupState {
 
     /// Public test helper: insert an item into the group without a vote (for unit tests).
     pub fn ensure_item_pub(&mut self, item: &str) -> usize {
-        if let Some(canon) = CanonicalItemUrl::parse(item) {
+        if let Some(canon) = ItemId::parse(item) {
             self.ensure_item(&canon)
         } else {
             // Fallback: treat as raw canonical string
-            let canon = CanonicalItemUrl(item.to_string());
+            let canon = ItemId::opaque(item.to_string());
             self.ensure_item(&canon)
         }
     }
@@ -103,8 +103,8 @@ impl GroupState {
     }
 
     pub fn apply_vote(&mut self, mut vote: VoteData) {
-        vote.a = CanonicalItemUrl::parse(vote.a.as_str()).unwrap_or(vote.a);
-        vote.b = CanonicalItemUrl::parse(vote.b.as_str()).unwrap_or(vote.b);
+        vote.a = ItemId::parse(vote.a.as_str()).unwrap_or_else(|| vote.a.clone());
+        vote.b = ItemId::parse(vote.b.as_str()).unwrap_or_else(|| vote.b.clone());
         vote.thread_tag = canonicalize_tag(&vote.thread_tag);
         if vote.ratio_left < 0 {
             vote.ratio_left = 0;
@@ -210,18 +210,18 @@ impl Default for ForumThreadState {
 #[derive(Debug, Clone, Default)]
 pub struct ContentState {
     pub ranking_group: GroupState,
-    pub items: HashSet<CanonicalItemUrl>,
-    pub item_bodies: HashMap<CanonicalItemUrl, String>,
+    pub items: HashSet<ItemId>,
+    pub item_bodies: HashMap<ItemId, String>,
     /// Parent canonical URL -> direct children.
-    pub item_children: HashMap<CanonicalItemUrl, HashSet<CanonicalItemUrl>>,
+    pub item_children: HashMap<ItemId, HashSet<ItemId>>,
     /// Per-item vote history (most recent first).
-    pub item_votes: HashMap<CanonicalItemUrl, VecDeque<VoteData>>,
+    pub item_votes: HashMap<ItemId, VecDeque<VoteData>>,
     /// Per-item ingest references (most recent first).
-    pub item_snippets: HashMap<CanonicalItemUrl, VecDeque<String>>,
+    pub item_snippets: HashMap<ItemId, VecDeque<String>>,
     /// Item path -> threads that mention or vote on this item.
-    pub item_threads: HashMap<CanonicalItemUrl, HashSet<String>>,
+    pub item_threads: HashMap<ItemId, HashSet<String>>,
     /// Per-item rank history, oldest first.
-    pub rank_history: HashMap<CanonicalItemUrl, Vec<RankHistoryEntry>>,
+    pub rank_history: HashMap<ItemId, Vec<RankHistoryEntry>>,
 }
 
 #[derive(Debug, Clone)]
@@ -351,7 +351,7 @@ impl ReducerState {
     /// For `a/b/c/d` this creates: `a/b/c→d`, `a/b→a/b/c`, `a→a/b`, `""→a`.
     /// Stops early when an intermediate is already registered (its ancestors must be too).
     /// @e2bdefa9-a6fa-4725-b0a2-c0b09d95bb20:claudecode:anthropic/claude-opus-4
-    fn add_child_edge(content: &mut ContentState, item: &CanonicalItemUrl) {
+    fn add_child_edge(content: &mut ContentState, item: &ItemId) {
         let mut child = item.clone();
         loop {
             let Some(parent) = child.parent() else { break };
@@ -366,16 +366,16 @@ impl ReducerState {
     }
 
     /// Resolve an item path as a first-class canonical path.
-    fn normalize_item(item: &str) -> Option<CanonicalItemUrl> {
-        CanonicalItemUrl::parse(item)
+    fn normalize_item(item: &str) -> Option<ItemId> {
+        ItemId::parse(item)
     }
 
     /// 1-indexed rank of `item` within its connected component in the parent scope.
     /// 0 if the item has no votes connecting it to siblings (unranked).
     fn scope_rank_of(
         group: &GroupState,
-        item: &CanonicalItemUrl,
-        item_children: &HashMap<CanonicalItemUrl, HashSet<CanonicalItemUrl>>,
+        item: &ItemId,
+        item_children: &HashMap<ItemId, HashSet<ItemId>>,
     ) -> usize {
         let scope = match item.parent() {
             Some(p) => p,
@@ -421,7 +421,7 @@ impl ReducerState {
     /// 1-indexed position of `item` in the component-aware global flat list.
     /// Components sorted largest-first; items ranked within each component.
     /// 0 if the item is not in the ranking group.
-    fn global_rank_of(group: &GroupState, item: &CanonicalItemUrl) -> usize {
+    fn global_rank_of(group: &GroupState, item: &ItemId) -> usize {
         if !group.item_to_idx.contains_key(item) {
             return 0;
         }
@@ -448,7 +448,7 @@ impl ReducerState {
         let doc = dsl::parse_full(&ing.raw).map_err(|_| ())?;
         let canonical_thread = canonicalize_tag(&ing.thread_tag);
 
-        let voted_items: Vec<CanonicalItemUrl> = doc
+        let voted_items: Vec<ItemId> = doc
             .statements
             .iter()
             .filter_map(|s| {
@@ -467,7 +467,7 @@ impl ReducerState {
         let principal = ing.principal.clone();
         let delegate = ing.delegate.clone();
 
-        let before: HashMap<CanonicalItemUrl, (usize, usize)> = if !voted_items.is_empty() {
+        let before: HashMap<ItemId, (usize, usize)> = if !voted_items.is_empty() {
             crate::ranking::compute_group_ranking(&mut content.ranking_group, 10000, 1e-8);
             voted_items
                 .iter()
@@ -485,7 +485,7 @@ impl ReducerState {
             HashMap::new()
         };
 
-        let mut ingest_items: HashSet<CanonicalItemUrl> = HashSet::new();
+        let mut ingest_items: HashSet<ItemId> = HashSet::new();
 
         for stmt in doc.statements {
             match stmt {

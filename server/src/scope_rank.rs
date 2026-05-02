@@ -3,7 +3,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::path_types::CanonicalItemUrl;
+use crate::path_types::ItemId;
 use crate::ranking::{connected_components_from_voted_pairs, ranked_items_subset, RankedItem};
 use crate::reducer::ContentState;
 
@@ -17,12 +17,12 @@ pub struct ScopedComponent {
 pub struct ChildrenRankings {
     pub component_rankings: Vec<ScopedComponent>,
     /// Items in scope with no rank (no votes connecting them to others in this scope).
-    pub unranked_items: Vec<CanonicalItemUrl>,
+    pub unranked_items: Vec<ItemId>,
 }
 
 /// Resolve one scope spec (literal path) to direct children of that parent. No wildcards.
-fn resolve_one_scope(content: &ContentState, spec: &str) -> HashSet<CanonicalItemUrl> {
-    let Some(parent) = CanonicalItemUrl::parse(spec.trim()) else {
+fn resolve_one_scope(content: &ContentState, spec: &str) -> HashSet<ItemId> {
+    let Some(parent) = ItemId::parse(spec.trim()) else {
         return HashSet::new();
     };
     content
@@ -36,12 +36,12 @@ fn resolve_one_scope(content: &ContentState, spec: &str) -> HashSet<CanonicalIte
 
 /// Resolve multiple scope specs (literal paths) to a single merged, deduplicated list of item paths.
 /// Used for rank/pair with multiple parents (explicit merge, e.g. rank ~/models ~/ai-models).
-pub fn resolve_scope(content: &ContentState, specs: &[String]) -> Vec<CanonicalItemUrl> {
+pub fn resolve_scope(content: &ContentState, specs: &[String]) -> Vec<ItemId> {
     let mut set = HashSet::new();
     for spec in specs {
         set.extend(resolve_one_scope(content, spec));
     }
-    let mut out: Vec<CanonicalItemUrl> = set.into_iter().collect();
+    let mut out: Vec<ItemId> = set.into_iter().collect();
     out.sort();
     out
 }
@@ -49,18 +49,18 @@ pub fn resolve_scope(content: &ContentState, specs: &[String]) -> Vec<CanonicalI
 /// Resolve scope specs recursively up to `depth` levels deep.
 /// depth=1 is equivalent to resolve_scope (direct children only).
 /// depth=2 includes grandchildren, etc.
-pub fn resolve_scope_recursive(content: &ContentState, specs: &[String], depth: usize) -> Vec<CanonicalItemUrl> {
+pub fn resolve_scope_recursive(content: &ContentState, specs: &[String], depth: usize) -> Vec<ItemId> {
     if depth == 0 {
         return vec![];
     }
-    let mut visited: HashSet<CanonicalItemUrl> = HashSet::new();
-    let mut frontier: Vec<CanonicalItemUrl> = specs
+    let mut visited: HashSet<ItemId> = HashSet::new();
+    let mut frontier: Vec<ItemId> = specs
         .iter()
-        .filter_map(|s| CanonicalItemUrl::parse(s))
+        .filter_map(|s| ItemId::parse(s))
         .collect();
 
     for _level in 0..depth {
-        let mut next_frontier: Vec<CanonicalItemUrl> = Vec::new();
+        let mut next_frontier: Vec<ItemId> = Vec::new();
         for parent in &frontier {
             if let Some(children) = content.item_children.get(parent) {
                 for child in children {
@@ -76,16 +76,16 @@ pub fn resolve_scope_recursive(content: &ContentState, specs: &[String], depth: 
         frontier = next_frontier;
     }
 
-    let mut out: Vec<CanonicalItemUrl> = visited.into_iter().collect();
+    let mut out: Vec<ItemId> = visited.into_iter().collect();
     out.sort();
     out
 }
 
 /// Build connected-component rankings for an explicit set of item paths.
 /// Use this when scope comes from multiple parents (resolve_scope).
-pub fn build_rankings_for_item_set(content: &ContentState, items_in_scope: &[CanonicalItemUrl]) -> ChildrenRankings {
+pub fn build_rankings_for_item_set(content: &ContentState, items_in_scope: &[ItemId]) -> ChildrenRankings {
     let group = &content.ranking_group;
-    let mut items_in_scope: Vec<CanonicalItemUrl> = items_in_scope.to_vec();
+    let mut items_in_scope: Vec<ItemId> = items_in_scope.to_vec();
     items_in_scope.sort();
 
     let scoped_idxs: Vec<usize> = items_in_scope
@@ -127,7 +127,7 @@ pub fn build_rankings_for_item_set(content: &ContentState, items_in_scope: &[Can
         })
         .collect();
 
-    let mut unranked_items: Vec<CanonicalItemUrl> = isolate_local_idxs
+    let mut unranked_items: Vec<ItemId> = isolate_local_idxs
         .into_iter()
         .filter_map(|li| local_to_global.get(li).copied())
         .filter_map(|idx| group.idx_to_item.get(idx).cloned())
@@ -148,9 +148,9 @@ pub fn build_rankings_for_item_set(content: &ContentState, items_in_scope: &[Can
 
 /// Build connected-component rankings for direct children of parent_scope.
 /// Matches the HTML garden view: multiple components, isolates, no-vote items.
-pub fn build_children_rankings(content: &ContentState, parent: &CanonicalItemUrl) -> ChildrenRankings {
+pub fn build_children_rankings(content: &ContentState, parent: &ItemId) -> ChildrenRankings {
     let parent = parent.clone().normalized_storage();
-    let items: Vec<CanonicalItemUrl> = content
+    let items: Vec<ItemId> = content
         .item_children
         .get(&parent)
         .map(|s| s.iter().cloned().collect())
@@ -164,10 +164,13 @@ mod tests {
     use std::collections::{HashMap, HashSet};
 
     fn content_with_children(edges: &[(&str, &[&str])]) -> ContentState {
-        let mut item_children: HashMap<CanonicalItemUrl, HashSet<CanonicalItemUrl>> = HashMap::new();
+        let mut item_children: HashMap<ItemId, HashSet<ItemId>> = HashMap::new();
         for (parent, children) in edges {
-            let parent = CanonicalItemUrl((*parent).to_string());
-            let set: HashSet<CanonicalItemUrl> = children.iter().map(|s| CanonicalItemUrl((*s).to_string())).collect();
+            let parent = ItemId::parse(parent).unwrap();
+            let set: HashSet<ItemId> = children
+                .iter()
+                .map(|s| ItemId::parse(s).unwrap())
+                .collect();
             item_children.insert(parent, set);
         }
         ContentState {
@@ -189,8 +192,8 @@ mod tests {
         ]);
         let out = resolve_one_scope(&content, "models");
         assert_eq!(out.len(), 2);
-        assert!(out.contains(&CanonicalItemUrl("https://slug.social/models/x".to_string())));
-        assert!(out.contains(&CanonicalItemUrl("https://slug.social/models/y".to_string())));
+        assert!(out.contains(&ItemId::parse("https://slug.social/models/x").unwrap()));
+        assert!(out.contains(&ItemId::parse("https://slug.social/models/y").unwrap()));
     }
 
     #[test]
@@ -201,9 +204,9 @@ mod tests {
         ]);
         let out = resolve_scope(&content, &["a".into(), "b".into()]);
         assert_eq!(out.len(), 4);
-        assert!(out.contains(&CanonicalItemUrl("https://slug.social/a/1".to_string())));
-        assert!(out.contains(&CanonicalItemUrl("https://slug.social/a/2".to_string())));
-        assert!(out.contains(&CanonicalItemUrl("https://slug.social/b/1".to_string())));
-        assert!(out.contains(&CanonicalItemUrl("https://slug.social/b/2".to_string())));
+        assert!(out.contains(&ItemId::parse("https://slug.social/a/1").unwrap()));
+        assert!(out.contains(&ItemId::parse("https://slug.social/a/2").unwrap()));
+        assert!(out.contains(&ItemId::parse("https://slug.social/b/1").unwrap()));
+        assert!(out.contains(&ItemId::parse("https://slug.social/b/2").unwrap()));
     }
 }

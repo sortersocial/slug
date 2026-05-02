@@ -1,14 +1,20 @@
 use serde::{Deserialize, Serialize};
 
 pub mod url_normalize;
+pub mod item_wire;
+pub mod item_id;
 pub mod paths;
 pub mod timeago;
 
+pub use item_id::ItemId;
+pub use item_wire::{
+    canonicalize_item, item_parent_path, item_path_segments, normalize_slug_ontology_storage_url,
+    SLUG_TILDE_ONTOLOGY_ROOT,
+};
 pub use paths::{
-    canonicalize_item, canonicalize_tag, item_parent_path, item_path_segments, normalize_slug_ontology_storage_url,
-    CanonicalItemUrl, ForumThreadUrl, GardenItemUrl, RelativePath, SLUG_TILDE_ONTOLOGY_ROOT,
+    canonicalize_tag, ForumThreadUrl, GardenItemUrl, RelativePath,
     room_id_from_route_segment, room_route_segment, ROOM_SHORT_ID_LEN,
-    TildeHttpPathTail, TildeOntologyPath, TildePath, tilde_http_path_to_canonical,
+    TildeHttpPathTail, TildeOntologyPath, TildePath, tilde_http_path_to_item_id,
 };
 pub use url_normalize::normalize_http_identity_url;
 

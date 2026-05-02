@@ -52,9 +52,14 @@ impl ThreadNav {
     }
 
     pub(crate) fn garden_item_url(&self, item: &str) -> String {
-        let Some(c) = crate::path_types::CanonicalItemUrl::parse(item) else {
+        let Some(c) = crate::path_types::ItemId::parse(item) else {
             return format!("{}/{}", self.garden_path_prefix, canonicalize_item(item));
         };
+        self.garden_item_href(&c)
+    }
+
+    /// Relative href for a structured [`crate::path_types::ItemId`] in this scope’s garden.
+    pub(crate) fn garden_item_href(&self, c: &crate::path_types::ItemId) -> String {
         if let Some(tail) = c.tilde_tail().map(str::to_owned) {
             format!("{}/{}", self.garden_path_prefix, tail)
         } else if c.as_str().starts_with("http://") || c.as_str().starts_with("https://") {
@@ -63,7 +68,7 @@ impl ThreadNav {
             let ext_prefix = format!("{}-", self.garden_path_prefix.trim_end_matches('~'));
             format!("{}/{}", ext_prefix, rest)
         } else {
-            format!("{}/{}", self.garden_path_prefix, canonicalize_item(item))
+            format!("{}/{}", self.garden_path_prefix, canonicalize_item(c.as_str()))
         }
     }
 

@@ -4,7 +4,7 @@
 //! Prefer `RouteContext::item_href` / [`RouteContext::thread_url`] in new Maud over stitching
 //! `/r/…` vs `/~` manually. Call sites can migrate incrementally from passing `&ThreadNav`.
 
-use crate::path_types::CanonicalItemUrl;
+use crate::path_types::ItemId;
 
 use super::forum::ThreadNav;
 
@@ -32,9 +32,9 @@ impl RouteContext {
         self.0
     }
 
-    /// Relative path for a stored canonical item in this scope’s garden.
-    pub fn item_href(&self, item: &CanonicalItemUrl) -> String {
-        self.0.garden_item_url(item.as_str())
+    /// Relative path for a stored item in this scope’s garden.
+    pub fn item_href(&self, item: &ItemId) -> String {
+        self.0.garden_item_href(item)
     }
 
     /// Same as [`Self::item_href`] but parses `item` first (raw DSL / user paste).
