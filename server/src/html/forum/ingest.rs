@@ -1,4 +1,3 @@
-use crate::canonical_path::canonicalize_tag;
 use crate::form_template::template_json_compact;
 use crate::reducer::{scope_from_room_wire, ReducerState};
 use maud::{html, Markup};
@@ -31,11 +30,7 @@ pub(super) fn thread_nav_for_ingest(ing: &crate::events::Ingest) -> Option<Threa
 
 pub(super) fn thread_post_index_in_scope(reduced: &ReducerState, ing: &crate::events::Ingest) -> Option<usize> {
     let scope = scope_from_room_wire(&ing.room_id);
-    let tag = canonicalize_tag(&ing.thread_tag);
-    reduced
-        .ingests_by_scope_thread
-        .get(&(scope, tag))
-        .and_then(|q| q.iter().rev().position(|id| id == &ing.id))
+    reduced.try_thread_post_index_chronological(&scope, &ing.thread_tag, &ing.id)
 }
 
 fn post_header_meta(

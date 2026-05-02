@@ -11,7 +11,7 @@ use crate::{
     canonical_path::canonicalize_item,
     events::ThreadCapability,
     path_types::CanonicalItemUrl,
-    reducer::{ReducerState, ScopeId},
+    reducer::{ContentState, ReducerState, ScopeId},
     ranking::{connected_components_from_voted_pairs, ranked_items_subset},
     scope_rank::{build_children_rankings, ChildrenRankings},
     state::AppState,
@@ -131,6 +131,23 @@ fn user_can_view_room(reduced: &ReducerState, room_id: &str, username: Option<&s
         return false;
     };
     reduced.user_has_cap(room_id, u, ThreadCapability::View)
+}
+
+/// Private `~/` / `-/` garden pages require at least one ingest in that scope (a `content` entry).
+fn room_scope_has_garden_content(reduced: &ReducerState, nav: &ThreadNav) -> bool {
+    match nav.scope() {
+        ScopeId::Public => true,
+        ScopeId::Room(_) => reduced.content_for_scope(&nav.scope()).is_some(),
+    }
+}
+
+fn content_for_garden_view<'a>(reduced: &'a ReducerState, scope: &ScopeId) -> &'a ContentState {
+    match scope {
+        ScopeId::Public => reduced.public(),
+        ScopeId::Room(_) => reduced.content_for_scope(scope).expect(
+            "room garden only renders after room_scope_has_garden_content returned true",
+        ),
+    }
 }
 
 /// Ontology index — root-level paths. Private (UUID) roots are excluded.
@@ -298,16 +315,20 @@ pub async fn room_garden_index(
     uri: Uri,
 ) -> impl IntoResponse {
     let room_id = format!("{room_short}/{room_slug}");
+    let Some(nav) = ThreadNav::from_room_id(&room_id) else {
+        return (StatusCode::NOT_FOUND, "bad room path").into_response();
+    };
     let reduced = state.reduced.read().await;
     let user = optional_principal(&headers, &jar, &reduced);
     if !user_can_view_room(&reduced, &room_id, user.as_deref()) {
         drop(reduced);
         return room_not_found_page(&jar, &uri).into_response();
     }
+    if !room_scope_has_garden_content(&reduced, &nav) {
+        drop(reduced);
+        return room_not_found_page(&jar, &uri).into_response();
+    }
     drop(reduced);
-    let Some(nav) = ThreadNav::from_room_id(&room_id) else {
-        return (StatusCode::NOT_FOUND, "bad room path").into_response();
-    };
     render_scope_view(
         state,
         GardenBrowsePath::Tilde(OntologyPath::root()),
@@ -326,25 +347,26 @@ pub async fn room_external_garden_index(
     uri: Uri,
 ) -> impl IntoResponse {
     let room_id = format!("{room_short}/{room_slug}");
+    let Some(nav) = ThreadNav::from_room_id(&room_id) else {
+        return (StatusCode::NOT_FOUND, "bad room path").into_response();
+    };
     let reduced = state.reduced.read().await;
     let user = optional_principal(&headers, &jar, &reduced);
     if !user_can_view_room(&reduced, &room_id, user.as_deref()) {
         drop(reduced);
         return room_not_found_page(&jar, &uri).into_response();
     }
-    drop(reduced);
-    let Some(nav) = ThreadNav::from_room_id(&room_id) else {
-        return (StatusCode::NOT_FOUND, "bad room path").into_response();
-    };
+    if !room_scope_has_garden_content(&reduced, &nav) {
+        drop(reduced);
+        return room_not_found_page(&jar, &uri).into_response();
+    }
     let ext_path = ExternalOntologyPath::from_input("");
     let parent = CanonicalItemUrl::parse("https://.").unwrap();
-    let child_rankings = {
-        let reduced = state.reduced.read().await;
-        let content = reduced
-            .content_for_scope(&nav.scope())
-            .unwrap_or_else(|| reduced.public());
-        build_children_rankings(content, &parent)
-    };
+    let child_rankings = build_children_rankings(
+        content_for_garden_view(&reduced, &nav.scope()),
+        &parent,
+    );
+    drop(reduced);
 
     let page = layout(
         "-/",
@@ -400,16 +422,20 @@ pub async fn room_external_ontology_path(
     uri: Uri,
 ) -> impl IntoResponse {
     let room_id = format!("{room_short}/{room_slug}");
+    let Some(nav) = ThreadNav::from_room_id(&room_id) else {
+        return (StatusCode::NOT_FOUND, "bad room path").into_response();
+    };
     let reduced = state.reduced.read().await;
     let user = optional_principal(&headers, &jar, &reduced);
     if !user_can_view_room(&reduced, &room_id, user.as_deref()) {
         drop(reduced);
         return room_not_found_page(&jar, &uri).into_response();
     }
+    if !room_scope_has_garden_content(&reduced, &nav) {
+        drop(reduced);
+        return room_not_found_page(&jar, &uri).into_response();
+    }
     drop(reduced);
-    let Some(nav) = ThreadNav::from_room_id(&room_id) else {
-        return (StatusCode::NOT_FOUND, "bad room path").into_response();
-    };
     let path = ExternalOntologyPath::from_input(&path);
     render_scope_view(state, GardenBrowsePath::External(path), nav, jar, uri).await
 }
@@ -422,16 +448,20 @@ pub async fn room_ontology_path(
     uri: Uri,
 ) -> impl IntoResponse {
     let room_id = format!("{room_short}/{room_slug}");
+    let Some(nav) = ThreadNav::from_room_id(&room_id) else {
+        return (StatusCode::NOT_FOUND, "bad room path").into_response();
+    };
     let reduced = state.reduced.read().await;
     let user = optional_principal(&headers, &jar, &reduced);
     if !user_can_view_room(&reduced, &room_id, user.as_deref()) {
         drop(reduced);
         return room_not_found_page(&jar, &uri).into_response();
     }
+    if !room_scope_has_garden_content(&reduced, &nav) {
+        drop(reduced);
+        return room_not_found_page(&jar, &uri).into_response();
+    }
     drop(reduced);
-    let Some(nav) = ThreadNav::from_room_id(&room_id) else {
-        return (StatusCode::NOT_FOUND, "bad room path").into_response();
-    };
     let path = OntologyPath::from_input(&path);
     render_scope_view(state, GardenBrowsePath::Tilde(path), nav, jar, uri).await
 }
@@ -474,9 +504,7 @@ fn build_sibling_rank(
     item: &CanonicalItemUrl,
 ) -> Option<SiblingRank> {
     let item = item.clone().normalized_storage();
-    let content = reduced
-        .content_for_scope(scope)
-        .unwrap_or_else(|| reduced.public());
+    let content = content_for_garden_view(reduced, scope);
     let group = &content.ranking_group;
     let parent = item.parent()?.normalized_storage();
     let siblings: Vec<CanonicalItemUrl> = content
@@ -537,9 +565,7 @@ fn build_rank_history(
     scope: &ScopeId,
     item: &str,
 ) -> Vec<RankHistoryEntryView> {
-    let content = reduced
-        .content_for_scope(scope)
-        .unwrap_or_else(|| reduced.public());
+    let content = content_for_garden_view(reduced, scope);
     let item_key = CanonicalItemUrl(item.to_string());
     let entries = match content.rank_history.get(&item_key) {
         None => return vec![],
@@ -574,11 +600,8 @@ fn build_rank_history(
             })
             .unwrap_or_default();
 
-        let thread_post_index = reduced
-            .ingests_by_scope_thread
-            .get(&(scope.clone(), e.thread.clone()))
-            .and_then(|q| q.iter().rev().position(|id| id == &e.post_id))
-            .expect("rank history post_id must be in ingests_by_scope_thread for (scope, thread)");
+        let thread_post_index =
+            reduced.thread_post_index_chronological(scope, &e.thread, &e.post_id);
 
         RankHistoryEntryView {
             ts: e.ts,
@@ -597,9 +620,7 @@ fn build_item_page_view_model(
     scope: &ScopeId,
     item: &str,
 ) -> ItemPageViewModel {
-    let content = reduced
-        .content_for_scope(scope)
-        .unwrap_or_else(|| reduced.public());
+    let content = content_for_garden_view(reduced, scope);
     let item_key = CanonicalItemUrl::parse(item)
         .unwrap_or_else(|| CanonicalItemUrl::parse("~/").unwrap())
         .normalized_storage();

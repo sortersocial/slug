@@ -1333,11 +1333,8 @@ pub async fn handle_rpc_batch(
                             }).collect()
                         })
                         .unwrap_or_default();
-                    let thread_post_index = reduced
-                        .ingests_by_scope_thread
-                        .get(&(scope.clone(), e.thread.clone()))
-                        .and_then(|q| q.iter().rev().position(|id| id == &e.post_id))
-                        .expect("rank history post_id must be in ingests_by_scope_thread for (scope, thread)");
+                    let thread_post_index =
+                        reduced.thread_post_index_chronological(&scope, &e.thread, &e.post_id);
                     RankHistoryRow {
                         ts: e.ts,
                         scope_rank: e.scope_rank,
@@ -1504,11 +1501,11 @@ pub async fn handle_rpc_batch(
                                         .map(|ing| {
                                             let scope = scope_from_room_wire(&ing.room_id);
                                             let thread_post_index = reduced
-                                                .ingests_by_scope_thread
-                                                .get(&(scope, ing.thread_tag.clone()))
-                                                .and_then(|q| {
-                                                    q.iter().rev().position(|pid| pid == &ing.id).map(|i| i + 1)
-                                                });
+                                                .try_thread_post_index_chronological(
+                                                    &scope,
+                                                    &ing.thread_tag,
+                                                    &ing.id,
+                                                );
                                             FeedPost {
                                                 ts: ing.ts,
                                                 id: ing.id.clone(),
@@ -1565,11 +1562,11 @@ pub async fn handle_rpc_batch(
                                     .map(|ing| {
                                         let scope = scope_from_room_wire(&ing.room_id);
                                         let thread_post_index = reduced
-                                            .ingests_by_scope_thread
-                                            .get(&(scope, ing.thread_tag.clone()))
-                                            .and_then(|q| {
-                                                q.iter().rev().position(|pid| pid == &ing.id).map(|i| i + 1)
-                                            });
+                                            .try_thread_post_index_chronological(
+                                                &scope,
+                                                &ing.thread_tag,
+                                                &ing.id,
+                                            );
                                         FeedPost {
                                             ts: ing.ts,
                                             id: ing.id.clone(),

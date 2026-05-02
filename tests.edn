@@ -17,7 +17,8 @@
                  "^test\\.browser-ui-morph$"
                  "^test\\.browser-post-redact$"
                  "^test\\.browser-room-delete$"
-                 "^test\\.browser-public-garden$"]
+                 "^test\\.browser-public-garden$"
+                 "^test\\.browser-redact-thread-index$"]
    :kaocha.filter/skip-meta [:skip]
    :parallel? false}]
  :plugins [:kaocha.plugin/junit-xml]

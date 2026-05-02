@@ -253,7 +253,7 @@ pub struct FeedPost {
     /// Primary thread tag (without #), if the ingest declared one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thread: Option<String>,
-    /// 1-based display ordinal for this post within the thread (feed only; URLs use 0-based paths).
+    /// 0-based chronological index within the thread (same as forum `/t/tag/N`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thread_post_index: Option<usize>,
     /// Full raw body of the ingest document.

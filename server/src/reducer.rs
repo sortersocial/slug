@@ -265,6 +265,31 @@ impl ReducerState {
         self.content.get(scope)
     }
 
+    /// 0-based chronological index of `post_id` in `(scope, thread_tag)` (forum routes `/t/tag/N`).
+    pub fn try_thread_post_index_chronological(
+        &self,
+        scope: &ScopeId,
+        thread_tag: &str,
+        post_id: &str,
+    ) -> Option<usize> {
+        let tag = canonicalize_tag(thread_tag);
+        self.ingests_by_scope_thread
+            .get(&(scope.clone(), tag))
+            .and_then(|q| q.iter().rev().position(|pid| pid == post_id))
+    }
+
+    pub fn thread_post_index_chronological(
+        &self,
+        scope: &ScopeId,
+        thread_tag: &str,
+        post_id: &str,
+    ) -> usize {
+        self.try_thread_post_index_chronological(scope, thread_tag, post_id)
+            .expect(
+                "post_id must appear in ingests_by_scope_thread for this scope and thread",
+            )
+    }
+
     /// Ingest ids authored by `actor`, oldest first. Unfiltered; use with access checks per ingest.
     pub fn posts_by_actor_ids(&self, actor: &str) -> Vec<String> {
         self.posts_by_actor
@@ -598,6 +623,8 @@ impl ReducerState {
             let _ = Self::apply_ingest_to_content(&mut cs, ing);
         }
         self.content.insert(scope, cs);
+        // `ingests_by_scope_thread` is intentionally not rebuilt: tombstoned ids stay in the deque so
+        // per-post URLs and chronological indices remain stable; only projected garden state resets.
     }
 
     /// Drop all reducer state keyed by a private room id (forum, garden scope, invites, grants).
@@ -720,6 +747,7 @@ impl ReducerState {
                     return;
                 };
                 let scope = scope_from_room_wire(&ing.room_id.trim());
+                // Rebuilds garden projection only; `ingests_by_scope_thread` is left as-is — see `rebuild_scope_content`.
                 self.rebuild_scope_content(scope);
             }
             Event::GrantAdded(ga) => {

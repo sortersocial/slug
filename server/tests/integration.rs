@@ -761,6 +761,43 @@ async fn test_private_room_garden_root_lists_top_level_tilde_children() {
 }
 
 #[tokio::test]
+async fn test_empty_private_room_garden_returns_404() {
+    let (addr, _tmp, _log, _handle) = create_test_server().await;
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    let bearer = test_bearer();
+
+    let create = rpc_batch(
+        &client,
+        addr,
+        Some(&bearer),
+        serde_json::json!([{
+            "RoomCreate": { "slug": "empty-garden-room" }
+        }]),
+    )
+    .await;
+    let room_id = create["results"][0]["result"]["RoomCreated"]["room_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let (room_short, room_slug) = room_id.split_once('/').unwrap();
+
+    let root = client
+        .get(format!("http://{addr}/r/{room_short}/{room_slug}/~"))
+        .header("Authorization", format!("Bearer {bearer}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        root.status(),
+        reqwest::StatusCode::NOT_FOUND,
+        "no ingest yet → no room scope content → must not fall back to public garden"
+    );
+}
+
+#[tokio::test]
 async fn test_post_check_returns_targeted_js_error_for_missing_thread_tag() {
     let (addr, _tmp, _log, _handle) = create_test_server().await;
     let client = reqwest::Client::builder()
