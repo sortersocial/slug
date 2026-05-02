@@ -15,6 +15,7 @@ mod breadcrumb_path;
 mod editor;
 mod forum;
 mod garden;
+pub mod routing;
 mod search;
 pub mod ui_action;
 use breadcrumb_path::{ExternalOntologyPath, OntologyPath};
@@ -35,6 +36,7 @@ pub use garden::{
     external_garden_index, external_ontology_path, garden_index, ontology_path, room_external_garden_index,
     room_external_ontology_path, room_garden_index, room_ontology_path,
 };
+pub use routing::RouteContext;
 pub use search::{search_page, search_results_fragment};
 pub use forum::user_profile_page;
 pub use ui_action::{parse_html_ui_from_form, HtmlUiAction, HtmlUiParseError, UI_RPC_FIELD};
