@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-pub mod room_route;
 pub mod url_normalize;
 pub mod paths;
 pub mod timeago;
@@ -8,9 +7,9 @@ pub mod timeago;
 pub use paths::{
     canonicalize_item, canonicalize_tag, item_parent_path, item_path_segments, normalize_slug_ontology_storage_url,
     CanonicalItemUrl, ForumThreadUrl, GardenItemUrl, RelativePath, SLUG_TILDE_ONTOLOGY_ROOT,
+    room_id_from_route_segment, room_route_segment, ROOM_SHORT_ID_LEN,
     TildeHttpPathTail, TildeOntologyPath, TildePath, tilde_http_path_to_canonical,
 };
-pub use room_route::{room_id_from_route_segment, room_route_segment, ROOM_SHORT_ID_LEN};
 pub use url_normalize::normalize_http_identity_url;
 
 /// Max characters returned for a garden item body unless `full=true` / `--full` (API + CLI).
@@ -661,6 +660,3 @@ pub struct VoteResponse {
     pub ranking: Vec<RankRow>,
     pub next: NextMoves,
 }
-
-#[cfg(test)]
-mod url_identity_tests;
