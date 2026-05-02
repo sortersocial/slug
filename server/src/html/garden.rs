@@ -309,12 +309,14 @@ pub async fn external_ontology_path(
 
 pub async fn room_garden_index(
     State(state): State<AppState>,
-    Path((room_short, room_slug)): Path<(String, String)>,
+    Path(room_key): Path<String>,
     headers: HeaderMap,
     jar: CookieJar,
     uri: Uri,
 ) -> impl IntoResponse {
-    let room_id = format!("{room_short}/{room_slug}");
+    let Some(room_id) = slug_types::room_id_from_route_segment(&room_key) else {
+        return (StatusCode::NOT_FOUND, "bad room path").into_response();
+    };
     let Some(nav) = ThreadNav::from_room_id(&room_id) else {
         return (StatusCode::NOT_FOUND, "bad room path").into_response();
     };
@@ -341,12 +343,14 @@ pub async fn room_garden_index(
 
 pub async fn room_external_garden_index(
     State(state): State<AppState>,
-    Path((room_short, room_slug)): Path<(String, String)>,
+    Path(room_key): Path<String>,
     headers: HeaderMap,
     jar: CookieJar,
     uri: Uri,
 ) -> impl IntoResponse {
-    let room_id = format!("{room_short}/{room_slug}");
+    let Some(room_id) = slug_types::room_id_from_route_segment(&room_key) else {
+        return (StatusCode::NOT_FOUND, "bad room path").into_response();
+    };
     let Some(nav) = ThreadNav::from_room_id(&room_id) else {
         return (StatusCode::NOT_FOUND, "bad room path").into_response();
     };
@@ -416,12 +420,14 @@ pub async fn room_external_garden_index(
 
 pub async fn room_external_ontology_path(
     State(state): State<AppState>,
-    Path((room_short, room_slug, path)): Path<(String, String, String)>,
+    Path((room_key, path)): Path<(String, String)>,
     headers: HeaderMap,
     jar: CookieJar,
     uri: Uri,
 ) -> impl IntoResponse {
-    let room_id = format!("{room_short}/{room_slug}");
+    let Some(room_id) = slug_types::room_id_from_route_segment(&room_key) else {
+        return (StatusCode::NOT_FOUND, "bad room path").into_response();
+    };
     let Some(nav) = ThreadNav::from_room_id(&room_id) else {
         return (StatusCode::NOT_FOUND, "bad room path").into_response();
     };
@@ -442,12 +448,14 @@ pub async fn room_external_ontology_path(
 
 pub async fn room_ontology_path(
     State(state): State<AppState>,
-    Path((room_short, room_slug, path)): Path<(String, String, String)>,
+    Path((room_key, path)): Path<(String, String)>,
     headers: HeaderMap,
     jar: CookieJar,
     uri: Uri,
 ) -> impl IntoResponse {
-    let room_id = format!("{room_short}/{room_slug}");
+    let Some(room_id) = slug_types::room_id_from_route_segment(&room_key) else {
+        return (StatusCode::NOT_FOUND, "bad room path").into_response();
+    };
     let Some(nav) = ThreadNav::from_room_id(&room_id) else {
         return (StatusCode::NOT_FOUND, "bad room path").into_response();
     };

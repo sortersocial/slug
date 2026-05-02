@@ -93,12 +93,14 @@ pub async fn thread_post_view(
 
 pub async fn room_thread_post_view(
     State(state): State<AppState>,
-    Path((room_short, room_slug, tag, index_str)): Path<(String, String, String, String)>,
+    Path((room_key, tag, index_str)): Path<(String, String, String)>,
     headers: HeaderMap,
     jar: CookieJar,
     uri: Uri,
 ) -> impl IntoResponse {
-    let room_id = format!("{room_short}/{room_slug}");
+    let Some(room_id) = slug_types::room_id_from_route_segment(&room_key) else {
+        return (StatusCode::NOT_FOUND, "bad room path").into_response();
+    };
     let reduced = state.reduced.read().await;
     let user = optional_principal(&headers, &jar, &reduced);
     if !user_can_view_room(&reduced, &room_id, user.as_deref()) {

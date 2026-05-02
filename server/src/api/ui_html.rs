@@ -270,10 +270,10 @@ fn post_redirect_location(room: &str, thread_tag: &str) -> String {
         format!("/t/{tag}")
     } else {
         let room = room.trim();
-        let Some((a, b)) = room.split_once('/') else {
+        let Some(seg) = slug_types::room_route_segment(room) else {
             return "/".to_string();
         };
-        format!("/r/{a}/{b}/t/{tag}")
+        format!("/r/{seg}/t/{tag}")
     }
 }
 

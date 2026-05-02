@@ -88,9 +88,9 @@
      :room {:id room-id
             :short room-short
             :slug room-slug
-            :url (str base-url "/r/" room-short "/" room-slug)
-            :thread_url (str base-url "/r/" room-short "/" room-slug "/t/walkthrough-thread")
-            :garden_url (str base-url "/r/" room-short "/" room-slug "/~/secret/item")}}))
+            :url (str base-url "/r/" room-short room-slug)
+            :thread_url (str base-url "/r/" room-short room-slug "/t/walkthrough-thread")
+            :garden_url (str base-url "/r/" room-short room-slug "/~/secret/item")}}))
 
 (defn- rebase-fixture-summary [saved current-base-url current-google-url current-data-dir]
   (let [inner (:summary saved)
@@ -103,9 +103,9 @@
            :data_dir (str current-data-dir)
            :summary (assoc inner
                            :room (assoc room
-                                         :url (str current-base-url "/r/" rs "/" lg)
-                                         :thread_url (str current-base-url "/r/" rs "/" lg "/t/walkthrough-thread")
-                                         :garden_url (str current-base-url "/r/" rs "/" lg "/~/secret/item"))))))
+                                         :url (str current-base-url "/r/" rs lg)
+                                         :thread_url (str current-base-url "/r/" rs lg "/t/walkthrough-thread")
+                                         :garden_url (str current-base-url "/r/" rs lg "/~/secret/item"))))))
 
 (defn- fixture-log-present? [data-dir]
   (let [p (fs/path data-dir "events.jsonl")]

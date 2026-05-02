@@ -183,16 +183,18 @@ pub async fn thread_view(
     thread_view_inner(state, tag, q, ThreadNav::public(), headers, jar, uri).await
 }
 
-/// Room thread — `/r/:short/:slug/t/:tag`
+/// Room thread — `/r/:room_key/t/:tag` (`room_key` = `{short}{slug}`).
 pub async fn room_thread_view(
     State(state): State<AppState>,
-    Path((room_short, room_slug, tag)): Path<(String, String, String)>,
+    Path((room_key, tag)): Path<(String, String)>,
     Query(q): Query<ThreadViewQuery>,
     headers: HeaderMap,
     jar: CookieJar,
     uri: Uri,
 ) -> impl IntoResponse {
-    let room_id = format!("{room_short}/{room_slug}");
+    let Some(room_id) = slug_types::room_id_from_route_segment(&room_key) else {
+        return (StatusCode::NOT_FOUND, "bad room path").into_response();
+    };
     let reduced = state.reduced.read().await;
     let user = optional_principal(&headers, &jar, &reduced);
     if !user_can_view_room(&reduced, &room_id, user.as_deref()) {
@@ -226,15 +228,17 @@ pub(super) fn room_not_found_page(jar: &CookieJar, uri: &Uri) -> impl IntoRespon
     (StatusCode::NOT_FOUND, Html(page.into_string()))
 }
 
-/// Private room index — `/r/:short/:slug`
+/// Private room index — `/r/:room_key`
 pub async fn room_page(
     State(state): State<AppState>,
-    Path((room_short, room_slug)): Path<(String, String)>,
+    Path(room_key): Path<String>,
     headers: HeaderMap,
     jar: CookieJar,
     uri: Uri,
 ) -> impl IntoResponse {
-    let room_id = format!("{room_short}/{room_slug}");
+    let Some(room_id) = slug_types::room_id_from_route_segment(&room_key) else {
+        return (StatusCode::NOT_FOUND, "room not found").into_response();
+    };
     let now = now_ms();
     let reduced = state.reduced.read().await;
     if !reduced.rooms.contains(&room_id) {
@@ -266,7 +270,10 @@ pub async fn room_page(
     let audit_cli = format!("npx slugsocial private {room_id} audit");
     drop(reduced);
 
-    let slug_display = room_slug.as_str();
+    let slug_display = room_id
+        .split_once('/')
+        .map(|(_, slug)| slug)
+        .unwrap_or(room_id.as_str());
     let page = layout(
         &format!("room {slug_display} — slug.social"),
         "view-thread",

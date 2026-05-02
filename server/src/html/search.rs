@@ -351,8 +351,8 @@ fn render_search_results(results: &SearchResults, query: &str) -> Markup {
                     ul class="search-posts" {
                         @for r in &results.posts {
                             @let (post_href, post_label) = if let Some((room, tag)) = r.thread.split_once("/#") {
-                                if let Some((short, slug)) = room.split_once('/') {
-                                    (format!("/r/{short}/{slug}/t/{tag}"), format!("{room}/#{tag}"))
+                                if let Some(seg) = slug_types::room_route_segment(room) {
+                                    (format!("/r/{seg}/t/{tag}"), format!("{room}/#{tag}"))
                                 } else {
                                     ("/".to_string(), r.thread.clone())
                                 }

@@ -1,4 +1,5 @@
 use sha2::{Digest, Sha256};
+use slug_types::room_route_segment;
 use slugsocial_server::{
     event_log::EventLog,
     events::{Event, TokenIssued, UserRegistered},
@@ -607,7 +608,7 @@ async fn test_private_room_thread_urls_use_t_segment() {
         .as_str()
         .unwrap()
         .to_string();
-    let (room_short, room_slug) = room_id.split_once('/').unwrap();
+    let room_seg = room_route_segment(&room_id).unwrap();
 
     let rpc = ui_post_ingest_rpc(&room_id, "main-thread", "private post via web");
     let post = client
@@ -626,7 +627,7 @@ async fn test_private_room_thread_urls_use_t_segment() {
         Some("text/javascript; charset=utf-8")
     );
     let post_js = post.text().await.unwrap();
-    let location = format!("/r/{room_short}/{room_slug}/t/main-thread");
+    let location = format!("/r/{room_seg}/t/main-thread");
     assert!(post_js.contains(&format!("window.location = {:?};", location)));
     assert!(post_js.contains("#room-thread-feed"));
     assert!(post_js.contains("#thread-feed-region"));
@@ -665,7 +666,7 @@ async fn test_private_room_post_links_use_private_garden_routes() {
         .as_str()
         .unwrap()
         .to_string();
-    let (room_short, room_slug) = room_id.split_once('/').unwrap();
+    let room_seg = room_route_segment(&room_id).unwrap();
 
     let rpc = ui_post_ingest_rpc(
         &room_id,
@@ -682,18 +683,18 @@ async fn test_private_room_post_links_use_private_garden_routes() {
     assert_eq!(post.status(), reqwest::StatusCode::OK);
 
     let thread_page = client
-        .get(format!("http://{addr}/r/{room_short}/{room_slug}/t/garden-thread"))
+        .get(format!("http://{addr}/r/{room_seg}/t/garden-thread"))
         .header("Authorization", format!("Bearer {bearer}"))
         .send()
         .await
         .unwrap();
     assert!(thread_page.status().is_success());
     let body = thread_page.text().await.unwrap();
-    assert!(body.contains(&format!("/r/{room_short}/{room_slug}/~/secret/item")));
+    assert!(body.contains(&format!("/r/{room_seg}/~/secret/item")));
     assert!(!body.contains("href=\"/~/secret/item\""));
 
     let garden_page = client
-        .get(format!("http://{addr}/r/{room_short}/{room_slug}/~/secret/item"))
+        .get(format!("http://{addr}/r/{room_seg}/~/secret/item"))
         .header("Authorization", format!("Bearer {bearer}"))
         .send()
         .await
@@ -701,7 +702,7 @@ async fn test_private_room_post_links_use_private_garden_routes() {
     assert!(garden_page.status().is_success());
     let garden_body = garden_page.text().await.unwrap();
     assert!(garden_body.contains("classified"));
-    assert!(garden_body.contains(&format!("/r/{room_short}/{room_slug}/t/garden-thread")));
+    assert!(garden_body.contains(&format!("/r/{room_seg}/t/garden-thread")));
 }
 
 #[tokio::test]
@@ -726,7 +727,7 @@ async fn test_private_room_garden_root_lists_top_level_tilde_children() {
         .as_str()
         .unwrap()
         .to_string();
-    let (room_short, room_slug) = room_id.split_once('/').unwrap();
+    let room_seg = room_route_segment(&room_id).unwrap();
 
     let rpc = ui_post_ingest_rpc(
         &room_id,
@@ -743,7 +744,7 @@ async fn test_private_room_garden_root_lists_top_level_tilde_children() {
     assert_eq!(post.status(), reqwest::StatusCode::OK);
 
     let root_page = client
-        .get(format!("http://{addr}/r/{room_short}/{room_slug}/~"))
+        .get(format!("http://{addr}/r/{room_seg}/~"))
         .header("Authorization", format!("Bearer {bearer}"))
         .send()
         .await
@@ -782,10 +783,10 @@ async fn test_empty_private_room_garden_returns_404() {
         .as_str()
         .unwrap()
         .to_string();
-    let (room_short, room_slug) = room_id.split_once('/').unwrap();
+    let room_seg = room_route_segment(&room_id).unwrap();
 
     let root = client
-        .get(format!("http://{addr}/r/{room_short}/{room_slug}/~"))
+        .get(format!("http://{addr}/r/{room_seg}/~"))
         .header("Authorization", format!("Bearer {bearer}"))
         .send()
         .await
@@ -896,8 +897,8 @@ async fn test_sse_stream_emits_evalable_js_after_post() {
         .as_str()
         .unwrap()
         .to_string();
-    let (room_short, room_slug) = room_id.split_once('/').unwrap();
-    let room_path = format!("/r/{room_short}/{room_slug}");
+    let room_seg = room_route_segment(&room_id).unwrap();
+    let room_path = format!("/r/{room_seg}");
 
     let sse_resp = client
         .get(format!("http://{addr}/sse?path={}", urlencoding::encode(&room_path)))

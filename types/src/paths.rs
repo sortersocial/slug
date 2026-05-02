@@ -5,7 +5,7 @@
 //!
 //! - **[`canonicalize_item`] / [`CanonicalItemUrl`]** — graph storage key and DSL form; tilde
 //!   ontology root is always [`SLUG_TILDE_ONTOLOGY_ROOT`] (no `…/~/` trailing slash only).
-//! - **[`TildeHttpPathTail`]** — capture from `GET /~/*path` or `…/r/…/~/…` (the `*path` segment).
+//! - **[`TildeHttpPathTail`]** — capture from `GET /~/*path` or `…/r/{short}{slug}/~/…` (the `*path` segment).
 //! - **`-/…` wire form** — external items; see [`canonicalize_item`] dash branch.
 //! - **[`GardenItemUrl`], [`ForumThreadUrl`]** — JSON / browser href surfaces.
 
@@ -14,6 +14,9 @@ use std::fmt;
 use std::ops::Deref;
 
 use serde::{Deserialize, Serialize};
+
+use crate::room_route::room_route_segment;
+use crate::url_normalize::{host_preserves_dash_path_case, normalize_http_identity_url};
 
 // ---------------------------------------------------------------------------
 // Slug tilde ontology (single storage form for `~/`)
@@ -41,6 +44,29 @@ pub fn canonicalize_tag(input: &str) -> String {
     input.trim().trim_start_matches('#').to_lowercase()
 }
 
+fn finalize_external_identity_url(s: String) -> String {
+    if s.starts_with("https://slug.social/") {
+        return s;
+    }
+    let normalized = normalize_http_identity_url(&s).unwrap_or_else(|| s.clone());
+    strip_redundant_root_slash(&normalized).unwrap_or(normalized)
+}
+
+/// `url::Url` serializes bare hosts with a `/` path; we keep host-only items slash-free for stable
+/// keys matching the pre-normalizer spellings.
+fn strip_redundant_root_slash(s: &str) -> Option<String> {
+    let u = url::Url::parse(s).ok()?;
+    if u.path() == "/" && u.query().is_none() && u.fragment().is_none() {
+        let scheme = u.scheme();
+        let host = u.host_str()?;
+        return Some(match u.port() {
+            Some(p) => format!("{scheme}://{host}:{p}"),
+            None => format!("{scheme}://{host}"),
+        });
+    }
+    None
+}
+
 /// Ontology item reference → canonical absolute URL on the slug host.
 pub fn canonicalize_item(input: &str) -> String {
     let s = input.trim();
@@ -57,8 +83,9 @@ pub fn canonicalize_item(input: &str) -> String {
         if host.is_empty() {
             return String::new();
         }
+        let preserve_case = host_preserves_dash_path_case(&host);
         return if tail.is_empty() {
-            format!("https://{}", host)
+            finalize_external_identity_url(format!("https://{}", host))
         } else {
             let path = tail
                 .trim_start_matches('/')
@@ -68,33 +95,35 @@ pub fn canonicalize_item(input: &str) -> String {
                     let t = seg.trim();
                     if t.is_empty() {
                         None
+                    } else if preserve_case {
+                        Some(t.to_string())
                     } else {
                         Some(t.to_lowercase())
                     }
                 })
                 .collect::<Vec<_>>()
                 .join("/");
-            format!("https://{}/{}", host, path)
+            finalize_external_identity_url(format!("https://{}/{}", host, path))
         };
     }
 
     if let Some(rest) = s.strip_prefix("https://") {
         let (host, tail) = rest.split_once('/').map_or((rest, ""), |(h, t)| (h, t));
         let host = host.trim().to_lowercase();
-        if tail.is_empty() {
-            return format!("https://{}", host);
+        return finalize_external_identity_url(if tail.is_empty() {
+            format!("https://{}", host)
         } else {
-            return format!("https://{}/{}", host, tail);
-        }
+            format!("https://{}/{}", host, tail)
+        });
     }
     if let Some(rest) = s.strip_prefix("http://") {
         let (host, tail) = rest.split_once('/').map_or((rest, ""), |(h, t)| (h, t));
         let host = host.trim().to_lowercase();
-        if tail.is_empty() {
-            return format!("http://{}", host);
+        return finalize_external_identity_url(if tail.is_empty() {
+            format!("http://{}", host)
         } else {
-            return format!("http://{}/{}", host, tail);
-        }
+            format!("http://{}/{}", host, tail)
+        });
     }
 
     let is_tilde = s.starts_with("~/");
@@ -319,7 +348,7 @@ impl CanonicalItemUrl {
     }
 }
 
-/// HTTP route capture: path segment after `~/` in `GET /~/*path` or `…/r/…/~/…` (empty = ontology root).
+/// HTTP route capture: path segment after `~/` in `GET /~/*path` or `…/r/{short}{slug}/~/…` (empty = ontology root).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TildeHttpPathTail(pub String);
 
@@ -506,12 +535,9 @@ fn garden_href_string(item: &str, room_wire: &str) -> String {
     if room.is_empty() || room == "public" {
         return api_path_or_url(item);
     }
-    let Some((short, slug)) = room.split_once('/') else {
+    let Some(room_seg) = room_route_segment(room) else {
         return api_path_or_url(item);
     };
-    if short.is_empty() || slug.is_empty() {
-        return api_path_or_url(item);
-    }
     let Some(c) = CanonicalItemUrl::parse(item) else {
         return api_path_or_url(item);
     };
@@ -520,19 +546,19 @@ fn garden_href_string(item: &str, room_wire: &str) -> String {
     let root_norm = root.as_str().trim_end_matches('/');
     if let Some(tail) = c.tilde_tail() {
         return if tail.is_empty() {
-            format!("https://slug.social/r/{short}/{slug}/~")
+            format!("https://slug.social/r/{room_seg}/~")
         } else {
-            format!("https://slug.social/r/{short}/{slug}/~/{}", tail)
+            format!("https://slug.social/r/{room_seg}/~/{}", tail)
         };
     }
     if item_norm == root_norm {
-        return format!("https://slug.social/r/{short}/{slug}/~");
+        return format!("https://slug.social/r/{room_seg}/~");
     }
     // External http(s) items use the same `/-/…` namespace under the room garden.
     if c.as_str().starts_with("https://") || c.as_str().starts_with("http://") {
         let tail = c.display_path();
         let tail = tail.strip_prefix("-/").unwrap_or(tail.as_str());
-        return format!("https://slug.social/r/{short}/{slug}/-/{tail}");
+        return format!("https://slug.social/r/{room_seg}/-/{tail}");
     }
     api_path_or_url(item)
 }
@@ -556,12 +582,8 @@ impl ForumThreadUrl {
         let tag = thread_tag.trim().trim_start_matches('#');
         Self(if room.is_empty() || room == "public" {
             format!("https://slug.social/t/{tag}")
-        } else if let Some((short, slug)) = room.split_once('/') {
-            if short.is_empty() || slug.is_empty() {
-                format!("https://slug.social/t/{tag}")
-            } else {
-                format!("https://slug.social/r/{short}/{slug}/t/{tag}")
-            }
+        } else if let Some(room_seg) = room_route_segment(room) {
+            format!("https://slug.social/r/{room_seg}/t/{tag}")
         } else {
             format!("https://slug.social/t/{tag}")
         })
@@ -706,7 +728,7 @@ mod tests {
     fn garden_private_room_prefixes_ontology() {
         assert_eq!(
             GardenItemUrl::from_storage_str("https://slug.social/~/topic/x", "9ab12cd/my-room").as_str(),
-            "https://slug.social/r/9ab12cd/my-room/~/topic/x"
+            "https://slug.social/r/9ab12cdmy-room/~/topic/x"
         );
     }
 
@@ -714,11 +736,11 @@ mod tests {
     fn garden_private_room_ontology_root() {
         assert_eq!(
             GardenItemUrl::from_storage_str("https://slug.social/~", "9ab12cd/my-room").as_str(),
-            "https://slug.social/r/9ab12cd/my-room/~"
+            "https://slug.social/r/9ab12cdmy-room/~"
         );
         assert_eq!(
             GardenItemUrl::from_storage_str("https://slug.social/~/", "9ab12cd/my-room").as_str(),
-            "https://slug.social/r/9ab12cd/my-room/~"
+            "https://slug.social/r/9ab12cdmy-room/~"
         );
     }
 
@@ -727,7 +749,7 @@ mod tests {
         let u = "https://example.com/z";
         assert_eq!(
             GardenItemUrl::from_storage_str(u, "9ab12cd/my-room").as_str(),
-            "https://slug.social/r/9ab12cd/my-room/-/example.com/z"
+            "https://slug.social/r/9ab12cdmy-room/-/example.com/z"
         );
     }
 
@@ -739,7 +761,19 @@ mod tests {
         );
         assert_eq!(
             ForumThreadUrl::from_room_tag("9ab12cd/my-room", "#debate").as_str(),
-            "https://slug.social/r/9ab12cd/my-room/t/debate"
+            "https://slug.social/r/9ab12cdmy-room/t/debate"
+        );
+    }
+
+    #[test]
+    fn canonicalize_youtube_short_links() {
+        assert_eq!(
+            canonicalize_item("https://youtu.be/dQw4w9WgXcQ"),
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+        );
+        assert_eq!(
+            canonicalize_item("-/youtu.be/dQw4w9WgXcQ"),
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
         );
     }
 

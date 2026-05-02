@@ -19,13 +19,15 @@ use crate::{
 use super::auth::{issue_token_for_user, verify_token};
 use super::helpers::{now_ms, resolve_item};
 use super::validate::{normalize_room_and_thread, validate_ingest_document};
-use slug_types::RpcResult;
+use slug_types::{room_route_segment, RpcResult, ROOM_SHORT_ID_LEN};
 
 fn gen_short_id() -> String {
     use rand::Rng;
     const ALPHABET: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyz";
     let mut rng = rand::thread_rng();
-    (0..7).map(|_| ALPHABET[rng.gen_range(0..ALPHABET.len())] as char).collect()
+    (0..ROOM_SHORT_ID_LEN)
+        .map(|_| ALPHABET[rng.gen_range(0..ALPHABET.len())] as char)
+        .collect()
 }
 
 fn parse_capability(s: &str) -> Result<crate::events::ThreadCapability, String> {
@@ -55,8 +57,8 @@ async fn broadcast_web_refresh(state: &AppState, room_key: &str, thread_id: &str
     let feed_id = if room_key == "public" { "thread-feed" } else { "room-thread-feed" };
     let thread_url = if room_key == "public" {
         format!("/t/{thread_id}")
-    } else if let Some((short, slug)) = room_key.split_once('/') {
-        format!("/r/{short}/{slug}/t/{thread_id}")
+    } else if let Some(seg) = room_route_segment(room_key) {
+        format!("/r/{seg}/t/{thread_id}")
     } else {
         format!("/t/{thread_id}")
     };
@@ -78,8 +80,8 @@ async fn broadcast_web_refresh(state: &AppState, room_key: &str, thread_id: &str
     let js = builder.build();
     let mut path_prefixes = vec![if room_key == "public" {
         "/".to_string()
-    } else if let Some((short, slug)) = room_key.split_once('/') {
-        format!("/r/{short}/{slug}")
+    } else if let Some(seg) = room_route_segment(room_key) {
+        format!("/r/{seg}")
     } else {
         "/".to_string()
     }];

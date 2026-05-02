@@ -79,30 +79,30 @@ pub fn create_app(state: AppState) -> Router {
         .route("/~/*path", get(crate::html::ontology_path))
         .route("/-", get(crate::html::external_garden_index))
         .route("/-/*path", get(crate::html::external_ontology_path))
-        .route("/r/:room_short/:room_slug/~", get(crate::html::room_garden_index))
+        .route("/r/:room_key/~", get(crate::html::room_garden_index))
         .route(
-            "/r/:room_short/:room_slug/~/*path",
+            "/r/:room_key/~/*path",
             get(crate::html::room_ontology_path),
         )
         .route(
-            "/r/:room_short/:room_slug/-",
+            "/r/:room_key/-",
             get(crate::html::room_external_garden_index),
         )
         .route(
-            "/r/:room_short/:room_slug/-/*path",
+            "/r/:room_key/-/*path",
             get(crate::html::room_external_ontology_path),
         )
         .route("/t/:tag/:index", get(crate::html::thread_post_view))
         .route("/t/:tag", get(crate::html::thread_view))
         .route(
-            "/r/:room_short/:room_slug/t/:thread_tag/:index",
+            "/r/:room_key/t/:thread_tag/:index",
             get(crate::html::room_thread_post_view),
         )
         .route(
-            "/r/:room_short/:room_slug/t/:thread_tag",
+            "/r/:room_key/t/:thread_tag",
             get(crate::html::room_thread_view),
         )
-        .route("/r/:room_short/:room_slug", get(crate::html::room_page))
+        .route("/r/:room_key", get(crate::html::room_page))
         .route("/join/:token", get(api::get_join_invite))
         .route("/auth/login", get(api::get_auth_login))
         .route("/auth/callback", get(api::get_auth_callback))

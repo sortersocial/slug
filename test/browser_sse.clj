@@ -77,7 +77,7 @@
                   (login-user! bob-pg base-url "bob")
 
                    (let [[room-short room-slug] (str/split room-id #"/" 2)
-                         room-url (str base-url "/r/" room-short "/" room-slug)
+                         room-url (str base-url "/r/" room-short room-slug)
                          thread-url (str room-url "/t/sse-thread")]
                     ;; Object under test: slug_ui.js intercepts POST /ui, evals JS, morphs
                     ;; #new-thread-ui-slot (expand compose), then post_ingest redirects to thread.

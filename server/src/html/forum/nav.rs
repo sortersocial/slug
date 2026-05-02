@@ -1,7 +1,8 @@
 use crate::canonical_path::canonicalize_item;
 use crate::reducer::ScopeId;
+use slug_types::room_route_segment;
 
-/// URL helpers for public `/t/…` and private room threads `/r/{short}/{slug}/t/…`.
+/// URL helpers for public `/t/…` and private room threads `/r/{short}{slug}/t/…`.
 #[derive(Clone)]
 pub struct ThreadNav {
     pub room_wire: String,
@@ -22,18 +23,15 @@ impl ThreadNav {
         }
     }
 
-    /// `room_id` wire form `shortid/slug`.
+    /// `room_id` wire form `shortid/slug` (HTTP uses [`slug_types::room_route_segment`]).
     pub(crate) fn from_room_id(room_id: &str) -> Option<Self> {
-        let (short, slug) = room_id.split_once('/')?;
-        if short.is_empty() || slug.is_empty() {
-            return None;
-        }
+        let room_seg = room_route_segment(room_id)?;
         Some(Self {
             room_wire: room_id.to_string(),
             scope: ScopeId::Room(room_id.to_string()),
-            room_path: format!("/r/{short}/{slug}"),
-            thread_path_prefix: format!("/r/{short}/{slug}/t"),
-            garden_path_prefix: format!("/r/{short}/{slug}/~"),
+            room_path: format!("/r/{room_seg}"),
+            thread_path_prefix: format!("/r/{room_seg}/t"),
+            garden_path_prefix: format!("/r/{room_seg}/~"),
         })
     }
 

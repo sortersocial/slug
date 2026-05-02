@@ -54,7 +54,7 @@
            room-id (get-in create-json ["results" 0 "result" "RoomCreated" "room_id"])
            _ (is (string? room-id) "room id present")
            [room-short room-slug] (str/split room-id #"/" 2)
-           room-path (str "/r/" room-short "/" room-slug)]
+           room-path (str "/r/" room-short room-slug)]
        (core/with-playwright [pw]
          (core/with-browser [browser (core/launch-chromium pw {:headless true :channel "chrome"})]
            (core/with-context [ctx (core/new-context browser)]
