@@ -334,19 +334,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn canonical_parent_deep() {
+    fn item_parent_deep() {
         let c = ItemId::parse("~/a/b/c").unwrap();
         assert_eq!(c.parent().unwrap().as_str(), "https://slug.social/~/a/b");
     }
 
     #[test]
-    fn canonical_parent_one_level() {
+    fn item_parent_one_level() {
         let c = ItemId::parse("~/a").unwrap();
         assert_eq!(c.parent().unwrap().as_str(), "https://slug.social/~");
     }
 
     #[test]
-    fn canonical_parent_root_is_none() {
+    fn item_parent_root_is_none() {
         let root = ItemId::parse("~/").unwrap();
         assert!(root.parent().is_none());
         assert_eq!(root.as_str(), SLUG_TILDE_ONTOLOGY_ROOT);

@@ -32,7 +32,7 @@ fn item_display_path(item: &str) -> String {
         .unwrap_or_else(|| canonicalize_item(item))
 }
 
-/// Canonical ontology URL for an item path.
+/// Garden href for an item path string in this nav scope.
 fn item_href(item: &str, nav: &ThreadNav) -> String {
     nav.garden_item_url(item)
 }
@@ -67,7 +67,7 @@ enum GardenBrowsePath {
 }
 
 impl GardenBrowsePath {
-    fn canonical_url(&self) -> &str {
+    fn item(&self) -> &str {
         match self {
             GardenBrowsePath::Tilde(p) => p.as_str(),
             GardenBrowsePath::External(p) => p.as_str(),
@@ -669,7 +669,7 @@ async fn render_scope_view(
     let scope = nav.scope();
     let model = {
         let reduced = state.reduced.read().await;
-        build_item_page_view_model(&reduced, &scope, browse.canonical_url())
+        build_item_page_view_model(&reduced, &scope, browse.item())
     };
     let thread_href = |tag: &str| nav.thread_url(tag);
     let external_empty_body = browse.is_external() && model.body.is_none();

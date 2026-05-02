@@ -88,7 +88,7 @@ impl GroupState {
         if let Some(canon) = ItemId::parse(item) {
             self.ensure_item(&canon)
         } else {
-            // Fallback: treat as raw canonical string
+            // Fallback: treat as raw storage string
             let canon = ItemId::opaque(item.to_string());
             self.ensure_item(&canon)
         }
@@ -212,7 +212,7 @@ pub struct ContentState {
     pub ranking_group: GroupState,
     pub items: HashSet<ItemId>,
     pub item_bodies: HashMap<ItemId, String>,
-    /// Parent canonical URL -> direct children.
+    /// Parent [`ItemId`] -> direct children.
     pub item_children: HashMap<ItemId, HashSet<ItemId>>,
     /// Per-item vote history (most recent first).
     pub item_votes: HashMap<ItemId, VecDeque<VoteData>>,
@@ -365,7 +365,7 @@ impl ReducerState {
         }
     }
 
-    /// Resolve an item path as a first-class canonical path.
+    /// Resolve an item path as a first-class [`ItemId`].
     fn normalize_item(item: &str) -> Option<ItemId> {
         ItemId::parse(item)
     }

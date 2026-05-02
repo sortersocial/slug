@@ -12,7 +12,7 @@ use crate::item_wire::{
 
 /// Structural key for items in [`slug_types`] and the server reducer.
 ///
-/// Wire / JSON uses the same single string as the former canonical item URL (via serde).
+/// Wire / JSON uses the same single normalized storage string (via serde).
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub enum ItemId {
     /// Tilde ontology root (`~/`); storage [`SLUG_TILDE_ONTOLOGY_ROOT`].
@@ -65,6 +65,8 @@ impl ItemId {
         self.as_str().to_string()
     }
 
+    /// Tail after `https://slug.social/~/` for ontology items (empty string at root), or `None`
+    /// when this id is not under the tilde ontology.
     pub fn tilde_tail(&self) -> Option<&str> {
         match self {
             ItemId::Root => Some(""),
@@ -79,11 +81,6 @@ impl ItemId {
                 None
             }
         }
-    }
-
-    /// HTTP garden tail after `~/` (empty at ontology root), or `None` if not under tilde ontology.
-    pub fn tilde_http_tail(&self) -> Option<String> {
-        self.tilde_tail().map(str::to_owned)
     }
 
     pub fn last_segment(&self) -> &str {

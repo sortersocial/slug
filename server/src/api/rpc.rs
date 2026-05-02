@@ -27,7 +27,7 @@ use crate::{
 use super::auth::{parse_bearer, verify_bearer_principal};
 use super::helpers::{
     compute_connectivity_stats, is_pair_voted, now_ms, paginate_rankings, parse_parent_specs,
-    pick_random_distinct_canonical, resolve_item, vote_touches_path,
+    pick_random_distinct_item_pair, resolve_item, vote_touches_path,
 };
 use super::validate::validate_ingest_document;
 
@@ -721,7 +721,7 @@ async fn rpc_get_pair(state: &AppState, room: String, parent_path: String) -> Re
         let content = reduced.content.entry(scope.clone()).or_default();
         let group = &mut content.ranking_group;
         if group.idx_to_item.is_empty() {
-            pick_random_distinct_canonical(&pool)
+            pick_random_distinct_item_pair(&pool)
         } else {
             let mut rng = rand::thread_rng();
             let idxs: Vec<usize> = pool
@@ -767,7 +767,7 @@ async fn rpc_get_pair(state: &AppState, room: String, parent_path: String) -> Re
                     }
                 }
             }
-            pick.or_else(|| pick_random_distinct_canonical(&pool))
+            pick.or_else(|| pick_random_distinct_item_pair(&pool))
         }
     };
     let Some((left, right)) = selected else {

@@ -11,7 +11,7 @@ pub trait ExternalResolver: Send + Sync {
     fn normalize(&self, path: &str) -> String;
 
     /// Fetches body when missing; GitHub hook lands here in a follow-up.
-    async fn fetch_body(&self, canonical_url: &ItemId) -> Result<String, String>;
+    async fn fetch_body(&self, item: &ItemId) -> Result<String, String>;
 }
 
 /// Placeholder until domain-specific resolvers exist.
@@ -27,7 +27,7 @@ impl ExternalResolver for DefaultExternalResolver {
         path.to_string()
     }
 
-    async fn fetch_body(&self, _canonical_url: &ItemId) -> Result<String, String> {
+    async fn fetch_body(&self, _item: &ItemId) -> Result<String, String> {
         Err("external fetch not implemented".to_string())
     }
 }

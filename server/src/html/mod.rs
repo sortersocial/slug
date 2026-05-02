@@ -376,7 +376,7 @@ fn bc_path_external(path: &ExternalOntologyPath) -> Markup {
     }
 }
 
-/// Breadcrumb for any canonical path, e.g. "parables" or "parables/counting-the-cost".
+/// Breadcrumb for any ontology path segment, e.g. "parables" or "parables/counting-the-cost".
 fn bc_path(path: &OntologyPath) -> Markup {
     html! {
         a href=(path.slug_root_href()) { "slug.social" }

@@ -31,13 +31,13 @@ pub fn now_ms() -> i64 {
     t.as_millis() as i64
 }
 
-/// Resolve DSL/user input to a stored canonical item id.
+/// Resolve DSL/user input to a stored [`ItemId`].
 pub fn resolve_item(item: &str) -> Result<ItemId, String> {
-    let canonical = canonicalize_item(item);
-    if canonical.is_empty() {
+    let wire = canonicalize_item(item);
+    if wire.is_empty() {
         return Err(format!("empty item path: `{}`", item));
     }
-    ItemId::parse(&canonical).ok_or_else(|| format!("invalid item path: `{}`", item))
+    ItemId::parse(&wire).ok_or_else(|| format!("invalid item path: `{}`", item))
 }
 
 pub fn parse_parent_specs(parent: Option<&String>) -> Vec<String> {
@@ -95,7 +95,7 @@ pub fn paginate_rankings(
     (out_components, out_unranked)
 }
 
-pub fn pick_random_distinct_canonical(items: &[ItemId]) -> Option<(ItemId, ItemId)> {
+pub fn pick_random_distinct_item_pair(items: &[ItemId]) -> Option<(ItemId, ItemId)> {
     use rand::seq::SliceRandom;
     if items.len() < 2 {
         return None;
