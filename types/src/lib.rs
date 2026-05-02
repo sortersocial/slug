@@ -4,8 +4,9 @@ pub mod paths;
 pub mod timeago;
 
 pub use paths::{
-    canonicalize_item, canonicalize_tag, item_parent_path, item_path_segments, CanonicalItemUrl,
-    ForumThreadUrl, GardenItemUrl, RelativePath, TildeOntologyPath, TildePath,
+    canonicalize_item, canonicalize_tag, item_parent_path, item_path_segments, normalize_slug_ontology_storage_url,
+    CanonicalItemUrl, ForumThreadUrl, GardenItemUrl, RelativePath, SLUG_TILDE_ONTOLOGY_ROOT,
+    TildeHttpPathTail, TildeOntologyPath, TildePath, tilde_http_path_to_canonical,
 };
 
 /// Max characters returned for a garden item body unless `full=true` / `--full` (API + CLI).

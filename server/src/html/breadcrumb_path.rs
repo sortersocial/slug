@@ -1,4 +1,4 @@
-use crate::path_types::CanonicalItemUrl;
+use crate::path_types::{tilde_http_path_to_canonical, CanonicalItemUrl};
 
 /// Semantic view of an ontology path for rendering and routing decisions.
 pub(super) struct OntologyPath {
@@ -11,16 +11,7 @@ impl OntologyPath {
     /// Path is the `*path` segment from `/~/*path` (e.g. `topic/a`). Always treat it as under `~/`
     /// so it canonicalizes to `https://slug.social/~/…`, not the non-tilde site path.
     pub(super) fn from_input(path: &str) -> Self {
-        let p = path.trim_start_matches('/');
-        let raw = if p.starts_with("http://") || p.starts_with("https://") {
-            p.to_string()
-        } else if p.is_empty() {
-            "~/".to_string()
-        } else {
-            format!("~/{}", p)
-        };
-        let canonical = CanonicalItemUrl::parse(&raw)
-            .unwrap_or_else(|| CanonicalItemUrl::parse("~/").unwrap());
+        let canonical = tilde_http_path_to_canonical(path);
         Self::from_canonical(canonical)
     }
 
@@ -37,7 +28,7 @@ impl OntologyPath {
     }
 
     pub(super) fn root() -> Self {
-        Self::from_canonical(CanonicalItemUrl::parse("~/").unwrap())
+        Self::from_canonical(CanonicalItemUrl::ontology_root())
     }
 
     pub(super) fn is_root(&self) -> bool {

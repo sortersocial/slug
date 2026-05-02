@@ -16,7 +16,8 @@
    :ns-patterns ["^test\\.browser-sse$"
                  "^test\\.browser-ui-morph$"
                  "^test\\.browser-post-redact$"
-                 "^test\\.browser-room-delete$"]
+                 "^test\\.browser-room-delete$"
+                 "^test\\.browser-public-garden$"]
    :kaocha.filter/skip-meta [:skip]
    :parallel? false}]
  :plugins [:kaocha.plugin/junit-xml]

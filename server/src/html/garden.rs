@@ -459,6 +459,8 @@ struct ItemPageViewModel {
     item: String,
     body: Option<String>,
     sibling_rank: Option<SiblingRank>,
+    /// False at the tilde ontology root (`~/`): sibling-rank footnote does not apply.
+    item_has_parent: bool,
     child_rankings: ChildrenRankings,
     rank_history: Vec<RankHistoryEntryView>,
     /// Forum threads that mention or vote on this item.
@@ -470,11 +472,12 @@ fn build_sibling_rank(
     scope: &ScopeId,
     item: &CanonicalItemUrl,
 ) -> Option<SiblingRank> {
+    let item = item.clone().normalized_storage();
     let content = reduced
         .content_for_scope(scope)
         .unwrap_or_else(|| reduced.public());
     let group = &content.ranking_group;
-    let parent = item.parent()?;
+    let parent = item.parent()?.normalized_storage();
     let siblings: Vec<CanonicalItemUrl> = content
         .item_children
         .get(&parent)
@@ -492,7 +495,7 @@ fn build_sibling_rank(
     if scoped_idxs.is_empty() {
         return None;
     }
-    let current_idx = *group.item_to_idx.get(item)?;
+    let current_idx = *group.item_to_idx.get(&item)?;
     if !scoped_idxs.contains(&current_idx) {
         return None;
     }
@@ -520,7 +523,7 @@ fn build_sibling_rank(
         .filter_map(|li| local_to_global.get(*li).copied())
         .collect();
     let ranked = ranked_items_subset(group, &comp_global, 10000, 1e-8);
-    let position = ranked.iter().position(|r| &r.item == item)? + 1;
+    let position = ranked.iter().position(|r| r.item == item)? + 1;
     Some(SiblingRank {
         position,
         component_size: ranked.len(),
@@ -597,7 +600,9 @@ fn build_item_page_view_model(
         .content_for_scope(scope)
         .unwrap_or_else(|| reduced.public());
     let item_key = CanonicalItemUrl::parse(item)
-        .unwrap_or_else(|| CanonicalItemUrl::parse("~/").unwrap());
+        .unwrap_or_else(|| CanonicalItemUrl::parse("~/").unwrap())
+        .normalized_storage();
+    let item_has_parent = item_key.parent().is_some();
     let child_rankings = build_children_rankings(content, &item_key);
 
     let rank_history = build_rank_history(reduced, scope, item_key.as_str());
@@ -617,6 +622,7 @@ fn build_item_page_view_model(
             .cloned()
             .or_else(|| reduced.public().item_bodies.get(&item_key).cloned()),
         sibling_rank: build_sibling_rank(reduced, scope, &item_key),
+        item_has_parent,
         child_rankings,
         rank_history,
         threads,
@@ -652,7 +658,7 @@ async fn render_scope_view(
                             (format!("#{} of {}", rank.position, rank.component_size))
                         }
                         span class="muted" { (format!("({} siblings)", rank.sibling_total)) }
-                    } @else {
+                    } @else if model.item_has_parent {
                         span class="muted" { "unranked among siblings" }
                     }
                 }
@@ -815,6 +821,18 @@ mod tests {
         }));
     }
 
+    fn apply_ingest_room(state: &mut ReducerState, ts: i64, room_id: &str, raw: &str) {
+        state.apply_event(Event::Ingest(Ingest {
+            ts,
+            id: format!("ing-{ts}"),
+            raw: raw.to_string(),
+            principal: "testuser".to_string(),
+            delegate: Some("00000000-0000-0000-0000-000000000000:test:local/test".to_string()),
+            room_id: room_id.to_string(),
+            thread_tag: String::new(),
+        }));
+    }
+
     #[test]
     fn item_page_model_includes_body_and_unranked_without_votes() {
         let mut reduced = ReducerState::default();
@@ -883,6 +901,87 @@ mod tests {
         assert!(
             model.child_rankings.unranked_items.contains(&CanonicalItemUrl("https://slug.social/~/topic/kid1".to_string()))
                 || model.child_rankings.unranked_items.contains(&CanonicalItemUrl("https://slug.social/~/topic/kid2".to_string()))
+        );
+    }
+
+    #[test]
+    fn item_page_room_scope_root_lists_top_level_children() {
+        let mut reduced = ReducerState::default();
+        apply_ingest_room(
+            &mut reduced,
+            1,
+            "9ab12cd/my-room",
+            "@00000000-0000-0000-0000-000000000000:test:local/test\n~/t1 {a}\n~/t2 {b}\n",
+        );
+        use crate::path_types::CanonicalItemUrl;
+        let root = CanonicalItemUrl::ontology_root();
+        let model = build_item_page_view_model(
+            &reduced,
+            &ScopeId::Room("9ab12cd/my-room".to_string()),
+            root.as_str(),
+        );
+        assert!(!model.item_has_parent);
+        assert_eq!(model.child_rankings.unranked_items.len(), 2);
+        let set: std::collections::HashSet<&str> = model
+            .child_rankings
+            .unranked_items
+            .iter()
+            .map(|u| u.as_str())
+            .collect();
+        assert!(set.contains("https://slug.social/~/t1"));
+        assert!(set.contains("https://slug.social/~/t2"));
+    }
+
+    /// Top-level `~/a` vs `~/b` votes form one ranked component under the ontology root.
+    #[test]
+    fn item_page_room_scope_root_shows_ranked_child_group() {
+        let mut reduced = ReducerState::default();
+        apply_ingest_room(
+            &mut reduced,
+            1,
+            "9ab12cd/my-room",
+            "@00000000-0000-0000-0000-000000000000:test:local/test\n\
+             ~/a {a}\n~/b {b}\n~/a 2:1 ~/b {because}\n",
+        );
+        use crate::path_types::CanonicalItemUrl;
+        let root = CanonicalItemUrl::ontology_root();
+        let model = build_item_page_view_model(
+            &reduced,
+            &ScopeId::Room("9ab12cd/my-room".to_string()),
+            root.as_str(),
+        );
+        assert_eq!(model.child_rankings.component_rankings.len(), 1);
+        assert_eq!(model.child_rankings.component_rankings[0].pairs, 1);
+        let names: Vec<&str> = model.child_rankings.component_rankings[0]
+            .ranked
+            .iter()
+            .map(|r| r.item.as_str())
+            .collect();
+        assert_eq!(
+            names,
+            vec!["https://slug.social/~/a", "https://slug.social/~/b"]
+        );
+        assert!(model.child_rankings.unranked_items.is_empty());
+    }
+
+    /// Legacy `https://slug.social/~/` spelling still resolves children under the real root key.
+    #[test]
+    fn item_page_model_normalizes_legacy_tilde_root_storage_url() {
+        let mut reduced = ReducerState::default();
+        apply_ingest(
+            &mut reduced,
+            1,
+            "@00000000-0000-0000-0000-000000000000:test:local/test\n~/x {x}\n",
+        );
+        let model = build_item_page_view_model(
+            &reduced,
+            &ScopeId::Public,
+            "https://slug.social/~/",
+        );
+        assert_eq!(model.child_rankings.unranked_items.len(), 1);
+        assert_eq!(
+            model.child_rankings.unranked_items[0].as_str(),
+            "https://slug.social/~/x"
         );
     }
 }

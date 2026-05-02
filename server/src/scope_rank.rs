@@ -149,9 +149,10 @@ pub fn build_rankings_for_item_set(content: &ContentState, items_in_scope: &[Can
 /// Build connected-component rankings for direct children of parent_scope.
 /// Matches the HTML garden view: multiple components, isolates, no-vote items.
 pub fn build_children_rankings(content: &ContentState, parent: &CanonicalItemUrl) -> ChildrenRankings {
+    let parent = parent.clone().normalized_storage();
     let items: Vec<CanonicalItemUrl> = content
         .item_children
-        .get(parent)
+        .get(&parent)
         .map(|s| s.iter().cloned().collect())
         .unwrap_or_default();
     build_rankings_for_item_set(content, &items)

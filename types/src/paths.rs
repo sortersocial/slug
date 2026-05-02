@@ -1,11 +1,36 @@
 //! Canonical paths, storage ids, and JSON href newtypes. All normalization and
 //! room-aware URL rules for items live here.
+//!
+//! ## String kinds (parse in this module only)
+//!
+//! - **[`canonicalize_item`] / [`CanonicalItemUrl`]** — graph storage key and DSL form; tilde
+//!   ontology root is always [`SLUG_TILDE_ONTOLOGY_ROOT`] (no `…/~/` trailing slash only).
+//! - **[`TildeHttpPathTail`]** — capture from `GET /~/*path` or `…/r/…/~/…` (the `*path` segment).
+//! - **`-/…` wire form** — external items; see [`canonicalize_item`] dash branch.
+//! - **[`GardenItemUrl`], [`ForumThreadUrl`]** — JSON / browser href surfaces.
 
 use std::borrow::Borrow;
 use std::fmt;
 use std::ops::Deref;
 
 use serde::{Deserialize, Serialize};
+
+// ---------------------------------------------------------------------------
+// Slug tilde ontology (single storage form for `~/`)
+// ---------------------------------------------------------------------------
+
+/// Canonical absolute URL for the tilde ontology **root** (`~/` in UI). Used as the
+/// `item_children` parent key for top-level items and must match [`CanonicalItemUrl::ontology_root`].
+pub const SLUG_TILDE_ONTOLOGY_ROOT: &str = "https://slug.social/~";
+
+/// Collapse legacy or parser variants of the ontology root to [`SLUG_TILDE_ONTOLOGY_ROOT`].
+pub fn normalize_slug_ontology_storage_url(s: &str) -> String {
+    if s == "https://slug.social/~/" {
+        SLUG_TILDE_ONTOLOGY_ROOT.to_string()
+    } else {
+        s.to_string()
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Normalization (moved from server `canonical_path`)
@@ -89,6 +114,9 @@ pub fn canonicalize_item(input: &str) -> String {
         .join("/");
 
     if is_tilde {
+        if tail.is_empty() {
+            return SLUG_TILDE_ONTOLOGY_ROOT.to_string();
+        }
         format!("https://slug.social/~/{}", tail)
     } else if tail.is_empty() {
         "https://slug.social".to_string()
@@ -173,7 +201,7 @@ impl CanonicalItemUrl {
         if c.is_empty() {
             None
         } else {
-            Some(Self(c))
+            Some(Self(normalize_slug_ontology_storage_url(&c)))
         }
     }
 
@@ -181,8 +209,19 @@ impl CanonicalItemUrl {
         &self.0
     }
 
+    /// Collapses legacy slug ontology root spellings so [`HashMap`] keys match the reducer graph.
+    pub fn normalized_storage(self) -> Self {
+        Self(normalize_slug_ontology_storage_url(self.as_str()))
+    }
+
     pub fn tilde_tail(&self) -> Option<&str> {
-        self.0.strip_prefix("https://slug.social/~/")
+        if let Some(tail) = self.0.strip_prefix("https://slug.social/~/") {
+            return Some(tail);
+        }
+        if self.0 == SLUG_TILDE_ONTOLOGY_ROOT || self.0 == "https://slug.social/~/" {
+            return Some("");
+        }
+        None
     }
 
     pub fn last_segment(&self) -> &str {
@@ -193,7 +232,7 @@ impl CanonicalItemUrl {
     }
 
     pub fn ontology_root() -> Self {
-        Self("https://slug.social/~".to_string())
+        Self(SLUG_TILDE_ONTOLOGY_ROOT.to_string())
     }
 
     pub fn parent(&self) -> Option<Self> {
@@ -234,9 +273,13 @@ impl CanonicalItemUrl {
 
     /// `-/` representation for external `https://…` items, `~/…` for slug ontology, else unchanged.
     pub fn display_path(&self) -> String {
-        if let Some(tail) = self.0.strip_prefix("https://slug.social/~/") {
-            format!("~/{}", tail)
-        } else if let Some(tail) = self.0.strip_prefix("https://") {
+        if let Some(tail) = self.tilde_tail() {
+            if tail.is_empty() {
+                return "~/".to_string();
+            }
+            return format!("~/{}", tail);
+        }
+        if let Some(tail) = self.0.strip_prefix("https://") {
             if tail.starts_with("slug.social") {
                 self.0.clone()
             } else {
@@ -274,6 +317,37 @@ impl CanonicalItemUrl {
     pub fn json_href(&self, room_wire: &str) -> GardenItemUrl {
         GardenItemUrl::from_stored(self, room_wire)
     }
+}
+
+/// HTTP route capture: path segment after `~/` in `GET /~/*path` or `…/r/…/~/…` (empty = ontology root).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct TildeHttpPathTail(pub String);
+
+impl TildeHttpPathTail {
+    pub fn new(path_segment: &str) -> Self {
+        Self(path_segment.trim_start_matches('/').to_string())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    pub fn to_canonical(&self) -> CanonicalItemUrl {
+        tilde_http_path_to_canonical(self.as_str())
+    }
+}
+
+/// Map the router's tilde tail (e.g. `topic/a`, or empty for root) to a [`CanonicalItemUrl`].
+pub fn tilde_http_path_to_canonical(path_segment: &str) -> CanonicalItemUrl {
+    let p = path_segment.trim_start_matches('/');
+    let raw = if p.starts_with("http://") || p.starts_with("https://") {
+        p.to_string()
+    } else if p.is_empty() {
+        "~/".to_string()
+    } else {
+        format!("~/{}", p)
+    };
+    CanonicalItemUrl::parse(&raw).unwrap_or_else(|| CanonicalItemUrl::ontology_root())
 }
 
 impl fmt::Display for CanonicalItemUrl {
@@ -557,6 +631,44 @@ mod tests {
     fn canonical_parent_root_is_none() {
         let root = CanonicalItemUrl::parse("~/").unwrap();
         assert!(root.parent().is_none());
+        assert_eq!(root.as_str(), SLUG_TILDE_ONTOLOGY_ROOT);
+        assert_eq!(root, CanonicalItemUrl::ontology_root());
+    }
+
+    #[test]
+    fn tilde_ontology_root_unifies_forms() {
+        assert_eq!(canonicalize_item("~/"), SLUG_TILDE_ONTOLOGY_ROOT);
+        assert_eq!(
+            normalize_slug_ontology_storage_url("https://slug.social/~/"),
+            SLUG_TILDE_ONTOLOGY_ROOT.to_string()
+        );
+        assert_eq!(
+            CanonicalItemUrl::parse("https://slug.social/~/")
+                .unwrap()
+                .as_str(),
+            SLUG_TILDE_ONTOLOGY_ROOT
+        );
+        let legacy = CanonicalItemUrl("https://slug.social/~/".to_string());
+        assert_eq!(legacy.normalized_storage().as_str(), SLUG_TILDE_ONTOLOGY_ROOT);
+    }
+
+    #[test]
+    fn tilde_http_path_tail_maps_router_segment() {
+        assert_eq!(
+            TildeHttpPathTail::new("").to_canonical(),
+            CanonicalItemUrl::ontology_root()
+        );
+        assert_eq!(
+            tilde_http_path_to_canonical("topic/x").as_str(),
+            "https://slug.social/~/topic/x"
+        );
+    }
+
+    #[test]
+    fn display_path_slug_ontology_root() {
+        let r = CanonicalItemUrl::ontology_root();
+        assert_eq!(r.display_path(), "~/");
+        assert_eq!(r.tilde_tail(), Some(""));
     }
 
     #[test]

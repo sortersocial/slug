@@ -705,6 +705,62 @@ async fn test_private_room_post_links_use_private_garden_routes() {
 }
 
 #[tokio::test]
+async fn test_private_room_garden_root_lists_top_level_tilde_children() {
+    let (addr, _tmp, _log, _handle) = create_test_server().await;
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    let bearer = test_bearer();
+
+    let create = rpc_batch(
+        &client,
+        addr,
+        Some(&bearer),
+        serde_json::json!([{
+            "RoomCreate": { "slug": "garden-root-list" }
+        }]),
+    )
+    .await;
+    let room_id = create["results"][0]["result"]["RoomCreated"]["room_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let (room_short, room_slug) = room_id.split_once('/').unwrap();
+
+    let rpc = ui_post_ingest_rpc(
+        &room_id,
+        "ing",
+        "~/test1 {wow}\n~/test2 {wow2}\n~/test1 2:1 ~/test2 {because}\n",
+    );
+    let post = client
+        .post(format!("http://{addr}/ui"))
+        .header("Authorization", format!("Bearer {bearer}"))
+        .form(&[("__rpc__", rpc.as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(post.status(), reqwest::StatusCode::OK);
+
+    let root_page = client
+        .get(format!("http://{addr}/r/{room_short}/{room_slug}/~"))
+        .header("Authorization", format!("Bearer {bearer}"))
+        .send()
+        .await
+        .unwrap();
+    assert!(root_page.status().is_success());
+    let body = root_page.text().await.unwrap();
+    assert!(
+        body.contains("ranked child groups"),
+        "expected garden child panel: {}",
+        body.len()
+    );
+    assert!(body.contains("~/test1"));
+    assert!(body.contains("~/test2"));
+    assert!(body.contains("ordering 1"));
+}
+
+#[tokio::test]
 async fn test_post_check_returns_targeted_js_error_for_missing_thread_tag() {
     let (addr, _tmp, _log, _handle) = create_test_server().await;
     let client = reqwest::Client::builder()
