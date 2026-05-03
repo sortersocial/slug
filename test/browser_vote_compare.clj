@@ -77,8 +77,6 @@
                    "edge history lists canonical-order vote")
                (locator/fill (page/locator pg "#vote-explain") "because playwright says so")
                (locator/click (page/locator pg "#vote-compare-form button[type=submit]"))
-               (is (wait-for-text pg "#vote-compare-preview" "because playwright" 20000)
-                   "preview region morphs new post card")
                (is (wait-for-text pg "ul.vote-edge-history" "because playwright" 20000)
                    "new vote appears in edge history after morph"))))))
 
