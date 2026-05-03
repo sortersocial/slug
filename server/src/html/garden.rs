@@ -9,30 +9,28 @@ use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashSet;
 
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD as B64_ENGINE, Engine as _};
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD as B64_ENGINE};
 
 use crate::{
     api::optional_principal,
     canonical_path::{canonicalize_item, canonicalize_tag},
-    form_template::template_json_compact,
-    html::{
-        ui_action::UI_RPC_FIELD,
-        user_can_post_room,
-        JsBuilder,
-    },
     events::ThreadCapability,
+    form_template::template_json_compact,
+    html::{JsBuilder, ui_action::UI_RPC_FIELD, user_can_post_room},
     path_types::ItemId,
-    reducer::{scope_from_room_wire, ContentState, ReducerState, ScopeId},
-    scope_rank::{build_children_rankings, ChildrenRankings},
+    reducer::{ContentState, ReducerState, ScopeId, scope_from_room_wire},
+    scope_rank::{ChildrenRankings, build_children_rankings},
     state::AppState,
     timeago,
 };
 
 use super::{
-    bc_path, bc_path_external, bc_segment, cli_panel, layout, layout_full_bleed_chromeless, now_ms,
-    ratio_pct, render_linkified_with_embeds_in_scope, theme_from_jar, theme_next_from_uri,
+    bc_path, bc_path_external, bc_segment,
     breadcrumb_path::{ExternalOntologyPath, OntologyPath},
-    forum::{ingest_entry_markup, ThreadNav},
+    cli_panel,
+    forum::{ThreadNav, ingest_entry_markup},
+    layout, layout_full_bleed_chromeless, now_ms, ratio_pct, render_linkified_with_embeds_in_scope,
+    theme_from_jar, theme_next_from_uri,
 };
 
 /// `GET /vote/compare` — pairs `left` / `right` query params with optional `thread`.
@@ -90,7 +88,11 @@ fn canonical_edge_items(a: &ItemId, b: &ItemId) -> (ItemId, ItemId) {
 }
 
 /// All votes whose endpoints are exactly this unordered pair (unsorted).
-fn edge_vote_entries_for_pair(content: &ContentState, a: &ItemId, b: &ItemId) -> Vec<crate::reducer::VoteData> {
+fn edge_vote_entries_for_pair(
+    content: &ContentState,
+    a: &ItemId,
+    b: &ItemId,
+) -> Vec<crate::reducer::VoteData> {
     let (lo, hi) = canonical_edge_items(a, b);
     let lo_s = lo.as_str();
     let hi_s = hi.as_str();
@@ -107,7 +109,11 @@ fn edge_vote_entries_for_pair(content: &ContentState, a: &ItemId, b: &ItemId) ->
         .collect()
 }
 
-fn ratios_for_compare_page(v: &crate::reducer::VoteData, page_left: &ItemId, page_right: &ItemId) -> (i32, i32) {
+fn ratios_for_compare_page(
+    v: &crate::reducer::VoteData,
+    page_left: &ItemId,
+    page_right: &ItemId,
+) -> (i32, i32) {
     let pl = page_left.as_str();
     let pr = page_right.as_str();
     match (v.a.as_str(), v.b.as_str()) {
@@ -121,11 +127,7 @@ fn left_share_normalized(ratio_left: i32, ratio_right: i32) -> f64 {
     let l = ratio_left.max(0) as f64;
     let r = ratio_right.max(0) as f64;
     let sum = l + r;
-    if sum <= 0.0 {
-        0.5
-    } else {
-        l / sum
-    }
+    if sum <= 0.0 { 0.5 } else { l / sum }
 }
 
 /// Stronger preference for **`page_left` first**; ties **newer first**.
@@ -177,11 +179,7 @@ fn vote_thread_tags_for_pair(content: &ContentState, a: &ItemId, b: &ItemId) -> 
     v.into_iter().map(|t| canonicalize_tag(&t)).collect()
 }
 
-fn vote_edge_history_markup(
-    content: &ContentState,
-    left: &ItemId,
-    right: &ItemId,
-) -> maud::Markup {
+fn vote_edge_history_markup(content: &ContentState, left: &ItemId, right: &ItemId) -> maud::Markup {
     let votes = edge_vote_entries_for_pair(content, left, right);
     let votes = sort_votes_for_compare_display(votes, left, right);
     let legend_left = item_display_path(left.as_str());
@@ -276,7 +274,12 @@ fn item_code_label(item: &str) -> String {
     item_display_path(item)
 }
 
-fn vote_compare_href(nav: &ThreadNav, left: &ItemId, right: &ItemId, thread_override: Option<&str>) -> String {
+fn vote_compare_href(
+    nav: &ThreadNav,
+    left: &ItemId,
+    right: &ItemId,
+    thread_override: Option<&str>,
+) -> String {
     let left_q = urlencoding::encode(left.as_str());
     let right_q = urlencoding::encode(right.as_str());
     let base = format!(
@@ -299,7 +302,8 @@ fn ont_pin_vote_controls(
     next_path: &str,
 ) -> maud::Markup {
     let room_wire = nav.room_wire.clone();
-    let current = ItemId::parse(current_storage).unwrap_or_else(|| ItemId::opaque(current_storage.to_string()));
+    let current = ItemId::parse(current_storage)
+        .unwrap_or_else(|| ItemId::opaque(current_storage.to_string()));
     let pin_matches_scope = pinned_room_and_item
         .map(|(r, _)| r == nav.room_wire.as_str())
         .unwrap_or(false);
@@ -307,26 +311,22 @@ fn ont_pin_vote_controls(
         .filter(|_| pin_matches_scope)
         .map(|(_, i)| i);
 
-    let pin_rpc = template_json_compact(
-        &json!({
-            "action": "set_garden_pin",
-            "clear": false,
-            "room_wire": room_wire,
-            "item_storage": current.as_str(),
-            "next": next_path,
-            "form_action": "/ui",
-        }),
-    )
+    let pin_rpc = template_json_compact(&json!({
+        "action": "set_garden_pin",
+        "clear": false,
+        "room_wire": room_wire,
+        "item_storage": current.as_str(),
+        "next": next_path,
+        "form_action": "/ui",
+    }))
     .expect("pin rpc json");
-    let unpin_rpc = template_json_compact(
-        &json!({
-            "action": "set_garden_pin",
-            "clear": true,
-            "room_wire": "",
-            "next": next_path,
-            "form_action": "/ui",
-        }),
-    )
+    let unpin_rpc = template_json_compact(&json!({
+        "action": "set_garden_pin",
+        "clear": true,
+        "room_wire": "",
+        "next": next_path,
+        "form_action": "/ui",
+    }))
     .expect("unpin rpc json");
 
     html! {
@@ -497,9 +497,9 @@ fn room_scope_has_garden_content(reduced: &ReducerState, nav: &ThreadNav) -> boo
 fn content_for_garden_view<'a>(reduced: &'a ReducerState, scope: &ScopeId) -> &'a ContentState {
     match scope {
         ScopeId::Public => reduced.public(),
-        ScopeId::Room(_) => reduced.content_for_scope(scope).expect(
-            "room garden only renders after room_scope_has_garden_content returned true",
-        ),
+        ScopeId::Room(_) => reduced
+            .content_for_scope(scope)
+            .expect("room garden only renders after room_scope_has_garden_content returned true"),
     }
 }
 
@@ -723,10 +723,8 @@ pub async fn room_external_garden_index(
     }
     let ext_path = ExternalOntologyPath::from_input("");
     let parent = ItemId::parse("https://.").unwrap();
-    let child_rankings = build_children_rankings(
-        content_for_garden_view(&reduced, &nav.scope()),
-        &parent,
-    );
+    let child_rankings =
+        build_children_rankings(content_for_garden_view(&reduced, &nav.scope()), &parent);
     drop(reduced);
 
     let page = layout(
@@ -953,48 +951,74 @@ fn build_rank_history(
         None => return vec![],
         Some(e) => e,
     };
-    entries.iter().map(|e| {
-        // Resolve caused_by: votes from this ingest that directly touched this item.
-        let caused_by: Vec<crate::reducer::VoteData> = reduced.ingests_by_id
-            .get(&e.post_id)
-            .and_then(|ing| crate::dsl::parse_full(&ing.raw).ok())
-            .map(|doc| {
-                doc.statements.into_iter().filter_map(|s| {
-                    if let crate::dsl::Stmt::Vote { item1, item2, ratio_left, ratio_right, explanation } = s {
-                        let a_str = crate::canonical_path::canonicalize_item(&item1);
-                        let b_str = crate::canonical_path::canonicalize_item(&item2);
-                        if a_str == item || b_str == item {
-                            Some(crate::reducer::VoteData {
-                                ts: e.ts,
-                                a: ItemId::parse(&a_str).unwrap_or_else(|| ItemId::opaque(a_str)),
-                                b: ItemId::parse(&b_str).unwrap_or_else(|| ItemId::opaque(b_str)),
-                                ratio_left, ratio_right,
-                                body: explanation,
-                                principal: reduced.ingests_by_id.get(&e.post_id)
-                                    .map(|ing| ing.principal.clone())
-                                    .unwrap_or_default(),
-                                delegate: reduced.ingests_by_id.get(&e.post_id).and_then(|ing| ing.delegate.clone()),
-                                thread_tag: e.thread.clone(),
-                            })
-                        } else { None }
-                    } else { None }
-                }).collect()
-            })
-            .unwrap_or_default();
+    entries
+        .iter()
+        .map(|e| {
+            // Resolve caused_by: votes from this ingest that directly touched this item.
+            let caused_by: Vec<crate::reducer::VoteData> = reduced
+                .ingests_by_id
+                .get(&e.post_id)
+                .and_then(|ing| crate::dsl::parse_full(&ing.raw).ok())
+                .map(|doc| {
+                    doc.statements
+                        .into_iter()
+                        .filter_map(|s| {
+                            if let crate::dsl::Stmt::Vote {
+                                item1,
+                                item2,
+                                ratio_left,
+                                ratio_right,
+                                explanation,
+                            } = s
+                            {
+                                let a_str = crate::canonical_path::canonicalize_item(&item1);
+                                let b_str = crate::canonical_path::canonicalize_item(&item2);
+                                if a_str == item || b_str == item {
+                                    Some(crate::reducer::VoteData {
+                                        ts: e.ts,
+                                        a: ItemId::parse(&a_str)
+                                            .unwrap_or_else(|| ItemId::opaque(a_str)),
+                                        b: ItemId::parse(&b_str)
+                                            .unwrap_or_else(|| ItemId::opaque(b_str)),
+                                        ratio_left,
+                                        ratio_right,
+                                        body: explanation,
+                                        principal: reduced
+                                            .ingests_by_id
+                                            .get(&e.post_id)
+                                            .map(|ing| ing.principal.clone())
+                                            .unwrap_or_default(),
+                                        delegate: reduced
+                                            .ingests_by_id
+                                            .get(&e.post_id)
+                                            .and_then(|ing| ing.delegate.clone()),
+                                        thread_tag: e.thread.clone(),
+                                    })
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            }
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
 
-        let thread_post_index =
-            reduced.thread_post_index_chronological(scope, &e.thread, &e.post_id);
+            let thread_post_index =
+                reduced.thread_post_index_chronological(scope, &e.thread, &e.post_id);
 
-        RankHistoryEntryView {
-            ts: e.ts,
-            scope_rank: e.scope_rank,
-            scope_total: e.scope_total,
-            scope_rank_delta: e.scope_rank_delta,
-            thread: e.thread.clone(),
-            thread_post_index,
-            caused_by,
-        }
-    }).collect()
+            RankHistoryEntryView {
+                ts: e.ts,
+                scope_rank: e.scope_rank,
+                scope_total: e.scope_total,
+                scope_rank_delta: e.scope_rank_delta,
+                thread: e.thread.clone(),
+                thread_post_index,
+                caused_by,
+            }
+        })
+        .collect()
 }
 
 fn build_item_page_view_model(
@@ -1301,23 +1325,28 @@ async fn vote_compare_inner(
     let edge_history = vote_edge_history_markup(content, &left, &right);
     drop(reduced);
 
-    let title = format!("vote — {} vs {}", item_display_path(left.as_str()), item_display_path(right.as_str()));
-    let next_path = uri.path_and_query().map(|pq| pq.as_str().to_string()).unwrap_or_else(|| "/vote/compare".into());
+    let title = format!(
+        "vote — {} vs {}",
+        item_display_path(left.as_str()),
+        item_display_path(right.as_str())
+    );
+    let next_path = uri
+        .path_and_query()
+        .map(|pq| pq.as_str().to_string())
+        .unwrap_or_else(|| "/vote/compare".into());
 
-    let rpc_json = template_json_compact(
-        &json!({
-            "action": "vote_compare_post",
-            "room": nav.room_wire,
-            "thread_tag": {"$form": "thread_tag"},
-            "left_item": left.as_str(),
-            "right_item": right.as_str(),
-            "ratio_left": {"$form": "ratio_left"},
-            "ratio_right": {"$form": "ratio_right"},
-            "explanation": {"$form": "explanation"},
-            "next": next_path,
-            "form_action": "/ui",
-        }),
-    )
+    let rpc_json = template_json_compact(&json!({
+        "action": "vote_compare_post",
+        "room": nav.room_wire,
+        "thread_tag": {"$form": "thread_tag"},
+        "left_item": left.as_str(),
+        "right_item": right.as_str(),
+        "ratio_left": {"$form": "ratio_left"},
+        "ratio_right": {"$form": "ratio_right"},
+        "explanation": {"$form": "explanation"},
+        "next": next_path,
+        "form_action": "/ui",
+    }))
     .expect("vote compare rpc json");
 
     let body = html! {
@@ -1532,11 +1561,23 @@ mod tests {
             .iter()
             .map(|r| r.item.as_str())
             .collect();
-        assert_eq!(names, vec!["https://slug.social/~/topic/a", "https://slug.social/~/topic/b"]);
+        assert_eq!(
+            names,
+            vec![
+                "https://slug.social/~/topic/a",
+                "https://slug.social/~/topic/b"
+            ]
+        );
         use crate::path_types::ItemId;
         assert!(
-            model.child_rankings.unranked_items.contains(&ItemId::parse("https://slug.social/~/topic/kid1").unwrap())
-                || model.child_rankings.unranked_items.contains(&ItemId::parse("https://slug.social/~/topic/kid2").unwrap())
+            model
+                .child_rankings
+                .unranked_items
+                .contains(&ItemId::parse("https://slug.social/~/topic/kid1").unwrap())
+                || model
+                    .child_rankings
+                    .unranked_items
+                    .contains(&ItemId::parse("https://slug.social/~/topic/kid2").unwrap())
         );
     }
 
@@ -1609,11 +1650,8 @@ mod tests {
             1,
             "@00000000-0000-0000-0000-000000000000:test:local/test\n~/x {x}\n",
         );
-        let model = build_item_page_view_model(
-            &reduced,
-            &ScopeId::Public,
-            "https://slug.social/~/",
-        );
+        let model =
+            build_item_page_view_model(&reduced, &ScopeId::Public, "https://slug.social/~/");
         assert_eq!(model.child_rankings.unranked_items.len(), 1);
         assert_eq!(
             model.child_rankings.unranked_items[0].as_str(),
