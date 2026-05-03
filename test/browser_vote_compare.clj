@@ -53,7 +53,8 @@
            raw (str "# " thread-tag "\n\n"
                     "~/gp-vote-a {one}\n"
                     "~/gp-vote-b {two}\n"
-                    "~/gp-vote-a 1:1 ~/gp-vote-b {seed edge vote}\n")
+                    "{seed edge vote}\n"
+                    "~/gp-vote-a 1:1 ~/gp-vote-b\n")
            post-resp (oauth/http-post-json
                       (str base-url "/api/v0/rpc")
                       [{"Post" {"room" "public"
