@@ -844,18 +844,25 @@ a.ont-vote-compare-btn {
   color: var(--ui);
   cursor: pointer;
   font-size: 11px;
-  padding: 2px 8px;
+  padding: 3px 10px;
   text-decoration: none;
   display: inline-flex;
   align-items: center;
   gap: 4px;
   font-family: inherit;
+  border-radius: 2px;
 }
 button.ont-pin-btn:hover,
 a.ont-vote-compare-btn:hover { color: var(--signal); }
+button.ont-pin-btn:focus-visible,
+a.ont-vote-compare-btn:focus-visible {
+  outline: 2px solid var(--link);
+  outline-offset: 2px;
+}
 button.ont-pin-btn-active {
   border-color: var(--link);
   color: var(--signal);
+  background: color-mix(in srgb, var(--link) 12%, var(--g4));
 }
 .ont-garden-child-actions {
   display: inline-flex;
@@ -868,12 +875,33 @@ a.ont-garden-vote-ico,
 span.ont-garden-pinned-here {
   font-size: 13px;
   line-height: 1;
-  padding: 0 2px;
-  border: none;
-  background: transparent;
+  padding: 2px 6px;
+  min-width: 26px;
+  min-height: 26px;
+  box-sizing: border-box;
+  border: var(--bv) solid;
+  border-color: var(--hi) var(--lo) var(--lo) var(--hi);
+  border-radius: 2px;
+  background: var(--g3);
   cursor: pointer;
   text-decoration: none;
   color: inherit;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+a.ont-garden-vote-ico:hover {
+  color: var(--signal);
+  background: var(--g4);
+}
+span.ont-garden-pinned-here {
+  border-color: var(--link);
+  color: var(--signal);
+  cursor: default;
+}
+button.ont-garden-pin-ico:focus-visible {
+  outline: 2px solid var(--link);
+  outline-offset: 2px;
 }
 body.view-ontology-light ol.ont-ranking-list li,
 body.view-ontology-light ul.ont-group-list li {
@@ -889,8 +917,19 @@ body.view-ontology-light ul.ont-group-list li .item-link {
 
 /* Vote compare page */
 .vote-compare-shell {
-  margin: 12px 0;
+  margin: 12px 0 20px;
   max-width: 720px;
+  padding: 14px 16px 18px;
+  background: var(--g2);
+  border: var(--bv-lg) solid;
+  border-color: var(--hi) var(--lo) var(--lo) var(--hi);
+}
+body.view-vote-compare .vote-compare-shell > h2 {
+  margin-top: 0;
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--meta);
 }
 .vote-compare-pair {
   display: flex;
@@ -899,12 +938,20 @@ body.view-ontology-light ul.ont-group-list li .item-link {
   gap: 10px 16px;
   margin: 10px 0;
 }
+.vote-compare-item {
+  text-decoration: none;
+}
 .vote-compare-item code {
   font-size: 13px;
 }
+.vote-compare-item:hover code {
+  color: var(--signal);
+}
 .vote-compare-vs {
   color: var(--meta);
-  font-size: 12px;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
 }
 .vote-compare-slider-label {
   display: flex;
@@ -917,7 +964,7 @@ body.view-ontology-light ul.ont-group-list li .item-link {
 #vote-preference-slider {
   flex: 1 1 180px;
   min-width: 120px;
-  accent-color: var(--ui);
+  accent-color: var(--link);
 }
 .vote-thread-picker {
   margin: 10px 0;
@@ -931,9 +978,17 @@ body.view-ontology-light ul.ont-group-list li .item-link {
 }
 #vote-thread-select {
   min-width: 160px;
+  background: var(--g3);
+  border: var(--bv) solid;
+  border-color: var(--hi) var(--lo) var(--lo) var(--hi);
+  color: var(--ui);
+  font-size: 12px;
+  padding: 3px 8px;
 }
 #vote-edge-history-region {
   margin: 14px 0 18px;
+  padding-bottom: 8px;
+  border-bottom: 1px dashed var(--lo);
 }
 .vote-compare-preview-wrap {
   margin: 12px 0;
@@ -946,8 +1001,37 @@ body.view-ontology-light ul.ont-group-list li .item-link {
 #vote-compare-preview {
   min-height: 48px;
 }
+.vote-explain-label {
+  display: block;
+  font-size: 12px;
+  color: var(--meta);
+  margin: 12px 0 4px;
+}
+body.view-vote-compare #vote-explain {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  background: var(--g3);
+  border: var(--bv) solid;
+  border-color: var(--hi) var(--lo) var(--lo) var(--hi);
+  color: var(--prose);
+  font: inherit;
+  line-height: 1.45;
+  padding: 8px 10px;
+}
+body.view-vote-compare #vote-explain:focus {
+  outline: none;
+  border-color: var(--link);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--link) 22%, transparent);
+}
+body.view-vote-compare #vote-compare-form button[type="submit"] {
+  margin-top: 6px;
+}
 .vote-edge-history-title {
-  font-size: 13px;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--meta);
   margin: 16px 0 8px;
 }
 ol.vote-edge-history {
@@ -968,6 +1052,8 @@ li.vote-edge-history-row {
 .vote-edge-bar {
   margin-top: 4px;
   max-width: 100%;
+  border-radius: 2px;
+  overflow: hidden;
 }
 .vote-edge-reason {
   margin-top: 4px;
