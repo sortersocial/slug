@@ -353,7 +353,7 @@ fn layout_embed_controls(
                 data-garden-room=(garden_room_wire.unwrap_or(""))
                 data-garden-prefix=(garden_path_prefix.unwrap_or("")) {
                 @if let Some(n) = views {
-                    span class="view-meta muted" { " · " (n) " views" }
+                    span class="view-meta muted" { (n) " views" }
                 }
                 div id="errors" {}
                 (body)
