@@ -1,8 +1,10 @@
+use axum::http::Uri;
 use sha2::{Digest, Sha256};
-use slug_types::room_route_segment;
+use slug_types::{room_route_segment, ItemId};
 use slugsocial_server::{
     event_log::EventLog,
     events::{Event, TokenIssued, UserRegistered},
+    middleware::canonical_view_url,
     spawn_writer_actor_for_test,
     state::{AppConfig, AppState},
 };
@@ -1368,7 +1370,69 @@ async fn test_search_page_and_results() {
 
 #[tokio::test]
 async fn test_view_counts_increment_and_display() {
-    // HTML view counters are offline during the auth-v3 refactor.
+    let (addr, _tmp, _log, state, _handle) = create_test_server_with_state().await;
+    let client = reqwest::Client::new();
+    let url = format!("http://{addr}/~");
+
+    let r1 = client.get(&url).send().await.unwrap();
+    assert!(r1.status().is_success());
+    let body1 = r1.text().await.unwrap();
+    assert!(
+        body1.contains("1 views"),
+        "expected first GET to show 1 views, body snippet: {}",
+        &body1.chars().take(500).collect::<String>()
+    );
+
+    let r2 = client.get(&url).send().await.unwrap();
+    assert!(r2.status().is_success());
+    let body2 = r2.text().await.unwrap();
+    assert!(
+        body2.contains("2 views"),
+        "expected second GET to show 2 views"
+    );
+
+    // Vote compare uses permuted `left` / `right`; middleware canonicalizes query order.
+    let left = ItemId::parse("~/vc-l")
+        .unwrap()
+        .normalized_storage()
+        .to_storage_string();
+    let right = ItemId::parse("~/vc-r")
+        .unwrap()
+        .normalized_storage()
+        .to_storage_string();
+    let vote_q_right_first = format!(
+        "/vote/compare?right={}&left={}",
+        urlencoding::encode(&right),
+        urlencoding::encode(&left)
+    );
+    let vote_q_left_first = format!(
+        "/vote/compare?left={}&right={}",
+        urlencoding::encode(&left),
+        urlencoding::encode(&right)
+    );
+    let vote_key_uri: Uri = format!("http://127.0.0.1{vote_q_left_first}")
+        .parse()
+        .unwrap();
+    let vote_key = canonical_view_url(&vote_key_uri);
+
+    let v1 = client
+        .get(format!("http://{addr}{vote_q_right_first}"))
+        .send()
+        .await
+        .unwrap();
+    assert!(v1.status().is_success(), "vote compare GET 1: {}", v1.status());
+    let v2 = client
+        .get(format!("http://{addr}{vote_q_left_first}"))
+        .send()
+        .await
+        .unwrap();
+    assert!(v2.status().is_success(), "vote compare GET 2: {}", v2.status());
+
+    assert_eq!(
+        state.views.get_views(&vote_key),
+        2,
+        "permuted vote/compare URLs should share one ViewStore key ({vote_key:?})"
+    );
 }
 
 #[tokio::test]

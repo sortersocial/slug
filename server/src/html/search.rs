@@ -10,6 +10,7 @@ use serde::Deserialize;
 use crate::{
     api::optional_principal,
     events::ThreadCapability,
+    middleware::canonical_view_url,
     reducer::{ReducerState, ScopeId},
     state::AppState,
     timeago,
@@ -407,6 +408,9 @@ pub async fn search_page(
         SearchResults { items: vec![], threads: vec![], posts: vec![] }
     };
 
+    let url_key = canonical_view_url(&uri);
+    let view_count = state.views.get_views(&url_key);
+
     let page = layout(
         "search \u{2014} slug.social",
         "view-thread",
@@ -420,7 +424,7 @@ pub async fn search_page(
             (render_search_results(&results, &query))
             (cli_panel(&["npx slugsocial search <query>"]))
         },
-        None,
+        Some(view_count),
         theme_from_jar(&jar),
         &theme_next_from_uri(&uri),
         None,

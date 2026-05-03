@@ -8,6 +8,7 @@ use maud::{html, Markup};
 
 use crate::api::optional_principal;
 use crate::canonical_path::canonicalize_tag;
+use crate::middleware::canonical_view_url;
 use crate::reducer::{ReducerState, ScopeId};
 use crate::state::AppState;
 use crate::timeago;
@@ -218,6 +219,9 @@ pub async fn home(
     let strip = auth_strip(&headers, &jar, &reduced_read);
     drop(reduced_read);
 
+    let url_key = canonical_view_url(&uri);
+    let view_count = state.views.get_views(&url_key);
+
     let page = layout(
         "slug.social",
         "view-thread",
@@ -251,7 +255,7 @@ pub async fn home(
             (render_thread_feed(Some(&nav), "thread-feed", &public_rows, now))
             (cli_panel(&["npx slugsocial public forum list"]))
         },
-        None,
+        Some(view_count),
         theme_from_jar(&jar),
         &theme_next_from_uri(&uri),
         None,

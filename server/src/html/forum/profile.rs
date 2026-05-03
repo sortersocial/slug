@@ -9,6 +9,7 @@ use maud::html;
 use crate::api::optional_principal;
 use crate::canonical_path::canonicalize_tag;
 use crate::identity::parse_username;
+use crate::middleware::canonical_view_url;
 use crate::state::AppState;
 
 use super::ingest::{thread_nav_for_ingest, thread_post_index_in_scope};
@@ -74,6 +75,9 @@ pub async fn user_profile_page(
     };
 
     let now = now_ms();
+    let url_key = canonical_view_url(&uri);
+    let view_count = state.views.get_views(&url_key);
+
     let page = layout(
         &format!("@{canon}"),
         "view-thread",
@@ -108,7 +112,7 @@ pub async fn user_profile_page(
             }
             (cli_panel(&[format!("npx slugsocial public forum list")]))
         },
-        None,
+        Some(view_count),
         theme_from_jar(&jar),
         &theme_next_from_uri(&uri),
         None,

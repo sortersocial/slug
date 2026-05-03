@@ -14,11 +14,12 @@ use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD as B64_ENGINE
 use crate::{
     api::optional_principal,
     canonical_path::{canonicalize_item, canonicalize_tag},
+    middleware::canonical_view_url,
     events::ThreadCapability,
     form_template::template_json_compact,
     html::{JsBuilder, ui_action::UI_RPC_FIELD, user_can_post_room},
     path_types::ItemId,
-    reducer::{ContentState, ReducerState, ScopeId, scope_from_room_wire},
+    reducer::{ContentState, ReducerState, ScopeId},
     scope_rank::{ChildrenRankings, build_children_rankings},
     state::AppState,
     timeago,
@@ -28,7 +29,7 @@ use super::{
     bc_path, bc_path_external, bc_segment,
     breadcrumb_path::{ExternalOntologyPath, OntologyPath},
     cli_panel,
-    forum::{ThreadNav, ingest_entry_markup},
+    forum::ThreadNav,
     layout, layout_full_bleed_chromeless, now_ms, ratio_pct, render_linkified_with_embeds_in_scope,
     theme_from_jar, theme_next_from_uri,
 };
@@ -224,39 +225,24 @@ fn vote_edge_history_markup(content: &ContentState, left: &ItemId, right: &ItemI
     }
 }
 
-/// After a successful vote post: morph the new card into `#vote-compare-preview` and refresh edge history.
+/// After a successful vote post: refresh edge history (no in-page preview card).
 pub(crate) async fn vote_compare_post_success_js(
     state: &AppState,
     nav: &ThreadNav,
-    room_wire: &str,
-    thread_tag: &str,
+    _room_wire: &str,
+    _thread_tag: &str,
     left: &ItemId,
     right: &ItemId,
-    post_id: &str,
-    post_idx: Option<usize>,
+    _post_id: &str,
+    _post_idx: Option<usize>,
 ) -> String {
     let reduced = state.reduced.read().await;
-    let scope = scope_from_room_wire(room_wire);
-    let Some(ing) = reduced.ingests_by_id.get(post_id).cloned() else {
-        drop(reduced);
-        return "console.warn('vote compare: new post not found');".to_string();
-    };
-    let idx = match post_idx {
-        Some(i) => i,
-        None => reduced
-            .try_thread_post_index_chronological(&scope, thread_tag, post_id)
-            .unwrap_or(0),
-    };
-    let viewer = None::<&str>;
-    let now = now_ms();
     let content = content_for_garden_view(&reduced, &nav.scope());
     let edge_history = vote_edge_history_markup(content, left, right);
-    let card = ingest_entry_markup(nav, thread_tag, idx, &ing, viewer, now, &reduced);
     drop(reduced);
-    let mut b = JsBuilder::new();
-    b = b.morph_inner_selector("#vote-compare-preview", card);
-    b = b.morph_inner_selector("#vote-edge-history-region", edge_history);
-    b.build()
+    JsBuilder::new()
+        .morph_inner_selector("#vote-edge-history-region", edge_history)
+        .build()
 }
 
 fn item_display_path(item: &str) -> String {
@@ -515,6 +501,9 @@ pub async fn garden_index(
         build_children_rankings(reduced.public(), &ItemId::ontology_root())
     };
 
+    let url_key = canonical_view_url(&uri);
+    let view_count = state.views.get_views(&url_key);
+
     let page = layout(
         "~/",
         "view-ontology view-ontology-light",
@@ -556,7 +545,7 @@ pub async fn garden_index(
             }
             (cli_panel(&["npx slugsocial garden tree"]))
         },
-        None,
+        Some(view_count),
         theme_from_jar(&jar),
         &theme_next_from_uri(&uri),
         Some("public"),
@@ -596,6 +585,9 @@ pub async fn external_garden_index(
         let reduced = state.reduced.read().await;
         build_children_rankings(reduced.public(), &parent)
     };
+
+    let url_key = canonical_view_url(&uri);
+    let view_count = state.views.get_views(&url_key);
 
     let page = layout(
         "-/",
@@ -637,7 +629,7 @@ pub async fn external_garden_index(
                 }
             }
         },
-        None,
+        Some(view_count),
         theme_from_jar(&jar),
         &theme_next_from_uri(&uri),
         Some("public"),
@@ -727,6 +719,9 @@ pub async fn room_external_garden_index(
         build_children_rankings(content_for_garden_view(&reduced, &nav.scope()), &parent);
     drop(reduced);
 
+    let url_key = canonical_view_url(&uri);
+    let view_count = state.views.get_views(&url_key);
+
     let page = layout(
         "-/",
         "view-ontology view-ontology-light",
@@ -766,7 +761,7 @@ pub async fn room_external_garden_index(
                 }
             }
         },
-        None,
+        Some(view_count),
         theme_from_jar(&jar),
         &theme_next_from_uri(&uri),
         Some(nav.room_wire.as_str()),
@@ -1080,6 +1075,9 @@ async fn render_scope_view(
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "/".to_string());
 
+    let url_key = canonical_view_url(&uri);
+    let view_count = state.views.get_views(&url_key);
+
     let page = layout(
         &item_display_path(&model.item),
         "view-ontology view-ontology-light",
@@ -1227,7 +1225,7 @@ async fn render_scope_view(
             };
             (cli_panel(std::slice::from_ref(&cli)))
         },
-        None,
+        Some(view_count),
         theme_from_jar(&jar),
         &theme_next_from_uri(&uri),
         Some(&garden_room),

@@ -9,8 +9,9 @@ use maud::{html, Markup};
 use serde::Deserialize;
 
 use crate::{
-    api::{validate_ingest_document, resolve_item},
+    api::{resolve_item, validate_ingest_document},
     html::JsBuilder,
+    middleware::canonical_view_url,
     reducer::ScopeId,
     state::AppState,
 };
@@ -25,7 +26,10 @@ fn bc_try() -> Markup {
 }
 
 /// The interactive editor page — `/try`.
-pub async fn editor_page(jar: CookieJar, uri: Uri) -> impl IntoResponse {
+pub async fn editor_page(State(state): State<AppState>, jar: CookieJar, uri: Uri) -> impl IntoResponse {
+    let url_key = canonical_view_url(&uri);
+    let view_count = state.views.get_views(&url_key);
+
     let page = layout(
         "try — slug.social",
         "view-thread",
@@ -41,7 +45,7 @@ pub async fn editor_page(jar: CookieJar, uri: Uri) -> impl IntoResponse {
                 div id="editor-results" {}
             }
         },
-        None,
+        Some(view_count),
         theme_from_jar(&jar),
         &theme_next_from_uri(&uri),
         None,

@@ -8,6 +8,7 @@ use maud::html;
 
 use crate::api::optional_principal;
 use crate::canonical_path::canonicalize_tag;
+use crate::middleware::canonical_view_url;
 use crate::reducer::ScopeId;
 use crate::state::AppState;
 
@@ -70,6 +71,9 @@ async fn thread_post_view_inner(
         }
     };
 
+    let url_key = canonical_view_url(&uri);
+    let view_count = state.views.get_views(&url_key);
+
     let page = layout(
         &format!("#{tag} / post #{index}"),
         "view-thread",
@@ -87,7 +91,7 @@ async fn thread_post_view_inner(
                 p class="muted" { "post not found" }
             }
         },
-        None,
+        Some(view_count),
         theme_from_jar(&jar),
         &theme_next_from_uri(&uri),
         None,

@@ -67,6 +67,7 @@ pub struct AppState {
     pub js_tx: broadcast::Sender<JsSnippet>,
     /// All durable writes and reducer mutations are serialized through this channel.
     pub write_tx: mpsc::Sender<WriteCmd>,
+    pub views: crate::views::ViewStore,
 }
 
 impl AppState {
@@ -81,6 +82,8 @@ impl AppState {
         let event_log = EventLog::new(cfg.event_log_path.clone());
         let (stream_tx, _) = broadcast::channel(64);
         let (js_tx, _) = broadcast::channel(64);
+        let views_path = format!("{}/views.json", cfg.data_dir);
+        let views = crate::views::ViewStore::new(&views_path);
         Self {
             cfg: Arc::new(cfg),
             event_log: Arc::new(event_log),
@@ -90,6 +93,7 @@ impl AppState {
             stream_tx,
             js_tx,
             write_tx,
+            views,
         }
     }
 }
