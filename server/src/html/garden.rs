@@ -1300,10 +1300,6 @@ async fn vote_compare_inner(
             div id="vote-edge-history-region" {
                 (edge_history)
             }
-            div class="vote-compare-preview-wrap" {
-                h3 { "your vote (after post)" }
-                div id="vote-compare-preview" class="vote-compare-preview" {}
-            }
             @if can_post {
                 form id="vote-compare-form" method="POST" action="/ui" {
                     input type="hidden" name=(UI_RPC_FIELD) value=(rpc_json);
