@@ -1454,8 +1454,8 @@ mod tests {
              ~/topic {root}\n\
              ~/topic/a {alpha}\n\
              ~/topic/b {beta}\n\
-             ~/topic/a 1:9 ~/topic/b {weak for a}\n\
-             ~/topic/a 8:2 ~/topic/b {strong for a}\n",
+             {weak for a}\n             ~/topic/a 1:9 ~/topic/b\n\
+             {strong for a}\n             ~/topic/a 8:2 ~/topic/b\n",
         );
         let content = content_for_garden_view(&reduced, &ScopeId::Public);
         let page_left = ItemId::parse("~/topic/a").unwrap().normalized_storage();
@@ -1483,8 +1483,10 @@ mod tests {
              ~/topic {root}\n\
              ~/topic/a {alpha}\n\
              ~/topic/b {beta}\n\
-             ~/topic/a 3:2 ~/topic/b {first vote}\n\
-             ~/topic/b 2:3 ~/topic/a {second vote}\n",
+             {first vote}\n\
+             ~/topic/a 3:2 ~/topic/b\n\
+             {second vote}\n\
+             ~/topic/b 2:3 ~/topic/a\n",
         );
         let content = content_for_garden_view(&reduced, &ScopeId::Public);
         let a = ItemId::parse("~/topic/a").unwrap().normalized_storage();
@@ -1525,7 +1527,7 @@ mod tests {
              ~/topic/a {alpha}\n\
              ~/topic/b {beta}\n\
              ~/topic/c {gamma}\n\
-             ~/topic/a 2:1 ~/topic/b {a beats b}\n",
+             {a beats b}\n             ~/topic/a 2:1 ~/topic/b\n",
         );
 
         let model = build_item_page_view_model(&reduced, &ScopeId::Public, "~/topic/a");
@@ -1545,7 +1547,7 @@ mod tests {
              ~/topic {root}\n\
              ~/topic/a {alpha}\n\
              ~/topic/b {beta}\n\
-             ~/topic/a 3:1 ~/topic/b {a beats b}\n\
+             {a beats b}\n             ~/topic/a 3:1 ~/topic/b\n\
              ~/topic/kid1 {k1}\n\
              ~/topic/kid2 {k2}\n\
              ~/topic/kid1/leaf {leaf}\n",
@@ -1616,7 +1618,7 @@ mod tests {
             1,
             "9ab12cd/my-room",
             "@00000000-0000-0000-0000-000000000000:test:local/test\n\
-             ~/a {a}\n~/b {b}\n~/a 2:1 ~/b {because}\n",
+             ~/a {a}\n~/b {b}\n{because}\n~/a 2:1 ~/b\n",
         );
         use crate::path_types::ItemId;
         let root = ItemId::ontology_root();

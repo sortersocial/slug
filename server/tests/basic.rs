@@ -31,7 +31,7 @@ fn ingest_event(ts: i64, raw: &str) -> Event {
 
 fn vote_doc(tag: &str, a: &str, b: &str, left: i32, right: i32) -> String {
     format!(
-        "~/{tag}/{a} {{body a}}\n~/{tag}/{b} {{body b}}\n~/{tag}/{a} {left}:{right} ~/{tag}/{b} {{because test}}\n"
+        "~/{tag}/{a} {{body a}}\n~/{tag}/{b} {{body b}}\n{{because test}}\n~/{tag}/{a} {left}:{right} ~/{tag}/{b}\n"
     )
 }
 
@@ -47,7 +47,7 @@ fn reducer_external_namespace_ranking() {
         "@00000000-0000-0000-0000-000000000000:test:local/test\n\
          -/github.com/iss/1 { one }\n\
          -/github.com/iss/2 { two }\n\
-         -/github.com/iss/1 2:1 -/github.com/iss/2 { because }\n",
+         { because }\n         -/github.com/iss/1 2:1 -/github.com/iss/2\n",
     ));
 
     let content = state.public();
@@ -77,9 +77,9 @@ fn reducer_and_ranking_linear_chain() {
     let mut state = ReducerState::default();
 
     // First ingest: define items + vote a > b.
-    state.apply_event(ingest_event(1, "~/t/a {a}\n~/t/b {b}\n~/t/a 3:1 ~/t/b {because}\n"));
+    state.apply_event(ingest_event(1, "~/t/a {a}\n~/t/b {b}\n{because}\n~/t/a 3:1 ~/t/b\n"));
     // Second ingest: define c + vote b > c.
-    state.apply_event(ingest_event(2, "~/t/c {c}\n~/t/b 3:1 ~/t/c {because}\n"));
+    state.apply_event(ingest_event(2, "~/t/c {c}\n{because}\n~/t/b 3:1 ~/t/c\n"));
 
     let mut group = state.public().ranking_group.clone();
     let ranked = ranked_items(&mut group, 20000, 1e-9);
@@ -96,15 +96,15 @@ fn reducer_canonicalizes_identifiers() {
     // Mix of formats across ingests (case + sigils).
     state.apply_event(ingest_event(
         1,
-        "~/Tag/Item-A {x}\n~/Tag/Item-B {y}\n~/Tag/Item-A 2:1 ~/Tag/Item-B {because}\n",
+        "~/Tag/Item-A {x}\n~/Tag/Item-B {y}\n{because}\n~/Tag/Item-A 2:1 ~/Tag/Item-B\n",
     ));
     state.apply_event(ingest_event(
         2,
-        "~/TAG/ITEM-A 2:1 ~/TAG/ITEM-B {because}\n",
+        "{because}\n~/TAG/ITEM-A 2:1 ~/TAG/ITEM-B\n",
     ));
     state.apply_event(ingest_event(
         3,
-        "~/tag/item-a 2:1 ~/tag/item-b {because}\n",
+        "{because}\n~/tag/item-a 2:1 ~/tag/item-b\n",
     ));
 
     assert_eq!(state.public().ranking_group.idx_to_item.len(), 2); // Should dedupe to 2 items
@@ -135,7 +135,7 @@ fn reducer_handles_item_and_body_from_ingest() {
 fn reducer_indexes_item_threads_and_vote_thread() {
     let mut state = ReducerState::default();
     // Thread routing is metadata (ingest.thread_tag), not parsed from raw.
-    let mut ev = match ingest_event(1, "~/sorts/insertion { O(n^2) }\n~/sorts/mergesort { O(n log n) }\n~/sorts/insertion 3:1 ~/sorts/mergesort { simpler for small n }\n") {
+    let mut ev = match ingest_event(1, "~/sorts/insertion { O(n^2) }\n~/sorts/mergesort { O(n log n) }\n{ simpler for small n }\n~/sorts/insertion 3:1 ~/sorts/mergesort\n") {
         Event::Ingest(i) => i,
         _ => unreachable!(),
     };
@@ -175,11 +175,11 @@ fn reducer_clamps_score_bounds() {
     let mut state = ReducerState::default();
     state.apply_event(ingest_event(
         1,
-        "@00000000-0000-0000-0000-000000000000:test:local/test\n~/t/a {a}\n~/t/b {b}\n~/t/a 1000:1 ~/t/b {huge}\n",
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n~/t/a {a}\n~/t/b {b}\n{huge}\n~/t/a 1000:1 ~/t/b\n",
     ));
     state.apply_event(ingest_event(
         2,
-        "@00000000-0000-0000-0000-000000000000:test:local/test\n~/t/a 1:1000 ~/t/b {huge}\n",
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n{huge}\n~/t/a 1:1000 ~/t/b\n",
     ));
 
     assert_eq!(state.public().ranking_group.idx_to_item.len(), 2); // Should still work, scores clamped internally
@@ -195,15 +195,15 @@ fn ranking_cycle_is_nearly_equal() {
     let mut state = ReducerState::default();
     state.apply_event(ingest_event(
         1,
-        "@00000000-0000-0000-0000-000000000000:test:local/test\n~/rps/rock {r}\n~/rps/scissors {s}\n~/rps/rock 3:1 ~/rps/scissors {because}\n",
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n~/rps/rock {r}\n~/rps/scissors {s}\n{because}\n~/rps/rock 3:1 ~/rps/scissors\n",
     ));
     state.apply_event(ingest_event(
         2,
-        "@00000000-0000-0000-0000-000000000000:test:local/test\n~/rps/paper {p}\n~/rps/scissors 3:1 ~/rps/paper {because}\n",
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n~/rps/paper {p}\n{because}\n~/rps/scissors 3:1 ~/rps/paper\n",
     ));
     state.apply_event(ingest_event(
         3,
-        "@00000000-0000-0000-0000-000000000000:test:local/test\n~/rps/paper 3:1 ~/rps/rock {because}\n",
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n{because}\n~/rps/paper 3:1 ~/rps/rock\n",
     ));
 
     let mut group = state.public().ranking_group.clone();
@@ -233,7 +233,7 @@ fn ranking_dominant_item_wins() {
     let mut state = ReducerState::default();
     state.apply_event(ingest_event(
         1,
-        "@00000000-0000-0000-0000-000000000000:test:local/test\n~/t/champion {c}\n~/t/b {b}\n~/t/c {c}\n~/t/d {d}\n~/t/champion 10:1 ~/t/b {because}\n~/t/champion 10:1 ~/t/c {because}\n~/t/champion 10:1 ~/t/d {because}\n~/t/b 2:1 ~/t/c {because}\n~/t/c 2:1 ~/t/d {because}\n",
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n~/t/champion {c}\n~/t/b {b}\n~/t/c {c}\n~/t/d {d}\n{because}\n~/t/champion 10:1 ~/t/b\n{because}\n~/t/champion 10:1 ~/t/c\n{because}\n~/t/champion 10:1 ~/t/d\n{because}\n~/t/b 2:1 ~/t/c\n{because}\n~/t/c 2:1 ~/t/d\n",
     ));
 
     let mut group = state.public().ranking_group.clone();
@@ -248,7 +248,7 @@ fn ranking_neutral_votes_produce_equal_scores() {
     let mut state = ReducerState::default();
     state.apply_event(ingest_event(
         1,
-        "@00000000-0000-0000-0000-000000000000:test:local/test\n~/t/a {a}\n~/t/b {b}\n~/t/c {c}\n~/t/a 1:1 ~/t/b {neutral}\n~/t/b 1:1 ~/t/c {neutral}\n~/t/c 1:1 ~/t/a {neutral}\n",
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n~/t/a {a}\n~/t/b {b}\n~/t/c {c}\n{neutral}\n~/t/a 1:1 ~/t/b\n{neutral}\n~/t/b 1:1 ~/t/c\n{neutral}\n~/t/c 1:1 ~/t/a\n",
     ));
 
     let mut group = state.public().ranking_group.clone();
@@ -301,8 +301,8 @@ async fn event_log_append_and_load() {
     let log = EventLog::new(log_path);
 
     let events = vec![
-        ingest_event(1, "~/a {x}\n~/b {y}\n~/a 2:1 ~/b {because}\n"),
-        ingest_event(2, "~/b 3:1 ~/c {because}\n"),
+        ingest_event(1, "~/a {x}\n~/b {y}\n{because}\n~/a 2:1 ~/b\n"),
+        ingest_event(2, "{because}\n~/b 3:1 ~/c\n"),
     ];
 
     for ev in &events {
@@ -323,7 +323,7 @@ async fn event_log_handles_corrupt_lines() {
     let log = EventLog::new(&log_path);
 
     // Write valid events using the log itself, then manually corrupt one line.
-    log.append(&ingest_event(1, "~/a {x}\n~/b {y}\n~/a 2:1 ~/b {because}\n"))
+    log.append(&ingest_event(1, "~/a {x}\n~/b {y}\n{because}\n~/a 2:1 ~/b\n"))
         .await
         .unwrap();
 
@@ -332,7 +332,7 @@ async fn event_log_handles_corrupt_lines() {
     let mut f = fs::OpenOptions::new().append(true).open(&log_path).unwrap();
     writeln!(f, "not json at all").unwrap();
 
-    log.append(&ingest_event(2, "~/b 3:1 ~/c {because}\n"))
+    log.append(&ingest_event(2, "{because}\n~/b 3:1 ~/c\n"))
         .await
         .unwrap();
 
@@ -351,7 +351,7 @@ async fn event_log_creates_parent_dirs() {
     let log_path = tmp.path().join("subdir").join("nested").join("events.jsonl");
     let log = EventLog::new(&log_path);
 
-    log.append(&ingest_event(1, "~/a {x}\n~/b {y}\n~/a 2:1 ~/b {because}\n"))
+    log.append(&ingest_event(1, "~/a {x}\n~/b {y}\n{because}\n~/a 2:1 ~/b\n"))
         .await
         .unwrap();
     assert!(log_path.exists());
@@ -379,7 +379,7 @@ async fn full_workflow_reducer_and_ranking() {
 
     state.apply_event(ingest_event(
         1,
-        "~/langs/rust {Systems language}\n~/langs/go {Simple concurrency}\n~/langs/rust 3:1 ~/langs/go {because}\n",
+        "~/langs/rust {Systems language}\n~/langs/go {Simple concurrency}\n{because}\n~/langs/rust 3:1 ~/langs/go\n",
     ));
 
     let mut group = state.public().ranking_group.clone();
@@ -452,21 +452,21 @@ fn ranking_repeated_votes_normalized() {
     let mut state_once = ReducerState::default();
     state_once.apply_event(ingest_event(
         1,
-        "~/norm/a {a}\n~/norm/b {b}\n~/norm/a 3:1 ~/norm/b {vote}\n",
+        "~/norm/a {a}\n~/norm/b {b}\n{vote}\n~/norm/a 3:1 ~/norm/b\n",
     ));
 
     let mut state_many = ReducerState::default();
     state_many.apply_event(ingest_event(
         1,
-        "~/norm/a {a}\n~/norm/b {b}\n~/norm/a 3:1 ~/norm/b {vote1}\n",
+        "~/norm/a {a}\n~/norm/b {b}\n{vote1}\n~/norm/a 3:1 ~/norm/b\n",
     ));
     state_many.apply_event(ingest_event(
         2,
-        "~/norm/a 3:1 ~/norm/b {vote2}\n",
+        "{vote2}\n~/norm/a 3:1 ~/norm/b\n",
     ));
     state_many.apply_event(ingest_event(
         3,
-        "~/norm/a 3:1 ~/norm/b {vote3}\n",
+        "{vote3}\n~/norm/a 3:1 ~/norm/b\n",
     ));
 
     let mut group_once = state_once.public().ranking_group.clone();
@@ -508,7 +508,7 @@ fn reducer_malformed_ingest_is_skipped_no_panic() {
 #[test]
 fn dsl_parse_rejects_zero_zero_vote_ratio() {
     let err = slugsocial_server::dsl::parse_full(
-        "~/t/a {a}\n~/t/b {b}\n~/t/a 0:0 ~/t/b {zero}\n",
+        "~/t/a {a}\n~/t/b {b}\n{zero}\n~/t/a 0:0 ~/t/b\n",
     )
     .expect_err("0:0 vote must be rejected by the parser");
     let msg = match err {
@@ -522,7 +522,7 @@ fn dsl_parse_rejects_zero_zero_vote_ratio() {
     let mut state = ReducerState::default();
     state.apply_event(ingest_event(
         1,
-        "~/t/a {a}\n~/t/b {b}\n~/t/a 0:0 ~/t/b {zero}\n",
+        "~/t/a {a}\n~/t/b {b}\n{zero}\n~/t/a 0:0 ~/t/b\n",
     ));
     let content = state.public();
     assert!(
@@ -620,7 +620,7 @@ fn ranking_convergence_tolerance_triggers_early_exit() {
     let mut state = ReducerState::default();
     state.apply_event(ingest_event(
         1,
-        "~/t/a {a}\n~/t/b {b}\n~/t/a 3:1 ~/t/b {because}\n",
+        "~/t/a {a}\n~/t/b {b}\n{because}\n~/t/a 3:1 ~/t/b\n",
     ));
     let mut group = state.public().ranking_group.clone();
     // Very tight tolerance but huge max_iters — should still converge fast
@@ -742,7 +742,7 @@ fn test_thread_timestamp_bump() {
 #[test]
 fn test_thread_id_is_used_for_votes_and_indexes() {
     let mut state = ReducerState::default();
-    let mut ev = match ingest_event(1, "~/t/a {a}\n~/t/b {b}\n~/t/a 2:1 ~/t/b {reason}\n") {
+    let mut ev = match ingest_event(1, "~/t/a {a}\n~/t/b {b}\n{reason}\n~/t/a 2:1 ~/t/b\n") {
         Event::Ingest(i) => i,
         _ => unreachable!(),
     };
@@ -770,7 +770,7 @@ fn test_rank_history_created_for_voted_items() {
     let mut state = ReducerState::default();
     state.apply_event(ingest_event(
         1,
-        "~/t/a {a}\n~/t/b {b}\n~/t/a 3:1 ~/t/b {reason}\n",
+        "~/t/a {a}\n~/t/b {b}\n{reason}\n~/t/a 3:1 ~/t/b\n",
     ));
     assert!(
         state.public().rank_history.contains_key(&item_id("https://slug.social/~/t/a")),
@@ -800,7 +800,7 @@ fn test_rank_history_first_entry_delta_zero() {
     let mut state = ReducerState::default();
     state.apply_event(ingest_event(
         1,
-        "~/t/a {a}\n~/t/b {b}\n~/t/a 3:1 ~/t/b {reason}\n",
+        "~/t/a {a}\n~/t/b {b}\n{reason}\n~/t/a 3:1 ~/t/b\n",
     ));
     let history_a = state.public().rank_history.get(&item_id("https://slug.social/~/t/a")).unwrap();
     assert_eq!(history_a.len(), 1);

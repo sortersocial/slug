@@ -63,11 +63,11 @@
            text-first (str "# " thread-tag "\n\n"
                            "~/rix/a {alpha}\n"
                            "~/rix/b {beta}\n"
-                           "~/rix/a 2:1 ~/rix/b {browser redact thread idx post one}\n")
+                           "{browser redact thread idx post one}\n~/rix/a 2:1 ~/rix/b\n")
            text-second (str "# " thread-tag "\n\n"
                             "~/rix/c {gamma}\n"
                             "~/rix/d {delta}\n"
-                            "~/rix/c 2:1 ~/rix/d {browser redact thread idx post two}\n")
+                            "{browser redact thread idx post two}\n~/rix/c 2:1 ~/rix/d\n")
            _ (is (true? (get-in (json/parse-string
                                  (:body (oauth/http-post-json
                                          (str base-url "/api/v0/rpc")

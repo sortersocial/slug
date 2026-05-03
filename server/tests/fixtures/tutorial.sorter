@@ -15,9 +15,9 @@ subsequent items will be catalogued in the index under this context.
 
 We are in a tag, now let's declare an item.
 
-~/alphabet/a
+~/alphabet/a {the letter a}
 
-~/alphabet/b
+~/alphabet/b {the letter b}
 
 The prefix `~/` denotes, when the first characters on a line, the beginning
 of the title of an ontology item (the garden layer).
@@ -25,7 +25,8 @@ Now we have two discrete, addressable items. Imagine two dots floating on a
 2d plane.
 Now let's draw a line segment between the two dots.
 
-~/alphabet/a 2:1 ~/alphabet/b {a edges out b in this ranking}
+{a edges out b in this ranking}
+~/alphabet/a 2:1 ~/alphabet/b
 
 
 We have asserted that ~/alphabet/a wins over ~/alphabet/b, winning 66% of that matchup.
@@ -35,12 +36,13 @@ From this assertion we derive the ranking:
 2) ~/alphabet/b
 
 If we were to send this email right now, we could view the ranking at
-https://slug.social/~/alphabet
+the URL https://slug.social/~/alphabet
 Easy enough.
 
-~/alphabet/c
+~/alphabet/c {the letter c}
 
-~/alphabet/a 3:1 ~/alphabet/c {a strongly preferred to c here}
+{a strongly preferred to c here}
+~/alphabet/a 3:1 ~/alphabet/c
 Now the ranking is
 
 1) ~/alphabet/a
@@ -102,20 +104,24 @@ Sorter is proprietary, trying to become a venture scale business.
 Now we have six dots swimming around. Lets order them.
 
 truth
-~/sorter-properties/collective = ~/sorter-properties/asynchronous {roughly equally important}
-~/sorter-properties/asynchronous = ~/sorter-properties/precise {roughly equally important}
-~/sorter-properties/precise = ~/sorter-properties/transitive {roughly equally important}
+{roughly equally important}
+~/sorter-properties/collective = ~/sorter-properties/asynchronous
+{roughly equally important}
+~/sorter-properties/asynchronous = ~/sorter-properties/precise
+{roughly equally important}
+~/sorter-properties/precise = ~/sorter-properties/transitive
 
 All equally, absolutely true.
 
-~/sorter-properties/asynchronous 10:1 ~/sorter-properties/new {
+{
 Sorter is certainly asynchronous.
 There have been many explorations of the core sorter idea. Pairwise
 comparisons have been studied for decades. Conjoint analysis. HotOrNot.
 Sorter is just one iteration of the human desire to rank things collectively
 }
+~/sorter-properties/asynchronous 10:1 ~/sorter-properties/new
 
-~/sorter-properties/new 100:1 ~/sorter-properties/proprietary {
+{
 There are some new things about sorter. The backwards compatible with prose
 syntax.
 The synthesis of email-first, rank-centrality, and social platform. So
@@ -124,6 +130,7 @@ But sorter is absolutely not ~/sorter-properties/proprietary. Sorter is open sou
 github.com/sortersocial/index
 Therefore, ~/sorter-properties/proprietary is banished 100:1 to the false end of the spectrum.
 }
+~/sorter-properties/new 100:1 ~/sorter-properties/proprietary
 
 In sorter, there are no binaries. Everything is a spectrum, including
 truth.
@@ -131,11 +138,17 @@ truth.
 The most important thing, in my mind, about sorter is that it’s collective.
 
 important
-~/sorter-properties/collective 100:20 ~/sorter-properties/asynchronous { sorter would still be cool if it was
-live }
-~/sorter-properties/collective 100:90 ~/sorter-properties/precise { precise thinking is good too }
-~/sorter-properties/collective 100:90 ~/sorter-properties/transitive { transitivity enables collectivity }
-~/sorter-properties/collective 100:10 ~/sorter-properties/new { other iterations of sorter were good too }
+{
+sorter would still be cool if it was
+live
+}
+~/sorter-properties/collective 100:20 ~/sorter-properties/asynchronous
+{ precise thinking is good too }
+~/sorter-properties/collective 100:90 ~/sorter-properties/precise
+{ transitivity enables collectivity }
+~/sorter-properties/collective 100:90 ~/sorter-properties/transitive
+{ other iterations of sorter were good too }
+~/sorter-properties/collective 100:10 ~/sorter-properties/new
 
 
 Any other person could add to or vote on #sorter-properties, this is just

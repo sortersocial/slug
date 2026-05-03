@@ -49,7 +49,7 @@
                            "capabilities" ["view" "post" "vote" "add_item"]}}]))
     (let [wall-text (str "Walkthrough seed — multi-paragraph stress test.\n\n"
                          "Second paragraph: the garden holds ~/secret/item and ~/secret/other. "
-                         "Votes like ~/secret/item 3:1 ~/secret/other {because} should still parse.\n\n"
+                         "Votes like {because}\\n~/secret/item 3:1 ~/secret/other should parse.\n\n"
                          "Third block: lorem-style filler so wrapping and vertical rhythm are obvious. "
                          "We want enough prose that the thread view scrolls and pre blocks show overflow "
                          "behavior (long lines, slug links, embed URLs) without looking like toy data.\n\n"
@@ -58,7 +58,7 @@
                          "https://open.spotify.com/track/4iV5W9uYEdYUVa79Axb7U9 https://www.youtube.com/watch?v=dQw4w9WgXcQ\n\n"
                          "~/secret/item {classified}\n"
                          "~/secret/other {secondary}\n"
-                         "~/secret/item 3:1 ~/secret/other {because}\n")
+                         "{because}\n~/secret/item 3:1 ~/secret/other\n")
           rpc (json/generate-string
                 {:action "post_ingest"
                  :room room-id

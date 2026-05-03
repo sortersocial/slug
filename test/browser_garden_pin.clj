@@ -60,7 +60,8 @@
            raw (str "# " thread-tag "\n\n"
                     "~/gp-pin-a {alpha}\n"
                     "~/gp-pin-b {beta}\n"
-                    "~/gp-pin-a 2:1 ~/gp-pin-b {pin test vote}\n")
+                    "{pin test vote}\n"
+                    "~/gp-pin-a 2:1 ~/gp-pin-b\n")
            post-resp (oauth/http-post-json
                       (str base-url "/api/v0/rpc")
                       [{"Post" {"room" "public"

@@ -11,16 +11,21 @@ pub struct Document {
 /// A single statement in the DSL (or prose when using `parse_full`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Stmt {
-    Item { title: String, body: Option<String> },
+    Item {
+        title: String,
+        body: Option<String>,
+    },
     Vote {
         item1: String,
         item2: String,
         ratio_left: i32,
         ratio_right: i32,
-        /// Required non-empty explanation (from trailing `{ ... }`).
+        /// Required non-empty explanation (from leading `{ ... }`).
         explanation: String,
     },
-    Prose { text: String },
+    Prose {
+        text: String,
+    },
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -391,71 +396,46 @@ fn parse_comparison_at(s: &str, i: usize) -> Option<((i32, i32), usize)> {
     Some(((left, right), j))
 }
 
-fn parse_item_statement(stripped: &str, masker: &BlockMasker) -> Result<Stmt, DslError> {
-    // item: ("~/" | "https://..." | "http://...") item_ref body?
-    // vote: same for both operands.
-    //
-    // Important: body token can be adjacent to the item name (no whitespace),
-    // e.g. "~/arrived{...}" -> "~/arrived__BLOCK_x__".
-    let s = stripped;
-    let bytes = s.as_bytes();
-    if bytes.is_empty() {
-        return Err(DslError::Parse("missing item statement".to_string()));
+fn parse_block_prefixed_statement(
+    block_token: &str,
+    tail: &str,
+    masker: &BlockMasker,
+) -> Result<Stmt, DslError> {
+    // vote: block item_ref comparison item_ref
+    let s = tail.trim_start();
+    if s.is_empty() {
+        return Err(DslError::Parse(
+            "missing vote statement after leading explanation block".to_string(),
+        ));
     }
 
     let (item1, j) =
         parse_item_name_at(s, 0).ok_or_else(|| DslError::Parse("invalid item name".to_string()))?;
+    let explanation = masker.extract_body(block_token);
+    let mut i = skip_ws(s, j);
 
-    // Either we have:
-    // - immediate/whitespace block token => Item
-    // - comparison => Vote
-    // - whitespace then block token => Item
-    // - whitespace then comparison => Vote
-    let i = skip_ws(s, j);
-
-    // If next is end or a block token => Item.
     if i >= s.len() {
-        return Ok(Stmt::Item {
-            title: item1,
-            body: None,
-        });
-    }
-    if let Some((tok, end)) = parse_block_token_at(s, i) {
-        let body = masker.extract_body(&tok);
-        let tail = s[end..].trim();
-        if !tail.is_empty() {
-            return Err(DslError::Parse("extra tokens after item".to_string()));
-        }
-        return Ok(Stmt::Item {
-            title: item1,
-            body: Some(body),
-        });
+        return Err(DslError::Parse(
+            "leading `{ ... }` blocks are vote explanations; item bodies belong after item paths"
+                .to_string(),
+        ));
     }
 
-    // Otherwise parse comparison then "/item2" then REQUIRED body.
-    let ((ratio_left, ratio_right), mut k) = parse_comparison_at(s, i)
+    let ((ratio_left, ratio_right), k) = parse_comparison_at(s, i)
         .ok_or_else(|| DslError::Parse(format!("invalid comparison near: {}", &s[i..])))?;
     if ratio_left == 0 && ratio_right == 0 {
         return Err(DslError::Parse(
             "vote ratio 0:0 is invalid; use 1:1 for a tie or omit the vote".to_string(),
         ));
     }
-    k = skip_ws(s, k);
-    let (item2, mut m) = parse_item_name_at(s, k)
+    i = skip_ws(s, k);
+    let (item2, m) = parse_item_name_at(s, i)
         .ok_or_else(|| DslError::Parse("invalid rhs item name".to_string()))?;
-    m = skip_ws(s, m);
-
-    let Some((tok, end)) = parse_block_token_at(s, m) else {
-        return Err(DslError::Parse(
-            "missing vote explanation (add a trailing `{ ... }`)".to_string(),
-        ));
-    };
-    let explanation = masker.extract_body(&tok);
+    i = skip_ws(s, m);
     if explanation.trim().is_empty() {
         return Err(DslError::Parse("empty vote explanation".to_string()));
     }
-    m = end;
-    let tail = s[m..].trim();
+    let tail = s[i..].trim();
     if !tail.is_empty() {
         return Err(DslError::Parse("extra tokens after vote".to_string()));
     }
@@ -469,6 +449,35 @@ fn parse_item_statement(stripped: &str, masker: &BlockMasker) -> Result<Stmt, Ds
     })
 }
 
+fn parse_item_definition_statement(stripped: &str, masker: &BlockMasker) -> Result<Stmt, DslError> {
+    let (item1, j) =
+        parse_item_name_at(stripped, 0).ok_or_else(|| DslError::Parse("invalid item name".to_string()))?;
+    let i = skip_ws(stripped, j);
+
+    if i >= stripped.len() {
+        return Ok(Stmt::Item {
+            title: item1,
+            body: None,
+        });
+    }
+
+    if let Some((tok, end)) = parse_block_token_at(stripped, i) {
+        let body = masker.extract_body(&tok);
+        let tail = stripped[end..].trim();
+        if !tail.is_empty() {
+            return Err(DslError::Parse("extra tokens after item".to_string()));
+        }
+        return Ok(Stmt::Item {
+            title: item1,
+            body: Some(body),
+        });
+    }
+
+    Err(DslError::Parse(
+        "vote explanations must start with a `{ ... }` block before the comparison".to_string(),
+    ))
+}
+
 fn parse_line(masked_line: &str, masker: &BlockMasker) -> Result<Vec<Stmt>, DslError> {
     let stripped = masked_line.trim_start();
     if stripped.is_empty() {
@@ -477,27 +486,28 @@ fn parse_line(masked_line: &str, masker: &BlockMasker) -> Result<Vec<Stmt>, DslE
     let first = stripped.chars().next().unwrap();
     match first {
         '#' => Err(DslError::Parse("not a DSL line".to_string())),
-        ':' => Err(DslError::Parse(
-            "leading ':' is not supported".to_string(),
-        )),
+        ':' => Err(DslError::Parse("leading ':' is not supported".to_string())),
         '@' => Err(DslError::Parse("not a DSL line".to_string())),
-        '/' => Err(DslError::Parse(
-            "item paths must use `~/` (e.g. `~/languages/python`), not a leading `/`"
-                .to_string(),
-        )),
-        '~' => {
-            Ok(vec![parse_item_statement(stripped, masker)?])
+        '_' => {
+            let Some((tok, end)) = parse_block_token_at(stripped, 0) else {
+                return Err(DslError::Parse("not a DSL line".to_string()));
+            };
+            parse_block_prefixed_statement(&tok, &stripped[end..], masker).map(|stmt| vec![stmt])
         }
+        '/' => Err(DslError::Parse(
+            "item paths must use `~/` (e.g. `~/languages/python`), not a leading `/`".to_string(),
+        )),
+        '~' => Ok(vec![parse_item_definition_statement(stripped, masker)?]),
         'h' => {
             if stripped.starts_with("https://") || stripped.starts_with("http://") {
-                Ok(vec![parse_item_statement(stripped, masker)?])
+                Ok(vec![parse_item_definition_statement(stripped, masker)?])
             } else {
                 Err(DslError::Parse("not a DSL line".to_string()))
             }
         }
         '-' => {
             if stripped.starts_with("-/") {
-                Ok(vec![parse_item_statement(stripped, masker)?])
+                Ok(vec![parse_item_definition_statement(stripped, masker)?])
             } else {
                 Err(DslError::Parse("not a DSL line".to_string()))
             }
@@ -516,6 +526,7 @@ pub fn parse_full(text: &str) -> Result<Document, DslError> {
     let (masker, masked) = mask_all(BlockMasker::new(), text);
     let mut statements: Vec<Stmt> = Vec::new();
     let mut prose_buffer: Vec<&str> = Vec::new();
+    let mut pending_block: Option<String> = None;
 
     let flush_prose = |buf: &mut Vec<&str>, out: &mut Vec<Stmt>, masker: &BlockMasker| {
         if buf.is_empty() {
@@ -529,11 +540,29 @@ pub fn parse_full(text: &str) -> Result<Document, DslError> {
 
     for line in masked.split('\n') {
         let stripped = line.trim_start();
+        if let Some(tok) = pending_block.as_ref() {
+            if stripped.is_empty() {
+                continue;
+            }
+            if stripped.starts_with("-/")
+                || stripped.starts_with("~/")
+                || stripped.starts_with("https://")
+                || stripped.starts_with("http://")
+            {
+                statements.push(parse_block_prefixed_statement(tok, stripped, &masker)?);
+                pending_block = None;
+                continue;
+            }
+            return Err(DslError::Parse(
+                "expected vote statement after leading explanation block".to_string(),
+            ));
+        }
+
         if !stripped.is_empty()
             && (stripped.starts_with("-/")
                 || {
                     let c = stripped.chars().next().unwrap();
-                    ":/!~".contains(c)
+                    ":/!~_".contains(c)
                 }
                 || stripped.starts_with("https://")
                 || stripped.starts_with("http://"))
@@ -541,11 +570,24 @@ pub fn parse_full(text: &str) -> Result<Document, DslError> {
             // Flush prose buffer first
             flush_prose(&mut prose_buffer, &mut statements, &masker);
 
+            if let Some((tok, end)) = parse_block_token_at(stripped, 0) {
+                if stripped[end..].trim().is_empty() {
+                    pending_block = Some(tok);
+                    continue;
+                }
+            }
+
             // Parse DSL line; DSL statements are not prose, so errors should propagate.
             statements.extend(parse_line(line, &masker)?);
         } else {
             prose_buffer.push(line);
         }
+    }
+
+    if pending_block.is_some() {
+        return Err(DslError::Parse(
+            "missing vote statement after leading explanation block".to_string(),
+        ));
     }
 
     // Final flush
@@ -592,7 +634,7 @@ mod tests {
 
     #[test]
     fn parse_vote_ratio_and_symbols() {
-        let d1 = parse_full("~/a 3:1 ~/b {because}").unwrap();
+        let d1 = parse_full("{because}\n~/a 3:1 ~/b").unwrap();
         assert_eq!(
             d1.statements,
             vec![Stmt::Vote {
@@ -604,7 +646,7 @@ mod tests {
             }]
         );
 
-        let d2 = parse_full("~/a > ~/b {because}").unwrap();
+        let d2 = parse_full("{because}\n~/a > ~/b").unwrap();
         assert_eq!(
             d2.statements,
             vec![Stmt::Vote {
@@ -616,7 +658,7 @@ mod tests {
             }]
         );
 
-        let d3 = parse_full("~/a = ~/b {because}").unwrap();
+        let d3 = parse_full("{because}\n~/a = ~/b").unwrap();
         assert_eq!(
             d3.statements,
             vec![Stmt::Vote {
@@ -631,7 +673,7 @@ mod tests {
 
     #[test]
     fn parse_vote_rejects_zero_zero_ratio() {
-        let err = parse_full("~/a 0:0 ~/b {tie placeholder}").unwrap_err();
+        let err = parse_full("{tie placeholder}\n~/a 0:0 ~/b").unwrap_err();
         let msg = match err {
             DslError::Parse(m) => m,
         };
@@ -667,8 +709,8 @@ mod tests {
     }
 
     #[test]
-    fn parse_vote_with_attached_body_without_space() {
-        let input = "~/a 2:1 ~/b{because}";
+    fn parse_vote_with_attached_explanation_without_space() {
+        let input = "{because}~/a 2:1 ~/b";
         let doc = parse_full(input).unwrap();
         assert_eq!(
             doc.statements,
@@ -697,7 +739,7 @@ mod tests {
 
     #[test]
     fn parse_nested_path_vote() {
-        let input = "~/whitepaper/a 3:1 ~/whitepaper/b { because }";
+        let input = "{ because }\n~/whitepaper/a 3:1 ~/whitepaper/b";
         let doc = parse_full(input).unwrap();
         assert_eq!(
             doc.statements,
@@ -718,7 +760,10 @@ mod tests {
             let result = parse_full(input);
             assert!(result.is_err(), "expected parse error for {input:?}");
             assert!(
-                result.unwrap_err().to_string().contains("leading ':' is not supported"),
+                result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("leading ':' is not supported"),
                 "wrong error for {input:?}"
             );
         }
@@ -741,7 +786,35 @@ mod tests {
         let result = parse_full(input);
         assert!(result.is_err(), "vote without explanation should fail");
         let err_msg = result.unwrap_err().to_string();
-        assert!(err_msg.contains("missing vote explanation"), "error: {}", err_msg);
+        assert!(
+            err_msg.contains("vote explanations must start"),
+            "error: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn parse_full_rejects_legacy_trailing_explanation_vote() {
+        let result = parse_full("~/a 2:1 ~/b {because}");
+        assert!(result.is_err(), "legacy vote syntax should fail");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("vote explanations must start"),
+            "error: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn parse_full_rejects_block_first_item_body() {
+        let result = parse_full("{body}\n~/a");
+        assert!(result.is_err(), "block-first item body syntax should fail");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("item bodies belong after item paths"),
+            "error: {}",
+            err_msg
+        );
     }
 
     #[test]
@@ -771,7 +844,7 @@ mod tests {
 
     #[test]
     fn parse_url_vote_statement() {
-        let input = "https://slug.social/~/music/a 3:1 https://slug.social/~/music/b { because }";
+        let input = "{ because }\nhttps://slug.social/~/music/a 3:1 https://slug.social/~/music/b";
         let doc = parse_full(input).unwrap();
         assert_eq!(
             doc.statements,
@@ -785,5 +858,3 @@ mod tests {
         );
     }
 }
-
-

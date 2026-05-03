@@ -125,14 +125,15 @@
        (println "\nalice posts items + vote to private room…")
        (is (rpc-line-ok? (:parsed (ingest! base-url alice-token room-id "main"
                                                  "00000000-0000-0000-0000-000000000001:test:local/dev"
-                                                 "~/fruits/apple { A crisp red apple. }\n~/fruits/banana { A yellow banana. }\n~/fruits/apple > ~/fruits/banana { apples are better }")))
+                                                 "~/fruits/apple { A crisp red apple. }\n~/fruits/banana { A yellow banana. }\n{ apples are better }\n~/fruits/apple > ~/fruits/banana")))
                 "alice vote in private room succeeds")
 
        ;; Bob (View + Post, no Vote) tries to vote.
        (println "\nbob (no Vote) tries to vote…")
        (is (not (rpc-line-ok? (:parsed (ingest! base-url bob-token room-id "main"
                                                      "00000000-0000-0000-0000-000000000002:test:local/dev"
-                                                     "~/fruits/apple > ~/fruits/banana { bob's take }"))))
+                                                     "{ bob's take }
+~/fruits/apple > ~/fruits/banana"))))
                 "bob without Vote gets RPC failure")
 
        ;; Alice grants bob Vote.
@@ -144,7 +145,8 @@
        (println "\nbob (View + Post + Vote) votes…")
        (is (rpc-line-ok? (:parsed (ingest! base-url bob-token room-id "main"
                                                  "00000000-0000-0000-0000-000000000002:test:local/dev"
-                                                 "~/fruits/apple > ~/fruits/banana { bob's take }")))
+                                                 "{ bob's take }
+~/fruits/apple > ~/fruits/banana")))
                 "bob with Vote succeeds"))
 
      (finally

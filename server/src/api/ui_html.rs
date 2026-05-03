@@ -222,13 +222,13 @@ async fn dispatch_ui_action(
             }
 
             let text = format!(
-                "@{}\n{} {}:{} {} {{\n{}\n}}\n",
+                "@{}\n{{\n{}\n}}\n{} {}:{} {}\n",
                 crate::api::auth::WEB_BROWSER_AGENT,
+                exp,
                 left_id.as_str(),
                 rl,
                 rr,
-                right_id.as_str(),
-                exp
+                right_id.as_str()
             );
 
             match rpc_post_with_bearer(state, &session.bearer, room.clone(), thread_tag.clone(), text).await {

@@ -673,7 +673,7 @@ async fn test_private_room_post_links_use_private_garden_routes() {
     let rpc = ui_post_ingest_rpc(
         &room_id,
         "garden-thread",
-        "~/secret/item {classified}\n~/secret/other {other body}\n~/secret/item 3:1 ~/secret/other {because}\n",
+        "~/secret/item {classified}\n~/secret/other {other body}\n{because}\n~/secret/item 3:1 ~/secret/other\n",
     );
     let post = client
         .post(format!("http://{addr}/ui"))
@@ -734,7 +734,7 @@ async fn test_private_room_garden_root_lists_top_level_tilde_children() {
     let rpc = ui_post_ingest_rpc(
         &room_id,
         "ing",
-        "~/test1 {wow}\n~/test2 {wow2}\n~/test1 2:1 ~/test2 {because}\n",
+        "~/test1 {wow}\n~/test2 {wow2}\n{because}\n~/test1 2:1 ~/test2\n",
     );
     let post = client
         .post(format!("http://{addr}/ui"))
@@ -1003,7 +1003,7 @@ async fn test_post_redact_removes_garden_and_marks_thread() {
                 "room": "public",
                 "thread_tag": "redact-test",
                 "delegate": "00000000-0000-0000-0000-000000000000:test:local/test",
-                "text": "~/del-a {a}\n~/del-b {b}\n~/del-a 2:1 ~/del-b {vote line}\n",
+                "text": "~/del-a {a}\n~/del-b {b}\n{vote line}\n~/del-a 2:1 ~/del-b\n",
                 "return_rank_diff": false
             }
         }]),
@@ -1123,7 +1123,7 @@ async fn test_vote_endpoint() {
             "room": "public",
             "thread_tag": "cli",
             "delegate": "00000000-0000-0000-0000-000000000000:test:local/test",
-            "text": "~/clap {cli parser}\n~/argh {cli parser}\n~/clap 3:1 ~/argh {because clap is more full-featured}\n",
+            "text": "~/clap {cli parser}\n~/argh {cli parser}\n{because clap is more full-featured}\n~/clap 3:1 ~/argh\n",
             "return_rank_diff": true
         }
     }]);
@@ -1144,7 +1144,7 @@ async fn test_rank_endpoint() {
             "room": "public",
             "thread_tag": "langs",
             "delegate": "00000000-0000-0000-0000-000000000000:test:local/test",
-            "text": "~/rust {systems}\n~/go {concurrency}\n~/rust 3:1 ~/go {because i prefer rust for systems work}\n",
+            "text": "~/rust {systems}\n~/go {concurrency}\n{because i prefer rust for systems work}\n~/rust 3:1 ~/go\n",
             "return_rank_diff": false
         }
     }]);
@@ -1178,7 +1178,7 @@ async fn test_check_endpoint_does_not_commit() {
     let check_batch = serde_json::json!([{
         "Check": {
             "room": "public",
-            "text": "~/a {x}\n~/b {y}\n~/a 2:1 ~/b {because}\n",
+            "text": "~/a {x}\n~/b {y}\n{because}\n~/a 2:1 ~/b\n",
         }
     }]);
     let resp_body = rpc_batch(&client, addr, None, check_batch).await;
@@ -1217,7 +1217,7 @@ async fn test_garden_item_pair_matchup_include_threads() {
             "room": "public",
             "thread_tag": "sorting-hat",
             "delegate": "00000000-0000-0000-0000-000000000000:test:local/test",
-            "text": "~/sorts/insertion { O(n^2) }\n~/sorts/mergesort { O(n log n) }\n~/sorts/insertion 3:1 ~/sorts/mergesort { simpler for small n }\n",
+            "text": "~/sorts/insertion { O(n^2) }\n~/sorts/mergesort { O(n log n) }\n{ simpler for small n }\n~/sorts/insertion 3:1 ~/sorts/mergesort\n",
             "return_rank_diff": false
         }
     }]);
@@ -1473,7 +1473,7 @@ async fn test_rank_history() {
 
     ingest(
         "00000000-0000-0000-0000-000000000001:rig:test/model",
-        "~/hist/rust { systems }\n~/hist/python { scripting }\n~/hist/go { concurrency }\n~/hist/rust 3:1 ~/hist/python { ownership over gc }\n~/hist/rust 2:1 ~/hist/go { performance over simplicity }\n",
+        "~/hist/rust { systems }\n~/hist/python { scripting }\n~/hist/go { concurrency }\n{ ownership over gc }\n~/hist/rust 3:1 ~/hist/python\n{ performance over simplicity }\n~/hist/rust 2:1 ~/hist/go\n",
     )
     .await;
 
@@ -1506,7 +1506,7 @@ async fn test_rank_history() {
 
     ingest(
         "00000000-0000-0000-0000-000000000002:rig:test/model",
-        "~/hist/python 3:1 ~/hist/go { dynamic typing is worth it }\n",
+        "{ dynamic typing is worth it }\n~/hist/python 3:1 ~/hist/go\n",
     )
     .await;
 
@@ -1571,7 +1571,7 @@ async fn pair_returns_connectivity_stats() {
             "room": "public",
             "thread_tag": "connectivity-test",
             "delegate": "00000000-0000-0000-0000-000000000001:testrig:test/model",
-            "text": "~/conn/a { item a }\n~/conn/b { item b }\n~/conn/c { item c }\n~/conn/d { item d }\n~/conn/a 3:1 ~/conn/b { a is better }\n",
+            "text": "~/conn/a { item a }\n~/conn/b { item b }\n~/conn/c { item c }\n~/conn/d { item d }\n{ a is better }\n~/conn/a 3:1 ~/conn/b\n",
             "return_rank_diff": false
         }
     }]);
@@ -1605,7 +1605,7 @@ async fn pair_returns_connectivity_stats() {
             "room": "public",
             "thread_tag": "connectivity-test",
             "delegate": "00000000-0000-0000-0000-000000000001:testrig:test/model",
-            "text": "~/conn/c 2:1 ~/conn/a { c beats a }\n",
+            "text": "{ c beats a }\n~/conn/c 2:1 ~/conn/a\n",
             "return_rank_diff": false
         }
     }]);

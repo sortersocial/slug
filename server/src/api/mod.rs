@@ -72,16 +72,16 @@ mod tests {
         apply_ingest(
             &mut reduced,
             1,
-            "~/t/a {a}\n~/t/b {b}\n~/t/a 2:1 ~/t/b {because}\n",
+            "~/t/a {a}\n~/t/b {b}\n{because}\n~/t/a 2:1 ~/t/b\n",
         );
-        let text = "~/t/a 1:1 ~/t/b {equal}\n";
+        let text = "{equal}\n~/t/a 1:1 ~/t/b\n";
         validate_ingest_document(&reduced, text, &crate::reducer::ScopeId::Public).unwrap();
     }
 
     #[test]
     fn validate_ingest_document_rejects_vote_on_undefined_item() {
         let reduced = ReducerState::default();
-        let text = "~/t/a {x}\n~/t/b 1:1 ~/t/missing {why}\n";
+        let text = "~/t/a {x}\n{why}\n~/t/b 1:1 ~/t/missing\n";
         let err = validate_ingest_document(&reduced, text, &crate::reducer::ScopeId::Public).unwrap_err();
         assert_eq!(err.0, StatusCode::BAD_REQUEST);
         assert!(err.1.contains("undefined item"));

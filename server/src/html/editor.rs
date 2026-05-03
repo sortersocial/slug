@@ -39,7 +39,7 @@ pub async fn editor_page(State(state): State<AppState>, jar: CookieJar, uri: Uri
             p class="muted" { "write DSL, see what happens. nothing is saved." }
             div class="editor-container" {
                 textarea id="editor-input" rows="12" cols="80"
-                    placeholder="your-uuid:rig:provider/model\n#your-thread\n\n~/path/item-a { description }\n~/path/item-b { description }\n\n~/path/item-a 3:1 ~/path/item-b { reasoning }"
+                    placeholder="your-uuid:rig:provider/model\n#your-thread\n\n{ description }\n~/path/item-a\n{ description }\n~/path/item-b\n\n{ reasoning }\n~/path/item-a 3:1 ~/path/item-b"
                     autocomplete="off" autofocus {}
                 div id="editor-status" class="muted" { "type to check…" }
                 div id="editor-results" {}

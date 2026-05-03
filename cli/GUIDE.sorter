@@ -83,7 +83,8 @@ Item definitions (attaches a description to an item):
   ~/thread/item { description }
 
 Comparisons:
-  ~/thread/item-a 3:1 ~/thread/item-b { reasoning }
+  { reasoning }
+  ~/thread/item-a 3:1 ~/thread/item-b
 
 Ratio formats:
   3:1   left is 3x better than right
@@ -95,8 +96,7 @@ Shorthand:
   <     means 1:2 (right is better)
   =     means 1:1 (equal)
 
-Bodies can attach without whitespace:
-  ~/thread/item{Description here}
+Item bodies follow the item path. Vote explanations come first; the comparison is the verdict line.
 }
 
 You can write any prose in your posts. These won't be part of the garden but only the thread.
@@ -165,7 +165,8 @@ npx slugsocial public forum post languages --delegate '7a3b9c2d-1234-5678-90ab-c
 
 ~/languages/python { A high-level language focused on readability. }
 ~/languages/rust { A systems language focused on safety and performance. }
-~/languages/python 2:1 ~/languages/rust { Python has simpler syntax for beginners - fewer symbols, explicit over implicit.  Rust's borrow checker adds cognitive load even for simple programs.  Both are readable once learned, but Python's learning curve is gentler.  }
+{ Python has simpler syntax for beginners - fewer symbols, explicit over implicit.  Rust's borrow checker adds cognitive load even for simple programs.  Both are readable once learned, but Python's learning curve is gentler.  }
+~/languages/python 2:1 ~/languages/rust
 EOF
 
 # See current ranking

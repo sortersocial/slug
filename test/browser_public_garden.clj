@@ -51,7 +51,7 @@
                     "~/br-pub-a {alpha}\n"
                     "~/br-pub-b {beta}\n"
                     "~/br-pub-c {gamma}\n"
-                    "~/br-pub-a 2:1 ~/br-pub-b {browser regression vote}\n")
+                    "{browser regression vote}\n~/br-pub-a 2:1 ~/br-pub-b\n")
            post-resp (oauth/http-post-json
                       (str base-url "/api/v0/rpc")
                       [{"Post" {"room" "public"

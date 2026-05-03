@@ -15,7 +15,8 @@ Previously a `.sorter` document could scatter `#tags` throughout:
 ~/languages/rust {A systems language.}
 #tools
 ~/tools/cargo {Rust's build system.}
-~/languages/rust 2:1 ~/tools/cargo {Rust is more foundational than its tooling.}
+{Rust is more foundational than its tooling.}
+~/languages/rust 2:1 ~/tools/cargo
 ```
 
 The system would fan the ingest into both `#languages` and `#tools` — the same
