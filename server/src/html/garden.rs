@@ -1454,8 +1454,8 @@ mod tests {
              ~/topic {root}\n\
              ~/topic/a {alpha}\n\
              ~/topic/b {beta}\n\
-             ~/topic/a 1:9 ~/topic/b {weak for a}\n\
-             ~/topic/a 8:2 ~/topic/b {strong for a}\n",
+             {weak for a}\n             ~/topic/a 1:9 ~/topic/b\n\
+             {strong for a}\n             ~/topic/a 8:2 ~/topic/b\n",
         );
         let content = content_for_garden_view(&reduced, &ScopeId::Public);
         let page_left = ItemId::parse("~/topic/a").unwrap().normalized_storage();
@@ -1483,8 +1483,10 @@ mod tests {
              ~/topic {root}\n\
              ~/topic/a {alpha}\n\
              ~/topic/b {beta}\n\
-             ~/topic/a 3:2 ~/topic/b {first vote}\n\
-             ~/topic/b 2:3 ~/topic/a {second vote}\n",
+             {first vote}\n\
+             ~/topic/a 3:2 ~/topic/b\n\
+             {second vote}\n\
+             ~/topic/b 2:3 ~/topic/a\n",
         );
         let content = content_for_garden_view(&reduced, &ScopeId::Public);
         let a = ItemId::parse("~/topic/a").unwrap().normalized_storage();
