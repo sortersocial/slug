@@ -84,4 +84,15 @@ impl ThreadNav {
     pub(crate) fn post_url(&self, tag: &str, idx: usize) -> String {
         format!("{}/{}/{}", self.thread_path_prefix, tag, idx)
     }
+
+    /// Empty for public; `/r/:seg` for room — prefix for routes like `/vote/compare`.
+    pub(crate) fn room_path_prefix_for_vote_compare(&self) -> String {
+        match &self.scope {
+            ScopeId::Public => String::new(),
+            ScopeId::Room(room_id) => {
+                let seg = room_route_segment(room_id).expect("room seg");
+                format!("/r/{seg}")
+            }
+        }
+    }
 }

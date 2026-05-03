@@ -141,32 +141,36 @@ async fn thread_view_inner(
         ScopeId::Room(r) => format!("npx slugsocial private {r} forum show {tag}"),
     };
 
+    let body = html! {
+        (strip)
+        nav class="breadcrumb" { (bc) }
+        p class="muted" { "top=oldest · bottom=newest" }
+        div id="thread-feed-region" {
+            @if display_ingests.is_empty() {
+                p class="muted" { "no activity yet" }
+            } @else {
+                (paginator_top)
+                @for row in &entry_rows {
+                    (row)
+                }
+                (paginator_bot)
+            }
+        }
+        div id="thread-live-region" {
+            (compose_form(&nav, &tag, show_compose))
+        }
+        (cli_panel(std::slice::from_ref(&cli)))
+    };
+
     let page = layout(
         &format!("#{tag}"),
         "view-thread",
-        html! {
-            (strip)
-            nav class="breadcrumb" { (bc) }
-            p class="muted" { "top=oldest · bottom=newest" }
-            div id="thread-feed-region" {
-                @if display_ingests.is_empty() {
-                    p class="muted" { "no activity yet" }
-                } @else {
-                    (paginator_top)
-                    @for row in &entry_rows {
-                        (row)
-                    }
-                    (paginator_bot)
-                }
-            }
-            div id="thread-live-region" {
-                (compose_form(&nav, &tag, show_compose))
-            }
-            (cli_panel(std::slice::from_ref(&cli)))
-        },
+        body,
         None,
         theme_from_jar(&jar),
         &theme_next_from_uri(&uri),
+        None,
+        None,
     );
     Html(page.into_string()).into_response()
 }
@@ -224,6 +228,8 @@ pub(super) fn room_not_found_page(jar: &CookieJar, uri: &Uri) -> impl IntoRespon
         None,
         theme_from_jar(jar),
         &theme_next_from_uri(uri),
+        None,
+        None,
     );
     (StatusCode::NOT_FOUND, Html(page.into_string()))
 }
@@ -293,6 +299,8 @@ pub async fn room_page(
         None,
         theme_from_jar(&jar),
         &theme_next_from_uri(&uri),
+        None,
+        None,
     );
     Html(page.into_string()).into_response()
 }

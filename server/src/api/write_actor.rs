@@ -341,9 +341,10 @@ pub async fn writer_actor(mut rx: mpsc::Receiver<WriteCmd>, state: AppState) {
                         }
                     }
 
+                    let new_post_id = uuid::Uuid::new_v4().to_string();
                     let ingest_event = Event::Ingest(Ingest {
                         ts: v.ts,
-                        id: uuid::Uuid::new_v4().to_string(),
+                        id: new_post_id.clone(),
                         raw: v.raw_text.clone(),
                         principal: principal.clone(),
                         delegate: delegate.clone(),
@@ -400,8 +401,19 @@ pub async fn writer_actor(mut rx: mpsc::Receiver<WriteCmd>, state: AppState) {
                         )
                     };
 
+                    let post_index = {
+                        let reduced = state.reduced.read().await;
+                        reduced.try_thread_post_index_chronological(
+                            &scope_from_room_wire(&room_key),
+                            &thread_tag_canon,
+                            &new_post_id,
+                        )
+                    };
+
                     Ok(RpcResult::PostOk {
                         events_appended,
+                        post_id: Some(new_post_id),
+                        post_index,
                         ranking_changes,
                         threads: vec![format!("#{}", thread_id)],
                         next: slug_types::NextMoves {

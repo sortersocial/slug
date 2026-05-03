@@ -36,7 +36,7 @@ pub fn choose_username_page(session: &str, error: Option<&str>, theme: &str, the
             (form_inner(session, error))
         }
     };
-    super::layout("join — slug.social", "view-auth", body, None, theme, theme_next)
+    super::layout("join — slug.social", "view-auth", body, None, theme, theme_next, None, None)
 }
 
 /// Fragment returned to the poem JS on error — replaces the form's innerHTML.
@@ -63,5 +63,5 @@ pub fn auth_complete_page(theme: &str, theme_next: &str) -> Markup {
         p { "Return to your terminal — your agent is polling and will collect your token automatically." }
         p.auth-hint { "You can close this tab." }
     };
-    super::layout("signed in — slug.social", "view-auth", body, None, theme, theme_next)
+    super::layout("signed in — slug.social", "view-auth", body, None, theme, theme_next, None, None)
 }

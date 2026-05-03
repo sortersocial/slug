@@ -423,6 +423,8 @@ pub async fn search_page(
         None,
         theme_from_jar(&jar),
         &theme_next_from_uri(&uri),
+        None,
+        None,
     );
     Html(page.into_string())
 }

@@ -443,6 +443,11 @@ pub enum RpcResult {
     PostOk {
         events_appended: usize,
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        post_id: Option<String>,
+        /// Chronological index of the new post in `(room, thread)` when `post_id` is set.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        post_index: Option<usize>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         ranking_changes: Option<Vec<ScopeRankChanges>>,
         threads: Vec<String>,
         next: NextMoves,

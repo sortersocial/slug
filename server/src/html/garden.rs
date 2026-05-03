@@ -1,14 +1,26 @@
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{HeaderMap, StatusCode, Uri},
     response::{Html, IntoResponse},
 };
 use axum_extra::extract::cookie::CookieJar;
 use maud::html;
+use serde::Deserialize;
+use serde_json::json;
+use std::collections::HashSet;
+
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD as B64_ENGINE, Engine as _};
 
 use crate::{
     api::optional_principal,
-    canonical_path::canonicalize_item,
+    canonical_path::{canonicalize_item, canonicalize_tag},
+    form_template::template_json_compact,
+    html::{
+        forum::ingest_entry_markup,
+        ui_action::UI_RPC_FIELD,
+        user_can_post_room,
+        JsBuilder,
+    },
     events::ThreadCapability,
     path_types::ItemId,
     reducer::{ContentState, ReducerState, ScopeId},
@@ -21,10 +33,181 @@ use super::{
     bc_path, bc_path_external, bc_segment, cli_panel, layout, now_ms, ratio_pct,
     render_linkified_with_embeds_in_scope, theme_from_jar, theme_next_from_uri,
     breadcrumb_path::{ExternalOntologyPath, OntologyPath},
-    forum::ThreadNav,
+    forum::{ThreadNav},
 };
 
-/// Display path for an item: `~/…` or `-/…` form.
+/// `GET /vote/compare` — pairs `left` / `right` query params with optional `thread`.
+pub(crate) const GARDEN_PIN_COOKIE: &str = "slug_garden_pin";
+const PIN_COOKIE_SEP: char = '\x1f';
+
+fn garden_layout_meta(nav: &ThreadNav) -> (String, String) {
+    (nav.room_wire.clone(), nav.garden_root_url().to_string())
+}
+
+/// Parse `slug_garden_pin`: base64(`room` + US + item storage), or legacy unencoded form.
+fn pinned_item_from_jar(jar: &CookieJar) -> Option<(String, ItemId)> {
+    let c = jar.get(GARDEN_PIN_COOKIE)?;
+    let v = c.value();
+    let raw: String = if let Ok(bytes) = B64_ENGINE.decode(v) {
+        String::from_utf8(bytes).ok()?
+    } else {
+        v.to_string()
+    };
+    let (room, rest) = raw.split_once(PIN_COOKIE_SEP)?;
+    let item = ItemId::parse(rest.trim())?;
+    Some((room.trim().to_string(), item.normalized_storage()))
+}
+
+pub(crate) fn encode_pin_cookie_value(room: &str, item_storage: &str) -> String {
+    let raw = format!("{room}{PIN_COOKIE_SEP}{item_storage}");
+    B64_ENGINE.encode(raw.as_bytes())
+}
+
+fn pick_autothread_for_vote_pair(content: &ContentState, a: &ItemId, b: &ItemId) -> String {
+    let cands: HashSet<String> = content
+        .item_threads
+        .get(a)
+        .into_iter()
+        .chain(content.item_threads.get(b))
+        .flat_map(|s| s.iter().cloned())
+        .collect();
+    if cands.is_empty() {
+        return "vote".to_string();
+    }
+    let mut v: Vec<String> = cands.into_iter().collect();
+    v.sort();
+    canonicalize_tag(&v[0])
+}
+
+/// Canonical unordered pair: lexicographic by storage string (stable edge identity).
+fn canonical_edge_items(a: &ItemId, b: &ItemId) -> (ItemId, ItemId) {
+    let ac = a.clone().normalized_storage();
+    let bc = b.clone().normalized_storage();
+    if ac.as_str() <= bc.as_str() {
+        (ac, bc)
+    } else {
+        (bc, ac)
+    }
+}
+
+/// Votes whose endpoints are exactly this unordered pair, oldest first.
+fn votes_for_edge(content: &ContentState, a: &ItemId, b: &ItemId) -> Vec<crate::reducer::VoteData> {
+    let (lo, hi) = canonical_edge_items(a, b);
+    let lo_s = lo.as_str();
+    let hi_s = hi.as_str();
+    let mut out: Vec<crate::reducer::VoteData> = content
+        .item_votes
+        .get(&lo)
+        .into_iter()
+        .flat_map(|q| q.iter())
+        .filter(|v| {
+            let touches = (v.a.as_str() == lo_s && v.b.as_str() == hi_s)
+                || (v.a.as_str() == hi_s && v.b.as_str() == lo_s);
+            touches
+        })
+        .cloned()
+        .collect();
+    out.sort_by_key(|v| v.ts);
+    out
+}
+
+fn vote_thread_tags_for_pair(content: &ContentState, a: &ItemId, b: &ItemId) -> Vec<String> {
+    let set: HashSet<String> = content
+        .item_threads
+        .get(a)
+        .into_iter()
+        .chain(content.item_threads.get(b))
+        .flat_map(|s| s.iter().cloned())
+        .collect();
+    let mut v: Vec<String> = set.into_iter().collect();
+    v.sort();
+    v.into_iter().map(|t| canonicalize_tag(&t)).collect()
+}
+
+fn vote_edge_history_markup(
+    content: &ContentState,
+    left: &ItemId,
+    right: &ItemId,
+    nav: &ThreadNav,
+) -> maud::Markup {
+    let votes = votes_for_edge(content, left, right);
+    let (lo, hi) = canonical_edge_items(left, right);
+    html! {
+        @if votes.is_empty() {
+            p class="muted vote-edge-empty" { "no votes on this pair in this scope yet" }
+        } @else {
+            h3 class="vote-edge-history-title" { "votes on this edge" }
+            ol class="vote-edge-history" {
+                @for v in &votes {
+                    @let (ratio_lo, ratio_hi) = if v.a == lo && v.b == hi {
+                        (v.ratio_left, v.ratio_right)
+                    } else {
+                        (v.ratio_right, v.ratio_left)
+                    };
+                    @let pct = ratio_pct(ratio_lo, ratio_hi);
+                    @let left_class = if lo.as_str() == left.as_str() { "ratio-left current" } else { "ratio-left" };
+                    @let right_class = if hi.as_str() == left.as_str() { "ratio-right current" } else { "ratio-right" };
+                    li class="vote-edge-history-row" {
+                        div class="vote-edge-meta" {
+                            a href=(nav.garden_item_href(&lo)) {
+                                code { (item_display_path(lo.as_str())) }
+                            }
+                            span class="vote-edge-ratio" { (format!("{}:{}", ratio_lo, ratio_hi)) }
+                            a href=(nav.garden_item_href(&hi)) {
+                                code { (item_display_path(hi.as_str())) }
+                            }
+                            span class="muted" { " · #" (v.thread_tag) " · @" (v.principal) }
+                        }
+                        div class="ratio-bar vote-edge-bar" {
+                            div class=(left_class) style={(format!("width: {:.3}%;", pct))} {}
+                            div class=(right_class) style={(format!("width: {:.3}%;", 100.0 - pct))} {}
+                        }
+                        @if !v.body.trim().is_empty() {
+                            div class="vote-edge-reason muted" { (v.body.trim()) }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// After a successful vote post: morph the new card into `#vote-compare-preview` and refresh edge history.
+pub(crate) async fn vote_compare_post_success_js(
+    state: &AppState,
+    nav: &ThreadNav,
+    room_wire: &str,
+    thread_tag: &str,
+    left: &ItemId,
+    right: &ItemId,
+    post_id: &str,
+    post_idx: Option<usize>,
+) -> String {
+    use crate::reducer::scope_from_room_wire;
+    let reduced = state.reduced.read().await;
+    let scope = scope_from_room_wire(room_wire.trim());
+    let Some(ing) = reduced.ingests_by_id.get(post_id).cloned() else {
+        drop(reduced);
+        return "console.warn('vote compare: new post not found');".to_string();
+    };
+    let idx = match post_idx {
+        Some(i) => i,
+        None => reduced
+            .try_thread_post_index_chronological(&scope, thread_tag, post_id)
+            .unwrap_or(0),
+    };
+    let viewer = None::<&str>;
+    let now = now_ms();
+    let card = ingest_entry_markup(nav, thread_tag, idx, &ing, viewer, now, &reduced);
+    let content = content_for_garden_view(&reduced, &nav.scope());
+    let edge_history = vote_edge_history_markup(content, left, right, nav);
+    drop(reduced);
+    let mut b = JsBuilder::new();
+    b = b.morph_inner_selector("#vote-compare-preview", card);
+    b = b.morph_inner_selector("#vote-edge-history-region", edge_history);
+    b.build()
+}
+
 fn item_display_path(item: &str) -> String {
     ItemId::parse(item)
         .map(|c| c.display_path())
@@ -38,6 +221,130 @@ fn item_href(item: &str, nav: &ThreadNav) -> String {
 
 fn item_code_label(item: &str) -> String {
     item_display_path(item)
+}
+
+fn vote_compare_href(nav: &ThreadNav, left: &ItemId, right: &ItemId, thread_override: Option<&str>) -> String {
+    let left_q = urlencoding::encode(left.as_str());
+    let right_q = urlencoding::encode(right.as_str());
+    let base = format!(
+        "{}/vote/compare?left={}&right={}",
+        nav.room_path_prefix_for_vote_compare(),
+        left_q,
+        right_q
+    );
+    if let Some(t) = thread_override.filter(|s| !s.is_empty()) {
+        format!("{}&thread={}", base, urlencoding::encode(t))
+    } else {
+        base
+    }
+}
+
+fn ont_pin_vote_controls(
+    nav: &ThreadNav,
+    current_storage: &str,
+    pinned_room_and_item: Option<&(String, ItemId)>,
+    next_path: &str,
+) -> maud::Markup {
+    let room_wire = nav.room_wire.clone();
+    let current = ItemId::parse(current_storage).unwrap_or_else(|| ItemId::opaque(current_storage.to_string()));
+    let pin_matches_scope = pinned_room_and_item
+        .map(|(r, _)| r == nav.room_wire.as_str())
+        .unwrap_or(false);
+    let pinned_item = pinned_room_and_item
+        .filter(|_| pin_matches_scope)
+        .map(|(_, i)| i);
+
+    let pin_rpc = template_json_compact(
+        &json!({
+            "action": "set_garden_pin",
+            "clear": false,
+            "room_wire": room_wire,
+            "item_storage": current.as_str(),
+            "next": next_path,
+            "form_action": "/ui",
+        }),
+    )
+    .expect("pin rpc json");
+    let unpin_rpc = template_json_compact(
+        &json!({
+            "action": "set_garden_pin",
+            "clear": true,
+            "room_wire": "",
+            "next": next_path,
+            "form_action": "/ui",
+        }),
+    )
+    .expect("unpin rpc json");
+
+    html! {
+        div class="ont-item-pin-zone" data-garden-room=(room_wire.as_str()) {
+            @if let Some(pi) = pinned_item {
+                @if pi == &current {
+                    form method="POST" action="/ui" data-navigate="full" class="ont-pin-form" {
+                        input type="hidden" name=(UI_RPC_FIELD) value=(unpin_rpc);
+                        button type="submit" class="ont-pin-btn ont-pin-btn-active" title="Unpin" aria-label="Unpin from HUD" {
+                            span class="ont-pin-glyph" aria-hidden="true" { "📌" }
+                        }
+                    }
+                } @else {
+                    a class="ont-vote-compare-btn" href=(vote_compare_href(nav, pi, &current, None)) title="Compare and vote" {
+                        span class="ont-vote-glyph" aria-hidden="true" { "⚖" }
+                        span { "vote" }
+                    }
+                }
+            } @else {
+                form method="POST" action="/ui" data-navigate="full" class="ont-pin-form" {
+                    input type="hidden" name=(UI_RPC_FIELD) value=(pin_rpc);
+                    button type="submit" class="ont-pin-btn" title="Pin to HUD" aria-label="Pin to corner" {
+                        span class="ont-pin-glyph" aria-hidden="true" { "📌" }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn child_row_pin_or_vote(
+    nav: &ThreadNav,
+    row_item: &ItemId,
+    pinned_room_and_item: Option<&(String, ItemId)>,
+    next_path: &str,
+) -> maud::Markup {
+    let pin_matches_scope = pinned_room_and_item
+        .map(|(r, _)| r == nav.room_wire.as_str())
+        .unwrap_or(false);
+    let pinned_item = pinned_room_and_item
+        .filter(|_| pin_matches_scope)
+        .map(|(_, i)| i);
+
+    let pin_rpc = template_json_compact(
+        &json!({
+            "action": "set_garden_pin",
+            "clear": false,
+            "room_wire": nav.room_wire.clone(),
+            "item_storage": row_item.as_str(),
+            "next": next_path,
+            "form_action": "/ui",
+        }),
+    )
+    .expect("child pin rpc json");
+
+    html! {
+        span class="ont-garden-child-actions" data-garden-room=(nav.room_wire.as_str()) {
+            @if let Some(pi) = pinned_item {
+                @if pi == row_item {
+                    span class="ont-garden-pinned-here" title="Pinned" aria-label="Pinned" { "📌" }
+                } @else {
+                    a class="ont-garden-vote-ico" href=(vote_compare_href(nav, pi, row_item, None)) title="Vote vs pinned" aria-label="Vote" { "⚖" }
+                }
+            } @else {
+                form method="POST" action="/ui" data-navigate="full" class="ont-pin-form ont-garden-pin-form" {
+                    input type="hidden" name=(UI_RPC_FIELD) value=(pin_rpc);
+                    button type="submit" class="ont-garden-pin-ico" title="Pin" aria-label="Pin" { "📌" }
+                }
+            }
+        }
+    }
 }
 
 fn scoped_bc_path_external(path: &ExternalOntologyPath, nav: &ThreadNav) -> maud::Markup {
@@ -118,6 +425,8 @@ fn room_not_found_page(jar: &CookieJar, uri: &Uri) -> impl IntoResponse {
         None,
         theme_from_jar(jar),
         &theme_next_from_uri(uri),
+        None,
+        None,
     );
     (StatusCode::NOT_FOUND, Html(page.into_string()))
 }
@@ -205,6 +514,8 @@ pub async fn garden_index(
         None,
         theme_from_jar(&jar),
         &theme_next_from_uri(&uri),
+        Some("public"),
+        Some("/~"),
     );
     Html(page.into_string())
 }
@@ -284,6 +595,8 @@ pub async fn external_garden_index(
         None,
         theme_from_jar(&jar),
         &theme_next_from_uri(&uri),
+        Some("public"),
+        Some("/~"),
     );
     Html(page.into_string())
 }
@@ -413,6 +726,8 @@ pub async fn room_external_garden_index(
         None,
         theme_from_jar(&jar),
         &theme_next_from_uri(&uri),
+        Some(nav.room_wire.as_str()),
+        Some(nav.garden_root_url()),
     );
     Html(page.into_string()).into_response()
 }
@@ -682,6 +997,7 @@ async fn render_scope_view(
     uri: Uri,
 ) -> axum::response::Response {
     let scope = nav.scope();
+    let pin_ref = pinned_item_from_jar(&jar);
     let model = {
         let reduced = state.reduced.read().await;
         build_item_page_view_model(&reduced, &scope, browse.item())
@@ -689,6 +1005,12 @@ async fn render_scope_view(
     let thread_href = |tag: &str| nav.thread_url(tag);
     let external_empty_body = browse.is_external() && model.body.is_none();
     let cli_path_arg = item_display_path(&model.item);
+    let (garden_room, garden_prefix) = garden_layout_meta(&nav);
+    let next_for_pin = uri
+        .path_and_query()
+        .map(|pq| pq.as_str().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "/".to_string());
 
     let page = layout(
         &item_display_path(&model.item),
@@ -698,12 +1020,13 @@ async fn render_scope_view(
             @if let Some(ref bar) = model.sibling_nav {
                 (sibling_nav_markup(&nav, bar, &model.item))
             }
-            section class="ont-item-shell" {
+            section class="ont-item-shell" data-garden-item=(model.item.as_str()) {
                 header class="ont-item-meta" {
                     span class="ont-item-title" { (item_display_path(&model.item)) }
                     @if model.sibling_nav.is_none() && model.item_has_parent {
-                        span class="muted" { "unranked among siblings" }
+                        span class="muted ont-item-unranked-note" { "unranked among siblings" }
                     }
+                    (ont_pin_vote_controls(&nav, &model.item, pin_ref.as_ref(), &next_for_pin))
                 }
                 @if let Some(body) = &model.body {
                     div class="ont-item-content" {
@@ -804,7 +1127,8 @@ async fn render_scope_view(
                                 @for r in comp.ranked.iter() {
                                     @let item_url = item_href(r.item.as_str(), &nav);
                                     @let score_str = format!("{:.3}", r.score);
-                                    li {
+                                    li data-garden-item=(r.item.as_str()) {
+                                        (child_row_pin_or_vote(&nav, &r.item, pin_ref.as_ref(), &next_for_pin))
                                         a class="item-link" href=(item_url) { code { (item_display_path(r.item.as_str())) } }
                                         span class="ont-rank-score" { (score_str) }
                                     }
@@ -819,7 +1143,8 @@ async fn render_scope_view(
                         div class="ont-group-meta" { "unranked" }
                         ul class="ont-group-list" {
                             @for name in &model.child_rankings.unranked_items {
-                                li {
+                                li data-garden-item=(name.as_str()) {
+                                    (child_row_pin_or_vote(&nav, name, pin_ref.as_ref(), &next_for_pin))
                                     @let href = item_href(name.as_str(), &nav);
                                     a class="item-link" href=(href) { code { (item_display_path(name.as_str())) } }
                                 }
@@ -837,8 +1162,196 @@ async fn render_scope_view(
         None,
         theme_from_jar(&jar),
         &theme_next_from_uri(&uri),
+        Some(&garden_room),
+        Some(&garden_prefix),
     );
 
+    Html(page.into_string()).into_response()
+}
+
+#[derive(Debug, Deserialize)]
+pub struct VoteCompareQuery {
+    pub left: String,
+    pub right: String,
+    #[serde(default)]
+    pub thread: Option<String>,
+}
+
+/// Public pairwise vote UI — `/vote/compare?left=&right=&thread=`.
+pub async fn vote_compare_page(
+    State(state): State<AppState>,
+    Query(q): Query<VoteCompareQuery>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    uri: Uri,
+) -> impl IntoResponse {
+    let nav = ThreadNav::public();
+    vote_compare_inner(state, q, nav, headers, jar, uri).await
+}
+
+pub async fn room_vote_compare_page(
+    State(state): State<AppState>,
+    Path(room_key): Path<String>,
+    Query(q): Query<VoteCompareQuery>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    uri: Uri,
+) -> impl IntoResponse {
+    let Some(room_id) = slug_types::room_id_from_route_segment(&room_key) else {
+        return (StatusCode::NOT_FOUND, "bad room path").into_response();
+    };
+    let Some(nav) = ThreadNav::from_room_id(&room_id) else {
+        return (StatusCode::NOT_FOUND, "bad room path").into_response();
+    };
+    let reduced = state.reduced.read().await;
+    let user = optional_principal(&headers, &jar, &reduced);
+    if !user_can_view_room(&reduced, &room_id, user.as_deref()) {
+        drop(reduced);
+        return room_not_found_page(&jar, &uri).into_response();
+    }
+    if !room_scope_has_garden_content(&reduced, &nav) {
+        drop(reduced);
+        return room_not_found_page(&jar, &uri).into_response();
+    }
+    drop(reduced);
+    vote_compare_inner(state, q, nav, headers, jar, uri).await
+}
+
+async fn vote_compare_inner(
+    state: AppState,
+    q: VoteCompareQuery,
+    nav: ThreadNav,
+    headers: HeaderMap,
+    jar: CookieJar,
+    uri: Uri,
+) -> axum::response::Response {
+    let left = match ItemId::parse(q.left.trim()) {
+        Some(i) => i.normalized_storage(),
+        None => return (StatusCode::NOT_FOUND, "bad left item").into_response(),
+    };
+    let right = match ItemId::parse(q.right.trim()) {
+        Some(i) => i.normalized_storage(),
+        None => return (StatusCode::NOT_FOUND, "bad right item").into_response(),
+    };
+    if left == right {
+        return (StatusCode::BAD_REQUEST, "items must differ").into_response();
+    }
+
+    let reduced = state.reduced.read().await;
+    let content = content_for_garden_view(&reduced, &nav.scope());
+    let viewer = optional_principal(&headers, &jar, &reduced);
+    let can_post = match &nav.scope() {
+        ScopeId::Public => viewer.is_some(),
+        ScopeId::Room(rid) => viewer
+            .as_ref()
+            .map(|u| user_can_post_room(&reduced, rid, u))
+            .unwrap_or(false),
+    };
+    let auto_thread = q
+        .thread
+        .as_ref()
+        .map(|t| canonicalize_tag(t))
+        .filter(|t| !t.is_empty())
+        .unwrap_or_else(|| pick_autothread_for_vote_pair(content, &left, &right));
+    let thread_tags = vote_thread_tags_for_pair(content, &left, &right);
+    let edge_history = vote_edge_history_markup(content, &left, &right, &nav);
+    drop(reduced);
+
+    let title = format!("vote — {} vs {}", item_display_path(left.as_str()), item_display_path(right.as_str()));
+    let next_path = uri.path_and_query().map(|pq| pq.as_str().to_string()).unwrap_or_else(|| "/vote/compare".into());
+
+    let rpc_json = template_json_compact(
+        &json!({
+            "action": "vote_compare_post",
+            "room": nav.room_wire,
+            "thread_tag": {"$form": "thread_tag"},
+            "left_item": left.as_str(),
+            "right_item": right.as_str(),
+            "ratio_left": {"$form": "ratio_left"},
+            "ratio_right": {"$form": "ratio_right"},
+            "explanation": {"$form": "explanation"},
+            "next": next_path,
+            "form_action": "/ui",
+        }),
+    )
+    .expect("vote compare rpc json");
+
+    let body = html! {
+        nav class="breadcrumb" {
+            a href="/" { "slug.social" }
+            @let vote_bc_href = if nav.room_path_prefix_for_vote_compare().is_empty() {
+                "/vote/compare".to_string()
+            } else {
+                format!("{}/vote/compare", nav.room_path_prefix_for_vote_compare())
+            };
+            (bc_segment("vote", &vote_bc_href, true))
+        }
+        section class="vote-compare-shell" {
+            h2 { "compare" }
+            div class="vote-compare-pair" {
+                a class="vote-compare-item" href=(nav.garden_item_href(&left)) {
+                    code { (item_display_path(left.as_str())) }
+                }
+                span class="vote-compare-vs" { "vs" }
+                a class="vote-compare-item" href=(nav.garden_item_href(&right)) {
+                    code { (item_display_path(right.as_str())) }
+                }
+            }
+            div id="vote-edge-history-region" {
+                (edge_history)
+            }
+            div class="vote-compare-preview-wrap" {
+                h3 { "your vote (after post)" }
+                div id="vote-compare-preview" class="vote-compare-preview" {}
+            }
+            @if can_post {
+                form id="vote-compare-form" method="POST" action="/ui" {
+                    input type="hidden" name=(UI_RPC_FIELD) value=(rpc_json);
+                    div class="vote-thread-picker" {
+                        label class="vote-thread-picker-label" { "thread" }
+                        select id="vote-thread-select" name="thread_tag" aria-label="Thread to post vote into" {
+                            @if thread_tags.is_empty() {
+                                option value="vote" selected { "#vote" }
+                            }
+                            @for t in &thread_tags {
+                                @if *t == auto_thread {
+                                    option value=(t) selected { "#" (t) }
+                                } @else {
+                                    option value=(t) { "#" (t) }
+                                }
+                            }
+                        }
+                    }
+                    input type="hidden" name="ratio_left" id="vote-ratio-left" value="50";
+                    input type="hidden" name="ratio_right" id="vote-ratio-right" value="50";
+                    label class="vote-compare-slider-label" {
+                        span id="vote-slider-left-label" { (item_display_path(left.as_str())) }
+                        input type="range" id="vote-preference-slider" min="0" max="100" value="50"
+                            aria-valuemin="0" aria-valuemax="100";
+                        span id="vote-slider-right-label" { (item_display_path(right.as_str())) }
+                    }
+                    label class="vote-explain-label" { "reason (required)" }
+                    textarea name="explanation" id="vote-explain" rows="5" placeholder="why this split?" required {}
+                    div id="vote-compare-errors" {}
+                    p { button type="submit" { "post vote" } }
+                }
+            } @else {
+                p class="muted" { a href="/login" { "log in" } " to post this vote." }
+            }
+        }
+    };
+
+    let (gr, gp) = garden_layout_meta(&nav);
+    let page = layout(
+        &title,
+        "view-ontology view-ontology-light view-vote-compare",
+        body,
+        None,
+        theme_from_jar(&jar),
+        &theme_next_from_uri(&uri),
+        Some(&gr),
+        Some(&gp),
+    );
     Html(page.into_string()).into_response()
 }
 

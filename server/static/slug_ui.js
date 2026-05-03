@@ -42,12 +42,13 @@
       });
     }
 
-    // POST forms → eval response (except theme)
+    // POST forms → eval response (except theme + full-navigation forms)
     document.addEventListener('submit', async function (e) {
       var f = e.target;
       if (!f || f.tagName !== 'FORM') return;
       if ((f.method || 'get').toLowerCase() !== 'post') return;
       if (f.id === 'slug-theme-form') return;
+      if (f.getAttribute('data-navigate') === 'full') return;
       e.preventDefault();
       var resp = await fetch(f.action, {
         method: 'POST',
@@ -146,6 +147,81 @@
             });
         }, 400);
       });
+    }
+
+    function decodePinCookie() {
+      var m = document.cookie.match(/(?:^|;\s*)slug_garden_pin=([^;]+)/);
+      if (!m) return null;
+      var v = decodeURIComponent(m[1].replace(/\+/g, ' ')).trim();
+      var raw;
+      try {
+        var b64 = v.replace(/-/g, '+').replace(/_/g, '/');
+        while (b64.length % 4) b64 += '=';
+        raw = atob(b64);
+      } catch (err) {
+        return null;
+      }
+      var sep = '\x1f';
+      var i = raw.indexOf(sep);
+      if (i < 0) {
+        i = raw.indexOf('\t');
+        if (i < 0) return null;
+      }
+      return { room: raw.slice(0, i), item: raw.slice(i + 1) };
+    }
+
+    function gardenItemHref(prefix, storageUrl) {
+      var marker = 'https://slug.social/~/';
+      if (storageUrl.indexOf(marker) === 0) {
+        var tail = storageUrl.slice(marker.length);
+        return prefix.replace(/\/$/, '') + (tail ? '/' + tail : '');
+      }
+      return storageUrl;
+    }
+
+    function refreshPinHud() {
+      var hud = document.getElementById('slug-pin-hud');
+      if (!hud) return;
+      var prefix = hud.getAttribute('data-garden-prefix') || '';
+      var bodyRoom = document.body ? document.body.getAttribute('data-garden-room') : '';
+      var pin = decodePinCookie();
+      hud.innerHTML = '';
+      if (!pin || !prefix || pin.room !== bodyRoom) return;
+      var a = document.createElement('a');
+      a.className = 'slug-pin-hud-link';
+      a.href = gardenItemHref(prefix, pin.item);
+      a.title = 'Pinned item';
+      var span = document.createElement('span');
+      span.className = 'slug-pin-hud-glyph';
+      span.setAttribute('aria-hidden', 'true');
+      span.textContent = '📌';
+      a.appendChild(span);
+      var label = pin.item.replace(/^https:\/\/slug\.social\/~\/?/, '~/');
+      if (label.length > 36) label = label.slice(0, 34) + '…';
+      a.appendChild(document.createTextNode(' ' + label));
+      hud.appendChild(a);
+    }
+    refreshPinHud();
+
+    // Vote compare: map slider 0–100 to integer ratio weights
+    var voteSlider = document.getElementById('vote-preference-slider');
+    if (voteSlider) {
+      var rl = document.getElementById('vote-ratio-left');
+      var rr = document.getElementById('vote-ratio-right');
+      function syncVoteRatio() {
+        var p = parseInt(voteSlider.value, 10);
+        if (isNaN(p)) p = 50;
+        var L = 100 - p;
+        var R = p;
+        if (L === 0 && R === 0) {
+          L = 1;
+          R = 1;
+        }
+        if (rl) rl.value = String(L);
+        if (rr) rr.value = String(R);
+      }
+      voteSlider.addEventListener('input', syncVoteRatio);
+      syncVoteRatio();
     }
 
     // SSE: server-pushed JS

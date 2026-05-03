@@ -798,6 +798,183 @@ details > summary::-webkit-details-marker { display: none; }
   transform: translate(1px, 1px);
 }
 
+/* Pinned item HUD — bottom bar, same plane as spread */
+#slug-pin-hud.slug-pin-hud {
+  margin-left: auto;
+  max-width: min(42vw, 280px);
+  font-size: 11px;
+  color: var(--meta);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.slug-pin-hud-link {
+  color: var(--ui);
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.slug-pin-hud-link:hover { color: var(--signal); }
+.slug-pin-hud-glyph { font-size: 13px; line-height: 1; }
+
+/* Garden pin / vote controls */
+body.view-ontology-light .ont-item-meta {
+  flex-wrap: wrap;
+}
+body.view-ontology-light .ont-item-title {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+body.view-ontology-light span.ont-item-unranked-note {
+  flex: 0 0 auto;
+}
+body.view-ontology-light .ont-item-pin-zone {
+  flex: 0 0 auto;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+button.ont-pin-btn,
+a.ont-vote-compare-btn {
+  background: var(--g4);
+  border: var(--bv) solid;
+  border-color: var(--hi) var(--lo) var(--lo) var(--hi);
+  color: var(--ui);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 2px 8px;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: inherit;
+}
+button.ont-pin-btn:hover,
+a.ont-vote-compare-btn:hover { color: var(--signal); }
+button.ont-pin-btn-active {
+  border-color: var(--link);
+  color: var(--signal);
+}
+.ont-garden-child-actions {
+  display: inline-flex;
+  align-items: center;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+button.ont-garden-pin-ico,
+a.ont-garden-vote-ico,
+span.ont-garden-pinned-here {
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 2px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-decoration: none;
+  color: inherit;
+}
+body.view-ontology-light ol.ont-ranking-list li,
+body.view-ontology-light ul.ont-group-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+body.view-ontology-light ol.ont-ranking-list li .item-link,
+body.view-ontology-light ul.ont-group-list li .item-link {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Vote compare page */
+.vote-compare-shell {
+  margin: 12px 0;
+  max-width: 720px;
+}
+.vote-compare-pair {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+  margin: 10px 0;
+}
+.vote-compare-item code {
+  font-size: 13px;
+}
+.vote-compare-vs {
+  color: var(--meta);
+  font-size: 12px;
+}
+.vote-compare-slider-label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0;
+  font-size: 12px;
+}
+#vote-preference-slider {
+  flex: 1 1 180px;
+  min-width: 120px;
+  accent-color: var(--ui);
+}
+.vote-thread-picker {
+  margin: 10px 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.vote-thread-picker-label {
+  font-size: 12px;
+  color: var(--meta);
+}
+#vote-thread-select {
+  min-width: 160px;
+}
+#vote-edge-history-region {
+  margin: 14px 0 18px;
+}
+.vote-compare-preview-wrap {
+  margin: 12px 0;
+}
+.vote-compare-preview-wrap h3 {
+  font-size: 13px;
+  margin: 0 0 6px;
+  color: var(--meta);
+}
+#vote-compare-preview {
+  min-height: 48px;
+}
+.vote-edge-history-title {
+  font-size: 13px;
+  margin: 16px 0 8px;
+}
+ol.vote-edge-history {
+  margin: 0;
+  padding-left: 1.2em;
+}
+li.vote-edge-history-row {
+  margin: 10px 0;
+}
+.vote-edge-meta {
+  font-size: 12px;
+  line-height: 1.5;
+}
+.vote-edge-ratio {
+  margin: 0 6px;
+  font-weight: 600;
+}
+.vote-edge-bar {
+  margin-top: 4px;
+  max-width: 100%;
+}
+.vote-edge-reason {
+  margin-top: 4px;
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
 /* ----------------------------------------------------------------
    RECENCY
    ---------------------------------------------------------------- */

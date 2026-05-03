@@ -254,6 +254,8 @@ pub async fn home(
         None,
         theme_from_jar(&jar),
         &theme_next_from_uri(&uri),
+        None,
+        None,
     );
     Html(page.into_string())
 }

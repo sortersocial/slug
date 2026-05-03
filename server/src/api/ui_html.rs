@@ -25,6 +25,7 @@ use crate::{
         thread_ui_expand_post_full, thread_ui_expand_redacted_post, ui_js_warn, user_can_post_room,
         user_can_view_room, HtmlUiAction, JsBuilder, ThreadNav,
     },
+    html::vote_compare_post_success_js,
     reducer::{scope_from_room_wire, ScopeId},
     state::AppState,
 };
@@ -48,6 +49,35 @@ pub async fn post_ui_html(
 }
 
 /// All UI command logic: HTTP extractors stop above; this only sees [`AppState`], session, and [`HtmlUiAction`].
+fn sanitize_vote_compare_next(next: &str) -> String {
+    let s = next.trim();
+    if s.starts_with('/') && !s.starts_with("//") && s.len() < 8192 {
+        s.to_string()
+    } else {
+        "/".to_string()
+    }
+}
+
+fn sanitize_garden_pin_next(next: &str) -> String {
+    let s = next.trim();
+    if s.starts_with('/') && !s.starts_with("//") && s.len() < 8192 {
+        s.to_string()
+    } else {
+        "/".to_string()
+    }
+}
+
+fn redirect_with_pin_cookie(cookie_header_value: &str, location: &str) -> Response {
+    let loc = HeaderValue::try_from(location).unwrap_or_else(|_| HeaderValue::from_static("/"));
+    let hv = HeaderValue::try_from(cookie_header_value).expect("set-cookie header");
+    Response::builder()
+        .status(StatusCode::SEE_OTHER)
+        .header(header::LOCATION, loc)
+        .header(header::SET_COOKIE, hv)
+        .body(axum::body::Body::empty())
+        .unwrap()
+}
+
 async fn dispatch_ui_action(
     state: &AppState,
     session: Option<&WebSession>,
@@ -124,6 +154,163 @@ async fn dispatch_ui_action(
                 Ok(_) => form_js_error(error_target.as_ref(), "unexpected response", "Check did not return CheckOk.").into_response(),
                 Err((msg, hint)) => form_js_error(error_target.as_ref(), &msg, hint.as_deref().unwrap_or("")).into_response(),
             }
+        }
+        HtmlUiAction::VoteComparePost {
+            room,
+            thread_tag,
+            left_item,
+            right_item,
+            ratio_left,
+            ratio_right,
+            explanation,
+            next,
+            form_action,
+        } => {
+            if form_action != "/ui" {
+                return (StatusCode::BAD_REQUEST, "invalid vote_compare_post form_action").into_response();
+            }
+            let Some(session) = session else {
+                return js_redirect("/login").into_response();
+            };
+            let err_tgt = Some("vote-compare-errors".to_string());
+            let room = room.trim().to_string();
+            let thread_tag = canonicalize_tag(&thread_tag);
+            if thread_tag.is_empty() {
+                return form_js_error(
+                    err_tgt.as_ref(),
+                    "missing thread",
+                    "Thread tag is required.",
+                )
+                .into_response();
+            }
+            let exp = explanation.trim();
+            if exp.is_empty() {
+                return form_js_error(
+                    err_tgt.as_ref(),
+                    "empty explanation",
+                    "Write a short reason in the textarea.",
+                )
+                .into_response();
+            }
+            let left_id = match crate::path_types::ItemId::parse(left_item.trim()) {
+                Some(i) => i.normalized_storage(),
+                None => {
+                    return form_js_error(
+                        err_tgt.as_ref(),
+                        "bad item",
+                        "Invalid left item path.",
+                    )
+                    .into_response();
+                }
+            };
+            let right_id = match crate::path_types::ItemId::parse(right_item.trim()) {
+                Some(i) => i.normalized_storage(),
+                None => {
+                    return form_js_error(
+                        err_tgt.as_ref(),
+                        "bad item",
+                        "Invalid right item path.",
+                    )
+                    .into_response();
+                }
+            };
+            let mut rl = ratio_left.trim().parse::<i32>().unwrap_or(0).max(0);
+            let mut rr = ratio_right.trim().parse::<i32>().unwrap_or(0).max(0);
+            if rl == 0 && rr == 0 {
+                rl = 1;
+                rr = 1;
+            }
+
+            let text = format!(
+                "@{}\n{} {}:{} {} {{\n{}\n}}\n",
+                crate::api::auth::WEB_BROWSER_AGENT,
+                left_id.as_str(),
+                rl,
+                rr,
+                right_id.as_str(),
+                exp
+            );
+
+            match rpc_post_with_bearer(state, &session.bearer, room.clone(), thread_tag.clone(), text).await {
+                Ok(RpcResult::PostOk {
+                    post_id,
+                    post_index,
+                    ..
+                }) => {
+                    let Some(pid) = post_id else {
+                        let loc = sanitize_vote_compare_next(&next);
+                        return js_redirect(&loc).into_response();
+                    };
+                    let nav = if room == "public" {
+                        ThreadNav::public()
+                    } else {
+                        let Some(n) = ThreadNav::from_room_id(&room) else {
+                            return form_js_error(
+                                err_tgt.as_ref(),
+                                "bad room",
+                                "Unknown room for vote post.",
+                            )
+                            .into_response();
+                        };
+                        n
+                    };
+                    let js = vote_compare_post_success_js(
+                        state,
+                        &nav,
+                        &room,
+                        &thread_tag,
+                        &left_id,
+                        &right_id,
+                        &pid,
+                        post_index,
+                    )
+                    .await;
+                    Response::builder()
+                        .status(StatusCode::OK)
+                        .header(header::CONTENT_TYPE, "text/javascript; charset=utf-8")
+                        .body(axum::body::Body::from(js))
+                        .unwrap()
+                }
+                Ok(_) => form_js_error(
+                    err_tgt.as_ref(),
+                    "unexpected response",
+                    "Post did not return PostOk.",
+                )
+                .into_response(),
+                Err((msg, hint)) => form_js_error(err_tgt.as_ref(), &msg, hint.as_deref().unwrap_or("")).into_response(),
+            }
+        }
+        HtmlUiAction::SetGardenPin {
+            clear,
+            room_wire,
+            item_storage,
+            next,
+            form_action,
+        } => {
+            if form_action != "/ui" {
+                return (StatusCode::BAD_REQUEST, "invalid set_garden_pin form_action").into_response();
+            }
+            let next_path = sanitize_garden_pin_next(&next);
+            use crate::html::{encode_pin_cookie_value, GARDEN_PIN_COOKIE};
+            use crate::path_types::ItemId;
+            if clear {
+                let cookie = format!("{GARDEN_PIN_COOKIE}=; Path=/; SameSite=Lax; Max-Age=0");
+                return redirect_with_pin_cookie(&cookie, &next_path);
+            }
+            let room = room_wire.trim().to_string();
+            if room.is_empty() {
+                return (StatusCode::BAD_REQUEST, "missing room").into_response();
+            }
+            let Some(raw) = item_storage.as_ref().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) else {
+                return (StatusCode::BAD_REQUEST, "missing item").into_response();
+            };
+            let Some(item) = ItemId::parse(&raw) else {
+                return (StatusCode::BAD_REQUEST, "bad item").into_response();
+            };
+            let item = item.normalized_storage();
+            let val = encode_pin_cookie_value(&room, item.as_str());
+            let cookie = format!("{GARDEN_PIN_COOKIE}={val}; Path=/; SameSite=Lax; Max-Age=7776000");
+            redirect_with_pin_cookie(&cookie, &next_path)
         }
         HtmlUiAction::RedactPost { post_id } => {
             let Some(session) = session else {
