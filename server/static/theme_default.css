@@ -1054,6 +1054,26 @@ body.view-vote-compare #vote-explain:focus {
 body.view-vote-compare #vote-compare-form button[type="submit"] {
   margin-top: 6px;
 }
+
+body.view-vote-compare-fullscreen {
+  max-width: none;
+  width: 100%;
+  margin-left: 0;
+  margin-right: 0;
+  padding: clamp(8px, 2.5vw, 28px);
+  padding-bottom: max(20px, env(safe-area-inset-bottom, 0px));
+  padding-top: max(8px, env(safe-area-inset-top, 0px));
+  min-height: 100vh;
+  min-height: 100dvh;
+  box-sizing: border-box;
+}
+body.view-vote-compare-fullscreen .vote-compare-shell {
+  max-width: none;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0;
+}
+
 .vote-edge-history-title {
   font-size: 12px;
   letter-spacing: 0.06em;
@@ -1061,9 +1081,15 @@ body.view-vote-compare #vote-compare-form button[type="submit"] {
   color: var(--meta);
   margin: 16px 0 8px;
 }
-ol.vote-edge-history {
+.vote-edge-history-axis {
+  text-transform: none;
+  letter-spacing: normal;
+  font-size: 13px;
+}
+ul.vote-edge-history {
   margin: 0;
-  padding-left: 1.2em;
+  padding-left: 1.35em;
+  list-style-type: disc;
 }
 li.vote-edge-history-row {
   margin: 10px 0;

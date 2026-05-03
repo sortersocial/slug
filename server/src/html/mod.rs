@@ -304,6 +304,28 @@ pub(super) fn layout(
     layout_embed_controls(title, view, body, views, theme, theme_next, garden_room_wire, garden_path_prefix, true)
 }
 
+/// Minimal document shell: no bottom controls, no garden HUD data attributes (`data-garden-room` /
+/// `data-garden-prefix` empty). For routes that own the full viewport (e.g. vote compare).
+pub(super) fn layout_full_bleed_chromeless(
+    title: &str,
+    view: &str,
+    body: Markup,
+    theme: &str,
+    theme_next: &str,
+) -> Markup {
+    layout_embed_controls(
+        title,
+        view,
+        body,
+        None,
+        theme,
+        theme_next,
+        None,
+        None,
+        false,
+    )
+}
+
 fn layout_embed_controls(
     title: &str,
     view: &str,

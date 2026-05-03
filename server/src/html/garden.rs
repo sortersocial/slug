@@ -22,17 +22,17 @@ use crate::{
     },
     events::ThreadCapability,
     path_types::ItemId,
-    reducer::{ContentState, ReducerState, ScopeId},
+    reducer::{scope_from_room_wire, ContentState, ReducerState, ScopeId},
     scope_rank::{build_children_rankings, ChildrenRankings},
     state::AppState,
     timeago,
 };
 
 use super::{
-    bc_path, bc_path_external, bc_segment, cli_panel, layout, now_ms, ratio_pct,
-    render_linkified_with_embeds_in_scope, theme_from_jar, theme_next_from_uri,
+    bc_path, bc_path_external, bc_segment, cli_panel, layout, layout_full_bleed_chromeless, now_ms,
+    ratio_pct, render_linkified_with_embeds_in_scope, theme_from_jar, theme_next_from_uri,
     breadcrumb_path::{ExternalOntologyPath, OntologyPath},
-    forum::{ThreadNav},
+    forum::{ingest_entry_markup, ThreadNav},
 };
 
 /// `GET /vote/compare` — pairs `left` / `right` query params with optional `thread`.
@@ -89,25 +89,62 @@ fn canonical_edge_items(a: &ItemId, b: &ItemId) -> (ItemId, ItemId) {
     }
 }
 
-/// Votes whose endpoints are exactly this unordered pair, oldest first.
-fn votes_for_edge(content: &ContentState, a: &ItemId, b: &ItemId) -> Vec<crate::reducer::VoteData> {
+/// All votes whose endpoints are exactly this unordered pair (unsorted).
+fn edge_vote_entries_for_pair(content: &ContentState, a: &ItemId, b: &ItemId) -> Vec<crate::reducer::VoteData> {
     let (lo, hi) = canonical_edge_items(a, b);
     let lo_s = lo.as_str();
     let hi_s = hi.as_str();
-    let mut out: Vec<crate::reducer::VoteData> = content
+    content
         .item_votes
         .get(&lo)
         .into_iter()
         .flat_map(|q| q.iter())
         .filter(|v| {
-            let touches = (v.a.as_str() == lo_s && v.b.as_str() == hi_s)
-                || (v.a.as_str() == hi_s && v.b.as_str() == lo_s);
-            touches
+            (v.a.as_str() == lo_s && v.b.as_str() == hi_s)
+                || (v.a.as_str() == hi_s && v.b.as_str() == lo_s)
         })
         .cloned()
-        .collect();
-    out.sort_by_key(|v| v.ts);
-    out
+        .collect()
+}
+
+fn ratios_for_compare_page(v: &crate::reducer::VoteData, page_left: &ItemId, page_right: &ItemId) -> (i32, i32) {
+    let pl = page_left.as_str();
+    let pr = page_right.as_str();
+    match (v.a.as_str(), v.b.as_str()) {
+        (a, b) if a == pl && b == pr => (v.ratio_left, v.ratio_right),
+        (a, b) if a == pr && b == pl => (v.ratio_right, v.ratio_left),
+        _ => (v.ratio_left, v.ratio_right),
+    }
+}
+
+fn left_share_normalized(ratio_left: i32, ratio_right: i32) -> f64 {
+    let l = ratio_left.max(0) as f64;
+    let r = ratio_right.max(0) as f64;
+    let sum = l + r;
+    if sum <= 0.0 {
+        0.5
+    } else {
+        l / sum
+    }
+}
+
+/// Stronger preference for **`page_left` first**; ties **newer first**.
+fn sort_votes_for_compare_display(
+    mut votes: Vec<crate::reducer::VoteData>,
+    page_left: &ItemId,
+    page_right: &ItemId,
+) -> Vec<crate::reducer::VoteData> {
+    votes.sort_by(|va, vb| {
+        let (ratio_left_a, ratio_right_a) = ratios_for_compare_page(va, page_left, page_right);
+        let (ratio_left_b, ratio_right_b) = ratios_for_compare_page(vb, page_left, page_right);
+        let sa = left_share_normalized(ratio_left_a, ratio_right_a);
+        let sb = left_share_normalized(ratio_left_b, ratio_right_b);
+        match sb.partial_cmp(&sa).unwrap_or(std::cmp::Ordering::Equal) {
+            std::cmp::Ordering::Equal => vb.ts.cmp(&va.ts),
+            o => o,
+        }
+    });
+    votes
 }
 
 /// Number of vote ingests recorded for this unordered pair in `content` (same scope as ranking).
@@ -144,39 +181,40 @@ fn vote_edge_history_markup(
     content: &ContentState,
     left: &ItemId,
     right: &ItemId,
-    nav: &ThreadNav,
 ) -> maud::Markup {
-    let votes = votes_for_edge(content, left, right);
-    let (lo, hi) = canonical_edge_items(left, right);
+    let votes = edge_vote_entries_for_pair(content, left, right);
+    let votes = sort_votes_for_compare_display(votes, left, right);
+    let legend_left = item_display_path(left.as_str());
+    let legend_right = item_display_path(right.as_str());
     html! {
         @if votes.is_empty() {
             p class="muted vote-edge-empty" { "no votes on this pair in this scope yet" }
         } @else {
-            h3 class="vote-edge-history-title" { "votes on this edge" }
-            ol class="vote-edge-history" {
+            h3 class="vote-edge-history-title" {
+                "votes on this edge"
+                span class="vote-edge-history-axis muted" { " · " (legend_left) " : " (legend_right) }
+            }
+            ul class="vote-edge-history" {
                 @for v in &votes {
-                    @let (ratio_lo, ratio_hi) = if v.a == lo && v.b == hi {
-                        (v.ratio_left, v.ratio_right)
-                    } else {
-                        (v.ratio_right, v.ratio_left)
-                    };
-                    @let pct = ratio_pct(ratio_lo, ratio_hi);
-                    @let left_class = if lo.as_str() == left.as_str() { "ratio-left current" } else { "ratio-left" };
-                    @let right_class = if hi.as_str() == left.as_str() { "ratio-right current" } else { "ratio-right" };
-                    li class="vote-edge-history-row" {
+                    @let (r_left, r_right) = ratios_for_compare_page(v, left, right);
+                    @let pct = ratio_pct(r_left, r_right);
+                    @let row_tip = format!(
+                        "{}:{} counts toward {} (left of bar) vs {} (right of bar); #{} · @{}",
+                        r_left,
+                        r_right,
+                        legend_left,
+                        legend_right,
+                        v.thread_tag,
+                        v.principal,
+                    );
+                    li class="vote-edge-history-row" title=(row_tip) {
                         div class="vote-edge-meta" {
-                            a href=(nav.garden_item_href(&lo)) {
-                                code { (item_display_path(lo.as_str())) }
-                            }
-                            span class="vote-edge-ratio" { (format!("{}:{}", ratio_lo, ratio_hi)) }
-                            a href=(nav.garden_item_href(&hi)) {
-                                code { (item_display_path(hi.as_str())) }
-                            }
+                            span class="vote-edge-ratio" { (format!("{}:{}", r_left, r_right)) }
                             span class="muted" { " · #" (v.thread_tag) " · @" (v.principal) }
                         }
-                        div class="ratio-bar vote-edge-bar" {
-                            div class=(left_class) style={(format!("width: {:.3}%;", pct))} {}
-                            div class=(right_class) style={(format!("width: {:.3}%;", 100.0 - pct))} {}
+                        div class="ratio-bar vote-edge-bar" aria-hidden="true" {
+                            div class="ratio-left" style={(format!("width: {:.3}%;", pct))} {}
+                            div class="ratio-right" style={(format!("width: {:.3}%;", 100.0 - pct))} {}
                         }
                         @if !v.body.trim().is_empty() {
                             div class="vote-edge-reason muted" { (v.body.trim()) }
@@ -192,14 +230,33 @@ fn vote_edge_history_markup(
 pub(crate) async fn vote_compare_post_success_js(
     state: &AppState,
     nav: &ThreadNav,
+    room_wire: &str,
+    thread_tag: &str,
     left: &ItemId,
     right: &ItemId,
+    post_id: &str,
+    post_idx: Option<usize>,
 ) -> String {
     let reduced = state.reduced.read().await;
+    let scope = scope_from_room_wire(room_wire);
+    let Some(ing) = reduced.ingests_by_id.get(post_id).cloned() else {
+        drop(reduced);
+        return "console.warn('vote compare: new post not found');".to_string();
+    };
+    let idx = match post_idx {
+        Some(i) => i,
+        None => reduced
+            .try_thread_post_index_chronological(&scope, thread_tag, post_id)
+            .unwrap_or(0),
+    };
+    let viewer = None::<&str>;
+    let now = now_ms();
     let content = content_for_garden_view(&reduced, &nav.scope());
-    let edge_history = vote_edge_history_markup(content, left, right, nav);
+    let edge_history = vote_edge_history_markup(content, left, right);
+    let card = ingest_entry_markup(nav, thread_tag, idx, &ing, viewer, now, &reduced);
     drop(reduced);
     let mut b = JsBuilder::new();
+    b = b.morph_inner_selector("#vote-compare-preview", card);
     b = b.morph_inner_selector("#vote-edge-history-region", edge_history);
     b.build()
 }
@@ -1259,7 +1316,7 @@ async fn vote_compare_inner(
         .filter(|t| !t.is_empty())
         .unwrap_or_else(|| pick_autothread_for_vote_pair(content, &left, &right));
     let thread_tags = vote_thread_tags_for_pair(content, &left, &right);
-    let edge_history = vote_edge_history_markup(content, &left, &right, &nav);
+    let edge_history = vote_edge_history_markup(content, &left, &right);
     drop(reduced);
 
     let title = format!("vote — {} vs {}", item_display_path(left.as_str()), item_display_path(right.as_str()));
@@ -1282,15 +1339,6 @@ async fn vote_compare_inner(
     .expect("vote compare rpc json");
 
     let body = html! {
-        nav class="breadcrumb" {
-            a href="/" { "slug.social" }
-            @let vote_bc_href = if nav.room_path_prefix_for_vote_compare().is_empty() {
-                "/vote/compare".to_string()
-            } else {
-                format!("{}/vote/compare", nav.room_path_prefix_for_vote_compare())
-            };
-            (bc_segment("vote", &vote_bc_href, true))
-        }
         section class="vote-compare-shell" {
             h2 { "compare" }
             div class="vote-compare-pair" {
@@ -1304,6 +1352,10 @@ async fn vote_compare_inner(
             }
             div id="vote-edge-history-region" {
                 (edge_history)
+            }
+            div class="vote-compare-preview-wrap" {
+                h3 { "your vote (after post)" }
+                div id="vote-compare-preview" class="vote-compare-preview" {}
             }
             @if can_post {
                 form id="vote-compare-form" method="POST" action="/ui" {
@@ -1342,16 +1394,12 @@ async fn vote_compare_inner(
         }
     };
 
-    let (gr, gp) = garden_layout_meta(&nav);
-    let page = layout(
+    let page = layout_full_bleed_chromeless(
         &title,
-        "view-ontology view-ontology-light view-vote-compare",
+        "view-ontology view-ontology-light view-vote-compare view-vote-compare-fullscreen",
         body,
-        None,
         theme_from_jar(&jar),
         &theme_next_from_uri(&uri),
-        Some(&gr),
-        Some(&gp),
     );
     Html(page.into_string()).into_response()
 }
@@ -1389,9 +1437,39 @@ mod tests {
     }
 
     #[test]
+    fn vote_edge_compare_sorts_rows_by_strength_for_page_left() {
+        use super::{
+            content_for_garden_view, edge_vote_entries_for_pair, ratios_for_compare_page,
+            sort_votes_for_compare_display,
+        };
+        use crate::path_types::ItemId;
+        let mut reduced = ReducerState::default();
+        apply_ingest(
+            &mut reduced,
+            1,
+            "@00000000-0000-0000-0000-000000000000:test:local/test\n\
+             ~/topic {root}\n\
+             ~/topic/a {alpha}\n\
+             ~/topic/b {beta}\n\
+             ~/topic/a 1:9 ~/topic/b {weak for a}\n\
+             ~/topic/a 8:2 ~/topic/b {strong for a}\n",
+        );
+        let content = content_for_garden_view(&reduced, &ScopeId::Public);
+        let page_left = ItemId::parse("~/topic/a").unwrap().normalized_storage();
+        let page_right = ItemId::parse("~/topic/b").unwrap().normalized_storage();
+        let raw = edge_vote_entries_for_pair(content, &page_left, &page_right);
+        assert_eq!(raw.len(), 2);
+        let sorted = sort_votes_for_compare_display(raw, &page_left, &page_right);
+        let (r0, _) = ratios_for_compare_page(&sorted[0], &page_left, &page_right);
+        assert_eq!(r0, 8, "stronger left weight should sort first");
+        let (r1, _) = ratios_for_compare_page(&sorted[1], &page_left, &page_right);
+        assert_eq!(r1, 1);
+    }
+
+    #[test]
     fn edge_vote_count_for_pair_matches_votes_for_edge_len() {
         use super::{
-            content_for_garden_view, edge_vote_count_for_pair, votes_for_edge,
+            content_for_garden_view, edge_vote_count_for_pair, edge_vote_entries_for_pair,
         };
         use crate::path_types::ItemId;
         let mut reduced = ReducerState::default();
@@ -1410,9 +1488,9 @@ mod tests {
         let b = ItemId::parse("~/topic/b").unwrap().normalized_storage();
         assert_eq!(
             edge_vote_count_for_pair(content, &a, &b),
-            votes_for_edge(content, &a, &b).len()
+            edge_vote_entries_for_pair(content, &a, &b).len()
         );
-        assert_eq!(votes_for_edge(content, &a, &b).len(), 2);
+        assert_eq!(edge_vote_entries_for_pair(content, &a, &b).len(), 2);
     }
 
     #[test]

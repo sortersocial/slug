@@ -176,3 +176,21 @@ nav.breadcrumb.ont-sibling-nav span.ont-sibling-nav-group-sep {
   border-right: none;
   border-top: none;
 }
+
+body.view-vote-compare-fullscreen {
+  max-width: none;
+  width: 100%;
+  margin: 0;
+  padding: clamp(8px, 2.5vw, 20px);
+  padding-bottom: max(24px, env(safe-area-inset-bottom, 0px));
+  padding-top: max(8px, env(safe-area-inset-top, 0px));
+  min-height: 100vh;
+  min-height: 100dvh;
+  box-sizing: border-box;
+}
+body.view-vote-compare-fullscreen .vote-compare-shell {
+  max-width: none;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0;
+}
