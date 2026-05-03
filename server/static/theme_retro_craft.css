@@ -522,6 +522,25 @@ body.view-ontology {
   color-scheme: light;
 }
 body.view-ontology a { color: #1a4a8c; }
+/* Ontology pages are light; craft breadcrumb hover used --ink (light) and vanished on cream. */
+body.view-ontology nav.breadcrumb a {
+  color: #5c574e;
+  text-decoration: none;
+}
+body.view-ontology nav.breadcrumb a:hover {
+  color: #0d3d82;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+body.view-ontology nav.breadcrumb a.bc-current {
+  color: #1a1814;
+  font-weight: 600;
+}
+body.view-ontology nav.breadcrumb .bc-sep {
+  opacity: 0.55;
+  color: #6a655c;
+}
 body.view-ontology #controls {
   background: #f0ebe3;
   border-top: 1px solid #c8c4bc;
