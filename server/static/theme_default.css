@@ -821,6 +821,11 @@ nav.breadcrumb.ont-sibling-nav .ont-sibling-nav-group {
 nav.breadcrumb.ont-sibling-nav span.bc-sep.ont-sibling-nav-intra {
   padding: 0 1px;
 }
+nav.breadcrumb.ont-sibling-nav span.ont-sibling-nav-group-sep {
+  color: var(--meta);
+  padding: 0 6px;
+  user-select: none;
+}
 
 /* ================================================================
    ONTOLOGY ITEM PAGE — DARK VARIANT (opt-in via body class)

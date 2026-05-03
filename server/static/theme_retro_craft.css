@@ -510,6 +510,11 @@ nav.breadcrumb.ont-sibling-nav .ont-sibling-nav-group {
 nav.breadcrumb.ont-sibling-nav span.bc-sep.ont-sibling-nav-intra {
   padding: 0 1px;
 }
+nav.breadcrumb.ont-sibling-nav span.ont-sibling-nav-group-sep {
+  color: #8a857a;
+  padding: 0 6px;
+  user-select: none;
+}
 
 body.view-ontology {
   background: #ebe6dc;

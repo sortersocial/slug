@@ -559,7 +559,7 @@ fn sibling_nav_markup(nav: &ThreadNav, bar: &SiblingNavBar, current_item: &str) 
         nav class="breadcrumb ont-sibling-nav" aria-label="siblings under same parent" {
             @for (gi, group) in bar.groups.iter().enumerate() {
                 @if gi > 0 {
-                    span class="bc-sep" aria-hidden="true" { " / " }
+                    span class="ont-sibling-nav-group-sep" aria-hidden="true" { "·" }
                 }
                 span class="ont-sibling-nav-group" {
                     @for (i, link) in group.links.iter().enumerate() {
@@ -571,7 +571,7 @@ fn sibling_nav_markup(nav: &ThreadNav, bar: &SiblingNavBar, current_item: &str) 
                         @let tip = item_display_path(&link.path);
                         @let is_current = link.path == current_item;
                         @if is_current {
-                            a href=(href) class="bc-current" title=(tip) aria-current="page" { (n) }
+                            a href=(href) title=(tip) aria-current="page" { "[" (n) "]" }
                         } @else {
                             a href=(href) title=(tip) { (n) }
                         }
