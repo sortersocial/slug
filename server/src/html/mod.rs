@@ -33,8 +33,9 @@ pub(crate) use forum::{
     user_can_post_room, user_can_view_room,
 };
 pub use garden::{
-    external_garden_index, external_ontology_path, garden_index, ontology_path, room_external_garden_index,
-    room_external_ontology_path, room_garden_index, room_ontology_path,
+    external_garden_index, external_ontology_path, garden_index, ontology_path,
+    post_garden_pin, room_external_garden_index, room_external_ontology_path, room_garden_index,
+    room_ontology_path, room_vote_compare_page, vote_compare_page,
 };
 pub use routing::RouteContext;
 pub use search::{search_page, search_results_fragment};
@@ -289,7 +290,16 @@ impl JsQueryBuilder {
     }
 }
 
-pub(super) fn layout(title: &str, view: &str, body: Markup, views: Option<u64>, theme: &str, theme_next: &str) -> Markup {
+pub(super) fn layout(
+    title: &str,
+    view: &str,
+    body: Markup,
+    views: Option<u64>,
+    theme: &str,
+    theme_next: &str,
+    garden_room_wire: Option<&str>,
+    garden_path_prefix: Option<&str>,
+) -> Markup {
     let theme = normalize_theme(theme);
     let css_href = format!("/static/theme_{theme}.css");
     html! {
@@ -302,7 +312,9 @@ pub(super) fn layout(title: &str, view: &str, body: Markup, views: Option<u64>, 
                 link rel="stylesheet" href=(css_href) id="theme-stylesheet";
                 script src="https://unpkg.com/idiomorph@0.3.0/dist/idiomorph.min.js" {}
             }
-            body class=(view) {
+            body class=(view)
+                data-garden-room=(garden_room_wire.unwrap_or(""))
+                data-garden-prefix=(garden_path_prefix.unwrap_or("")) {
                 @if let Some(n) = views {
                     span class="view-meta muted" { " · " (n) " views" }
                 }
@@ -313,6 +325,11 @@ pub(super) fn layout(title: &str, view: &str, body: Markup, views: Option<u64>, 
                     div id="spread-control" {
                         span { "spread" }
                         input type="range" id="spread-slider" min="0" max="1" step="0.05" value="1";
+                    }
+                    @if let (Some(ref gr), Some(ref gpx)) = (garden_room_wire, garden_path_prefix) {
+                        @if !gr.is_empty() {
+                            div id="slug-pin-hud" class="slug-pin-hud" data-garden-prefix=(gpx) {}
+                        }
                     }
                     a id="search-btn" href="/search" { "search" }
                     form id="slug-theme-form" method="post" action="/theme" {

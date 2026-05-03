@@ -34,6 +34,18 @@ pub enum HtmlUiAction {
         #[serde(default)]
         form_id: Option<String>,
     },
+    /// Post a pairwise vote from `/vote/compare` (browser compose).
+    VoteComparePost {
+        room: String,
+        thread_tag: String,
+        left_item: String,
+        right_item: String,
+        ratio_left: i32,
+        ratio_right: i32,
+        explanation: String,
+        /// Same-origin path to load after a successful post (e.g. `/vote/compare?…`).
+        next: String,
+    },
     /// Author redacts own post via `POST /ui`.
     RedactPost {
         post_id: String,

@@ -29,7 +29,7 @@ use crate::{
 const INVITE_BROWSER_AGENT: &str = "00000000-0000-0000-0000-000000000000:invite:web/join";
 
 /// Agent id for `/login` browser OAuth (no CLI); must pass [`parse_agent`].
-const WEB_BROWSER_AGENT: &str = "00000000-0000-0000-0000-000000000001:social:web/browser";
+pub const WEB_BROWSER_AGENT: &str = "00000000-0000-0000-0000-000000000001:social:web/browser";
 
 /// HttpOnly cookie storing the same `slug_*` bearer string the CLI uses.
 pub const SLUG_SESSION_COOKIE: &str = "slug_session";

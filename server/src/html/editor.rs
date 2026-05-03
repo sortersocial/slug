@@ -44,6 +44,8 @@ pub async fn editor_page(jar: CookieJar, uri: Uri) -> impl IntoResponse {
         None,
         theme_from_jar(&jar),
         &theme_next_from_uri(&uri),
+        None,
+        None,
     );
     Html(page.into_string())
 }

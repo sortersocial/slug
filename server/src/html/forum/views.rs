@@ -167,6 +167,8 @@ async fn thread_view_inner(
         None,
         theme_from_jar(&jar),
         &theme_next_from_uri(&uri),
+        None,
+        None,
     );
     Html(page.into_string()).into_response()
 }
@@ -224,6 +226,8 @@ pub(super) fn room_not_found_page(jar: &CookieJar, uri: &Uri) -> impl IntoRespon
         None,
         theme_from_jar(jar),
         &theme_next_from_uri(uri),
+        None,
+        None,
     );
     (StatusCode::NOT_FOUND, Html(page.into_string()))
 }
@@ -293,6 +297,8 @@ pub async fn room_page(
         None,
         theme_from_jar(&jar),
         &theme_next_from_uri(&uri),
+        None,
+        None,
     );
     Html(page.into_string()).into_response()
 }

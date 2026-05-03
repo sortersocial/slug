@@ -48,6 +48,15 @@ pub async fn post_ui_html(
 }
 
 /// All UI command logic: HTTP extractors stop above; this only sees [`AppState`], session, and [`HtmlUiAction`].
+fn sanitize_vote_compare_next(next: &str) -> String {
+    let s = next.trim();
+    if s.starts_with('/') && !s.starts_with("//") && s.len() < 8192 {
+        s.to_string()
+    } else {
+        "/".to_string()
+    }
+}
+
 async fn dispatch_ui_action(
     state: &AppState,
     session: Option<&WebSession>,
@@ -123,6 +132,92 @@ async fn dispatch_ui_action(
                 Ok(RpcResult::CheckOk { .. }) => js_clear_errors(&form_error_target(error_target.as_ref())).into_response(),
                 Ok(_) => form_js_error(error_target.as_ref(), "unexpected response", "Check did not return CheckOk.").into_response(),
                 Err((msg, hint)) => form_js_error(error_target.as_ref(), &msg, hint.as_deref().unwrap_or("")).into_response(),
+            }
+        }
+        HtmlUiAction::VoteComparePost {
+            room,
+            thread_tag,
+            left_item,
+            right_item,
+            ratio_left,
+            ratio_right,
+            explanation,
+            next,
+        } => {
+            let Some(session) = session else {
+                return js_redirect("/login").into_response();
+            };
+            let err_tgt = Some("vote-compare-errors".to_string());
+            let room = room.trim().to_string();
+            let thread_tag = canonicalize_tag(&thread_tag);
+            if thread_tag.is_empty() {
+                return form_js_error(
+                    err_tgt.as_ref(),
+                    "missing thread",
+                    "Thread tag is required.",
+                )
+                .into_response();
+            }
+            let exp = explanation.trim();
+            if exp.is_empty() {
+                return form_js_error(
+                    err_tgt.as_ref(),
+                    "empty explanation",
+                    "Write a short reason in the textarea.",
+                )
+                .into_response();
+            }
+            let left_id = match crate::path_types::ItemId::parse(left_item.trim()) {
+                Some(i) => i.normalized_storage(),
+                None => {
+                    return form_js_error(
+                        err_tgt.as_ref(),
+                        "bad item",
+                        "Invalid left item path.",
+                    )
+                    .into_response();
+                }
+            };
+            let right_id = match crate::path_types::ItemId::parse(right_item.trim()) {
+                Some(i) => i.normalized_storage(),
+                None => {
+                    return form_js_error(
+                        err_tgt.as_ref(),
+                        "bad item",
+                        "Invalid right item path.",
+                    )
+                    .into_response();
+                }
+            };
+            let mut rl = ratio_left.max(0);
+            let mut rr = ratio_right.max(0);
+            if rl == 0 && rr == 0 {
+                rl = 1;
+                rr = 1;
+            }
+
+            let text = format!(
+                "@{}\n{} {}:{} {}\n{{\n{}\n}}\n",
+                crate::api::auth::WEB_BROWSER_AGENT,
+                left_id.as_str(),
+                rl,
+                rr,
+                right_id.as_str(),
+                exp
+            );
+
+            match rpc_post_with_bearer(state, &session.bearer, room.clone(), thread_tag.clone(), text).await {
+                Ok(RpcResult::PostOk { .. }) => {
+                    let loc = sanitize_vote_compare_next(&next);
+                    js_redirect(&loc).into_response()
+                }
+                Ok(_) => form_js_error(
+                    err_tgt.as_ref(),
+                    "unexpected response",
+                    "Post did not return PostOk.",
+                )
+                .into_response(),
+                Err((msg, hint)) => form_js_error(err_tgt.as_ref(), &msg, hint.as_deref().unwrap_or("")).into_response(),
             }
         }
         HtmlUiAction::RedactPost { post_id } => {
