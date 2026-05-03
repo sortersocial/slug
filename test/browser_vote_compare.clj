@@ -71,7 +71,8 @@
                (page/navigate pg (str base-url "/login"))
                (is (wait-for-text pg "body" "@alice" 15000) "alice session after login")
                (page/navigate pg cmp-url)
-               (is (wait-for-text pg ".vote-compare-shell" "compare" 15000) "vote compare shell")
+               ;; No .vote-compare-shell wrapper — wait on stable vote-compare UI instead.
+               (is (wait-for-text pg "body.view-vote-compare" "compare" 15000) "vote compare page")
                (is (wait-for-text pg "ul.vote-edge-history" "seed edge vote" 15000)
                    "edge history lists canonical-order vote")
                (locator/fill (page/locator pg "#vote-explain") "because playwright says so")
