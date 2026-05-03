@@ -1321,55 +1321,53 @@ async fn vote_compare_inner(
     .expect("vote compare rpc json");
 
     let body = html! {
-        section class="vote-compare-shell" {
-            h2 { "compare" }
-            div class="vote-compare-pair" {
-                a class="vote-compare-item" href=(nav.garden_item_href(&left)) {
-                    code { (item_display_path(left.as_str())) }
-                }
-                span class="vote-compare-vs" { "vs" }
-                a class="vote-compare-item" href=(nav.garden_item_href(&right)) {
-                    code { (item_display_path(right.as_str())) }
-                }
-            }
-            div id="vote-edge-history-region" {
-                (edge_history)
-            }
-            @if can_post {
-                form id="vote-compare-form" method="POST" action="/ui" {
-                    input type="hidden" name=(UI_RPC_FIELD) value=(rpc_json);
-                    div class="vote-thread-picker" {
-                        label class="vote-thread-picker-label" { "thread" }
-                        select id="vote-thread-select" name="thread_tag" aria-label="Thread to post vote into" {
-                            @if thread_tags.is_empty() {
-                                option value="vote" selected { "#vote" }
-                            }
-                            @for t in &thread_tags {
-                                @if *t == auto_thread {
-                                    option value=(t) selected { "#" (t) }
-                                } @else {
-                                    option value=(t) { "#" (t) }
-                                }
-                            }
+    h2 { "compare" }
+    div class="vote-compare-pair" {
+        a class="vote-compare-item" href=(nav.garden_item_href(&left)) {
+            code { (item_display_path(left.as_str())) }
+        }
+        span class="vote-compare-vs" { "vs" }
+        a class="vote-compare-item" href=(nav.garden_item_href(&right)) {
+            code { (item_display_path(right.as_str())) }
+        }
+    }
+    div id="vote-edge-history-region" {
+        (edge_history)
+    }
+    @if can_post {
+        form id="vote-compare-form" method="POST" action="/ui" {
+            input type="hidden" name=(UI_RPC_FIELD) value=(rpc_json);
+            div class="vote-thread-picker" {
+                label class="vote-thread-picker-label" { "thread" }
+                select id="vote-thread-select" name="thread_tag" aria-label="Thread to post vote into" {
+                    @if thread_tags.is_empty() {
+                        option value="vote" selected { "#vote" }
+                    }
+                    @for t in &thread_tags {
+                        @if *t == auto_thread {
+                            option value=(t) selected { "#" (t) }
+                        } @else {
+                            option value=(t) { "#" (t) }
                         }
                     }
-                    input type="hidden" name="ratio_left" id="vote-ratio-left" value="50";
-                    input type="hidden" name="ratio_right" id="vote-ratio-right" value="50";
-                    label class="vote-compare-slider-label" {
-                        span id="vote-slider-left-label" { (item_display_path(left.as_str())) }
-                        input type="range" id="vote-preference-slider" min="0" max="100" value="50"
-                            aria-valuemin="0" aria-valuemax="100";
-                        span id="vote-slider-right-label" { (item_display_path(right.as_str())) }
-                    }
-                    label class="vote-explain-label" { "reason (required)" }
-                    textarea name="explanation" id="vote-explain" rows="5" placeholder="why this split?" required {}
-                    div id="vote-compare-errors" {}
-                    p { button type="submit" { "post vote" } }
                 }
-            } @else {
-                p class="muted" { a href="/login" { "log in" } " to post this vote." }
             }
+            input type="hidden" name="ratio_left" id="vote-ratio-left" value="50";
+            input type="hidden" name="ratio_right" id="vote-ratio-right" value="50";
+            label class="vote-compare-slider-label" {
+                span id="vote-slider-left-label" { (item_display_path(left.as_str())) }
+                input type="range" id="vote-preference-slider" min="0" max="100" value="50"
+                    aria-valuemin="0" aria-valuemax="100";
+                span id="vote-slider-right-label" { (item_display_path(right.as_str())) }
+            }
+            label class="vote-explain-label" { "reason (required)" }
+            textarea name="explanation" id="vote-explain" rows="5" placeholder="why this split?" required {}
+            div id="vote-compare-errors" {}
+            p { button type="submit" { "post vote" } }
         }
+    } @else {
+        p class="muted" { a href="/login" { "log in" } " to post this vote." }
+    }
     };
 
     let page = layout_full_bleed_chromeless(

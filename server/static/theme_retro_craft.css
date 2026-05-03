@@ -742,11 +742,31 @@ body.view-ontology button.ont-garden-pin-ico:focus-visible {
   outline-offset: 2px;
 }
 
+body.view-ontology ol.ont-ranking-list {
+  counter-reset: ont-rank;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
 body.view-ontology ol.ont-ranking-list li,
 body.view-ontology ul.ont-group-list li {
   display: flex;
   align-items: baseline;
   gap: 0.35rem;
+}
+body.view-ontology ol.ont-ranking-list li {
+  counter-increment: ont-rank;
+}
+body.view-ontology ol.ont-ranking-list li::before {
+  flex-shrink: 0;
+  color: #5c574e;
+  content: counter(ont-rank) ".";
+  font-size: 1.35rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  min-width: 2.25ch;
+  text-align: right;
 }
 body.view-ontology ol.ont-ranking-list li .item-link,
 body.view-ontology ul.ont-group-list li .item-link {

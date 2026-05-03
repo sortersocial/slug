@@ -1270,8 +1270,12 @@ body.view-ontology-dark .ont-ranking-list li {
 body.view-ontology-dark .ont-ranking-list li::before {
   color: var(--meta);
   content: counter(ont-rank) ".";
-  font-size: 11px;
-  min-width: 18px;
+  flex-shrink: 0;
+  font-size: 1.35rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  min-width: 2.25ch;
   text-align: right;
 }
 body.view-ontology-dark .ont-rank-score {
@@ -1424,8 +1428,12 @@ body.view-ontology-light .ont-ranking-list li {
 body.view-ontology-light .ont-ranking-list li::before {
   color: var(--meta);
   content: counter(ont-rank) ".";
-  font-size: 11px;
-  min-width: 18px;
+  flex-shrink: 0;
+  font-size: 1.35rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  min-width: 2.25ch;
   text-align: right;
 }
 body.view-ontology-light .ont-rank-score {
