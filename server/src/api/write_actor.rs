@@ -86,17 +86,6 @@ async fn broadcast_web_refresh(state: &AppState, room_key: &str, thread_id: &str
         "/".to_string()
     }];
     path_prefixes.push(thread_url.clone());
-    if room_key == "public" {
-        path_prefixes.push(format!("/embed/t/{}", urlencoding::encode(thread_id)));
-        path_prefixes.push("/vote/compare".to_string());
-    } else if let Some(seg) = room_route_segment(room_key) {
-        path_prefixes.push(format!(
-            "/r/{}/embed/t/{}",
-            seg,
-            urlencoding::encode(thread_id)
-        ));
-        path_prefixes.push(format!("/r/{seg}/vote/compare"));
-    }
     let _ = state.js_tx.send(crate::state::JsSnippet { code: js, path_prefixes });
 }
 

@@ -25,7 +25,7 @@ use super::paginator::{render_thread_paginator, PAGE_SIZE};
 use super::room_members::room_members_section_markup;
 use crate::html::ui_action::UI_RPC_FIELD;
 use crate::html::{
-    bc_threads, cli_panel, layout, layout_embed_thread, now_ms, theme_from_jar, theme_next_from_uri,
+    bc_threads, cli_panel, layout, now_ms, theme_from_jar, theme_next_from_uri,
 };
 
 fn compose_form(nav: &ThreadNav, thread_tag: &str, show: bool) -> Markup {
@@ -73,7 +73,6 @@ async fn thread_view_inner(
     headers: HeaderMap,
     jar: CookieJar,
     uri: Uri,
-    embed: bool,
 ) -> impl IntoResponse {
     let tag = canonicalize_tag(&tag);
     let scope = nav.scope();
@@ -110,11 +109,7 @@ async fn thread_view_inner(
             .map(|u| user_can_post_room(&reduced, rid, u))
             .unwrap_or(false),
     };
-    let strip = if embed {
-        html! {}
-    } else {
-        auth_strip(&headers, &jar, &reduced)
-    };
+    let strip = auth_strip(&headers, &jar, &reduced);
     let now = now_ms();
     let entry_rows: Vec<Markup> = display_ingests
         .iter()
@@ -129,19 +124,15 @@ async fn thread_view_inner(
     let paginator_top = render_thread_paginator(&nav, &tag, offset, total, true);
     let paginator_bot = render_thread_paginator(&nav, &tag, offset, total, false);
 
-    let bc: Markup = if embed {
-        html! {}
-    } else {
-        match &sc {
-            ScopeId::Public => bc_threads(Some(&tag), None),
-            ScopeId::Room(rid) => {
-                let slug = if let Some((_, s)) = rid.split_once('/') {
-                    s
-                } else {
-                    rid.as_str()
-                };
-                bc_room(&nav, slug, Some(&tag), None)
-            }
+    let bc: Markup = match &sc {
+        ScopeId::Public => bc_threads(Some(&tag), None),
+        ScopeId::Room(rid) => {
+            let slug = if let Some((_, s)) = rid.split_once('/') {
+                s
+            } else {
+                rid.as_str()
+            };
+            bc_room(&nav, slug, Some(&tag), None)
         }
     };
 
@@ -151,11 +142,9 @@ async fn thread_view_inner(
     };
 
     let body = html! {
-        @if !embed {
-            (strip)
-            nav class="breadcrumb" { (bc) }
-            p class="muted" { "top=oldest · bottom=newest" }
-        }
+        (strip)
+        nav class="breadcrumb" { (bc) }
+        p class="muted" { "top=oldest · bottom=newest" }
         div id="thread-feed-region" {
             @if display_ingests.is_empty() {
                 p class="muted" { "no activity yet" }
@@ -167,34 +156,22 @@ async fn thread_view_inner(
                 (paginator_bot)
             }
         }
-        @if !embed {
-            div id="thread-live-region" {
-                (compose_form(&nav, &tag, show_compose))
-            }
-            (cli_panel(std::slice::from_ref(&cli)))
+        div id="thread-live-region" {
+            (compose_form(&nav, &tag, show_compose))
         }
+        (cli_panel(std::slice::from_ref(&cli)))
     };
 
-    let theme = theme_from_jar(&jar);
-    let page = if embed {
-        layout_embed_thread(
-            &format!("#{tag} (embed)"),
-            "view-thread view-thread-embed",
-            body,
-            theme,
-        )
-    } else {
-        layout(
-            &format!("#{tag}"),
-            "view-thread",
-            body,
-            None,
-            theme,
-            &theme_next_from_uri(&uri),
-            None,
-            None,
-        )
-    };
+    let page = layout(
+        &format!("#{tag}"),
+        "view-thread",
+        body,
+        None,
+        theme_from_jar(&jar),
+        &theme_next_from_uri(&uri),
+        None,
+        None,
+    );
     Html(page.into_string()).into_response()
 }
 
@@ -207,19 +184,7 @@ pub async fn thread_view(
     jar: CookieJar,
     uri: Uri,
 ) -> impl IntoResponse {
-    thread_view_inner(state, tag, q, ThreadNav::public(), headers, jar, uri, false).await
-}
-
-/// Embeddable thread posts list for iframes — `/embed/t/:tag` (SSE + morph; no compose bar).
-pub async fn embed_public_thread_view(
-    State(state): State<AppState>,
-    Path(tag): Path<String>,
-    Query(q): Query<ThreadViewQuery>,
-    headers: HeaderMap,
-    jar: CookieJar,
-    uri: Uri,
-) -> impl IntoResponse {
-    thread_view_inner(state, tag, q, ThreadNav::public(), headers, jar, uri, true).await
+    thread_view_inner(state, tag, q, ThreadNav::public(), headers, jar, uri).await
 }
 
 /// Room thread — `/r/:room_key/t/:tag` (`room_key` = `{short}{slug}`).
@@ -244,34 +209,7 @@ pub async fn room_thread_view(
     let Some(nav) = ThreadNav::from_room_id(&room_id) else {
         return (StatusCode::NOT_FOUND, "bad room path").into_response();
     };
-    thread_view_inner(state, tag, q, nav, headers, jar, uri, false)
-        .await
-        .into_response()
-}
-
-/// Embeddable room thread — `/r/:room_key/embed/t/:tag`.
-pub async fn embed_room_thread_view(
-    State(state): State<AppState>,
-    Path((room_key, tag)): Path<(String, String)>,
-    Query(q): Query<ThreadViewQuery>,
-    headers: HeaderMap,
-    jar: CookieJar,
-    uri: Uri,
-) -> impl IntoResponse {
-    let Some(room_id) = slug_types::room_id_from_route_segment(&room_key) else {
-        return (StatusCode::NOT_FOUND, "bad room path").into_response();
-    };
-    let reduced = state.reduced.read().await;
-    let user = optional_principal(&headers, &jar, &reduced);
-    if !user_can_view_room(&reduced, &room_id, user.as_deref()) {
-        drop(reduced);
-        return room_not_found_page(&jar, &uri).into_response();
-    }
-    drop(reduced);
-    let Some(nav) = ThreadNav::from_room_id(&room_id) else {
-        return (StatusCode::NOT_FOUND, "bad room path").into_response();
-    };
-    thread_view_inner(state, tag, q, nav, headers, jar, uri, true)
+    thread_view_inner(state, tag, q, nav, headers, jar, uri)
         .await
         .into_response()
 }

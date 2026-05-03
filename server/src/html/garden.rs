@@ -172,7 +172,7 @@ fn vote_edge_history_markup(
     }
 }
 
-/// After a successful vote post: morph the new card into `#vote-compare-preview` and reload the thread iframe.
+/// After a successful vote post: morph the new card into `#vote-compare-preview` and refresh edge history.
 pub(crate) async fn vote_compare_post_success_js(
     state: &AppState,
     nav: &ThreadNav,
@@ -202,13 +202,9 @@ pub(crate) async fn vote_compare_post_success_js(
     let content = content_for_garden_view(&reduced, &nav.scope());
     let edge_history = vote_edge_history_markup(content, left, right, nav);
     drop(reduced);
-    let embed_src = super::js_string_literal(&nav.embed_thread_url(thread_tag));
     let mut b = JsBuilder::new();
     b = b.morph_inner_selector("#vote-compare-preview", card);
     b = b.morph_inner_selector("#vote-edge-history-region", edge_history);
-    b = b.raw(&format!(
-        "var __ifr=document.getElementById('vote-thread-iframe'); if(__ifr){{ __ifr.src={embed_src}; }}",
-    ));
     b.build()
 }
 
@@ -1280,8 +1276,6 @@ async fn vote_compare_inner(
     )
     .expect("vote compare rpc json");
 
-    let embed_initial = nav.embed_thread_url(&auto_thread);
-
     let body = html! {
         nav class="breadcrumb" {
             a href="/" { "slug.social" }
@@ -1292,7 +1286,7 @@ async fn vote_compare_inner(
             };
             (bc_segment("vote", &vote_bc_href, true))
         }
-        section class="vote-compare-shell" data-embed-prefix=(nav.embed_thread_prefix()) {
+        section class="vote-compare-shell" {
             h2 { "compare" }
             div class="vote-compare-pair" {
                 a class="vote-compare-item" href=(nav.garden_item_href(&left)) {
@@ -1303,13 +1297,12 @@ async fn vote_compare_inner(
                     code { (item_display_path(right.as_str())) }
                 }
             }
-            iframe id="vote-thread-iframe" class="vote-thread-iframe" title="Thread posts" src=(embed_initial) {}
+            div id="vote-edge-history-region" {
+                (edge_history)
+            }
             div class="vote-compare-preview-wrap" {
                 h3 { "your vote (after post)" }
                 div id="vote-compare-preview" class="vote-compare-preview" {}
-            }
-            div id="vote-edge-history-region" {
-                (edge_history)
             }
             @if can_post {
                 form id="vote-compare-form" method="POST" action="/ui" {

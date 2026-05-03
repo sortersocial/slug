@@ -932,13 +932,8 @@ body.view-ontology-light ul.ont-group-list li .item-link {
 #vote-thread-select {
   min-width: 160px;
 }
-iframe.vote-thread-iframe {
-  width: 100%;
-  min-height: 220px;
-  border: 1px solid var(--hairline, #333);
-  border-radius: 4px;
-  margin: 8px 0 14px;
-  background: var(--panel, #111);
+#vote-edge-history-region {
+  margin: 14px 0 18px;
 }
 .vote-compare-preview-wrap {
   margin: 12px 0;
@@ -978,9 +973,6 @@ li.vote-edge-history-row {
   margin-top: 4px;
   font-size: 12px;
   white-space: pre-wrap;
-}
-body.view-thread-embed {
-  margin: 8px;
 }
 
 /* ----------------------------------------------------------------

@@ -224,19 +224,6 @@
       syncVoteRatio();
     }
 
-    var voteShell = document.querySelector('.vote-compare-shell[data-embed-prefix]');
-    if (voteShell) {
-      var embedPrefix = voteShell.getAttribute('data-embed-prefix') || '';
-      var threadSel = document.getElementById('vote-thread-select');
-      var ifr = document.getElementById('vote-thread-iframe');
-      function syncVoteThreadIframe() {
-        if (!threadSel || !ifr || !embedPrefix) return;
-        var tag = threadSel.value || 'vote';
-        ifr.src = embedPrefix + '/' + encodeURIComponent(tag);
-      }
-      if (threadSel) threadSel.addEventListener('change', syncVoteThreadIframe);
-    }
-
     // SSE: server-pushed JS
     function connectSSE() {
       var ssePath = window.location.pathname + window.location.search;

@@ -17,9 +17,7 @@ pub use feed::{home, thread_feed_html, thread_feed_html_for_room, thread_feed_re
 pub use nav::ThreadNav;
 pub use post_single::{room_thread_post_view, thread_post_view};
 pub use profile::user_profile_page;
-pub use views::{
-    embed_public_thread_view, embed_room_thread_view, room_page, room_thread_view, thread_view,
-};
+pub use views::{room_page, room_thread_view, thread_view};
 
 pub(crate) use access::{user_can_post_room, user_can_view_room};
 pub(crate) use ingest::ingest_entry_markup;

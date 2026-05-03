@@ -23,9 +23,8 @@ use breadcrumb_path::{ExternalOntologyPath, OntologyPath};
 pub use auth::{auth_complete_page, auth_signed_in_fragment, choose_username_error_fragment, choose_username_page};
 pub use editor::{editor_check, editor_page};
 pub use forum::{
-    embed_public_thread_view, embed_room_thread_view, home, room_page, room_thread_post_view,
-    room_thread_view, thread_feed_html, thread_feed_html_for_room, thread_feed_region_markup,
-    thread_post_view, thread_view, ThreadNav,
+    home, room_page, room_thread_post_view, room_thread_view, thread_feed_html,
+    thread_feed_html_for_room, thread_feed_region_markup, thread_post_view, thread_view, ThreadNav,
 };
 
 pub(crate) use forum::{
@@ -251,11 +250,6 @@ impl JsBuilder {
         self
     }
 
-    pub(crate) fn raw(mut self, js: &str) -> Self {
-        self.snippets.push(js.to_string());
-        self
-    }
-
     pub(crate) fn build(self) -> String {
         self.snippets.join(" ")
     }
@@ -308,11 +302,6 @@ pub(super) fn layout(
     garden_path_prefix: Option<&str>,
 ) -> Markup {
     layout_embed_controls(title, view, body, views, theme, theme_next, garden_room_wire, garden_path_prefix, true)
-}
-
-/// Minimal document for `/embed/…` iframes: theme CSS + body + `slug_ui.js` (SSE), no bottom controls bar.
-pub(super) fn layout_embed_thread(title: &str, view: &str, body: Markup, theme: &str) -> Markup {
-    layout_embed_controls(title, view, body, None, theme, "/", None, None, false)
 }
 
 fn layout_embed_controls(

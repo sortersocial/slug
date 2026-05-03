@@ -1,5 +1,5 @@
 (ns test.browser-vote-compare
-  "Vote compare: POST /ui morphs preview + edge history; thread iframe loads /embed/t/…"
+  "Vote compare: POST /ui morphs preview + edge history."
   (:require [babashka.fs :as fs]
             [cheshire.core :as json]
             [clojure.string :as str]

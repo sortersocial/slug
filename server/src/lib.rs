@@ -97,11 +97,6 @@ pub fn create_app(state: AppState) -> Router {
             "/r/:room_key/-/*path",
             get(crate::html::room_external_ontology_path),
         )
-        .route("/embed/t/:tag", get(crate::html::embed_public_thread_view))
-        .route(
-            "/r/:room_key/embed/t/:thread_tag",
-            get(crate::html::embed_room_thread_view),
-        )
         .route("/t/:tag/:index", get(crate::html::thread_post_view))
         .route("/t/:tag", get(crate::html::thread_view))
         .route(
