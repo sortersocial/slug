@@ -118,6 +118,48 @@ body.view-ontology #controls {
   border-top: 1px solid #ccc;
 }
 
+body.view-ontology nav.breadcrumb {
+  color: #666;
+  font-size: 0.85rem;
+  margin: 8px 0 0;
+}
+body.view-ontology nav.breadcrumb a {
+  color: #23a;
+  text-decoration: none;
+}
+body.view-ontology nav.breadcrumb a:hover {
+  color: #0a4a9e;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+body.view-ontology nav.breadcrumb a.bc-current { color: #111; font-weight: 600; }
+body.view-ontology nav.breadcrumb .bc-sep { color: #888; padding: 0 2px; }
+
+nav.breadcrumb.ont-sibling-nav {
+  margin-top: 0;
+  width: 100%;
+  max-width: 100%;
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 0;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+nav.breadcrumb.ont-sibling-nav .ont-sibling-nav-group {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: nowrap;
+}
+nav.breadcrumb.ont-sibling-nav span.bc-sep.ont-sibling-nav-intra {
+  padding: 0 1px;
+}
+nav.breadcrumb.ont-sibling-nav span.ont-sibling-nav-group-sep {
+  color: #888;
+  padding: 0 6px;
+  user-select: none;
+}
+
 #detail-pane {
   background: #f5f0e8;
   border-left: 1px solid #ccc;

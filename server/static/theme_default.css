@@ -73,7 +73,12 @@ nav.breadcrumb {
   width: fit-content;
 }
 nav.breadcrumb a       { color: var(--ui); text-decoration: none; }
-nav.breadcrumb a:hover { color: var(--signal); }
+nav.breadcrumb a:hover {
+  color: var(--link);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
 nav.breadcrumb a.bc-current { color: var(--signal); }
 nav.breadcrumb .bc-sep { color: var(--meta); padding: 0 2px; }
 nav.breadcrumb .bc-side { margin-left: 8px; font-size: 12px; color: var(--meta); }
@@ -801,6 +806,32 @@ details > summary::-webkit-details-marker { display: none; }
 .age-week   a { color: var(--link); }
 .age-old    a { color: var(--meta); }
 
+/* Sibling quick-nav: second breadcrumb row (same link styling as nav.breadcrumb) */
+nav.breadcrumb.ont-sibling-nav {
+  margin-top: 0;
+  width: 100%;
+  max-width: 100%;
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 0;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+nav.breadcrumb.ont-sibling-nav .ont-sibling-nav-group {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: nowrap;
+}
+nav.breadcrumb.ont-sibling-nav span.bc-sep.ont-sibling-nav-intra {
+  padding: 0 1px;
+}
+nav.breadcrumb.ont-sibling-nav span.ont-sibling-nav-group-sep {
+  color: var(--meta);
+  padding: 0 6px;
+  user-select: none;
+}
+
 /* ================================================================
    ONTOLOGY ITEM PAGE — DARK VARIANT (opt-in via body class)
    ================================================================ */
@@ -1156,6 +1187,13 @@ body.view-ontology.view-ontology-light .ont-item-content pre {
   background: var(--g1);
   border: 1px solid var(--lo);
   color: var(--code-fg);
+}
+/* Breadcrumb bar uses pale --g2; hover must stay darker than paper (not --signal-on-paper edge cases). */
+body.view-ontology.view-ontology-light nav.breadcrumb a:hover {
+  color: var(--link);
+}
+body.view-ontology.view-ontology-light nav.breadcrumb a.bc-current {
+  color: var(--signal);
 }
 body.view-ontology .age-fresh  a { color: #005500; }
 body.view-ontology .age-recent a { color: #003080; }

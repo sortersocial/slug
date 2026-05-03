@@ -491,12 +491,56 @@ body.view-ontology-light .ont-tab.is-active {
   color: #1a1814;
 }
 
+nav.breadcrumb.ont-sibling-nav {
+  margin-top: 0;
+  width: 100%;
+  max-width: 100%;
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 0;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+nav.breadcrumb.ont-sibling-nav .ont-sibling-nav-group {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: nowrap;
+}
+nav.breadcrumb.ont-sibling-nav span.bc-sep.ont-sibling-nav-intra {
+  padding: 0 1px;
+}
+nav.breadcrumb.ont-sibling-nav span.ont-sibling-nav-group-sep {
+  color: #8a857a;
+  padding: 0 6px;
+  user-select: none;
+}
+
 body.view-ontology {
   background: #ebe6dc;
   color: #1a1814;
   color-scheme: light;
 }
 body.view-ontology a { color: #1a4a8c; }
+/* Ontology pages are light; craft breadcrumb hover used --ink (light) and vanished on cream. */
+body.view-ontology nav.breadcrumb a {
+  color: #5c574e;
+  text-decoration: none;
+}
+body.view-ontology nav.breadcrumb a:hover {
+  color: #0d3d82;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+body.view-ontology nav.breadcrumb a.bc-current {
+  color: #1a1814;
+  font-weight: 600;
+}
+body.view-ontology nav.breadcrumb .bc-sep {
+  opacity: 0.55;
+  color: #6a655c;
+}
 body.view-ontology #controls {
   background: #f0ebe3;
   border-top: 1px solid #c8c4bc;
