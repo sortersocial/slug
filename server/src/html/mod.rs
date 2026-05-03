@@ -310,6 +310,7 @@ pub(super) fn layout_full_bleed_chromeless(
     title: &str,
     view: &str,
     body: Markup,
+    views: Option<u64>,
     theme: &str,
     theme_next: &str,
 ) -> Markup {
@@ -317,7 +318,7 @@ pub(super) fn layout_full_bleed_chromeless(
         title,
         view,
         body,
-        None,
+        views,
         theme,
         theme_next,
         None,

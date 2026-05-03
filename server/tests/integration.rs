@@ -1421,12 +1421,24 @@ async fn test_view_counts_increment_and_display() {
         .await
         .unwrap();
     assert!(v1.status().is_success(), "vote compare GET 1: {}", v1.status());
+    let v1_body = v1.text().await.unwrap();
+    assert!(
+        v1_body.contains("1 views"),
+        "vote compare page should show view count, snippet: {}",
+        v1_body.chars().take(600).collect::<String>()
+    );
     let v2 = client
         .get(format!("http://{addr}{vote_q_left_first}"))
         .send()
         .await
         .unwrap();
     assert!(v2.status().is_success(), "vote compare GET 2: {}", v2.status());
+    let v2_body = v2.text().await.unwrap();
+    assert!(
+        v2_body.contains("2 views"),
+        "vote compare page should reflect incremented count, snippet: {}",
+        v2_body.chars().take(600).collect::<String>()
+    );
 
     assert_eq!(
         state.views.get_views(&vote_key),

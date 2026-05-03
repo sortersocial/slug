@@ -1397,10 +1397,14 @@ async fn vote_compare_inner(
     }
     };
 
+    let url_key = canonical_view_url(&uri);
+    let view_count = state.views.get_views(&url_key);
+
     let page = layout_full_bleed_chromeless(
         &title,
         "view-ontology view-ontology-light view-vote-compare view-vote-compare-fullscreen",
         body,
+        Some(view_count),
         theme_from_jar(&jar),
         &theme_next_from_uri(&uri),
     );
