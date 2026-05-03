@@ -14,6 +14,7 @@ use crate::state::AppState;
 use super::access::user_can_view_room;
 use super::ingest::ingest_entry_markup;
 use super::nav::ThreadNav;
+use super::paginator::render_post_permalink_nav;
 use super::page::bc_room;
 use super::views::room_not_found_page;
 use crate::html::{bc_threads, layout, now_ms, theme_from_jar, theme_next_from_uri};
@@ -32,17 +33,28 @@ async fn thread_post_view_inner(
     let index: usize = index_str.parse().unwrap_or(0);
     let scope = nav.scope();
     let now = now_ms();
-    let (ing, body_markup) = {
+    let (ing, body_markup, permalink_nav) = {
         let reduced = state.reduced.read().await;
-        let ing = reduced
+        let queue = reduced
             .ingests_by_scope_thread
-            .get(&(scope.clone(), tag.clone()))
+            .get(&(scope.clone(), tag.clone()));
+        let total_posts = queue.map(|q| q.len()).unwrap_or(0);
+        let ing = queue
             .and_then(|q| q.iter().rev().nth(index))
             .and_then(|id| reduced.ingests_by_id.get(id).cloned());
+        let nav_index = ing
+            .as_ref()
+            .and_then(|i| reduced.try_thread_post_index_chronological(&scope, &tag, &i.id))
+            .unwrap_or(index);
         let body = ing.as_ref().map(|i| {
-            ingest_entry_markup(&nav, &tag, index, i, viewer.as_deref(), now, &reduced)
+            ingest_entry_markup(&nav, &tag, nav_index, i, viewer.as_deref(), now, &reduced)
         });
-        (ing, body)
+        let permalink_nav = if total_posts > 1 {
+            Some(render_post_permalink_nav(&nav, &tag, nav_index, total_posts))
+        } else {
+            None
+        };
+        (ing, body, permalink_nav)
     };
 
     let sc = nav.scope();
@@ -64,7 +76,13 @@ async fn thread_post_view_inner(
         html! {
             nav class="breadcrumb" { (bc) }
             @if let (Some(_ing), Some(bm)) = (&ing, &body_markup) {
+                @if let Some(ref pn) = permalink_nav {
+                    (pn)
+                }
                 (bm)
+                @if let Some(pn) = permalink_nav {
+                    (pn)
+                }
             } @else {
                 p class="muted" { "post not found" }
             }
