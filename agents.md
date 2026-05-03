@@ -33,17 +33,11 @@ Strict **CSP** that blocks `eval` would break the current app. Other projects ma
 
 - **`RpcCommand` / `POST /api/v0/rpc`** (`types/src/lib.rs`, `server/src/api/rpc.rs`): **Bearer-authenticated** JSON API for CLI, automation, and programmatic clients. Durable effects go through here (append to event log, then `apply_event`).
 
-- **`HtmlUiAction` / `POST /ui`** (`server/src/html/ui_action.rs`, `server/src/api/ui_html.rs`): **Browser session** (cookie) UI commands. Payload is `__rpc__` + form fields. Responses are **JS morphs**, not JSON result objects. Used for posting from forms, checks, redact button, thread expand/collapse, new-thread slots, etc.
+- **`HtmlUiAction` / `POST /ui`** (`server/src/html/ui_action.rs`, `server/src/api/ui_html.rs`): **Browser session** (cookie) UI commands. Payload is `__rpc__` + form fields. Most responses are **JS morphs**; some actions return **HTTP redirects** (see below).
 
-- **Exceptions (full navigation):** `POST /theme` and `POST /garden/pin` use normal redirects and `Set-Cookie` (not `eval`). The vote compare form (`HtmlUiAction::VoteComparePost`) uses `POST /ui` but returns **`window.location` redirect JS** so the client performs a full navigation after posting.
+- **Non-morph `POST /ui` responses:** **`SetGardenPin`** returns **`303 See Other`** and **`Set-Cookie`** (same idea as `POST /theme`); the client in `server/static/slug_ui.js` uses **`fetch` with `redirect: 'manual'`** and then **`location.assign`**. **`VoteComparePost`** still returns **`text/javascript`** with **`window.location = …`** for a full navigation after posting.
 
-**Garden pin / compare voting**
-
-- Cookie **`slug_garden_pin`**: URL-safe base64 of `room_wire` + record separator + canonical item storage URL (`server/src/html/garden.rs`). Set via **`POST /garden/pin`**; cleared with `clear=1`.
-
-- Pairwise UI: **`GET /vote/compare?left=&right=&thread=`** (optional `thread` overrides auto-pick). Room scope: **`GET /r/:room_key/vote/compare?…`**. Auto-thread picks the lexicographically first shared thread tag on both items, else **`vote`**.
-
-- HUD: **`#slug-pin-hud`** in `#controls` when `layout` receives garden metadata (pinned link to current scope’s item).
+- **Garden pin / compare voting:** Cookie **`slug_garden_pin`** is set by **`HtmlUiAction::set_garden_pin`** on **`POST /ui`** (JSON: **`clear`**, **`room_wire`**, **`item_storage`**, **`next`**). Pairwise UI: **`GET /vote/compare?left=&right=&thread=`** and **`GET /r/:room_key/vote/compare?…`**. Auto-thread: first shared thread tag on both items, else **`vote`**. HUD: **`#slug-pin-hud`** in **`#controls`** when garden layout metadata is present.
 
 **Rule of thumb:** New **CLI or API** verbs → `RpcCommand`. New **in-page morph or form-driven** behavior that only makes sense in the browser → `HtmlUiAction`. If both need the same operation, implement the real work once (e.g. call shared RPC helpers from `post_ui_html`) and keep the wire shapes separate.
 

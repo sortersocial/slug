@@ -48,6 +48,7 @@
       if (!f || f.tagName !== 'FORM') return;
       if ((f.method || 'get').toLowerCase() !== 'post') return;
       if (f.id === 'slug-theme-form') return;
+      if (f.id === 'vote-compare-form') return;
       if (f.getAttribute('data-navigate') === 'full') return;
       e.preventDefault();
       var resp = await fetch(f.action, {
@@ -149,7 +150,27 @@
       });
     }
 
-    // Garden pin: POST /garden/pin (full page), cookie + redirect
+    // Garden pin: POST /ui + __rpc__ `set_garden_pin` → 303 + Set-Cookie (same entrypoint as other UI actions)
+    async function postUiRedirect(rpcObj) {
+      var fd = new URLSearchParams();
+      fd.set('__rpc__', JSON.stringify(rpcObj));
+      var resp = await fetch('/ui', {
+        method: 'POST',
+        body: fd,
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        credentials: 'same-origin',
+        redirect: 'manual',
+      });
+      if (resp.status === 303 || resp.status === 302 || resp.status === 301) {
+        var loc = resp.headers.get('Location');
+        if (loc) {
+          window.location.assign(loc);
+          return;
+        }
+      }
+      console.warn('slug UI redirect: unexpected response', resp.status);
+    }
+
     document.addEventListener('click', function (e) {
       var t = e.target;
       if (!t || !t.closest) return;
@@ -165,20 +186,15 @@
       }
       if (!room) return;
       var next = window.location.pathname + window.location.search;
-      var form = document.createElement('form');
-      form.method = 'POST';
-      form.action = '/garden/pin';
-      form.setAttribute('data-navigate', 'full');
-      form.style.display = 'none';
-      [['room_wire', room], ['item_storage', storage], ['next', next]].forEach(function (pair) {
-        var inp = document.createElement('input');
-        inp.type = 'hidden';
-        inp.name = pair[0];
-        inp.value = pair[1];
-        form.appendChild(inp);
+      postUiRedirect({
+        action: 'set_garden_pin',
+        clear: false,
+        room_wire: room,
+        item_storage: storage,
+        next: next,
+      }).catch(function (err) {
+        console.warn('slug pin failed', err);
       });
-      document.body.appendChild(form);
-      form.submit();
     });
 
     document.addEventListener('click', function (e) {
@@ -188,20 +204,14 @@
       if (!unpin) return;
       e.preventDefault();
       var next = window.location.pathname + window.location.search;
-      var form = document.createElement('form');
-      form.method = 'POST';
-      form.action = '/garden/pin';
-      form.setAttribute('data-navigate', 'full');
-      form.style.display = 'none';
-      [['clear', '1'], ['next', next]].forEach(function (pair) {
-        var inp = document.createElement('input');
-        inp.type = 'hidden';
-        inp.name = pair[0];
-        inp.value = pair[1];
-        form.appendChild(inp);
+      postUiRedirect({
+        action: 'set_garden_pin',
+        clear: true,
+        room_wire: '',
+        next: next,
+      }).catch(function (err) {
+        console.warn('slug unpin failed', err);
       });
-      document.body.appendChild(form);
-      form.submit();
     });
 
     document.addEventListener('click', function (e) {
@@ -217,20 +227,15 @@
       if (!room && document.body) room = document.body.getAttribute('data-garden-room') || '';
       if (!room) return;
       var next = window.location.pathname + window.location.search;
-      var form = document.createElement('form');
-      form.method = 'POST';
-      form.action = '/garden/pin';
-      form.setAttribute('data-navigate', 'full');
-      form.style.display = 'none';
-      [['room_wire', room], ['item_storage', storage], ['next', next]].forEach(function (pair) {
-        var inp = document.createElement('input');
-        inp.type = 'hidden';
-        inp.name = pair[0];
-        inp.value = pair[1];
-        form.appendChild(inp);
+      postUiRedirect({
+        action: 'set_garden_pin',
+        clear: false,
+        room_wire: room,
+        item_storage: storage,
+        next: next,
+      }).catch(function (err) {
+        console.warn('slug pin failed', err);
       });
-      document.body.appendChild(form);
-      form.submit();
     });
 
     function decodePinCookie() {

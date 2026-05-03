@@ -1,8 +1,7 @@
 use axum::{
     extract::{Path, Query, State},
-    http::{header, HeaderMap, HeaderValue, StatusCode, Uri},
-    response::{Html, IntoResponse, Response},
-    Form,
+    http::{HeaderMap, StatusCode, Uri},
+    response::{Html, IntoResponse},
 };
 use axum_extra::extract::cookie::CookieJar;
 use maud::html;
@@ -52,7 +51,7 @@ fn pinned_item_from_jar(jar: &CookieJar) -> Option<(String, ItemId)> {
     Some((room.trim().to_string(), item.normalized_storage()))
 }
 
-fn encode_pin_cookie_value(room: &str, item_storage: &str) -> String {
+pub(crate) fn encode_pin_cookie_value(room: &str, item_storage: &str) -> String {
     let raw = format!("{room}{PIN_COOKIE_SEP}{item_storage}");
     B64_ENGINE.encode(raw.as_bytes())
 }
@@ -993,67 +992,6 @@ pub struct VoteCompareQuery {
     pub thread: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct PinForm {
-    /// When `"1"`, clear the pin cookie.
-    #[serde(default)]
-    pub clear: Option<String>,
-    #[serde(default)]
-    pub room_wire: Option<String>,
-    #[serde(default)]
-    pub item_storage: Option<String>,
-    #[serde(default)]
-    pub next: Option<String>,
-}
-
-fn sanitize_garden_next(next: Option<&str>) -> String {
-    let s = next.unwrap_or("/").trim();
-    if s.starts_with('/') && !s.starts_with("//") && s.len() < 8192 {
-        s.to_string()
-    } else {
-        "/".to_string()
-    }
-}
-
-/// `POST /garden/pin` — set or clear [`GARDEN_PIN_COOKIE`] and redirect.
-pub async fn post_garden_pin(Form(form): Form<PinForm>) -> impl IntoResponse {
-    let next = sanitize_garden_next(form.next.as_deref());
-    let loc = HeaderValue::try_from(next.as_str()).unwrap_or_else(|_| HeaderValue::from_static("/"));
-
-    if form.clear.as_deref() == Some("1") {
-        let cookie = format!("{}=; Path=/; SameSite=Lax; Max-Age=0", GARDEN_PIN_COOKIE);
-        let hv = HeaderValue::try_from(cookie).expect("pin clear cookie");
-        return Response::builder()
-            .status(StatusCode::SEE_OTHER)
-            .header(header::LOCATION, loc)
-            .header(header::SET_COOKIE, hv)
-            .body(axum::body::Body::empty())
-            .unwrap();
-    }
-
-    let Some(room) = form.room_wire.as_ref().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) else {
-        return (StatusCode::BAD_REQUEST, "missing room").into_response();
-    };
-    let Some(raw_item) = form.item_storage.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) else {
-        return (StatusCode::BAD_REQUEST, "missing item").into_response();
-    };
-    let Some(item) = ItemId::parse(raw_item) else {
-        return (StatusCode::BAD_REQUEST, "bad item").into_response();
-    };
-    let item = item.normalized_storage();
-    let val = encode_pin_cookie_value(&room, item.as_str());
-    let cookie = format!(
-        "{GARDEN_PIN_COOKIE}={val}; Path=/; SameSite=Lax; Max-Age=7776000"
-    );
-    let hv = HeaderValue::try_from(cookie).expect("pin cookie");
-    Response::builder()
-        .status(StatusCode::SEE_OTHER)
-        .header(header::LOCATION, loc)
-        .header(header::SET_COOKIE, hv)
-        .body(axum::body::Body::empty())
-        .unwrap()
-}
-
 /// Public pairwise vote UI — `/vote/compare?left=&right=&thread=`.
 pub async fn vote_compare_page(
     State(state): State<AppState>,
@@ -1180,7 +1118,7 @@ async fn vote_compare_inner(
                 strong { "#" (auto_thread) }
             }
             @if can_post {
-                form id="vote-compare-form" method="POST" action="/ui" data-navigate="full" {
+                form id="vote-compare-form" method="POST" action="/ui" {
                     input type="hidden" name=(UI_RPC_FIELD) value=(rpc_json);
                     input type="hidden" name="ratio_left" id="vote-ratio-left" value="50";
                     input type="hidden" name="ratio_right" id="vote-ratio-right" value="50";

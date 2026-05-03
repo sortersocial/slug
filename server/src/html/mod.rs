@@ -34,9 +34,10 @@ pub(crate) use forum::{
 };
 pub use garden::{
     external_garden_index, external_ontology_path, garden_index, ontology_path,
-    post_garden_pin, room_external_garden_index, room_external_ontology_path, room_garden_index,
+    room_external_garden_index, room_external_ontology_path, room_garden_index,
     room_ontology_path, room_vote_compare_page, vote_compare_page,
 };
+pub(crate) use garden::{encode_pin_cookie_value, GARDEN_PIN_COOKIE};
 pub use routing::RouteContext;
 pub use search::{search_page, search_results_fragment};
 pub use forum::user_profile_page;

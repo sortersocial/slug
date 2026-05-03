@@ -46,6 +46,16 @@ pub enum HtmlUiAction {
         /// Same-origin path to load after a successful post (e.g. `/vote/compare?…`).
         next: String,
     },
+    /// Set or clear the garden HUD pin cookie (`slug_garden_pin`). Response is HTTP redirect + `Set-Cookie`, not JS morph (client uses `fetch` + manual navigation).
+    SetGardenPin {
+        #[serde(default)]
+        clear: bool,
+        #[serde(default)]
+        room_wire: String,
+        #[serde(default)]
+        item_storage: Option<String>,
+        next: String,
+    },
     /// Author redacts own post via `POST /ui`.
     RedactPost {
         post_id: String,

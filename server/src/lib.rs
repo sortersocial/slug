@@ -80,7 +80,6 @@ pub fn create_app(state: AppState) -> Router {
             "/r/:room_key/vote/compare",
             get(crate::html::room_vote_compare_page),
         )
-        .route("/garden/pin", post(crate::html::post_garden_pin))
         .route("/~", get(crate::html::garden_index))
         .route("/~/*path", get(crate::html::ontology_path))
         .route("/-", get(crate::html::external_garden_index))

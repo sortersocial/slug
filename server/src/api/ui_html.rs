@@ -57,6 +57,26 @@ fn sanitize_vote_compare_next(next: &str) -> String {
     }
 }
 
+fn sanitize_garden_pin_next(next: &str) -> String {
+    let s = next.trim();
+    if s.starts_with('/') && !s.starts_with("//") && s.len() < 8192 {
+        s.to_string()
+    } else {
+        "/".to_string()
+    }
+}
+
+fn redirect_with_pin_cookie(cookie_header_value: &str, location: &str) -> Response {
+    let loc = HeaderValue::try_from(location).unwrap_or_else(|_| HeaderValue::from_static("/"));
+    let hv = HeaderValue::try_from(cookie_header_value).expect("set-cookie header");
+    Response::builder()
+        .status(StatusCode::SEE_OTHER)
+        .header(header::LOCATION, loc)
+        .header(header::SET_COOKIE, hv)
+        .body(axum::body::Body::empty())
+        .unwrap()
+}
+
 async fn dispatch_ui_action(
     state: &AppState,
     session: Option<&WebSession>,
@@ -219,6 +239,34 @@ async fn dispatch_ui_action(
                 .into_response(),
                 Err((msg, hint)) => form_js_error(err_tgt.as_ref(), &msg, hint.as_deref().unwrap_or("")).into_response(),
             }
+        }
+        HtmlUiAction::SetGardenPin {
+            clear,
+            room_wire,
+            item_storage,
+            next,
+        } => {
+            let next_path = sanitize_garden_pin_next(&next);
+            use crate::html::{encode_pin_cookie_value, GARDEN_PIN_COOKIE};
+            use crate::path_types::ItemId;
+            if clear {
+                let cookie = format!("{GARDEN_PIN_COOKIE}=; Path=/; SameSite=Lax; Max-Age=0");
+                return redirect_with_pin_cookie(&cookie, &next_path);
+            }
+            let room = room_wire.trim().to_string();
+            if room.is_empty() {
+                return (StatusCode::BAD_REQUEST, "missing room").into_response();
+            }
+            let Some(raw) = item_storage.as_ref().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) else {
+                return (StatusCode::BAD_REQUEST, "missing item").into_response();
+            };
+            let Some(item) = ItemId::parse(&raw) else {
+                return (StatusCode::BAD_REQUEST, "bad item").into_response();
+            };
+            let item = item.normalized_storage();
+            let val = encode_pin_cookie_value(&room, item.as_str());
+            let cookie = format!("{GARDEN_PIN_COOKIE}={val}; Path=/; SameSite=Lax; Max-Age=7776000");
+            redirect_with_pin_cookie(&cookie, &next_path)
         }
         HtmlUiAction::RedactPost { post_id } => {
             let Some(session) = session else {
