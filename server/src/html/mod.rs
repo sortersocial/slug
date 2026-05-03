@@ -389,18 +389,24 @@ fn bc_path(path: &OntologyPath) -> Markup {
     }
 }
 
-/// Render the thread path breadcrumb: `slug.social / #tag`
+/// Render the thread path breadcrumb: `slug.social / #tag` or `… / #tag / post #N` on a single post.
 /// Root link toggles to `/~` only at thread-root (`/`).
-pub(super) fn bc_threads(thread_tag: Option<&str>) -> Markup {
+pub(super) fn bc_threads(thread_tag: Option<&str>, focused_post: Option<usize>) -> Markup {
     let root_href = if thread_tag.is_some() { "/" } else { "/~" };
+    let root_is_current = thread_tag.is_none();
     html! {
-        @if thread_tag.is_none() {
+        @if root_is_current {
             a href=(root_href) class="bc-current" { "slug.social" }
         } @else {
             a href=(root_href) { "slug.social" }
         }
         @if let Some(tag) = thread_tag {
-            (bc_segment(&format!("#{tag}"), &format!("/t/{tag}"), true))
+            @if let Some(idx) = focused_post {
+                (bc_segment(&format!("#{tag}"), &format!("/t/{tag}"), false))
+                (bc_segment(&format!("post #{idx}"), &format!("/t/{tag}/{idx}"), true))
+            } @else {
+                (bc_segment(&format!("#{tag}"), &format!("/t/{tag}"), true))
+            }
         }
     }
 }

@@ -32,7 +32,7 @@ async fn thread_post_view_inner(
     let index: usize = index_str.parse().unwrap_or(0);
     let scope = nav.scope();
     let now = now_ms();
-    let (ing, subtitle, body_markup) = {
+    let (ing, body_markup) = {
         let reduced = state.reduced.read().await;
         let ing = reduced
             .ingests_by_scope_thread
@@ -42,19 +42,19 @@ async fn thread_post_view_inner(
         let body = ing.as_ref().map(|i| {
             ingest_entry_markup(&nav, &tag, index, i, viewer.as_deref(), now, &reduced)
         });
-        (ing, None::<String>, body)
+        (ing, body)
     };
 
     let sc = nav.scope();
     let bc: Markup = match &sc {
-        ScopeId::Public => bc_threads(Some(&tag)),
+        ScopeId::Public => bc_threads(Some(&tag), Some(index)),
         ScopeId::Room(rid) => {
             let slug = if let Some((_, s)) = rid.split_once('/') {
                 s
             } else {
                 rid.as_str()
             };
-            bc_room(&nav, slug, Some(&tag))
+            bc_room(&nav, slug, Some(&tag), Some(index))
         }
     };
 
@@ -63,7 +63,6 @@ async fn thread_post_view_inner(
         "view-thread",
         html! {
             nav class="breadcrumb" { (bc) }
-            h2 { "#" (tag) @if let Some(sub) = &subtitle { ": " (sub) } " / post #" (index) }
             @if let (Some(_ing), Some(bm)) = (&ing, &body_markup) {
                 (bm)
             } @else {
