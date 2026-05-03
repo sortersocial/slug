@@ -163,7 +163,11 @@ async fn dispatch_ui_action(
             ratio_right,
             explanation,
             next,
+            form_action,
         } => {
+            if form_action != "/ui" {
+                return (StatusCode::BAD_REQUEST, "invalid vote_compare_post form_action").into_response();
+            }
             let Some(session) = session else {
                 return js_redirect("/login").into_response();
             };
@@ -245,7 +249,11 @@ async fn dispatch_ui_action(
             room_wire,
             item_storage,
             next,
+            form_action,
         } => {
+            if form_action != "/ui" {
+                return (StatusCode::BAD_REQUEST, "invalid set_garden_pin form_action").into_response();
+            }
             let next_path = sanitize_garden_pin_next(&next);
             use crate::html::{encode_pin_cookie_value, GARDEN_PIN_COOKIE};
             use crate::path_types::ItemId;

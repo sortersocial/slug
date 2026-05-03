@@ -35,9 +35,9 @@ Strict **CSP** that blocks `eval` would break the current app. Other projects ma
 
 - **`HtmlUiAction` / `POST /ui`** (`server/src/html/ui_action.rs`, `server/src/api/ui_html.rs`): **Browser session** (cookie) UI commands. Payload is `__rpc__` + form fields. Most responses are **JS morphs**; some actions return **HTTP redirects** (see below).
 
-- **Non-morph `POST /ui` responses:** **`SetGardenPin`** returns **`303 See Other`** and **`Set-Cookie`** (same idea as `POST /theme`); the client in `server/static/slug_ui.js` uses **`fetch` with `redirect: 'manual'`** and then **`location.assign`**. **`VoteComparePost`** still returns **`text/javascript`** with **`window.location = …`** for a full navigation after posting.
+- **Non-morph `POST /ui` responses:** **`SetGardenPin`** returns **`303 See Other`** and **`Set-Cookie`** (same as **`POST /theme`**). Garden pin/unpin is a normal **`<form method="POST" action="/ui" data-navigate="full">`** — browser navigation applies cookies reliably (see **`test/browser_garden_pin.clj`**). Each **`__rpc__`** payload includes **`form_action: "/ui"`**; **`post_ui_html`** rejects mismatches to bind tokens to the UI endpoint. **`VoteComparePost`** still returns **`text/javascript`** with **`window.location = …`**; its **`__rpc__`** also carries **`form_action: "/ui"`**.
 
-- **Garden pin / compare voting:** Cookie **`slug_garden_pin`** is set by **`HtmlUiAction::set_garden_pin`** on **`POST /ui`** (JSON: **`clear`**, **`room_wire`**, **`item_storage`**, **`next`**). Pairwise UI: **`GET /vote/compare?left=&right=&thread=`** and **`GET /r/:room_key/vote/compare?…`**. Auto-thread: first shared thread tag on both items, else **`vote`**. HUD: **`#slug-pin-hud`** in **`#controls`** when garden layout metadata is present.
+- **Garden pin / compare voting:** Cookie **`slug_garden_pin`** via **`set_garden_pin`**. Pairwise UI: **`GET /vote/compare?…`** / **`GET /r/:room_key/vote/compare?…`**. HUD: **`#slug-pin-hud`** when **`layout`** passes garden metadata on **`body`**.
 
 **Rule of thumb:** New **CLI or API** verbs → `RpcCommand`. New **in-page morph or form-driven** behavior that only makes sense in the browser → `HtmlUiAction`. If both need the same operation, implement the real work once (e.g. call shared RPC helpers from `post_ui_html`) and keep the wire shapes separate.
 

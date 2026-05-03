@@ -6,6 +6,7 @@ use axum::{
 use axum_extra::extract::cookie::CookieJar;
 use maud::html;
 use serde::Deserialize;
+use serde_json::json;
 use std::collections::HashSet;
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD as B64_ENGINE, Engine as _};
@@ -13,7 +14,11 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD as B64_ENGINE, Engine as _
 use crate::{
     api::optional_principal,
     canonical_path::{canonicalize_item, canonicalize_tag},
-    html::user_can_post_room,
+    form_template::template_json_compact,
+    html::{
+        ui_action::UI_RPC_FIELD,
+        user_can_post_room,
+    },
     events::ThreadCapability,
     path_types::ItemId,
     reducer::{ContentState, ReducerState, ScopeId},
@@ -108,6 +113,7 @@ fn ont_pin_vote_controls(
     nav: &ThreadNav,
     current_storage: &str,
     pinned_room_and_item: Option<&(String, ItemId)>,
+    next_path: &str,
 ) -> maud::Markup {
     let room_wire = nav.room_wire.clone();
     let current = ItemId::parse(current_storage).unwrap_or_else(|| ItemId::opaque(current_storage.to_string()));
@@ -118,12 +124,37 @@ fn ont_pin_vote_controls(
         .filter(|_| pin_matches_scope)
         .map(|(_, i)| i);
 
+    let pin_rpc = template_json_compact(
+        &json!({
+            "action": "set_garden_pin",
+            "clear": false,
+            "room_wire": room_wire,
+            "item_storage": current.as_str(),
+            "next": next_path,
+            "form_action": "/ui",
+        }),
+    )
+    .expect("pin rpc json");
+    let unpin_rpc = template_json_compact(
+        &json!({
+            "action": "set_garden_pin",
+            "clear": true,
+            "room_wire": "",
+            "next": next_path,
+            "form_action": "/ui",
+        }),
+    )
+    .expect("unpin rpc json");
+
     html! {
         div class="ont-item-pin-zone" data-garden-room=(room_wire.as_str()) {
             @if let Some(pi) = pinned_item {
                 @if pi == &current {
-                    button type="button" class="ont-pin-btn ont-pin-btn-active" data-unpin="1" title="Unpin" aria-label="Unpin from HUD" {
-                        span class="ont-pin-glyph" aria-hidden="true" { "📌" }
+                    form method="POST" action="/ui" data-navigate="full" class="ont-pin-form" {
+                        input type="hidden" name=(UI_RPC_FIELD) value=(unpin_rpc);
+                        button type="submit" class="ont-pin-btn ont-pin-btn-active" title="Unpin" aria-label="Unpin from HUD" {
+                            span class="ont-pin-glyph" aria-hidden="true" { "📌" }
+                        }
                     }
                 } @else {
                     a class="ont-vote-compare-btn" href=(vote_compare_href(nav, pi, &current, None)) title="Compare and vote" {
@@ -132,8 +163,11 @@ fn ont_pin_vote_controls(
                     }
                 }
             } @else {
-                button type="button" class="ont-pin-btn" title="Pin to HUD" aria-label="Pin to corner" data-item-storage=(current.as_str()) {
-                    span class="ont-pin-glyph" aria-hidden="true" { "📌" }
+                form method="POST" action="/ui" data-navigate="full" class="ont-pin-form" {
+                    input type="hidden" name=(UI_RPC_FIELD) value=(pin_rpc);
+                    button type="submit" class="ont-pin-btn" title="Pin to HUD" aria-label="Pin to corner" {
+                        span class="ont-pin-glyph" aria-hidden="true" { "📌" }
+                    }
                 }
             }
         }
@@ -144,6 +178,7 @@ fn child_row_pin_or_vote(
     nav: &ThreadNav,
     row_item: &ItemId,
     pinned_room_and_item: Option<&(String, ItemId)>,
+    next_path: &str,
 ) -> maud::Markup {
     let pin_matches_scope = pinned_room_and_item
         .map(|(r, _)| r == nav.room_wire.as_str())
@@ -151,6 +186,18 @@ fn child_row_pin_or_vote(
     let pinned_item = pinned_room_and_item
         .filter(|_| pin_matches_scope)
         .map(|(_, i)| i);
+
+    let pin_rpc = template_json_compact(
+        &json!({
+            "action": "set_garden_pin",
+            "clear": false,
+            "room_wire": nav.room_wire.clone(),
+            "item_storage": row_item.as_str(),
+            "next": next_path,
+            "form_action": "/ui",
+        }),
+    )
+    .expect("child pin rpc json");
 
     html! {
         span class="ont-garden-child-actions" data-garden-room=(nav.room_wire.as_str()) {
@@ -161,7 +208,10 @@ fn child_row_pin_or_vote(
                     a class="ont-garden-vote-ico" href=(vote_compare_href(nav, pi, row_item, None)) title="Vote vs pinned" aria-label="Vote" { "⚖" }
                 }
             } @else {
-                button type="button" class="ont-garden-pin-ico" title="Pin" aria-label="Pin" data-item-storage=(row_item.as_str()) { "📌" }
+                form method="POST" action="/ui" data-navigate="full" class="ont-pin-form ont-garden-pin-form" {
+                    input type="hidden" name=(UI_RPC_FIELD) value=(pin_rpc);
+                    button type="submit" class="ont-garden-pin-ico" title="Pin" aria-label="Pin" { "📌" }
+                }
             }
         }
     }
@@ -826,6 +876,11 @@ async fn render_scope_view(
     let external_empty_body = browse.is_external() && model.body.is_none();
     let cli_path_arg = item_display_path(&model.item);
     let (garden_room, garden_prefix) = garden_layout_meta(&nav);
+    let next_for_pin = uri
+        .path_and_query()
+        .map(|pq| pq.as_str().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "/".to_string());
 
     let page = layout(
         &item_display_path(&model.item),
@@ -841,7 +896,7 @@ async fn render_scope_view(
                     @if model.sibling_nav.is_none() && model.item_has_parent {
                         span class="muted ont-item-unranked-note" { "unranked among siblings" }
                     }
-                    (ont_pin_vote_controls(&nav, &model.item, pin_ref.as_ref()))
+                    (ont_pin_vote_controls(&nav, &model.item, pin_ref.as_ref(), &next_for_pin))
                 }
                 @if let Some(body) = &model.body {
                     div class="ont-item-content" {
@@ -943,7 +998,7 @@ async fn render_scope_view(
                                     @let item_url = item_href(r.item.as_str(), &nav);
                                     @let score_str = format!("{:.3}", r.score);
                                     li data-garden-item=(r.item.as_str()) {
-                                        (child_row_pin_or_vote(&nav, &r.item, pin_ref.as_ref()))
+                                        (child_row_pin_or_vote(&nav, &r.item, pin_ref.as_ref(), &next_for_pin))
                                         a class="item-link" href=(item_url) { code { (item_display_path(r.item.as_str())) } }
                                         span class="ont-rank-score" { (score_str) }
                                     }
@@ -959,7 +1014,7 @@ async fn render_scope_view(
                         ul class="ont-group-list" {
                             @for name in &model.child_rankings.unranked_items {
                                 li data-garden-item=(name.as_str()) {
-                                    (child_row_pin_or_vote(&nav, name, pin_ref.as_ref()))
+                                    (child_row_pin_or_vote(&nav, name, pin_ref.as_ref(), &next_for_pin))
                                     @let href = item_href(name.as_str(), &nav);
                                     a class="item-link" href=(href) { code { (item_display_path(name.as_str())) } }
                                 }
@@ -1073,10 +1128,6 @@ async fn vote_compare_inner(
     let title = format!("vote — {} vs {}", item_display_path(left.as_str()), item_display_path(right.as_str()));
     let next_path = uri.path_and_query().map(|pq| pq.as_str().to_string()).unwrap_or_else(|| "/vote/compare".into());
 
-    use crate::form_template::template_json_compact;
-    use serde_json::json;
-    use super::ui_action::UI_RPC_FIELD;
-
     let rpc_json = template_json_compact(
         &json!({
             "action": "vote_compare_post",
@@ -1088,6 +1139,7 @@ async fn vote_compare_inner(
             "ratio_right": {"$form": "ratio_right"},
             "explanation": {"$form": "explanation"},
             "next": next_path,
+            "form_action": "/ui",
         }),
     )
     .expect("vote compare rpc json");

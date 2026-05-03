@@ -10,6 +10,10 @@ use thiserror::Error;
 /// Form field name for the compact JSON template (possibly with `{"$form":"…"}` holes).
 pub const UI_RPC_FIELD: &str = "__rpc__";
 
+fn default_ui_form_action() -> String {
+    "/ui".to_string()
+}
+
 /// HTML form / fetch `POST /ui` payload after template fill and deserialization.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "action", rename_all = "snake_case")]
@@ -43,10 +47,12 @@ pub enum HtmlUiAction {
         ratio_left: i32,
         ratio_right: i32,
         explanation: String,
-        /// Same-origin path to load after a successful post (e.g. `/vote/compare?…`).
+        /// Same-origin path after successful post (JS redirect).
         next: String,
+        #[serde(default = "default_ui_form_action")]
+        form_action: String,
     },
-    /// Set or clear the garden HUD pin cookie (`slug_garden_pin`). Response is HTTP redirect + `Set-Cookie`, not JS morph (client uses `fetch` + manual navigation).
+    /// Set or clear the garden HUD pin cookie (`slug_garden_pin`). Response is **`303` + `Set-Cookie`** when submitted as a full-navigation form (`data-navigate="full"`), matching `POST /theme`.
     SetGardenPin {
         #[serde(default)]
         clear: bool,
@@ -55,6 +61,9 @@ pub enum HtmlUiAction {
         #[serde(default)]
         item_storage: Option<String>,
         next: String,
+        /// Must equal the form `action` (usually `/ui`). Used to reject forged requests that POST to another path.
+        #[serde(default = "default_ui_form_action")]
+        form_action: String,
     },
     /// Author redacts own post via `POST /ui`.
     RedactPost {
