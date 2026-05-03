@@ -16,6 +16,7 @@ pub mod reducer;
 pub mod scope_rank;
 pub mod state;
 pub mod timeago;
+pub mod views;
 pub mod write_cmd;
 
 use std::collections::HashMap;
@@ -37,6 +38,8 @@ pub fn create_app_state(cfg: AppConfig) -> AppState {
     let (stream_tx, _) = broadcast::channel(64);
     let (js_tx, _) = broadcast::channel(64);
     let (write_tx, write_rx) = mpsc::channel::<WriteCmd>(256);
+    let views_path = format!("{}/views.json", cfg.data_dir);
+    let views = crate::views::ViewStore::new(&views_path);
     let state = AppState {
         cfg: Arc::new(cfg),
         event_log: Arc::new(event_log),
@@ -46,6 +49,7 @@ pub fn create_app_state(cfg: AppConfig) -> AppState {
         stream_tx,
         js_tx,
         write_tx,
+        views,
     };
     tokio::spawn(crate::api::write_actor::writer_actor(write_rx, state.clone()));
     state
@@ -118,6 +122,10 @@ pub fn create_app(state: AppState) -> Router {
         .route("/api/v0/pending-session/:id", get(api::get_pending_session))
         .route("/api/v0/whoami", get(api::get_whoami))
         .route("/api/v0/rpc", post(api::handle_rpc_batch))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            crate::middleware::view_count_middleware,
+        ))
         .with_state(state)
         .layer(TraceLayer::new_for_http())
 }

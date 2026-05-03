@@ -1368,7 +1368,42 @@ async fn test_search_page_and_results() {
 
 #[tokio::test]
 async fn test_view_counts_increment_and_display() {
-    // HTML view counters are offline during the auth-v3 refactor.
+    let (addr, _tmp, _log, _handle) = create_test_server().await;
+    let client = reqwest::Client::new();
+    let url = format!("http://{addr}/~");
+
+    let r1 = client.get(&url).send().await.unwrap();
+    assert!(r1.status().is_success());
+    let body1 = r1.text().await.unwrap();
+    assert!(
+        body1.contains("1 views"),
+        "expected first GET to show 1 views, body snippet: {}",
+        &body1.chars().take(500).collect::<String>()
+    );
+
+    let r2 = client.get(&url).send().await.unwrap();
+    assert!(r2.status().is_success());
+    let body2 = r2.text().await.unwrap();
+    assert!(
+        body2.contains("2 views"),
+        "expected second GET to show 2 views"
+    );
+
+    // Query parameter order is canonicalized for the same counter key.
+    let u_a = format!("http://{addr}/search?b=two&a=one");
+    let u_b = format!("http://{addr}/search?a=one&b=two");
+    client.get(&u_a).send().await.unwrap();
+    client.get(&u_b).send().await.unwrap();
+    let r3 = client.get(&u_a).send().await.unwrap();
+    let body3 = r3.text().await.unwrap();
+    assert!(
+        body3.contains("3 views"),
+        "expected third GET on canonical /search URL to show 3 cumulative views, got fragment: {}",
+        body3
+            .lines()
+            .find(|l| l.contains("views"))
+            .unwrap_or("<no views line>")
+    );
 }
 
 #[tokio::test]

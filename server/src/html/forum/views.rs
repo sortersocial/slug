@@ -11,6 +11,7 @@ use serde_json::json;
 use crate::api::optional_principal;
 use crate::canonical_path::canonicalize_tag;
 use crate::form_template::template_json_compact;
+use crate::middleware::canonical_view_url;
 use crate::reducer::ScopeId;
 use crate::state::AppState;
 
@@ -141,6 +142,9 @@ async fn thread_view_inner(
         ScopeId::Room(r) => format!("npx slugsocial private {r} forum show {tag}"),
     };
 
+    let url_key = canonical_view_url(&uri);
+    let view_count = state.views.get_views(&url_key);
+
     let body = html! {
         (strip)
         nav class="breadcrumb" { (bc) }
@@ -166,7 +170,7 @@ async fn thread_view_inner(
         &format!("#{tag}"),
         "view-thread",
         body,
-        None,
+        Some(view_count),
         theme_from_jar(&jar),
         &theme_next_from_uri(&uri),
         None,
@@ -276,6 +280,9 @@ pub async fn room_page(
     let audit_cli = format!("npx slugsocial private {room_id} audit");
     drop(reduced);
 
+    let url_key = canonical_view_url(&uri);
+    let view_count = state.views.get_views(&url_key);
+
     let slug_display = room_id
         .split_once('/')
         .map(|(_, slug)| slug)
@@ -296,7 +303,7 @@ pub async fn room_page(
             }
             (cli_panel(&[forum_cli, garden_cli, audit_cli]))
         },
-        None,
+        Some(view_count),
         theme_from_jar(&jar),
         &theme_next_from_uri(&uri),
         None,

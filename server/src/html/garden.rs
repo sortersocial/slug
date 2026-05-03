@@ -14,6 +14,7 @@ use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD as B64_ENGINE
 use crate::{
     api::optional_principal,
     canonical_path::{canonicalize_item, canonicalize_tag},
+    middleware::canonical_view_url,
     events::ThreadCapability,
     form_template::template_json_compact,
     html::{JsBuilder, ui_action::UI_RPC_FIELD, user_can_post_room},
@@ -515,6 +516,9 @@ pub async fn garden_index(
         build_children_rankings(reduced.public(), &ItemId::ontology_root())
     };
 
+    let url_key = canonical_view_url(&uri);
+    let view_count = state.views.get_views(&url_key);
+
     let page = layout(
         "~/",
         "view-ontology view-ontology-light",
@@ -556,7 +560,7 @@ pub async fn garden_index(
             }
             (cli_panel(&["npx slugsocial garden tree"]))
         },
-        None,
+        Some(view_count),
         theme_from_jar(&jar),
         &theme_next_from_uri(&uri),
         Some("public"),
@@ -596,6 +600,9 @@ pub async fn external_garden_index(
         let reduced = state.reduced.read().await;
         build_children_rankings(reduced.public(), &parent)
     };
+
+    let url_key = canonical_view_url(&uri);
+    let view_count = state.views.get_views(&url_key);
 
     let page = layout(
         "-/",
@@ -637,7 +644,7 @@ pub async fn external_garden_index(
                 }
             }
         },
-        None,
+        Some(view_count),
         theme_from_jar(&jar),
         &theme_next_from_uri(&uri),
         Some("public"),
@@ -727,6 +734,9 @@ pub async fn room_external_garden_index(
         build_children_rankings(content_for_garden_view(&reduced, &nav.scope()), &parent);
     drop(reduced);
 
+    let url_key = canonical_view_url(&uri);
+    let view_count = state.views.get_views(&url_key);
+
     let page = layout(
         "-/",
         "view-ontology view-ontology-light",
@@ -766,7 +776,7 @@ pub async fn room_external_garden_index(
                 }
             }
         },
-        None,
+        Some(view_count),
         theme_from_jar(&jar),
         &theme_next_from_uri(&uri),
         Some(nav.room_wire.as_str()),
@@ -1080,6 +1090,9 @@ async fn render_scope_view(
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "/".to_string());
 
+    let url_key = canonical_view_url(&uri);
+    let view_count = state.views.get_views(&url_key);
+
     let page = layout(
         &item_display_path(&model.item),
         "view-ontology view-ontology-light",
@@ -1227,7 +1240,7 @@ async fn render_scope_view(
             };
             (cli_panel(std::slice::from_ref(&cli)))
         },
-        None,
+        Some(view_count),
         theme_from_jar(&jar),
         &theme_next_from_uri(&uri),
         Some(&garden_room),
