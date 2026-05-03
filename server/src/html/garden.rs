@@ -837,7 +837,8 @@ struct SiblingNavGroup {
     links: Vec<SiblingNavLink>,
 }
 
-/// Siblings under the same parent, grouped like child rankings (components then isolates).
+/// Siblings under the same parent: one group per ranking component (ordered list), then one
+/// group per isolated unranked sibling (each shows rank `1`, separated like components).
 #[derive(Debug, Clone)]
 struct SiblingNavBar {
     groups: Vec<SiblingNavGroup>,
@@ -890,15 +891,12 @@ fn build_sibling_nav(
             groups.push(SiblingNavGroup { links });
         }
     }
-    if !rankings.unranked_items.is_empty() {
-        let links: Vec<SiblingNavLink> = rankings
-            .unranked_items
-            .iter()
-            .map(|u| SiblingNavLink {
+    for u in &rankings.unranked_items {
+        groups.push(SiblingNavGroup {
+            links: vec![SiblingNavLink {
                 path: u.clone().normalized_storage().to_storage_string(),
-            })
-            .collect();
-        groups.push(SiblingNavGroup { links });
+            }],
+        });
     }
     let sibling_total: usize = groups.iter().map(|g| g.links.len()).sum();
     if sibling_total <= 1 {
@@ -1539,6 +1537,29 @@ mod tests {
         assert_eq!(nav.groups.len(), 2);
         assert_eq!(nav.groups[0].links.len(), 2);
         assert_eq!(nav.groups[1].links.len(), 1);
+    }
+
+    #[test]
+    fn sibling_nav_splits_each_unranked_into_its_own_group() {
+        let mut reduced = ReducerState::default();
+        apply_ingest(
+            &mut reduced,
+            1,
+            "@00000000-0000-0000-0000-000000000000:test:local/test\n\
+             ~/topic {topic body}\n\
+             ~/topic/a {alpha}\n\
+             ~/topic/b {beta}\n\
+             ~/topic/c {gamma}\n\
+             ~/topic/d {delta}\n\
+             {a beats b}\n             ~/topic/a 2:1 ~/topic/b\n",
+        );
+
+        let model = build_item_page_view_model(&reduced, &ScopeId::Public, "~/topic/a");
+        let nav = model.sibling_nav.expect("expected sibling nav");
+        assert_eq!(nav.groups.len(), 3);
+        assert_eq!(nav.groups[0].links.len(), 2);
+        assert_eq!(nav.groups[1].links.len(), 1);
+        assert_eq!(nav.groups[2].links.len(), 1);
     }
 
     #[test]
