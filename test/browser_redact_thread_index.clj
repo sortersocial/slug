@@ -61,13 +61,13 @@
            ;; Two chronologically ordered posts in the same thread with disjoint tilde paths so
            ;; replay after redacting the first only reapplies the second ingest successfully.
            text-first (str "# " thread-tag "\n\n"
-                           "~/rix/a {alpha}\n"
-                           "~/rix/b {beta}\n"
-                           "~/rix/a 2:1 ~/rix/b {browser redact thread idx post one}\n")
+                           "{alpha}\n~/rix/a\n"
+                           "{beta}\n~/rix/b\n"
+                           "{browser redact thread idx post one}\n~/rix/a 2:1 ~/rix/b\n")
            text-second (str "# " thread-tag "\n\n"
-                            "~/rix/c {gamma}\n"
-                            "~/rix/d {delta}\n"
-                            "~/rix/c 2:1 ~/rix/d {browser redact thread idx post two}\n")
+                            "{gamma}\n~/rix/c\n"
+                            "{delta}\n~/rix/d\n"
+                            "{browser redact thread idx post two}\n~/rix/c 2:1 ~/rix/d\n")
            _ (is (true? (get-in (json/parse-string
                                  (:body (oauth/http-post-json
                                          (str base-url "/api/v0/rpc")

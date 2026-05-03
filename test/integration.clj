@@ -38,43 +38,59 @@
             [actor-1
              "#integration-test"
              ""
-             "~/languages/python { General-purpose, dynamically typed }"
-             "~/languages/rust   { Systems language with ownership model }"
-             "~/languages/go     { Compiled, garbage-collected, simple concurrency }"
+             "{ General-purpose, dynamically typed }
+~/languages/python"
+             "{ Systems language with ownership model }
+~/languages/rust"
+             "{ Compiled, garbage-collected, simple concurrency }
+~/languages/go"
              ""
-             "~/languages/rust 3:1 ~/languages/python { Rust has stronger type safety }"
-             "~/languages/rust 2:1 ~/languages/go     { Ownership beats GC for systems work }"
-             "~/languages/python 2:1 ~/languages/go   { Python's ecosystem is broader }"]))
+             "{ Rust has stronger type safety }
+~/languages/rust 3:1 ~/languages/python"
+             "{ Ownership beats GC for systems work }
+~/languages/rust 2:1 ~/languages/go"
+             "{ Python's ecosystem is broader }
+~/languages/python 2:1 ~/languages/go"]))
 
 (def sorter-doc-2
   (str/join "\n"
             [actor-2
              "#integration-test"
              ""
-             "~/languages/go 2:1 ~/languages/python { Go deploys as a single binary, simpler ops }"]))
+             "{ Go deploys as a single binary, simpler ops }
+~/languages/go 2:1 ~/languages/python"]))
 
 (def external-sorter-doc
   (str/join "\n"
             [actor-1
              "#integration-test"
              ""
-             "-/github.com/iss/1 { issue one }"
-             "-/github.com/iss/2 { issue two }"
+             "{ issue one }
+-/github.com/iss/1"
+             "{ issue two }
+-/github.com/iss/2"
              ""
-             "-/github.com/iss/1 2:1 -/github.com/iss/2 { triage order }"]))
+             "{ triage order }
+-/github.com/iss/1 2:1 -/github.com/iss/2"]))
 
 (def check-doc-disconnected
   (str/join "\n"
             [actor-1
              "#integration-test"
              ""
-             "~/disc/a { a }"
-             "~/disc/b { b }"
-             "~/disc/c { c }"
-             "~/disc/d { d }"
+             "{ a }
+~/disc/a"
+             "{ b }
+~/disc/b"
+             "{ c }
+~/disc/c"
+             "{ d }
+~/disc/d"
              ""
-             "~/disc/a 2:1 ~/disc/b { first component }"
-             "~/disc/c 2:1 ~/disc/d { second component }"]))
+             "{ first component }
+~/disc/a 2:1 ~/disc/b"
+             "{ second component }
+~/disc/c 2:1 ~/disc/d"]))
 
 ;; ---------------------------------------------------------------------------
 ;; main flow (linear integration)
@@ -291,8 +307,10 @@
       (bind two-vote-doc     (str/join "\n"
                                        ["@00000000-0000-0000-0000-000000000003:integration:local/test"
                                         "#integration-test"
-                                        "~/languages/rust 4:1 ~/languages/python { type safety }"
-                                        "~/languages/rust 3:1 ~/languages/go { zero-cost abstractions }"]))
+                                        "{ type safety }
+~/languages/rust 4:1 ~/languages/python"
+                                        "{ zero-cost abstractions }
+~/languages/rust 3:1 ~/languages/go"]))
       (bind hist-ingest      (common/run-cli cli-bin base-url ["public" "forum" "post" "integration-test" "--json" "--delegate" "00000000-0000-0000-0000-000000000000:cli:local/dev"] :input two-vote-doc :extra-env token-env))
       (is (zero? (:exit hist-ingest))
                (str "two-vote ingest exits 0 (err: " (:err hist-ingest) ")"))

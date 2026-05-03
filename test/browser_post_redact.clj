@@ -58,9 +58,9 @@
            thread-tag "redact-browser"
            ;; Items + vote so we can assert garden clears after redact
            raw (str "# " thread-tag "\n\n"
-                    "~/tomb-a {tomb item a}\n"
-                    "~/tomb-b {tomb item b}\n"
-                    "~/tomb-a 2:1 ~/tomb-b {browser redact vote}\n")
+                    "{tomb item a}\n~/tomb-a\n"
+                    "{tomb item b}\n~/tomb-b\n"
+                    "{browser redact vote}\n~/tomb-a 2:1 ~/tomb-b\n")
            post-resp (oauth/http-post-json
                       (str base-url "/api/v0/rpc")
                       [{"Post" {"room" "public"

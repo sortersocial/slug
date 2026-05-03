@@ -28,7 +28,7 @@ fn parses_tutorial_fixture_with_prose() {
 
 #[test]
 fn parses_big_book_fixture_with_attached_bodies() {
-    // This doc heavily uses the "~/name{...}" style with no whitespace.
+    // This doc heavily uses the "{...}\n~/name" style with no whitespace.
     let doc = dsl::parse_full(BIG_BOOK).expect("parse_full should succeed");
 
     let mut items = 0usize;
@@ -55,7 +55,7 @@ fn parses_big_book_fixture_with_attached_bodies() {
 
 #[test]
 fn parses_external_dash_vote_line() {
-    let doc = dsl::parse_full("-/domain.com/a 2:1 -/domain.com/b { reason }").unwrap();
+    let doc = dsl::parse_full("{ reason }\n-/domain.com/a 2:1 -/domain.com/b").unwrap();
     assert_eq!(
         doc.statements,
         vec![dsl::Stmt::Vote {

@@ -67,7 +67,7 @@ pub fn validate_ingest_document(
                     return Err((
                         StatusCode::BAD_REQUEST,
                         format!("item missing body: {}", GardenItemUrl::from_stored(&item, room_wire)),
-                        Some("items must be declared with bodies, e.g. `~/path/item { ... }`".to_string()),
+                        Some("items must be declared with bodies, e.g. `{ ... }\n~/path/item`".to_string()),
                     ));
                 };
                 if body_text.trim().is_empty() {

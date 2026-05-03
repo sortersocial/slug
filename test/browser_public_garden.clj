@@ -48,10 +48,10 @@
            thread-tag "browser-pub-garden"
            ;; Ranked pair at root + one isolate so both panels are exercised.
            raw (str "# " thread-tag "\n\n"
-                    "~/br-pub-a {alpha}\n"
-                    "~/br-pub-b {beta}\n"
-                    "~/br-pub-c {gamma}\n"
-                    "~/br-pub-a 2:1 ~/br-pub-b {browser regression vote}\n")
+                    "{alpha}\n~/br-pub-a\n"
+                    "{beta}\n~/br-pub-b\n"
+                    "{gamma}\n~/br-pub-c\n"
+                    "{browser regression vote}\n~/br-pub-a 2:1 ~/br-pub-b\n")
            post-resp (oauth/http-post-json
                       (str base-url "/api/v0/rpc")
                       [{"Post" {"room" "public"

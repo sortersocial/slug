@@ -15,12 +15,25 @@ CLI vs .sorter file (important)
 prose blocks which are the body of the OP post...
 Blank lines are preserved to maintain paragraph structure.
 
-~/item/a {itembody}
-~/python { A high-level scripting language }
+{itembody}
+~/item/a
+{ A high-level scripting language }
+~/python
 
-~/item/a > ~/python { Item A is better because of X. }
-~/python 3:1 ~/go { Python's ecosystem is much richer than Go's. }
-https://example.com/lang = ~/go { They are equally good in this context. }
+{
+Item A is better because of X.
+}
+~/item/a > ~/python
+
+{
+Python's ecosystem is much richer than Go's.
+}
+~/python 3:1 ~/go
+
+{
+They are equally good in this context.
+}
+https://example.com/lang = ~/go
 ```
 
 SYNTAX RULES
@@ -32,13 +45,15 @@ SYNTAX RULES
 Starts a thread. Tag allows alphanumeric, `-`, `_`, and `/`. Subtitle max 100 chars, in `{ ... }`.
 
 ```sorter
-~/<local-item-path> { description }
+{ description }
+~/<local-item-path>
 ```
 Defines an ontology item (garden layer). Paths can be nested (e.g. `~/languages/python`).
-A leading `/` alone is **not** allowed in the DSL — use `~/` only. Descriptions (bodies) are wrapped in `{}`. Can be adjacent (e.g. `~/arrived{ready}`).
+A leading `/` alone is **not** allowed in the DSL — use `~/` only.
 
 ```sorter
-https://example.com/item { description }
+{ description }
+https://example.com/item
 ```
 
 URLs can be used directly as items in definitions or votes.
@@ -46,7 +61,10 @@ Canonicalization rules for URLs:
 - `~/` and `https://slug.social/~/` map to the same local item path.
 
 ```sorter
-<item1> <comparison> <item2> { required explanation }
+{
+required explanation
+}
+<item1> <comparison> <item2>
 ```
 Compares two items. The explanation is REQUIRED.
 Comparisons:
@@ -65,7 +83,8 @@ When writing bodies or explanations, you can use braces `{}` and code blocks wit
 3. Single braces: { ... }
 
 ```sorter
-~/code { Here is a block: ```def foo(): return {"a": 1}``` }
+{ Here is a block: ```def foo(): return {"a": 1}``` }
+~/code
 ```
 
 STYLE
