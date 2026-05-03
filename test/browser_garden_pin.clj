@@ -21,6 +21,17 @@
             (do (Thread/sleep 200) (recur))
             false))))))
 
+(defn- wait-for-absence-substr [pg selector substr timeout-ms]
+  "True once selector text does not contain substr (or is empty), or timeout."
+  (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
+    (loop []
+      (let [text (locator/text-content (page/locator pg selector))]
+        (if (not (and (string? text) (str/includes? text substr)))
+          true
+          (if (< (System/currentTimeMillis) deadline)
+            (do (Thread/sleep 200) (recur))
+            false))))))
+
 (defn garden-pin-flow! []
   (println "\n━━━ browser garden pin (POST /ui set_garden_pin + HUD + vote link) ━━━\n")
 
@@ -75,8 +86,14 @@
                (is (wait-for-text pg ".ont-item-shell" "~/gp-pin-b" 15000) "on item b page")
                (is (wait-for-text pg "a.ont-vote-compare-btn" "vote" 10000)
                    "vote link visible vs pinned item")
+               ;; HUD clears pin (POST set_garden_pin clear), not navigate to item
+               (locator/click (page/locator pg "#slug-pin-hud button.slug-pin-hud-unpin-btn"))
+               (is (wait-for-absence-substr pg "#slug-pin-hud" "gp-pin-a" 15000)
+                   "HUD clears after unpin from HUD button")
+               (is (wait-for-absence-substr pg "body" "ont-vote-compare-btn" 15000)
+                   "compare vote CTA removed after HUD unpin on same reload")
                (is (str/includes? (or (page/url pg) "") "/~/gp-pin-b")
-                   "still on item b after vote link check"))))))
+                   "still on item b after HUD unpin"))))))
 
      (finally
        (when-some [s @!server] (common/kill-server s))

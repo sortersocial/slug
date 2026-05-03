@@ -593,6 +593,12 @@ body.view-ontology #controls {
    (Global craft `code` + `button[type=submit]` are tuned for dark
    thread pages; these overrides match the cream ontology shell.)
    ---------------------------------------------------------------- */
+body.view-ontology .slug-pin-hud-form {
+  display: inline;
+  margin: 0;
+  padding: 0;
+  border: none;
+}
 body.view-ontology #slug-pin-hud.slug-pin-hud {
   margin-left: auto;
   max-width: min(42vw, 280px);
@@ -603,6 +609,14 @@ body.view-ontology #slug-pin-hud.slug-pin-hud {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+body.view-ontology .slug-pin-hud-link.slug-pin-hud-unpin-btn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: inherit;
+  font-family: inherit;
+  padding: 0;
+}
 body.view-ontology .slug-pin-hud-link {
   color: #1a4a8c;
   text-decoration: none;
@@ -610,7 +624,8 @@ body.view-ontology .slug-pin-hud-link {
   align-items: center;
   gap: 0.25rem;
 }
-body.view-ontology .slug-pin-hud-link:hover {
+body.view-ontology .slug-pin-hud-link:hover,
+body.view-ontology .slug-pin-hud-unpin-btn:hover {
   color: #0d3d82;
   text-decoration: underline;
 }
@@ -674,6 +689,20 @@ body.view-ontology .ont-garden-child-actions {
   margin-right: 0.35rem;
   vertical-align: middle;
   gap: 0.1rem;
+}
+body.view-ontology button.ont-garden-pin-ico,
+body.view-ontology a.ont-garden-vote-ico {
+  gap: 0.2rem;
+}
+body.view-ontology .ont-garden-vote-count {
+  font-size: 0.65rem;
+  font-family: var(--font-ui);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.92;
+}
+body.view-ontology span.ont-garden-vote-glyph {
+  line-height: 1;
 }
 body.view-ontology button.ont-garden-pin-ico,
 body.view-ontology a.ont-garden-vote-ico,

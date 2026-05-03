@@ -799,6 +799,12 @@ details > summary::-webkit-details-marker { display: none; }
 }
 
 /* Pinned item HUD — bottom bar, same plane as spread */
+.slug-pin-hud-form {
+  display: inline;
+  margin: 0;
+  padding: 0;
+  border: none;
+}
 #slug-pin-hud.slug-pin-hud {
   margin-left: auto;
   max-width: min(42vw, 280px);
@@ -808,6 +814,13 @@ details > summary::-webkit-details-marker { display: none; }
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.slug-pin-hud-link.slug-pin-hud-unpin-btn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: inherit;
+  font-family: inherit;
+}
 .slug-pin-hud-link {
   color: var(--ui);
   text-decoration: none;
@@ -815,7 +828,10 @@ details > summary::-webkit-details-marker { display: none; }
   align-items: center;
   gap: 4px;
 }
-.slug-pin-hud-link:hover { color: var(--signal); }
+.slug-pin-hud-link:hover,
+.slug-pin-hud-unpin-btn:hover {
+  color: var(--signal);
+}
 .slug-pin-hud-glyph { font-size: 13px; line-height: 1; }
 
 /* Garden pin / vote controls */
@@ -890,9 +906,20 @@ span.ont-garden-pinned-here {
   align-items: center;
   justify-content: center;
 }
+a.ont-garden-vote-ico {
+  gap: 4px;
+}
 a.ont-garden-vote-ico:hover {
   color: var(--signal);
   background: var(--g4);
+}
+.ont-garden-vote-count {
+  font-size: 10px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+span.ont-garden-vote-glyph {
+  line-height: 1;
 }
 span.ont-garden-pinned-here {
   border-color: var(--link);

@@ -39,7 +39,7 @@ Strict **CSP** that blocks `eval` would break the current app. Other projects ma
 
 - **`VoteComparePost`:** On success returns **`text/javascript`** that **morphs** **`#vote-compare-preview`** (new ingest card) and **`#vote-edge-history-region`** (recomputed edge list). Uses **`RpcResult::PostOk`**’s **`post_id`** / **`post_index`** for the card. **`__rpc__`** carries **`form_action: "/ui"`**; **`thread_tag`** and ratio fields come from the same form as **`$form`** holes.
 
-- **Garden pin / compare voting:** Cookie **`slug_garden_pin`** via **`set_garden_pin`**. Pairwise UI: **`GET /vote/compare?…`** / **`GET /r/:room_key/vote/compare?…`**. HUD: **`#slug-pin-hud`** when **`layout`** passes garden metadata on **`body`**.
+- **Garden pin / compare voting:** Cookie **`slug_garden_pin`** via **`set_garden_pin`**. Pairwise UI: **`GET /vote/compare?…`** / **`GET /r/:room_key/vote/compare?…`**. HUD: **`#slug-pin-hud`** when **`layout`** passes garden metadata on **`body`**; the label is **`POST /ui`** **`set_garden_pin`** **`clear:true`** (**`slug_ui.js`**), not a permalink to the item.
 
 **Rule of thumb:** New **CLI or API** verbs → `RpcCommand`. New **in-page morph or form-driven** behavior that only makes sense in the browser → `HtmlUiAction`. If both need the same operation, implement the real work once (e.g. call shared RPC helpers from `post_ui_html`) and keep the wire shapes separate.
 

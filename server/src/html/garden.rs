@@ -16,7 +16,6 @@ use crate::{
     canonical_path::{canonicalize_item, canonicalize_tag},
     form_template::template_json_compact,
     html::{
-        forum::ingest_entry_markup,
         ui_action::UI_RPC_FIELD,
         user_can_post_room,
         JsBuilder,
@@ -109,6 +108,23 @@ fn votes_for_edge(content: &ContentState, a: &ItemId, b: &ItemId) -> Vec<crate::
         .collect();
     out.sort_by_key(|v| v.ts);
     out
+}
+
+/// Number of vote ingests recorded for this unordered pair in `content` (same scope as ranking).
+fn edge_vote_count_for_pair(content: &ContentState, a: &ItemId, b: &ItemId) -> usize {
+    let (lo, hi) = canonical_edge_items(a, b);
+    let lo_s = lo.as_str();
+    let hi_s = hi.as_str();
+    content
+        .item_votes
+        .get(&lo)
+        .into_iter()
+        .flat_map(|q| q.iter())
+        .filter(|v| {
+            (v.a.as_str() == lo_s && v.b.as_str() == hi_s)
+                || (v.a.as_str() == hi_s && v.b.as_str() == lo_s)
+        })
+        .count()
 }
 
 fn vote_thread_tags_for_pair(content: &ContentState, a: &ItemId, b: &ItemId) -> Vec<String> {
@@ -288,6 +304,7 @@ fn child_row_pin_or_vote(
     nav: &ThreadNav,
     row_item: &ItemId,
     pinned_room_and_item: Option<&(String, ItemId)>,
+    scope_content: &ContentState,
     next_path: &str,
 ) -> maud::Markup {
     let pin_matches_scope = pinned_room_and_item
@@ -315,7 +332,16 @@ fn child_row_pin_or_vote(
                 @if pi == row_item {
                     span class="ont-garden-pinned-here" title="Pinned" aria-label="Pinned" { "📌" }
                 } @else {
-                    a class="ont-garden-vote-ico" href=(vote_compare_href(nav, pi, row_item, None)) title="Vote vs pinned" aria-label="Vote" { "⚖" }
+                    @let nv = edge_vote_count_for_pair(scope_content, pi, row_item);
+                    @let tip = format!(
+                        "Compare and vote — {nv} pairwise vote{} in this scope for pinned vs this row",
+                        if nv == 1 { "" } else { "s" },
+                    );
+                    @let aria = format!("Vote; {} pairwise {}", nv, if nv == 1 { "vote" } else { "votes" });
+                    a class="ont-garden-vote-ico" href=(vote_compare_href(nav, pi, row_item, None)) title=(tip) aria-label=(aria) {
+                        span class="ont-garden-vote-glyph" aria-hidden="true" { "⚖" }
+                        span class="ont-garden-vote-count" { (format!("{}", nv)) }
+                    }
                 }
             } @else {
                 form method="POST" action="/ui" data-navigate="full" class="ont-pin-form ont-garden-pin-form" {
@@ -978,10 +1004,9 @@ async fn render_scope_view(
 ) -> axum::response::Response {
     let scope = nav.scope();
     let pin_ref = pinned_item_from_jar(&jar);
-    let model = {
-        let reduced = state.reduced.read().await;
-        build_item_page_view_model(&reduced, &scope, browse.item())
-    };
+    let reduced = state.reduced.read().await;
+    let model = build_item_page_view_model(&reduced, &scope, browse.item());
+    let scope_content = content_for_garden_view(&reduced, &scope);
     let thread_href = |tag: &str| nav.thread_url(tag);
     let external_empty_body = browse.is_external() && model.body.is_none();
     let cli_path_arg = item_display_path(&model.item);
@@ -1108,7 +1133,7 @@ async fn render_scope_view(
                                     @let item_url = item_href(r.item.as_str(), &nav);
                                     @let score_str = format!("{:.3}", r.score);
                                     li data-garden-item=(r.item.as_str()) {
-                                        (child_row_pin_or_vote(&nav, &r.item, pin_ref.as_ref(), &next_for_pin))
+                                        (child_row_pin_or_vote(&nav, &r.item, pin_ref.as_ref(), scope_content, &next_for_pin))
                                         a class="item-link" href=(item_url) { code { (item_display_path(r.item.as_str())) } }
                                         span class="ont-rank-score" { (score_str) }
                                     }
@@ -1124,7 +1149,7 @@ async fn render_scope_view(
                         ul class="ont-group-list" {
                             @for name in &model.child_rankings.unranked_items {
                                 li data-garden-item=(name.as_str()) {
-                                    (child_row_pin_or_vote(&nav, name, pin_ref.as_ref(), &next_for_pin))
+                                    (child_row_pin_or_vote(&nav, name, pin_ref.as_ref(), scope_content, &next_for_pin))
                                     @let href = item_href(name.as_str(), &nav);
                                     a class="item-link" href=(href) { code { (item_display_path(name.as_str())) } }
                                 }
@@ -1361,6 +1386,33 @@ mod tests {
             room_id: room_id.to_string(),
             thread_tag: String::new(),
         }));
+    }
+
+    #[test]
+    fn edge_vote_count_for_pair_matches_votes_for_edge_len() {
+        use super::{
+            content_for_garden_view, edge_vote_count_for_pair, votes_for_edge,
+        };
+        use crate::path_types::ItemId;
+        let mut reduced = ReducerState::default();
+        apply_ingest(
+            &mut reduced,
+            1,
+            "@00000000-0000-0000-0000-000000000000:test:local/test\n\
+             ~/topic {root}\n\
+             ~/topic/a {alpha}\n\
+             ~/topic/b {beta}\n\
+             ~/topic/a 3:2 ~/topic/b {first vote}\n\
+             ~/topic/b 2:3 ~/topic/a {second vote}\n",
+        );
+        let content = content_for_garden_view(&reduced, &ScopeId::Public);
+        let a = ItemId::parse("~/topic/a").unwrap().normalized_storage();
+        let b = ItemId::parse("~/topic/b").unwrap().normalized_storage();
+        assert_eq!(
+            edge_vote_count_for_pair(content, &a, &b),
+            votes_for_edge(content, &a, &b).len()
+        );
+        assert_eq!(votes_for_edge(content, &a, &b).len(), 2);
     }
 
     #[test]

@@ -170,15 +170,6 @@
       return { room: raw.slice(0, i), item: raw.slice(i + 1) };
     }
 
-    function gardenItemHref(prefix, storageUrl) {
-      var marker = 'https://slug.social/~/';
-      if (storageUrl.indexOf(marker) === 0) {
-        var tail = storageUrl.slice(marker.length);
-        return prefix.replace(/\/$/, '') + (tail ? '/' + tail : '');
-      }
-      return storageUrl;
-    }
-
     function refreshPinHud() {
       var hud = document.getElementById('slug-pin-hud');
       if (!hud) return;
@@ -187,19 +178,37 @@
       var pin = decodePinCookie();
       hud.innerHTML = '';
       if (!pin || !prefix || pin.room !== bodyRoom) return;
-      var a = document.createElement('a');
-      a.className = 'slug-pin-hud-link';
-      a.href = gardenItemHref(prefix, pin.item);
-      a.title = 'Pinned item';
+      var form = document.createElement('form');
+      form.method = 'POST';
+      form.action = '/ui';
+      form.setAttribute('data-navigate', 'full');
+      form.className = 'slug-pin-hud-form';
+      var rpc = document.createElement('input');
+      rpc.type = 'hidden';
+      rpc.name = '__rpc__';
+      rpc.value = JSON.stringify({
+        action: 'set_garden_pin',
+        clear: true,
+        room_wire: '',
+        next: window.location.pathname + window.location.search,
+        form_action: '/ui',
+      });
+      form.appendChild(rpc);
+      var btn = document.createElement('button');
+      btn.type = 'submit';
+      btn.className = 'slug-pin-hud-link slug-pin-hud-unpin-btn';
+      btn.title = 'Unpin — removes this item from the corner HUD';
+      btn.setAttribute('aria-label', 'Unpin pinned item');
       var span = document.createElement('span');
       span.className = 'slug-pin-hud-glyph';
       span.setAttribute('aria-hidden', 'true');
       span.textContent = '📌';
-      a.appendChild(span);
+      btn.appendChild(span);
       var label = pin.item.replace(/^https:\/\/slug\.social\/~\/?/, '~/');
       if (label.length > 36) label = label.slice(0, 34) + '…';
-      a.appendChild(document.createTextNode(' ' + label));
-      hud.appendChild(a);
+      btn.appendChild(document.createTextNode(' ' + label));
+      form.appendChild(btn);
+      hud.appendChild(form);
     }
     refreshPinHud();
 
