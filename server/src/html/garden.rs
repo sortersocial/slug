@@ -176,34 +176,14 @@ fn vote_edge_history_markup(
 pub(crate) async fn vote_compare_post_success_js(
     state: &AppState,
     nav: &ThreadNav,
-    room_wire: &str,
-    thread_tag: &str,
     left: &ItemId,
     right: &ItemId,
-    post_id: &str,
-    post_idx: Option<usize>,
 ) -> String {
-    use crate::reducer::scope_from_room_wire;
     let reduced = state.reduced.read().await;
-    let scope = scope_from_room_wire(room_wire.trim());
-    let Some(ing) = reduced.ingests_by_id.get(post_id).cloned() else {
-        drop(reduced);
-        return "console.warn('vote compare: new post not found');".to_string();
-    };
-    let idx = match post_idx {
-        Some(i) => i,
-        None => reduced
-            .try_thread_post_index_chronological(&scope, thread_tag, post_id)
-            .unwrap_or(0),
-    };
-    let viewer = None::<&str>;
-    let now = now_ms();
-    let card = ingest_entry_markup(nav, thread_tag, idx, &ing, viewer, now, &reduced);
     let content = content_for_garden_view(&reduced, &nav.scope());
     let edge_history = vote_edge_history_markup(content, left, right, nav);
     drop(reduced);
     let mut b = JsBuilder::new();
-    b = b.morph_inner_selector("#vote-compare-preview", card);
     b = b.morph_inner_selector("#vote-edge-history-region", edge_history);
     b.build()
 }

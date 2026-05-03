@@ -254,17 +254,7 @@ async fn dispatch_ui_action(
                         };
                         n
                     };
-                    let js = vote_compare_post_success_js(
-                        state,
-                        &nav,
-                        &room,
-                        &thread_tag,
-                        &left_id,
-                        &right_id,
-                        &pid,
-                        post_index,
-                    )
-                    .await;
+                    let js = vote_compare_post_success_js(state, &nav, &left_id, &right_id).await;
                     Response::builder()
                         .status(StatusCode::OK)
                         .header(header::CONTENT_TYPE, "text/javascript; charset=utf-8")
