@@ -51,3 +51,43 @@ Strict **CSP** that blocks `eval` would break the current app. Other projects ma
 | **Reducer projection** | **Derived** | Rebuilt from log on startup; not separately persisted |
 
 If you add a new ephemeral map or start persisting something that was RAM-only, **update this table and the code comments** (`server/src/state.rs` is a good anchor).
+
+---
+
+## Cursor Cloud specific instructions
+
+### Services
+
+**slugsocial-server** — single Rust binary, no external DB or message queue. Data stored in a local JSONL event log.
+
+### Running the dev server
+
+```
+mkdir -p dev-data
+SLUG_DATA_DIR=dev-data SLUG_KEYS=dev:dev PORT=8080 RUST_LOG=info cargo run -p slugsocial-server
+```
+
+For authenticated API testing, you need a mock Google OAuth. Start a mock on a free port (e.g. 9999) that returns a fake `id_token` at `POST /token` and redirects at `GET /o/oauth2/v2/auth`, then pass these env vars to the server:
+
+```
+SLUG_PUBLIC_URL=http://localhost:8080
+SLUG_GOOGLE_AUTH_URL=http://localhost:9999/o/oauth2/v2/auth
+SLUG_GOOGLE_TOKEN_URL=http://localhost:9999/token
+SLUG_GOOGLE_CLIENT_ID=mock
+SLUG_GOOGLE_CLIENT_SECRET=mock
+```
+
+After OAuth completes, the pending-session poll returns a `slug_…` bearer token for API calls.
+
+### Testing
+
+- **Rust tests:** `cargo nextest run --workspace` (163 tests; requires `cargo-nextest`)
+- **Clojure integration + browser tests:** `clojure -M:kaocha` (runs both `:http-integration` and `:browser` suites; the test harness builds release binaries, starts its own server instances with mock OAuth, and runs Playwright browser tests)
+- **Lint:** `cargo clippy --workspace` (warnings are expected; zero errors required)
+
+### Key caveats
+
+- The Clojure test harness (`clojure -M:kaocha`) builds release binaries itself via `cargo build --release`. On a cold workspace this can take ~30s. The binary path is `target/release/slugsocial-server`.
+- `bb dev` (Babashka) is a convenience wrapper around `cargo run` for local dev. It requires `bb` (Babashka) to be installed.
+- Bearer tokens use format `slug_<id>_<secret>` and are verified against the reducer state's `tokens_by_id` map. Raw API-key strings like "dev" won't work; you must complete the OAuth registration flow to get a valid token.
+- Node.js 24 + Playwright chromium are required for browser tests (`npx playwright install chromium`).
