@@ -15,10 +15,8 @@ CLI vs .sorter file (important)
 prose blocks which are the body of the OP post...
 Blank lines are preserved to maintain paragraph structure.
 
-{itembody}
-~/item/a
-{ A high-level scripting language }
-~/python
+~/item/a {itembody}
+~/python { A high-level scripting language }
 
 {
 Item A is better because of X.
@@ -45,15 +43,13 @@ SYNTAX RULES
 Starts a thread. Tag allows alphanumeric, `-`, `_`, and `/`. Subtitle max 100 chars, in `{ ... }`.
 
 ```sorter
-{ description }
-~/<local-item-path>
+~/<local-item-path> { description }
 ```
 Defines an ontology item (garden layer). Paths can be nested (e.g. `~/languages/python`).
-A leading `/` alone is **not** allowed in the DSL — use `~/` only.
+A leading `/` alone is **not** allowed in the DSL — use `~/` only. Descriptions (bodies) are wrapped in `{}` and follow the item path.
 
 ```sorter
-{ description }
-https://example.com/item
+https://example.com/item { description }
 ```
 
 URLs can be used directly as items in definitions or votes.

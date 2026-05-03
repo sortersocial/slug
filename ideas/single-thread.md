@@ -12,11 +12,9 @@ Previously a `.sorter` document could scatter `#tags` throughout:
 ```
 @agent
 #languages
-{A systems language.}
-~/languages/rust
+~/languages/rust {A systems language.}
 #tools
-{Rust's build system.}
-~/tools/cargo
+~/tools/cargo {Rust's build system.}
 {Rust is more foundational than its tooling.}
 ~/languages/rust 2:1 ~/tools/cargo
 ```

@@ -1503,9 +1503,9 @@ mod tests {
             &mut reduced,
             1,
             "@00000000-0000-0000-0000-000000000000:test:local/test\n\
-             {topic body}\n             ~/topic\n\
-             {alpha}\n             ~/topic/a\n\
-             {beta}\n             ~/topic/b\n",
+             ~/topic {topic body}\n\
+             ~/topic/a {alpha}\n\
+             ~/topic/b {beta}\n",
         );
 
         let model = build_item_page_view_model(&reduced, &ScopeId::Public, "~/topic/a");
@@ -1521,10 +1521,10 @@ mod tests {
             &mut reduced,
             1,
             "@00000000-0000-0000-0000-000000000000:test:local/test\n\
-             {topic body}\n             ~/topic\n\
-             {alpha}\n             ~/topic/a\n\
-             {beta}\n             ~/topic/b\n\
-             {gamma}\n             ~/topic/c\n\
+             ~/topic {topic body}\n\
+             ~/topic/a {alpha}\n\
+             ~/topic/b {beta}\n\
+             ~/topic/c {gamma}\n\
              {a beats b}\n             ~/topic/a 2:1 ~/topic/b\n",
         );
 
@@ -1542,13 +1542,13 @@ mod tests {
             &mut reduced,
             1,
             "@00000000-0000-0000-0000-000000000000:test:local/test\n\
-             {root}\n             ~/topic\n\
-             {alpha}\n             ~/topic/a\n\
-             {beta}\n             ~/topic/b\n\
+             ~/topic {root}\n\
+             ~/topic/a {alpha}\n\
+             ~/topic/b {beta}\n\
              {a beats b}\n             ~/topic/a 3:1 ~/topic/b\n\
-             {k1}\n             ~/topic/kid1\n\
-             {k2}\n             ~/topic/kid2\n\
-             {leaf}\n             ~/topic/kid1/leaf\n",
+             ~/topic/kid1 {k1}\n\
+             ~/topic/kid2 {k2}\n\
+             ~/topic/kid1/leaf {leaf}\n",
         );
 
         let model = build_item_page_view_model(&reduced, &ScopeId::Public, "~/topic");
@@ -1586,7 +1586,7 @@ mod tests {
             &mut reduced,
             1,
             "9ab12cd/my-room",
-            "@00000000-0000-0000-0000-000000000000:test:local/test\n{a}\n~/t1\n{b}\n~/t2\n",
+            "@00000000-0000-0000-0000-000000000000:test:local/test\n~/t1 {a}\n~/t2 {b}\n",
         );
         use crate::path_types::ItemId;
         let root = ItemId::ontology_root();
@@ -1616,7 +1616,7 @@ mod tests {
             1,
             "9ab12cd/my-room",
             "@00000000-0000-0000-0000-000000000000:test:local/test\n\
-             {a}\n             ~/a\n{b}\n~/b\n{because}\n~/a 2:1 ~/b\n",
+             ~/a {a}\n~/b {b}\n{because}\n~/a 2:1 ~/b\n",
         );
         use crate::path_types::ItemId;
         let root = ItemId::ontology_root();
@@ -1646,7 +1646,7 @@ mod tests {
         apply_ingest(
             &mut reduced,
             1,
-            "@00000000-0000-0000-0000-000000000000:test:local/test\n{x}\n~/x\n",
+            "@00000000-0000-0000-0000-000000000000:test:local/test\n~/x {x}\n",
         );
         let model =
             build_item_page_view_model(&reduced, &ScopeId::Public, "https://slug.social/~/");

@@ -56,8 +56,8 @@
                          "Overflow torture (no spaces — browser must break or scroll):\n"
                          "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n\n"
                          "https://open.spotify.com/track/4iV5W9uYEdYUVa79Axb7U9 https://www.youtube.com/watch?v=dQw4w9WgXcQ\n\n"
-                         "{classified}\n~/secret/item\n"
-                         "{secondary}\n~/secret/other\n"
+                         "~/secret/item {classified}\n"
+                         "~/secret/other {secondary}\n"
                          "{because}\n~/secret/item 3:1 ~/secret/other\n")
           rpc (json/generate-string
                 {:action "post_ingest"

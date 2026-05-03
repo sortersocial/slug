@@ -38,12 +38,9 @@
             [actor-1
              "#integration-test"
              ""
-             "{ General-purpose, dynamically typed }
-~/languages/python"
-             "{ Systems language with ownership model }
-~/languages/rust"
-             "{ Compiled, garbage-collected, simple concurrency }
-~/languages/go"
+             "~/languages/python { General-purpose, dynamically typed }"
+             "~/languages/rust { Systems language with ownership model }"
+             "~/languages/go { Compiled, garbage-collected, simple concurrency }"
              ""
              "{ Rust has stronger type safety }
 ~/languages/rust 3:1 ~/languages/python"
@@ -65,10 +62,8 @@
             [actor-1
              "#integration-test"
              ""
-             "{ issue one }
--/github.com/iss/1"
-             "{ issue two }
--/github.com/iss/2"
+             "-/github.com/iss/1 { issue one }"
+             "-/github.com/iss/2 { issue two }"
              ""
              "{ triage order }
 -/github.com/iss/1 2:1 -/github.com/iss/2"]))
@@ -78,14 +73,10 @@
             [actor-1
              "#integration-test"
              ""
-             "{ a }
-~/disc/a"
-             "{ b }
-~/disc/b"
-             "{ c }
-~/disc/c"
-             "{ d }
-~/disc/d"
+             "~/disc/a { a }"
+             "~/disc/b { b }"
+             "~/disc/c { c }"
+             "~/disc/d { d }"
              ""
              "{ first component }
 ~/disc/a 2:1 ~/disc/b"

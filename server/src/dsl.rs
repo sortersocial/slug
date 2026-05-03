@@ -401,25 +401,24 @@ fn parse_block_prefixed_statement(
     tail: &str,
     masker: &BlockMasker,
 ) -> Result<Stmt, DslError> {
-    // item: block item_ref
     // vote: block item_ref comparison item_ref
     let s = tail.trim_start();
     if s.is_empty() {
         return Err(DslError::Parse(
-            "missing item statement after leading block".to_string(),
+            "missing vote statement after leading explanation block".to_string(),
         ));
     }
 
     let (item1, j) =
         parse_item_name_at(s, 0).ok_or_else(|| DslError::Parse("invalid item name".to_string()))?;
-    let body_or_explanation = masker.extract_body(block_token);
+    let explanation = masker.extract_body(block_token);
     let mut i = skip_ws(s, j);
 
     if i >= s.len() {
-        return Ok(Stmt::Item {
-            title: item1,
-            body: Some(body_or_explanation),
-        });
+        return Err(DslError::Parse(
+            "leading `{ ... }` blocks are vote explanations; item bodies belong after item paths"
+                .to_string(),
+        ));
     }
 
     let ((ratio_left, ratio_right), k) = parse_comparison_at(s, i)
@@ -433,7 +432,7 @@ fn parse_block_prefixed_statement(
     let (item2, m) = parse_item_name_at(s, i)
         .ok_or_else(|| DslError::Parse("invalid rhs item name".to_string()))?;
     i = skip_ws(s, m);
-    if body_or_explanation.trim().is_empty() {
+    if explanation.trim().is_empty() {
         return Err(DslError::Parse("empty vote explanation".to_string()));
     }
     let tail = s[i..].trim();
@@ -446,8 +445,37 @@ fn parse_block_prefixed_statement(
         item2,
         ratio_left,
         ratio_right,
-        explanation: body_or_explanation,
+        explanation,
     })
+}
+
+fn parse_item_definition_statement(stripped: &str, masker: &BlockMasker) -> Result<Stmt, DslError> {
+    let (item1, j) =
+        parse_item_name_at(stripped, 0).ok_or_else(|| DslError::Parse("invalid item name".to_string()))?;
+    let i = skip_ws(stripped, j);
+
+    if i >= stripped.len() {
+        return Ok(Stmt::Item {
+            title: item1,
+            body: None,
+        });
+    }
+
+    if let Some((tok, end)) = parse_block_token_at(stripped, i) {
+        let body = masker.extract_body(&tok);
+        let tail = stripped[end..].trim();
+        if !tail.is_empty() {
+            return Err(DslError::Parse("extra tokens after item".to_string()));
+        }
+        return Ok(Stmt::Item {
+            title: item1,
+            body: Some(body),
+        });
+    }
+
+    Err(DslError::Parse(
+        "vote explanations must start with a `{ ... }` block before the comparison".to_string(),
+    ))
 }
 
 fn parse_line(masked_line: &str, masker: &BlockMasker) -> Result<Vec<Stmt>, DslError> {
@@ -469,23 +497,17 @@ fn parse_line(masked_line: &str, masker: &BlockMasker) -> Result<Vec<Stmt>, DslE
         '/' => Err(DslError::Parse(
             "item paths must use `~/` (e.g. `~/languages/python`), not a leading `/`".to_string(),
         )),
-        '~' => Err(DslError::Parse(
-            "statements must start with a `{ ... }` body or explanation block".to_string(),
-        )),
+        '~' => Ok(vec![parse_item_definition_statement(stripped, masker)?]),
         'h' => {
             if stripped.starts_with("https://") || stripped.starts_with("http://") {
-                Err(DslError::Parse(
-                    "statements must start with a `{ ... }` body or explanation block".to_string(),
-                ))
+                Ok(vec![parse_item_definition_statement(stripped, masker)?])
             } else {
                 Err(DslError::Parse("not a DSL line".to_string()))
             }
         }
         '-' => {
             if stripped.starts_with("-/") {
-                Err(DslError::Parse(
-                    "statements must start with a `{ ... }` body or explanation block".to_string(),
-                ))
+                Ok(vec![parse_item_definition_statement(stripped, masker)?])
             } else {
                 Err(DslError::Parse("not a DSL line".to_string()))
             }
@@ -532,7 +554,7 @@ pub fn parse_full(text: &str) -> Result<Document, DslError> {
                 continue;
             }
             return Err(DslError::Parse(
-                "expected item statement after leading block".to_string(),
+                "expected vote statement after leading explanation block".to_string(),
             ));
         }
 
@@ -564,7 +586,7 @@ pub fn parse_full(text: &str) -> Result<Document, DslError> {
 
     if pending_block.is_some() {
         return Err(DslError::Parse(
-            "missing item statement after leading block".to_string(),
+            "missing vote statement after leading explanation block".to_string(),
         ));
     }
 
@@ -599,7 +621,7 @@ mod tests {
 
     #[test]
     fn parse_item_with_body_strips_outer_braces() {
-        let input = "{ Systems language }\n~/rust";
+        let input = "~/rust { Systems language }";
         let doc = parse_full(input).unwrap();
         assert_eq!(
             doc.statements,
@@ -675,7 +697,7 @@ mod tests {
 
     #[test]
     fn parse_item_body_without_space_like_big_book() {
-        let input = "{I had arrived.}\n~/arrived";
+        let input = "~/arrived{I had arrived.}";
         let doc = parse_full(input).unwrap();
         assert_eq!(
             doc.statements,
@@ -704,7 +726,7 @@ mod tests {
 
     #[test]
     fn parse_nested_path_item() {
-        let input = "{ Body }\n~/whitepaper/architectural-choices";
+        let input = "~/whitepaper/architectural-choices { Body }";
         let doc = parse_full(input).unwrap();
         assert_eq!(
             doc.statements,
@@ -760,12 +782,12 @@ mod tests {
 
     #[test]
     fn parse_full_rejects_vote_without_explanation() {
-        let input = "{item a}\n~/a\n{item b}\n~/b\n~/a 2:1 ~/b\n";
+        let input = "~/a {item a}\n~/b {item b}\n~/a 2:1 ~/b\n";
         let result = parse_full(input);
         assert!(result.is_err(), "vote without explanation should fail");
         let err_msg = result.unwrap_err().to_string();
         assert!(
-            err_msg.contains("statements must start"),
+            err_msg.contains("vote explanations must start"),
             "error: {}",
             err_msg
         );
@@ -777,19 +799,19 @@ mod tests {
         assert!(result.is_err(), "legacy vote syntax should fail");
         let err_msg = result.unwrap_err().to_string();
         assert!(
-            err_msg.contains("statements must start"),
+            err_msg.contains("vote explanations must start"),
             "error: {}",
             err_msg
         );
     }
 
     #[test]
-    fn parse_full_rejects_legacy_inline_item_body() {
-        let result = parse_full("~/a {body}");
-        assert!(result.is_err(), "legacy item body syntax should fail");
+    fn parse_full_rejects_block_first_item_body() {
+        let result = parse_full("{body}\n~/a");
+        assert!(result.is_err(), "block-first item body syntax should fail");
         let err_msg = result.unwrap_err().to_string();
         assert!(
-            err_msg.contains("statements must start"),
+            err_msg.contains("item bodies belong after item paths"),
             "error: {}",
             err_msg
         );
@@ -809,7 +831,7 @@ mod tests {
 
     #[test]
     fn parse_url_item_statement() {
-        let input = "{ body }\nhttps://slug.social/~/music/song-a";
+        let input = "https://slug.social/~/music/song-a { body }";
         let doc = parse_full(input).unwrap();
         assert_eq!(
             doc.statements,

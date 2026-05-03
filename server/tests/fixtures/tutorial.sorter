@@ -15,11 +15,9 @@ subsequent items will be catalogued in the index under this context.
 
 We are in a tag, now let's declare an item.
 
-{the letter a}
-~/alphabet/a
+~/alphabet/a {the letter a}
 
-{the letter b}
-~/alphabet/b
+~/alphabet/b {the letter b}
 
 The prefix `~/` denotes, when the first characters on a line, the beginning
 of the title of an ontology item (the garden layer).
@@ -41,8 +39,7 @@ If we were to send this email right now, we could view the ranking at
 the URL https://slug.social/~/alphabet
 Easy enough.
 
-{the letter c}
-~/alphabet/c
+~/alphabet/c {the letter c}
 
 {a strongly preferred to c here}
 ~/alphabet/a 3:1 ~/alphabet/c
@@ -61,7 +58,7 @@ Lets sort some properties about sorter itself.
 
 #sorter-properties
 
-{
+~/sorter-properties/transitive {
 We are now in the body of the item titled ~/sorter-properties/transitive, because of the open
 bracket. We could write an entire essay here.
 Transitive is the property I just demonstrated above. The ranking between
@@ -69,17 +66,15 @@ Transitive is the property I just demonstrated above. The ranking between
 In general, with precise ratios, you only need N-1 votes for N items. Just
 enough to connect all the dots together.
 }
-~/sorter-properties/transitive
 
-{
+~/sorter-properties/precise {
 As you can tell, sorter forces more precise thinking. More precise in that
 your prose needs to conform to syntax, but also more precise in that you
 need to discretize your thoughts into titled blocks, and put ratios to
 judgements.
 }
-~/sorter-properties/precise
 
-{
+~/sorter-properties/asynchronous {
 Slug’s primary interface is the web + API. (Email ingestion is not implemented yet.)
 submit your items/votes/prose. All emails are public once sent, indexed on
 the website verbatim, and also deconstructed and compiled into the
@@ -88,27 +83,23 @@ Asynchronous means that emails can come in at any time. The accumulation of
 consensus happens at the speed of contemplation, not the speed of a social
 media feed.
 }
-~/sorter-properties/asynchronous
 
-{
+~/sorter-properties/collective {
 Sorter is multiplayer. Anyone can add to #sorter-properties, just by
 emailing in a syntax-conforming snippet. Anyone can vote on what they think
 the ordering should be.
 Sorter is a collaborative project.
 Nobody owns the rankings. Everybody owns the rankings.
 }
-~/sorter-properties/collective
 
-{
+~/sorter-properties/new {
 Sorter is completely original and nothing like this has ever existed before
 }
-~/sorter-properties/new
 
 
-{
+~/sorter-properties/proprietary {
 Sorter is proprietary, trying to become a venture scale business.
 }
-~/sorter-properties/proprietary
 
 Now we have six dots swimming around. Lets order them.
 

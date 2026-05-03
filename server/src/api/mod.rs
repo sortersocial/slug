@@ -72,7 +72,7 @@ mod tests {
         apply_ingest(
             &mut reduced,
             1,
-            "{a}\n~/t/a\n{b}\n~/t/b\n{because}\n~/t/a 2:1 ~/t/b\n",
+            "~/t/a {a}\n~/t/b {b}\n{because}\n~/t/a 2:1 ~/t/b\n",
         );
         let text = "{equal}\n~/t/a 1:1 ~/t/b\n";
         validate_ingest_document(&reduced, text, &crate::reducer::ScopeId::Public).unwrap();
@@ -81,7 +81,7 @@ mod tests {
     #[test]
     fn validate_ingest_document_rejects_vote_on_undefined_item() {
         let reduced = ReducerState::default();
-        let text = "{x}\n~/t/a\n{why}\n~/t/b 1:1 ~/t/missing\n";
+        let text = "~/t/a {x}\n{why}\n~/t/b 1:1 ~/t/missing\n";
         let err = validate_ingest_document(&reduced, text, &crate::reducer::ScopeId::Public).unwrap_err();
         assert_eq!(err.0, StatusCode::BAD_REQUEST);
         assert!(err.1.contains("undefined item"));
@@ -90,14 +90,14 @@ mod tests {
     #[test]
     fn validate_ingest_document_accepts_quoted_thread_title() {
         let reduced = ReducerState::default();
-        let text = "\"This is a title\" { This is the body of the post }\n{a}\n~/t/a\n";
+        let text = "\"This is a title\" { This is the body of the post }\n~/t/a {a}\n";
         validate_ingest_document(&reduced, text, &crate::reducer::ScopeId::Public).unwrap();
     }
 
     #[test]
     fn validate_ingest_document_rejects_multiple_threads() {
         let reduced = ReducerState::default();
-        let text = "#one\n#two\n{a}\n~/t/a\n";
+        let text = "#one\n#two\n~/t/a {a}\n";
         validate_ingest_document(&reduced, text, &crate::reducer::ScopeId::Public).unwrap();
     }
 
@@ -107,6 +107,6 @@ mod tests {
         let text = "~/t/a\n";
         let err = validate_ingest_document(&reduced, text, &crate::reducer::ScopeId::Public).unwrap_err();
         assert_eq!(err.0, StatusCode::BAD_REQUEST);
-        assert_eq!(err.1, "parse error");
+        assert!(err.1.contains("missing body"));
     }
 }
