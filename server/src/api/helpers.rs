@@ -51,6 +51,30 @@ pub fn parse_parent_specs(parent: Option<&String>) -> Vec<String> {
     s.split(',').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect()
 }
 
+/// Validate multi-parent garden scopes against [`ContentState`]: every explicit parent path must be a
+/// known item id or at least have appeared as a parent with children in the graph (matches
+/// `GetGardenRank` semantics).
+pub fn validate_garden_parent_scope_paths(
+    content: &crate::reducer::ContentState,
+    specs: &[String],
+    is_global_rank_parent: bool,
+) -> Result<(), (String, Option<String>)> {
+    if is_global_rank_parent || specs.is_empty() {
+        return Ok(());
+    }
+    let none_exist = specs.iter().all(|spec| {
+        let Some(canon) = ItemId::parse(spec) else { return true };
+        !content.items.contains(&canon) && !content.item_children.contains_key(&canon)
+    });
+    if none_exist {
+        return Err((
+            "path not found".into(),
+            Some(format!("{} does not exist", specs.join(", "))),
+        ));
+    }
+    Ok(())
+}
+
 /// Apply offset+limit pagination to the flattened component rankings.
 pub fn paginate_rankings(
     components: Vec<RankComponent>,

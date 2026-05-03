@@ -27,7 +27,8 @@ use crate::{
 use super::auth::{parse_bearer, verify_bearer_principal};
 use super::helpers::{
     compute_connectivity_stats, is_pair_voted, now_ms, paginate_rankings, parse_parent_specs,
-    pick_random_distinct_item_pair, resolve_item, vote_touches_path,
+    pick_random_distinct_item_pair, resolve_item, validate_garden_parent_scope_paths,
+    vote_touches_path,
 };
 use super::validate::validate_ingest_document;
 
@@ -148,19 +149,7 @@ fn build_rank_response_for_content(
     let specs = parse_parent_specs(parent_owned.as_ref());
     let is_global = parent.map(|p| p.trim() == "~").unwrap_or(false);
 
-    if !is_global && !specs.is_empty() {
-        let none_exist = specs.iter().all(|spec| {
-            let Some(canon) = ItemId::parse(spec) else { return true };
-            !content.items.contains(&canon) && !content.item_children.contains_key(&canon)
-        });
-        if none_exist {
-            return Err((
-                "path not found".into(),
-                Some(format!("{} does not exist", specs.join(", "))),
-            ));
-        }
-    }
-
+    validate_garden_parent_scope_paths(content, &specs, is_global)?;
     let depth = depth.max(1);
     let rankings = if is_global {
         let all_items: Vec<ItemId> = content.items.iter().cloned().collect();
@@ -704,6 +693,8 @@ async fn rpc_get_pair(state: &AppState, room: String, parent_path: String) -> Re
             Some(parent_path.clone())
         };
         let specs = parse_parent_specs(tmp.as_ref());
+        validate_garden_parent_scope_paths(content, &specs, false)?;
+
         if specs.is_empty() {
             content.ranking_group.idx_to_item.clone()
         } else {

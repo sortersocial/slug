@@ -1287,6 +1287,80 @@ async fn test_garden_item_pair_matchup_include_threads() {
     assert_eq!(first_thread, "sorting-hat", "vote should cite thread");
 }
 
+/// `GetGardenRank` and `GetPair` must agree on whether a parent path "exists" (empty garden).
+#[tokio::test]
+async fn test_garden_pair_and_rank_path_not_found_consistent() {
+    let (addr, _tmp, _log, _handle) = create_test_server().await;
+    let client = reqwest::Client::new();
+    let bad_parent = "https://slug.social/~/no_such_garden_parent_for_scope_test";
+
+    let rank = rpc_batch(
+        &client,
+        addr,
+        None,
+        serde_json::json!([{
+            "GetGardenRank": {
+                "room": "public",
+                "parent_path": bad_parent,
+                "depth": 1
+            }
+        }]),
+    )
+    .await;
+    let rank_line = &rank["results"][0];
+    assert_eq!(rank_line["ok"], false, "GetGardenRank: {:?}", rank_line);
+    assert_eq!(rank_line["error"], "path not found");
+
+    let pair = rpc_batch(
+        &client,
+        addr,
+        None,
+        serde_json::json!([{
+            "GetPair": {
+                "room": "public",
+                "parent_path": bad_parent
+            }
+        }]),
+    )
+    .await;
+    let pair_line = &pair["results"][0];
+    assert_eq!(pair_line["ok"], false, "GetPair: {:?}", pair_line);
+    assert_eq!(pair_line["error"], "path not found");
+
+    let ingest = rpc_batch(
+        &client,
+        addr,
+        Some(&test_bearer()),
+        serde_json::json!([{
+            "Post": {
+                "room": "public",
+                "thread_tag": "scope-a",
+                "delegate": "00000000-0000-0000-0000-000000000000:test:local/test",
+                "text": "~/no_such_garden_parent_for_scope_test/x {a}\n~/no_such_garden_parent_for_scope_test/y {b}\n",
+                "return_rank_diff": false
+            }
+        }]),
+    )
+    .await;
+    assert_eq!(ingest["results"][0]["ok"], true, "ingest: {:?}", ingest);
+
+    let pair2 = rpc_batch(
+        &client,
+        addr,
+        None,
+        serde_json::json!([{
+            "GetPair": {
+                "room": "public",
+                "parent_path": bad_parent
+            }
+        }]),
+    )
+    .await;
+    let pair2_line = &pair2["results"][0];
+    assert_eq!(pair2_line["ok"], true, "GetPair after parent materialized: {:?}", pair2_line);
+    assert!(pair2_line["result"]["Pair"].is_object());
+}
+
 #[tokio::test]
 async fn test_search_page_and_results() {
     // HTML search pages are offline during the auth-v3 refactor.

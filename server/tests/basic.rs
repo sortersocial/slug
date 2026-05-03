@@ -506,21 +506,30 @@ fn reducer_malformed_ingest_is_skipped_no_panic() {
 }
 
 #[test]
-fn reducer_zero_zero_vote_ratio_normalizes_to_one_one() {
+fn dsl_parse_rejects_zero_zero_vote_ratio() {
+    let err = slugsocial_server::dsl::parse_full(
+        "~/t/a {a}\n~/t/b {b}\n~/t/a 0:0 ~/t/b {zero}\n",
+    )
+    .expect_err("0:0 vote must be rejected by the parser");
+    let msg = match err {
+        slugsocial_server::dsl::DslError::Parse(m) => m,
+    };
+    assert!(
+        msg.contains("0:0"),
+        "expected message about invalid 0:0 ratio, got: {msg}"
+    );
+
     let mut state = ReducerState::default();
     state.apply_event(ingest_event(
         1,
         "~/t/a {a}\n~/t/b {b}\n~/t/a 0:0 ~/t/b {zero}\n",
     ));
-    let group = &state.public().ranking_group;
-    let a_idx = group.item_to_idx[&item_id("https://slug.social/~/t/a")];
-    let b_idx = group.item_to_idx[&item_id("https://slug.social/~/t/b")];
-    // 0:0 should normalize to 1:1 — both directions should have weight
-    assert!(group.edges.contains_key(&(a_idx, b_idx)));
-    assert!(group.edges.contains_key(&(b_idx, a_idx)));
-    let w_ab = group.edges[&(a_idx, b_idx)];
-    let w_ba = group.edges[&(b_idx, a_idx)];
-    assert!((w_ab - w_ba).abs() < 1e-9, "0:0 should produce equal weights");
+    let content = state.public();
+    assert!(
+        content.items.is_empty() && content.ranking_group.idx_to_item.is_empty(),
+        "parse failure must skip entire ingest; got items={:?}",
+        content.items.len(),
+    );
 }
 
 #[test]
