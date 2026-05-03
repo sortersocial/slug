@@ -1108,6 +1108,8 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
                 match rpc_line_ok(&batch.results[0])? {
                     RpcResult::PostOk {
                         events_appended,
+                        post_id: _,
+                        post_index: _,
                         ranking_changes,
                         threads,
                         next,

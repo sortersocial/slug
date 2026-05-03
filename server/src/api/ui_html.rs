@@ -25,6 +25,7 @@ use crate::{
         thread_ui_expand_post_full, thread_ui_expand_redacted_post, ui_js_warn, user_can_post_room,
         user_can_view_room, HtmlUiAction, JsBuilder, ThreadNav,
     },
+    html::vote_compare_post_success_js,
     reducer::{scope_from_room_wire, ScopeId},
     state::AppState,
 };
@@ -213,15 +214,15 @@ async fn dispatch_ui_action(
                     .into_response();
                 }
             };
-            let mut rl = ratio_left.max(0);
-            let mut rr = ratio_right.max(0);
+            let mut rl = ratio_left.trim().parse::<i32>().unwrap_or(0).max(0);
+            let mut rr = ratio_right.trim().parse::<i32>().unwrap_or(0).max(0);
             if rl == 0 && rr == 0 {
                 rl = 1;
                 rr = 1;
             }
 
             let text = format!(
-                "@{}\n{} {}:{} {}\n{{\n{}\n}}\n",
+                "@{}\n{} {}:{} {} {{\n{}\n}}\n",
                 crate::api::auth::WEB_BROWSER_AGENT,
                 left_id.as_str(),
                 rl,
@@ -231,9 +232,44 @@ async fn dispatch_ui_action(
             );
 
             match rpc_post_with_bearer(state, &session.bearer, room.clone(), thread_tag.clone(), text).await {
-                Ok(RpcResult::PostOk { .. }) => {
-                    let loc = sanitize_vote_compare_next(&next);
-                    js_redirect(&loc).into_response()
+                Ok(RpcResult::PostOk {
+                    post_id,
+                    post_index,
+                    ..
+                }) => {
+                    let Some(pid) = post_id else {
+                        let loc = sanitize_vote_compare_next(&next);
+                        return js_redirect(&loc).into_response();
+                    };
+                    let nav = if room == "public" {
+                        ThreadNav::public()
+                    } else {
+                        let Some(n) = ThreadNav::from_room_id(&room) else {
+                            return form_js_error(
+                                err_tgt.as_ref(),
+                                "bad room",
+                                "Unknown room for vote post.",
+                            )
+                            .into_response();
+                        };
+                        n
+                    };
+                    let js = vote_compare_post_success_js(
+                        state,
+                        &nav,
+                        &room,
+                        &thread_tag,
+                        &left_id,
+                        &right_id,
+                        &pid,
+                        post_index,
+                    )
+                    .await;
+                    Response::builder()
+                        .status(StatusCode::OK)
+                        .header(header::CONTENT_TYPE, "text/javascript; charset=utf-8")
+                        .body(axum::body::Body::from(js))
+                        .unwrap()
                 }
                 Ok(_) => form_js_error(
                     err_tgt.as_ref(),

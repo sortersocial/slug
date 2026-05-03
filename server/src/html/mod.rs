@@ -23,8 +23,9 @@ use breadcrumb_path::{ExternalOntologyPath, OntologyPath};
 pub use auth::{auth_complete_page, auth_signed_in_fragment, choose_username_error_fragment, choose_username_page};
 pub use editor::{editor_check, editor_page};
 pub use forum::{
-    home, room_page, room_thread_post_view, room_thread_view, thread_feed_html,
-    thread_feed_html_for_room, thread_feed_region_markup, thread_post_view, thread_view, ThreadNav,
+    embed_public_thread_view, embed_room_thread_view, home, room_page, room_thread_post_view,
+    room_thread_view, thread_feed_html, thread_feed_html_for_room, thread_feed_region_markup,
+    thread_post_view, thread_view, ThreadNav,
 };
 
 pub(crate) use forum::{
@@ -37,7 +38,7 @@ pub use garden::{
     room_external_garden_index, room_external_ontology_path, room_garden_index,
     room_ontology_path, room_vote_compare_page, vote_compare_page,
 };
-pub(crate) use garden::{encode_pin_cookie_value, GARDEN_PIN_COOKIE};
+pub(crate) use garden::{encode_pin_cookie_value, vote_compare_post_success_js, GARDEN_PIN_COOKIE};
 pub use routing::RouteContext;
 pub use search::{search_page, search_results_fragment};
 pub use forum::user_profile_page;
@@ -250,6 +251,11 @@ impl JsBuilder {
         self
     }
 
+    pub(crate) fn raw(mut self, js: &str) -> Self {
+        self.snippets.push(js.to_string());
+        self
+    }
+
     pub(crate) fn build(self) -> String {
         self.snippets.join(" ")
     }
@@ -301,6 +307,25 @@ pub(super) fn layout(
     garden_room_wire: Option<&str>,
     garden_path_prefix: Option<&str>,
 ) -> Markup {
+    layout_embed_controls(title, view, body, views, theme, theme_next, garden_room_wire, garden_path_prefix, true)
+}
+
+/// Minimal document for `/embed/…` iframes: theme CSS + body + `slug_ui.js` (SSE), no bottom controls bar.
+pub(super) fn layout_embed_thread(title: &str, view: &str, body: Markup, theme: &str) -> Markup {
+    layout_embed_controls(title, view, body, None, theme, "/", None, None, false)
+}
+
+fn layout_embed_controls(
+    title: &str,
+    view: &str,
+    body: Markup,
+    views: Option<u64>,
+    theme: &str,
+    theme_next: &str,
+    garden_room_wire: Option<&str>,
+    garden_path_prefix: Option<&str>,
+    show_controls: bool,
+) -> Markup {
     let theme = normalize_theme(theme);
     let css_href = format!("/static/theme_{theme}.css");
     html! {
@@ -321,6 +346,7 @@ pub(super) fn layout(
                 }
                 div id="errors" {}
                 (body)
+                @if show_controls {
                 div id="controls" {
                     a href="https://github.com/sortersocial/slug" id="src-link" { "src" }
                     div id="spread-control" {
@@ -345,6 +371,7 @@ pub(super) fn layout(
                             }
                         }
                     }
+                }
                 }
                 script src="/static/slug_ui.js" {}
             }

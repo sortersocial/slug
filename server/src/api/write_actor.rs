@@ -86,6 +86,17 @@ async fn broadcast_web_refresh(state: &AppState, room_key: &str, thread_id: &str
         "/".to_string()
     }];
     path_prefixes.push(thread_url.clone());
+    if room_key == "public" {
+        path_prefixes.push(format!("/embed/t/{}", urlencoding::encode(thread_id)));
+        path_prefixes.push("/vote/compare".to_string());
+    } else if let Some(seg) = room_route_segment(room_key) {
+        path_prefixes.push(format!(
+            "/r/{}/embed/t/{}",
+            seg,
+            urlencoding::encode(thread_id)
+        ));
+        path_prefixes.push(format!("/r/{seg}/vote/compare"));
+    }
     let _ = state.js_tx.send(crate::state::JsSnippet { code: js, path_prefixes });
 }
 
@@ -341,9 +352,10 @@ pub async fn writer_actor(mut rx: mpsc::Receiver<WriteCmd>, state: AppState) {
                         }
                     }
 
+                    let new_post_id = uuid::Uuid::new_v4().to_string();
                     let ingest_event = Event::Ingest(Ingest {
                         ts: v.ts,
-                        id: uuid::Uuid::new_v4().to_string(),
+                        id: new_post_id.clone(),
                         raw: v.raw_text.clone(),
                         principal: principal.clone(),
                         delegate: delegate.clone(),
@@ -400,8 +412,19 @@ pub async fn writer_actor(mut rx: mpsc::Receiver<WriteCmd>, state: AppState) {
                         )
                     };
 
+                    let post_index = {
+                        let reduced = state.reduced.read().await;
+                        reduced.try_thread_post_index_chronological(
+                            &scope_from_room_wire(&room_key),
+                            &thread_tag_canon,
+                            &new_post_id,
+                        )
+                    };
+
                     Ok(RpcResult::PostOk {
                         events_appended,
+                        post_id: Some(new_post_id),
+                        post_index,
                         ranking_changes,
                         threads: vec![format!("#{}", thread_id)],
                         next: slug_types::NextMoves {

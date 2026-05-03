@@ -919,6 +919,69 @@ body.view-ontology-light ul.ont-group-list li .item-link {
   min-width: 120px;
   accent-color: var(--ui);
 }
+.vote-thread-picker {
+  margin: 10px 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.vote-thread-picker-label {
+  font-size: 12px;
+  color: var(--meta);
+}
+#vote-thread-select {
+  min-width: 160px;
+}
+iframe.vote-thread-iframe {
+  width: 100%;
+  min-height: 220px;
+  border: 1px solid var(--hairline, #333);
+  border-radius: 4px;
+  margin: 8px 0 14px;
+  background: var(--panel, #111);
+}
+.vote-compare-preview-wrap {
+  margin: 12px 0;
+}
+.vote-compare-preview-wrap h3 {
+  font-size: 13px;
+  margin: 0 0 6px;
+  color: var(--meta);
+}
+#vote-compare-preview {
+  min-height: 48px;
+}
+.vote-edge-history-title {
+  font-size: 13px;
+  margin: 16px 0 8px;
+}
+ol.vote-edge-history {
+  margin: 0;
+  padding-left: 1.2em;
+}
+li.vote-edge-history-row {
+  margin: 10px 0;
+}
+.vote-edge-meta {
+  font-size: 12px;
+  line-height: 1.5;
+}
+.vote-edge-ratio {
+  margin: 0 6px;
+  font-weight: 600;
+}
+.vote-edge-bar {
+  margin-top: 4px;
+  max-width: 100%;
+}
+.vote-edge-reason {
+  margin-top: 4px;
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+body.view-thread-embed {
+  margin: 8px;
+}
 
 /* ----------------------------------------------------------------
    RECENCY

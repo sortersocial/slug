@@ -35,7 +35,9 @@ Strict **CSP** that blocks `eval` would break the current app. Other projects ma
 
 - **`HtmlUiAction` / `POST /ui`** (`server/src/html/ui_action.rs`, `server/src/api/ui_html.rs`): **Browser session** (cookie) UI commands. Payload is `__rpc__` + form fields. Most responses are **JS morphs**; some actions return **HTTP redirects** (see below).
 
-- **Non-morph `POST /ui` responses:** **`SetGardenPin`** returns **`303 See Other`** and **`Set-Cookie`** (same as **`POST /theme`**). Garden pin/unpin is a normal **`<form method="POST" action="/ui" data-navigate="full">`** — browser navigation applies cookies reliably (see **`test/browser_garden_pin.clj`**). Each **`__rpc__`** payload includes **`form_action: "/ui"`**; **`post_ui_html`** rejects mismatches to bind tokens to the UI endpoint. **`VoteComparePost`** still returns **`text/javascript`** with **`window.location = …`**; its **`__rpc__`** also carries **`form_action: "/ui"`**.
+- **Non-morph `POST /ui` responses:** **`SetGardenPin`** returns **`303 See Other`** and **`Set-Cookie`** (same as **`POST /theme`**). Garden pin/unpin is a normal **`<form method="POST" action="/ui" data-navigate="full">`** — browser navigation applies cookies reliably (see **`test/browser_garden_pin.clj`**). Each **`__rpc__`** payload includes **`form_action: "/ui"`**; **`post_ui_html`** rejects mismatches to bind tokens to the UI endpoint.
+
+- **`VoteComparePost`:** On success returns **`text/javascript`** that **morphs** **`#vote-compare-preview`** (new ingest card), **`#vote-edge-history-region`** (recomputed edge list), and reloads **`#vote-thread-iframe`** from **`/embed/t/:tag`** (room: **`/r/:room_key/embed/t/:thread_tag`**). Uses **`RpcResult::PostOk`**’s **`post_id`** / **`post_index`** for the card. **`__rpc__`** carries **`form_action: "/ui"`**; **`thread_tag`** and ratio fields come from the same form as **`$form`** holes.
 
 - **Garden pin / compare voting:** Cookie **`slug_garden_pin`** via **`set_garden_pin`**. Pairwise UI: **`GET /vote/compare?…`** / **`GET /r/:room_key/vote/compare?…`**. HUD: **`#slug-pin-hud`** when **`layout`** passes garden metadata on **`body`**.
 

@@ -16,8 +16,10 @@ use crate::{
     canonical_path::{canonicalize_item, canonicalize_tag},
     form_template::template_json_compact,
     html::{
+        forum::ingest_entry_markup,
         ui_action::UI_RPC_FIELD,
         user_can_post_room,
+        JsBuilder,
     },
     events::ThreadCapability,
     path_types::ItemId,
@@ -77,7 +79,139 @@ fn pick_autothread_for_vote_pair(content: &ContentState, a: &ItemId, b: &ItemId)
     canonicalize_tag(&v[0])
 }
 
-/// Display path for an item: `~/…` or `-/…` form.
+/// Canonical unordered pair: lexicographic by storage string (stable edge identity).
+fn canonical_edge_items(a: &ItemId, b: &ItemId) -> (ItemId, ItemId) {
+    let ac = a.clone().normalized_storage();
+    let bc = b.clone().normalized_storage();
+    if ac.as_str() <= bc.as_str() {
+        (ac, bc)
+    } else {
+        (bc, ac)
+    }
+}
+
+/// Votes whose endpoints are exactly this unordered pair, oldest first.
+fn votes_for_edge(content: &ContentState, a: &ItemId, b: &ItemId) -> Vec<crate::reducer::VoteData> {
+    let (lo, hi) = canonical_edge_items(a, b);
+    let lo_s = lo.as_str();
+    let hi_s = hi.as_str();
+    let mut out: Vec<crate::reducer::VoteData> = content
+        .item_votes
+        .get(&lo)
+        .into_iter()
+        .flat_map(|q| q.iter())
+        .filter(|v| {
+            let touches = (v.a.as_str() == lo_s && v.b.as_str() == hi_s)
+                || (v.a.as_str() == hi_s && v.b.as_str() == lo_s);
+            touches
+        })
+        .cloned()
+        .collect();
+    out.sort_by_key(|v| v.ts);
+    out
+}
+
+fn vote_thread_tags_for_pair(content: &ContentState, a: &ItemId, b: &ItemId) -> Vec<String> {
+    let set: HashSet<String> = content
+        .item_threads
+        .get(a)
+        .into_iter()
+        .chain(content.item_threads.get(b))
+        .flat_map(|s| s.iter().cloned())
+        .collect();
+    let mut v: Vec<String> = set.into_iter().collect();
+    v.sort();
+    v.into_iter().map(|t| canonicalize_tag(&t)).collect()
+}
+
+fn vote_edge_history_markup(
+    content: &ContentState,
+    left: &ItemId,
+    right: &ItemId,
+    nav: &ThreadNav,
+) -> maud::Markup {
+    let votes = votes_for_edge(content, left, right);
+    let (lo, hi) = canonical_edge_items(left, right);
+    html! {
+        @if votes.is_empty() {
+            p class="muted vote-edge-empty" { "no votes on this pair in this scope yet" }
+        } @else {
+            h3 class="vote-edge-history-title" { "votes on this edge" }
+            ol class="vote-edge-history" {
+                @for v in &votes {
+                    @let (ratio_lo, ratio_hi) = if v.a == lo && v.b == hi {
+                        (v.ratio_left, v.ratio_right)
+                    } else {
+                        (v.ratio_right, v.ratio_left)
+                    };
+                    @let pct = ratio_pct(ratio_lo, ratio_hi);
+                    @let left_class = if lo.as_str() == left.as_str() { "ratio-left current" } else { "ratio-left" };
+                    @let right_class = if hi.as_str() == left.as_str() { "ratio-right current" } else { "ratio-right" };
+                    li class="vote-edge-history-row" {
+                        div class="vote-edge-meta" {
+                            a href=(nav.garden_item_href(&lo)) {
+                                code { (item_display_path(lo.as_str())) }
+                            }
+                            span class="vote-edge-ratio" { (format!("{}:{}", ratio_lo, ratio_hi)) }
+                            a href=(nav.garden_item_href(&hi)) {
+                                code { (item_display_path(hi.as_str())) }
+                            }
+                            span class="muted" { " · #" (v.thread_tag) " · @" (v.principal) }
+                        }
+                        div class="ratio-bar vote-edge-bar" {
+                            div class=(left_class) style={(format!("width: {:.3}%;", pct))} {}
+                            div class=(right_class) style={(format!("width: {:.3}%;", 100.0 - pct))} {}
+                        }
+                        @if !v.body.trim().is_empty() {
+                            div class="vote-edge-reason muted" { (v.body.trim()) }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// After a successful vote post: morph the new card into `#vote-compare-preview` and reload the thread iframe.
+pub(crate) async fn vote_compare_post_success_js(
+    state: &AppState,
+    nav: &ThreadNav,
+    room_wire: &str,
+    thread_tag: &str,
+    left: &ItemId,
+    right: &ItemId,
+    post_id: &str,
+    post_idx: Option<usize>,
+) -> String {
+    use crate::reducer::scope_from_room_wire;
+    let reduced = state.reduced.read().await;
+    let scope = scope_from_room_wire(room_wire.trim());
+    let Some(ing) = reduced.ingests_by_id.get(post_id).cloned() else {
+        drop(reduced);
+        return "console.warn('vote compare: new post not found');".to_string();
+    };
+    let idx = match post_idx {
+        Some(i) => i,
+        None => reduced
+            .try_thread_post_index_chronological(&scope, thread_tag, post_id)
+            .unwrap_or(0),
+    };
+    let viewer = None::<&str>;
+    let now = now_ms();
+    let card = ingest_entry_markup(nav, thread_tag, idx, &ing, viewer, now, &reduced);
+    let content = content_for_garden_view(&reduced, &nav.scope());
+    let edge_history = vote_edge_history_markup(content, left, right, nav);
+    drop(reduced);
+    let embed_src = super::js_string_literal(&nav.embed_thread_url(thread_tag));
+    let mut b = JsBuilder::new();
+    b = b.morph_inner_selector("#vote-compare-preview", card);
+    b = b.morph_inner_selector("#vote-edge-history-region", edge_history);
+    b = b.raw(&format!(
+        "var __ifr=document.getElementById('vote-thread-iframe'); if(__ifr){{ __ifr.src={embed_src}; }}",
+    ));
+    b.build()
+}
+
 fn item_display_path(item: &str) -> String {
     ItemId::parse(item)
         .map(|c| c.display_path())
@@ -1123,6 +1257,8 @@ async fn vote_compare_inner(
         .map(|t| canonicalize_tag(t))
         .filter(|t| !t.is_empty())
         .unwrap_or_else(|| pick_autothread_for_vote_pair(content, &left, &right));
+    let thread_tags = vote_thread_tags_for_pair(content, &left, &right);
+    let edge_history = vote_edge_history_markup(content, &left, &right, &nav);
     drop(reduced);
 
     let title = format!("vote — {} vs {}", item_display_path(left.as_str()), item_display_path(right.as_str()));
@@ -1132,7 +1268,7 @@ async fn vote_compare_inner(
         &json!({
             "action": "vote_compare_post",
             "room": nav.room_wire,
-            "thread_tag": auto_thread,
+            "thread_tag": {"$form": "thread_tag"},
             "left_item": left.as_str(),
             "right_item": right.as_str(),
             "ratio_left": {"$form": "ratio_left"},
@@ -1144,6 +1280,8 @@ async fn vote_compare_inner(
     )
     .expect("vote compare rpc json");
 
+    let embed_initial = nav.embed_thread_url(&auto_thread);
+
     let body = html! {
         nav class="breadcrumb" {
             a href="/" { "slug.social" }
@@ -1154,7 +1292,7 @@ async fn vote_compare_inner(
             };
             (bc_segment("vote", &vote_bc_href, true))
         }
-        section class="vote-compare-shell" {
+        section class="vote-compare-shell" data-embed-prefix=(nav.embed_thread_prefix()) {
             h2 { "compare" }
             div class="vote-compare-pair" {
                 a class="vote-compare-item" href=(nav.garden_item_href(&left)) {
@@ -1165,13 +1303,32 @@ async fn vote_compare_inner(
                     code { (item_display_path(right.as_str())) }
                 }
             }
-            p class="muted vote-compare-thread-hint" {
-                "posting to thread "
-                strong { "#" (auto_thread) }
+            iframe id="vote-thread-iframe" class="vote-thread-iframe" title="Thread posts" src=(embed_initial) {}
+            div class="vote-compare-preview-wrap" {
+                h3 { "your vote (after post)" }
+                div id="vote-compare-preview" class="vote-compare-preview" {}
+            }
+            div id="vote-edge-history-region" {
+                (edge_history)
             }
             @if can_post {
                 form id="vote-compare-form" method="POST" action="/ui" {
                     input type="hidden" name=(UI_RPC_FIELD) value=(rpc_json);
+                    div class="vote-thread-picker" {
+                        label class="vote-thread-picker-label" { "thread" }
+                        select id="vote-thread-select" name="thread_tag" aria-label="Thread to post vote into" {
+                            @if thread_tags.is_empty() {
+                                option value="vote" selected { "#vote" }
+                            }
+                            @for t in &thread_tags {
+                                @if *t == auto_thread {
+                                    option value=(t) selected { "#" (t) }
+                                } @else {
+                                    option value=(t) { "#" (t) }
+                                }
+                            }
+                        }
+                    }
                     input type="hidden" name="ratio_left" id="vote-ratio-left" value="50";
                     input type="hidden" name="ratio_right" id="vote-ratio-right" value="50";
                     label class="vote-compare-slider-label" {

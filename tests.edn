@@ -19,7 +19,8 @@
                  "^test\\.browser-room-delete$"
                  "^test\\.browser-public-garden$"
                  "^test\\.browser-redact-thread-index$"
-                 "^test\\.browser-garden-pin$"]
+                 "^test\\.browser-garden-pin$"
+                 "^test\\.browser-vote-compare$"]
    :kaocha.filter/skip-meta [:skip]
    :parallel? false}]
  :plugins [:kaocha.plugin/junit-xml]

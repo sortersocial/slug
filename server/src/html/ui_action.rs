@@ -44,8 +44,9 @@ pub enum HtmlUiAction {
         thread_tag: String,
         left_item: String,
         right_item: String,
-        ratio_left: i32,
-        ratio_right: i32,
+        /// From form fields (string); parsed server-side.
+        ratio_left: String,
+        ratio_right: String,
         explanation: String,
         /// Same-origin path after successful post (JS redirect).
         next: String,

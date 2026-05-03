@@ -48,7 +48,6 @@
       if (!f || f.tagName !== 'FORM') return;
       if ((f.method || 'get').toLowerCase() !== 'post') return;
       if (f.id === 'slug-theme-form') return;
-      if (f.id === 'vote-compare-form') return;
       if (f.getAttribute('data-navigate') === 'full') return;
       e.preventDefault();
       var resp = await fetch(f.action, {
@@ -223,6 +222,19 @@
       }
       voteSlider.addEventListener('input', syncVoteRatio);
       syncVoteRatio();
+    }
+
+    var voteShell = document.querySelector('.vote-compare-shell[data-embed-prefix]');
+    if (voteShell) {
+      var embedPrefix = voteShell.getAttribute('data-embed-prefix') || '';
+      var threadSel = document.getElementById('vote-thread-select');
+      var ifr = document.getElementById('vote-thread-iframe');
+      function syncVoteThreadIframe() {
+        if (!threadSel || !ifr || !embedPrefix) return;
+        var tag = threadSel.value || 'vote';
+        ifr.src = embedPrefix + '/' + encodeURIComponent(tag);
+      }
+      if (threadSel) threadSel.addEventListener('change', syncVoteThreadIframe);
     }
 
     // SSE: server-pushed JS

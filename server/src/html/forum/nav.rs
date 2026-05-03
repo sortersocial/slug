@@ -1,6 +1,7 @@
 use crate::canonical_path::canonicalize_item;
 use crate::reducer::ScopeId;
 use slug_types::room_route_segment;
+use urlencoding;
 
 /// URL helpers for public `/t/…` and private room threads `/r/{short}{slug}/t/…`.
 #[derive(Clone)]
@@ -83,6 +84,20 @@ impl ThreadNav {
 
     pub(crate) fn post_url(&self, tag: &str, idx: usize) -> String {
         format!("{}/{}/{}", self.thread_path_prefix, tag, idx)
+    }
+
+    pub(crate) fn embed_thread_prefix(&self) -> String {
+        match &self.scope {
+            ScopeId::Public => "/embed/t".to_string(),
+            ScopeId::Room(room_id) => {
+                let seg = room_route_segment(room_id).expect("room seg");
+                format!("/r/{seg}/embed/t")
+            }
+        }
+    }
+
+    pub(crate) fn embed_thread_url(&self, tag: &str) -> String {
+        format!("{}/{}", self.embed_thread_prefix(), urlencoding::encode(tag))
     }
 
     /// Empty for public; `/r/:seg` for room — prefix for routes like `/vote/compare`.

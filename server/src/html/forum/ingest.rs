@@ -128,7 +128,7 @@ pub(super) fn redacted_header_row(
     }
 }
 
-pub(super) fn ingest_entry_markup(
+pub(crate) fn ingest_entry_markup(
     nav: &ThreadNav,
     tag: &str,
     post_idx: usize,
