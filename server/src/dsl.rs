@@ -435,6 +435,11 @@ fn parse_item_statement(stripped: &str, masker: &BlockMasker) -> Result<Stmt, Ds
     // Otherwise parse comparison then "/item2" then REQUIRED body.
     let ((ratio_left, ratio_right), mut k) = parse_comparison_at(s, i)
         .ok_or_else(|| DslError::Parse(format!("invalid comparison near: {}", &s[i..])))?;
+    if ratio_left == 0 && ratio_right == 0 {
+        return Err(DslError::Parse(
+            "vote ratio 0:0 is invalid; use 1:1 for a tie or omit the vote".to_string(),
+        ));
+    }
     k = skip_ws(s, k);
     let (item2, mut m) = parse_item_name_at(s, k)
         .ok_or_else(|| DslError::Parse("invalid rhs item name".to_string()))?;
@@ -621,6 +626,18 @@ mod tests {
                 ratio_right: 1,
                 explanation: "because".to_string()
             }]
+        );
+    }
+
+    #[test]
+    fn parse_vote_rejects_zero_zero_ratio() {
+        let err = parse_full("~/a 0:0 ~/b {tie placeholder}").unwrap_err();
+        let msg = match err {
+            DslError::Parse(m) => m,
+        };
+        assert!(
+            msg.contains("0:0"),
+            "expected 0:0 rejection message, got: {msg}"
         );
     }
 
