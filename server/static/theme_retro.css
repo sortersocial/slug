@@ -118,50 +118,37 @@ body.view-ontology #controls {
   border-top: 1px solid #ccc;
 }
 
-nav.ont-sibling-nav {
-  align-items: center;
-  display: flex;
-  flex-wrap: nowrap;
-  gap: 6px;
-  margin: 4px 0 8px;
-  overflow-x: auto;
-  padding: 2px 0;
-  white-space: nowrap;
-}
-span.ont-sibling-nav-sep {
-  color: #888;
+body.view-ontology nav.breadcrumb {
+  color: #666;
   font-size: 0.85rem;
-  padding: 0 2px;
-  user-select: none;
+  margin: 8px 0 0;
 }
-span.ont-sibling-nav-group {
-  align-items: center;
-  display: inline-flex;
-  flex-wrap: nowrap;
-  gap: 4px;
-}
-a.ont-sibling-nav-link {
-  background: #ede8df;
-  border: 1px solid #bbb;
+body.view-ontology nav.breadcrumb a {
   color: #23a;
-  font-size: 0.78rem;
-  font-weight: 600;
-  line-height: 1.2;
-  min-width: 1.6em;
-  padding: 2px 8px;
-  text-align: center;
   text-decoration: none;
 }
-a.ont-sibling-nav-link:hover {
-  border-color: #23a;
+body.view-ontology nav.breadcrumb a:hover { color: #000; }
+body.view-ontology nav.breadcrumb a.bc-current { color: #000; font-weight: 600; }
+body.view-ontology nav.breadcrumb .bc-sep { color: #888; padding: 0 2px; }
+
+nav.breadcrumb.ont-sibling-nav {
+  margin-top: 0;
+  width: 100%;
+  max-width: 100%;
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 0;
+  overflow-x: auto;
+  white-space: nowrap;
 }
-a.ont-sibling-nav-link.is-current {
-  background: #d8e4f8;
-  border-color: #23a;
-  box-shadow: inset 0 0 0 1px #23a;
-  color: #000;
-  cursor: default;
-  font-weight: 800;
+nav.breadcrumb.ont-sibling-nav .ont-sibling-nav-group {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: nowrap;
+}
+nav.breadcrumb.ont-sibling-nav span.bc-sep.ont-sibling-nav-intra {
+  padding: 0 1px;
 }
 
 #detail-pane {

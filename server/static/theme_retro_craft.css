@@ -491,51 +491,24 @@ body.view-ontology-light .ont-tab.is-active {
   color: #1a1814;
 }
 
-nav.ont-sibling-nav {
-  align-items: center;
+nav.breadcrumb.ont-sibling-nav {
+  margin-top: 0;
+  width: 100%;
+  max-width: 100%;
   display: flex;
   flex-wrap: nowrap;
-  gap: 6px;
-  margin: 4px 0 8px;
+  align-items: center;
+  gap: 0;
   overflow-x: auto;
-  padding: 2px 0;
   white-space: nowrap;
 }
-span.ont-sibling-nav-sep {
-  color: #8a857a;
-  font-size: 0.85rem;
-  padding: 0 2px;
-  user-select: none;
-}
-span.ont-sibling-nav-group {
-  align-items: center;
+nav.breadcrumb.ont-sibling-nav .ont-sibling-nav-group {
   display: inline-flex;
+  align-items: center;
   flex-wrap: nowrap;
-  gap: 4px;
 }
-a.ont-sibling-nav-link {
-  background: #f0ebe2;
-  border: 1px solid #c8c4bc;
-  color: #1a4a8c;
-  font-size: 0.78rem;
-  font-weight: 600;
-  line-height: 1.2;
-  min-width: 1.6em;
-  padding: 2px 8px;
-  text-align: center;
-  text-decoration: none;
-}
-a.ont-sibling-nav-link:hover {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-a.ont-sibling-nav-link.is-current {
-  background: #ebe6dc;
-  border-color: var(--accent);
-  box-shadow: inset 0 0 0 1px var(--accent);
-  color: #1a1814;
-  cursor: default;
-  font-weight: 800;
+nav.breadcrumb.ont-sibling-nav span.bc-sep.ont-sibling-nav-intra {
+  padding: 0 1px;
 }
 
 body.view-ontology {

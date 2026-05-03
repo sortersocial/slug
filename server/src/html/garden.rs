@@ -12,7 +12,6 @@ use crate::{
     events::ThreadCapability,
     path_types::ItemId,
     reducer::{ContentState, ReducerState, ScopeId},
-    ranking::{connected_components_from_voted_pairs, ranked_items_subset},
     scope_rank::{build_children_rankings, ChildrenRankings},
     state::AppState,
     timeago,
@@ -474,13 +473,6 @@ pub async fn room_ontology_path(
     render_scope_view(state, GardenBrowsePath::Tilde(path), nav, jar, uri).await
 }
 
-#[derive(Debug, Clone)]
-struct SiblingRank {
-    position: usize,
-    component_size: usize,
-    sibling_total: usize,
-}
-
 /// One sibling link in the breadcrumb nav row (label is 1-based index within its ranking group).
 #[derive(Debug, Clone)]
 struct SiblingNavLink {
@@ -514,7 +506,6 @@ struct RankHistoryEntryView {
 struct ItemPageViewModel {
     item: String,
     body: Option<String>,
-    sibling_rank: Option<SiblingRank>,
     sibling_nav: Option<SiblingNavBar>,
     /// False at the tilde ontology root (`~/`): sibling-rank footnote does not apply.
     item_has_parent: bool,
@@ -522,68 +513,6 @@ struct ItemPageViewModel {
     rank_history: Vec<RankHistoryEntryView>,
     /// Forum threads that mention or vote on this item.
     threads: Vec<String>,
-}
-
-fn build_sibling_rank(
-    reduced: &crate::reducer::ReducerState,
-    scope: &ScopeId,
-    item: &ItemId,
-) -> Option<SiblingRank> {
-    let item = item.clone().normalized_storage();
-    let content = content_for_garden_view(reduced, scope);
-    let group = &content.ranking_group;
-    let parent = item.parent()?.normalized_storage();
-    let siblings: Vec<ItemId> = content
-        .item_children
-        .get(&parent)
-        .map(|s| s.iter().cloned().collect())
-        .unwrap_or_default();
-    if siblings.is_empty() {
-        return None;
-    }
-
-    let sibling_total = siblings.len();
-    let scoped_idxs: Vec<usize> = siblings
-        .iter()
-        .filter_map(|it| group.item_to_idx.get(it).copied())
-        .collect();
-    if scoped_idxs.is_empty() {
-        return None;
-    }
-    let current_idx = *group.item_to_idx.get(&item)?;
-    if !scoped_idxs.contains(&current_idx) {
-        return None;
-    }
-
-    let local_to_global: Vec<usize> = scoped_idxs.clone();
-    let global_to_local: std::collections::HashMap<usize, usize> = scoped_idxs
-        .iter()
-        .enumerate()
-        .map(|(local, global)| (*global, local))
-        .collect();
-    let current_local = *global_to_local.get(&current_idx)?;
-    let (comps_local, _) = connected_components_from_voted_pairs(
-        scoped_idxs.len(),
-        group.voted_pairs.iter().filter_map(|(i, j)| {
-            let li = global_to_local.get(i).copied()?;
-            let lj = global_to_local.get(j).copied()?;
-            Some((li, lj))
-        }),
-    );
-    let containing_comp = comps_local
-        .iter()
-        .find(|comp| comp.contains(&current_local))?;
-    let comp_global: Vec<usize> = containing_comp
-        .iter()
-        .filter_map(|li| local_to_global.get(*li).copied())
-        .collect();
-    let ranked = ranked_items_subset(group, &comp_global, 10000, 1e-8);
-    let position = ranked.iter().position(|r| r.item == item)? + 1;
-    Some(SiblingRank {
-        position,
-        component_size: ranked.len(),
-        sibling_total,
-    })
 }
 
 fn build_sibling_nav(
@@ -627,20 +556,24 @@ fn build_sibling_nav(
 
 fn sibling_nav_markup(nav: &ThreadNav, bar: &SiblingNavBar, current_item: &str) -> maud::Markup {
     html! {
-        nav class="ont-sibling-nav" aria-label="siblings under same parent" {
+        nav class="breadcrumb ont-sibling-nav" aria-label="siblings under same parent" {
             @for (gi, group) in bar.groups.iter().enumerate() {
                 @if gi > 0 {
-                    span class="ont-sibling-nav-sep" aria-hidden="true" { "·" }
+                    span class="bc-sep" aria-hidden="true" { " / " }
                 }
                 span class="ont-sibling-nav-group" {
                     @for (i, link) in group.links.iter().enumerate() {
+                        @if i > 0 {
+                            span class="bc-sep ont-sibling-nav-intra" aria-hidden="true" { " " }
+                        }
                         @let n = i + 1;
                         @let href = item_href(&link.path, nav);
+                        @let tip = item_display_path(&link.path);
                         @let is_current = link.path == current_item;
                         @if is_current {
-                            a class="ont-sibling-nav-link is-current" href=(href) aria-current="page" { (n) }
+                            a href=(href) class="bc-current" title=(tip) aria-current="page" { (n) }
                         } @else {
-                            a class="ont-sibling-nav-link" href=(href) { (n) }
+                            a href=(href) title=(tip) { (n) }
                         }
                     }
                 }
@@ -733,7 +666,6 @@ fn build_item_page_view_model(
             .get(&item_key)
             .cloned()
             .or_else(|| reduced.public().item_bodies.get(&item_key).cloned()),
-        sibling_rank: build_sibling_rank(reduced, scope, &item_key),
         sibling_nav,
         item_has_parent,
         child_rankings,
@@ -769,12 +701,7 @@ async fn render_scope_view(
             section class="ont-item-shell" {
                 header class="ont-item-meta" {
                     span class="ont-item-title" { (item_display_path(&model.item)) }
-                    @if let Some(rank) = &model.sibling_rank {
-                        span class="ont-rank-badge" {
-                            (format!("#{} of {}", rank.position, rank.component_size))
-                        }
-                        span class="muted" { (format!("({} siblings)", rank.sibling_total)) }
-                    } @else if model.item_has_parent {
+                    @if model.sibling_nav.is_none() && model.item_has_parent {
                         span class="muted" { "unranked among siblings" }
                     }
                 }
@@ -961,12 +888,12 @@ mod tests {
 
         let model = build_item_page_view_model(&reduced, &ScopeId::Public, "~/topic/a");
         assert_eq!(model.body.as_deref(), Some("alpha"));
-        assert!(model.sibling_rank.is_none());
+        assert!(model.sibling_nav.is_some());
         assert!(model.child_rankings.component_rankings.is_empty());
     }
 
     #[test]
-    fn item_page_model_computes_sibling_rank_in_component() {
+    fn item_page_model_computes_sibling_nav_in_component() {
         let mut reduced = ReducerState::default();
         apply_ingest(
             &mut reduced,
@@ -980,10 +907,6 @@ mod tests {
         );
 
         let model = build_item_page_view_model(&reduced, &ScopeId::Public, "~/topic/a");
-        let rank = model.sibling_rank.expect("expected sibling rank");
-        assert_eq!(rank.position, 1);
-        assert_eq!(rank.component_size, 2);
-        assert_eq!(rank.sibling_total, 3);
         let nav = model.sibling_nav.expect("expected sibling nav");
         assert_eq!(nav.groups.len(), 2);
         assert_eq!(nav.groups[0].links.len(), 2);
