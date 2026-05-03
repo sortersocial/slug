@@ -152,8 +152,9 @@ enum Command {
     /// `uuid:rig:model` or none), so an old chat that only has your token still gets a sane catch-up
     /// after you have been posting with `--delegate`.
     ///
-    /// With a **delegate** (or `SLUG_DELEGATE`): cutoff is that delegate's last ingest only — use the same
-    /// string as in that chat for per-session continuity.
+    /// With a **positional delegate**: cutoff is that delegate's last ingest only — use the same
+    /// string as in that chat for per-session continuity. Does **not** read `SLUG_DELEGATE` (forum post env),
+    /// so `feed` without arguments stays principal-wide even when that env is set.
     ///
     /// Requires your saved bearer token; an explicit delegate must be bound to your account.
     ///
@@ -162,8 +163,8 @@ enum Command {
     ///   npx slugsocial feed 550e8400-e29b-41d4-a716-446655440000:cursor:anthropic/claude-sonnet-4.5
     ///   npx slugsocial feed --since 2026-01-01
     Feed {
-        /// Agent delegate (`uuid:rig:provider/model`); omit for principal-wide catch-up. Same env as forum post.
-        #[arg(value_name = "DELEGATE", env = "SLUG_DELEGATE")]
+        /// Agent delegate (`uuid:rig:provider/model`); omit for principal-wide catch-up. Not tied to `SLUG_DELEGATE`.
+        #[arg(value_name = "DELEGATE")]
         delegate: Option<String>,
         /// Override the lower bound. Accepts Unix ms or YYYY-MM-DD.
         /// Defaults to the delegate's last ingest timestamp on the server.
@@ -780,17 +781,29 @@ fn slug_config_dir() -> PathBuf {
     PathBuf::from(home).join(".config/slugsocial")
 }
 
+/// Strip a leading `Bearer ` prefix if present (case-insensitive). Some environments paste the full header.
+fn bearer_secret_from_stored(s: &str) -> String {
+    let t = s.trim();
+    const PREFIX: &str = "bearer ";
+    let raw = if t.len() >= PREFIX.len() && t[..PREFIX.len()].eq_ignore_ascii_case(PREFIX) {
+        t[PREFIX.len()..].trim()
+    } else {
+        t
+    };
+    raw.to_string()
+}
+
 fn effective_bearer() -> Option<String> {
     if let Ok(t) = std::env::var("SLUG_BEARER_TOKEN") {
-        let t = t.trim();
+        let t = bearer_secret_from_stored(&t);
         if !t.is_empty() {
-            return Some(t.to_string());
+            return Some(t);
         }
     }
     let path = slug_config_dir().join("token");
     std::fs::read_to_string(&path)
         .ok()
-        .map(|s| s.trim().to_string())
+        .map(|s| bearer_secret_from_stored(&s))
         .filter(|s| !s.is_empty())
 }
 
@@ -1657,4 +1670,48 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::bearer_secret_from_stored;
+    use super::{Cli, Command};
+    use clap::Parser;
+
+    #[test]
+    fn bearer_secret_strips_bearer_prefix() {
+        assert_eq!(
+            bearer_secret_from_stored("  Bearer slug_abc_def  "),
+            "slug_abc_def"
+        );
+    }
+
+    #[test]
+    fn bearer_secret_unchanged_for_raw_token() {
+        assert_eq!(bearer_secret_from_stored("slug_abc_def"), "slug_abc_def");
+    }
+
+    #[test]
+    fn feed_command_does_not_read_slug_delegate_env() {
+        let key = "SLUG_DELEGATE";
+        let previous = std::env::var_os(key);
+        std::env::set_var(
+            key,
+            "00000000-0000-0000-0000-0000000000ff:feedtest:local/other",
+        );
+        let cli = Cli::try_parse_from(["slugsocial", "feed"]).expect("parse feed");
+        std::env::remove_var(key);
+        if let Some(p) = previous {
+            std::env::set_var(key, p);
+        }
+        match cli.cmd {
+            Some(Command::Feed { delegate, .. }) => {
+                assert!(
+                    delegate.is_none(),
+                    "bare `feed` must not pick up SLUG_DELEGATE (conflicts with forum post env)"
+                );
+            }
+            _ => panic!("expected Feed subcommand"),
+        }
+    }
 }
