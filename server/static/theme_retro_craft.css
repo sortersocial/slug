@@ -638,6 +638,7 @@ body.view-ontology .ont-item-meta {
   flex-wrap: wrap;
   align-items: center;
   gap: 0.35rem;
+  display: flex;
 }
 body.view-ontology .ont-item-title {
   flex: 1 1 auto;

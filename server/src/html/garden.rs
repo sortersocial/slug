@@ -362,7 +362,6 @@ fn child_row_pin_or_vote(
     row_item: &ItemId,
     pinned_room_and_item: Option<&(String, ItemId)>,
     scope_content: &ContentState,
-    next_path: &str,
 ) -> maud::Markup {
     let pin_matches_scope = pinned_room_and_item
         .map(|(r, _)| r == nav.room_wire.as_str())
@@ -371,21 +370,9 @@ fn child_row_pin_or_vote(
         .filter(|_| pin_matches_scope)
         .map(|(_, i)| i);
 
-    let pin_rpc = template_json_compact(
-        &json!({
-            "action": "set_garden_pin",
-            "clear": false,
-            "room_wire": nav.room_wire.clone(),
-            "item_storage": row_item.as_str(),
-            "next": next_path,
-            "form_action": "/ui",
-        }),
-    )
-    .expect("child pin rpc json");
-
     html! {
-        span class="ont-garden-child-actions" data-garden-room=(nav.room_wire.as_str()) {
-            @if let Some(pi) = pinned_item {
+        @if let Some(pi) = pinned_item {
+            span class="ont-garden-child-actions" data-garden-room=(nav.room_wire.as_str()) {
                 @if pi == row_item {
                     span class="ont-garden-pinned-here" title="Pinned" aria-label="Pinned" { "📌" }
                 } @else {
@@ -399,11 +386,6 @@ fn child_row_pin_or_vote(
                         span class="ont-garden-vote-glyph" aria-hidden="true" { "⚖" }
                         span class="ont-garden-vote-count" { (format!("{}", nv)) }
                     }
-                }
-            } @else {
-                form method="POST" action="/ui" data-navigate="full" class="ont-pin-form ont-garden-pin-form" {
-                    input type="hidden" name=(UI_RPC_FIELD) value=(pin_rpc);
-                    button type="submit" class="ont-garden-pin-ico" title="Pin" aria-label="Pin" { "📌" }
                 }
             }
         }
@@ -1190,7 +1172,7 @@ async fn render_scope_view(
                                     @let item_url = item_href(r.item.as_str(), &nav);
                                     @let score_str = format!("{:.3}", r.score);
                                     li data-garden-item=(r.item.as_str()) {
-                                        (child_row_pin_or_vote(&nav, &r.item, pin_ref.as_ref(), scope_content, &next_for_pin))
+                                        (child_row_pin_or_vote(&nav, &r.item, pin_ref.as_ref(), scope_content))
                                         a class="item-link" href=(item_url) { code { (item_display_path(r.item.as_str())) } }
                                         span class="ont-rank-score" { (score_str) }
                                     }
@@ -1206,7 +1188,7 @@ async fn render_scope_view(
                         ul class="ont-group-list" {
                             @for name in &model.child_rankings.unranked_items {
                                 li data-garden-item=(name.as_str()) {
-                                    (child_row_pin_or_vote(&nav, name, pin_ref.as_ref(), scope_content, &next_for_pin))
+                                    (child_row_pin_or_vote(&nav, name, pin_ref.as_ref(), scope_content))
                                     @let href = item_href(name.as_str(), &nav);
                                     a class="item-link" href=(href) { code { (item_display_path(name.as_str())) } }
                                 }
@@ -1352,10 +1334,6 @@ async fn vote_compare_inner(
             }
             div id="vote-edge-history-region" {
                 (edge_history)
-            }
-            div class="vote-compare-preview-wrap" {
-                h3 { "your vote (after post)" }
-                div id="vote-compare-preview" class="vote-compare-preview" {}
             }
             @if can_post {
                 form id="vote-compare-form" method="POST" action="/ui" {
