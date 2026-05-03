@@ -481,6 +481,23 @@ struct SiblingRank {
     sibling_total: usize,
 }
 
+/// One sibling link in the breadcrumb nav row (label is 1-based index within its ranking group).
+#[derive(Debug, Clone)]
+struct SiblingNavLink {
+    path: String,
+}
+
+#[derive(Debug, Clone)]
+struct SiblingNavGroup {
+    links: Vec<SiblingNavLink>,
+}
+
+/// Siblings under the same parent, grouped like child rankings (components then isolates).
+#[derive(Debug, Clone)]
+struct SiblingNavBar {
+    groups: Vec<SiblingNavGroup>,
+}
+
 #[derive(Debug, Clone)]
 struct RankHistoryEntryView {
     ts: i64,
@@ -498,6 +515,7 @@ struct ItemPageViewModel {
     item: String,
     body: Option<String>,
     sibling_rank: Option<SiblingRank>,
+    sibling_nav: Option<SiblingNavBar>,
     /// False at the tilde ontology root (`~/`): sibling-rank footnote does not apply.
     item_has_parent: bool,
     child_rankings: ChildrenRankings,
@@ -568,6 +586,69 @@ fn build_sibling_rank(
     })
 }
 
+fn build_sibling_nav(
+    reduced: &crate::reducer::ReducerState,
+    scope: &ScopeId,
+    current: &ItemId,
+) -> Option<SiblingNavBar> {
+    let current = current.clone().normalized_storage();
+    let parent = current.parent()?.normalized_storage();
+    let content = content_for_garden_view(reduced, scope);
+    let rankings = build_children_rankings(content, &parent);
+    let mut groups: Vec<SiblingNavGroup> = Vec::new();
+    for comp in &rankings.component_rankings {
+        let links: Vec<SiblingNavLink> = comp
+            .ranked
+            .iter()
+            .map(|r| SiblingNavLink {
+                path: r.item.clone().normalized_storage().to_storage_string(),
+            })
+            .collect();
+        if !links.is_empty() {
+            groups.push(SiblingNavGroup { links });
+        }
+    }
+    if !rankings.unranked_items.is_empty() {
+        let links: Vec<SiblingNavLink> = rankings
+            .unranked_items
+            .iter()
+            .map(|u| SiblingNavLink {
+                path: u.clone().normalized_storage().to_storage_string(),
+            })
+            .collect();
+        groups.push(SiblingNavGroup { links });
+    }
+    let sibling_total: usize = groups.iter().map(|g| g.links.len()).sum();
+    if sibling_total <= 1 {
+        return None;
+    }
+    Some(SiblingNavBar { groups })
+}
+
+fn sibling_nav_markup(nav: &ThreadNav, bar: &SiblingNavBar, current_item: &str) -> maud::Markup {
+    html! {
+        nav class="ont-sibling-nav" aria-label="siblings under same parent" {
+            @for (gi, group) in bar.groups.iter().enumerate() {
+                @if gi > 0 {
+                    span class="ont-sibling-nav-sep" aria-hidden="true" { "·" }
+                }
+                span class="ont-sibling-nav-group" {
+                    @for (i, link) in group.links.iter().enumerate() {
+                        @let n = i + 1;
+                        @let href = item_href(&link.path, nav);
+                        @let is_current = link.path == current_item;
+                        @if is_current {
+                            a class="ont-sibling-nav-link is-current" href=(href) aria-current="page" { (n) }
+                        } @else {
+                            a class="ont-sibling-nav-link" href=(href) { (n) }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 fn build_rank_history(
     reduced: &crate::reducer::ReducerState,
     scope: &ScopeId,
@@ -634,6 +715,7 @@ fn build_item_page_view_model(
         .normalized_storage();
     let item_has_parent = item_key.parent().is_some();
     let child_rankings = build_children_rankings(content, &item_key);
+    let sibling_nav = build_sibling_nav(reduced, scope, &item_key);
 
     let rank_history = build_rank_history(reduced, scope, item_key.as_str());
 
@@ -652,6 +734,7 @@ fn build_item_page_view_model(
             .cloned()
             .or_else(|| reduced.public().item_bodies.get(&item_key).cloned()),
         sibling_rank: build_sibling_rank(reduced, scope, &item_key),
+        sibling_nav,
         item_has_parent,
         child_rankings,
         rank_history,
@@ -680,6 +763,9 @@ async fn render_scope_view(
         "view-ontology view-ontology-light",
         html! {
             nav class="breadcrumb" { (scoped_bc_path_for(&browse, &nav)) }
+            @if let Some(ref bar) = model.sibling_nav {
+                (sibling_nav_markup(&nav, bar, &model.item))
+            }
             section class="ont-item-shell" {
                 header class="ont-item-meta" {
                     span class="ont-item-title" { (item_display_path(&model.item)) }
@@ -898,6 +984,10 @@ mod tests {
         assert_eq!(rank.position, 1);
         assert_eq!(rank.component_size, 2);
         assert_eq!(rank.sibling_total, 3);
+        let nav = model.sibling_nav.expect("expected sibling nav");
+        assert_eq!(nav.groups.len(), 2);
+        assert_eq!(nav.groups[0].links.len(), 2);
+        assert_eq!(nav.groups[1].links.len(), 1);
     }
 
     #[test]

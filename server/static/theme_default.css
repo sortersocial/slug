@@ -801,6 +801,54 @@ details > summary::-webkit-details-marker { display: none; }
 .age-week   a { color: var(--link); }
 .age-old    a { color: var(--meta); }
 
+/* Sibling quick-nav on item pages (same grouping as ranked child groups) */
+nav.ont-sibling-nav {
+  align-items: center;
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 6px;
+  margin: 4px 0 8px;
+  overflow-x: auto;
+  padding: 2px 0;
+  white-space: nowrap;
+}
+span.ont-sibling-nav-sep {
+  color: var(--meta);
+  font-size: 14px;
+  padding: 0 2px;
+  user-select: none;
+}
+span.ont-sibling-nav-group {
+  align-items: center;
+  display: inline-flex;
+  flex-wrap: nowrap;
+  gap: 4px;
+}
+a.ont-sibling-nav-link {
+  background: var(--g3);
+  border: var(--bv) solid;
+  border-color: var(--hi) var(--lo) var(--lo) var(--hi);
+  color: var(--ui);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+  min-width: 1.6em;
+  padding: 2px 8px;
+  text-align: center;
+  text-decoration: none;
+}
+a.ont-sibling-nav-link:hover {
+  color: var(--signal);
+}
+a.ont-sibling-nav-link.is-current {
+  background: var(--g4);
+  border-color: var(--lo) var(--hi) var(--hi) var(--lo);
+  box-shadow: inset 0 0 0 1px var(--signal);
+  color: var(--signal);
+  cursor: default;
+  font-weight: 800;
+}
+
 /* ================================================================
    ONTOLOGY ITEM PAGE — DARK VARIANT (opt-in via body class)
    ================================================================ */
