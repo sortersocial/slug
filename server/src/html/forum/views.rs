@@ -125,14 +125,14 @@ async fn thread_view_inner(
     let paginator_bot = render_thread_paginator(&nav, &tag, offset, total, false);
 
     let bc: Markup = match &sc {
-        ScopeId::Public => bc_threads(Some(&tag)),
+        ScopeId::Public => bc_threads(Some(&tag), None),
         ScopeId::Room(rid) => {
             let slug = if let Some((_, s)) = rid.split_once('/') {
                 s
             } else {
                 rid.as_str()
             };
-            bc_room(&nav, slug, Some(&tag))
+            bc_room(&nav, slug, Some(&tag), None)
         }
     };
 
@@ -279,7 +279,7 @@ pub async fn room_page(
         "view-thread",
         html! {
             (strip)
-            nav class="breadcrumb" { (bc_room(&nav, slug_display, None)) }
+            nav class="breadcrumb" { (bc_room(&nav, slug_display, None, None)) }
             (members_markup)
             h3 { "threads" }
             (render_thread_feed(Some(&nav), "room-thread-feed", &rows, now))

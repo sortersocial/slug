@@ -223,7 +223,7 @@ pub async fn home(
         "view-thread",
         html! {
             (strip)
-            nav class="breadcrumb" { (bc_threads(None)) }
+            nav class="breadcrumb" { (bc_threads(None, None)) }
             @if !room_ids.is_empty() {
                 h2 { "your rooms" }
                 ul class="thread-feed" {

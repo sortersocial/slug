@@ -29,7 +29,12 @@ pub(super) fn auth_strip(
     }
 }
 
-pub(super) fn bc_room(nav: &ThreadNav, room_slug: &str, thread_tag: Option<&str>) -> Markup {
+pub(super) fn bc_room(
+    nav: &ThreadNav,
+    room_slug: &str,
+    thread_tag: Option<&str>,
+    focused_post: Option<usize>,
+) -> Markup {
     html! {
         a href="/" { "slug.social" }
         @if let Some(t) = thread_tag {
@@ -38,7 +43,12 @@ pub(super) fn bc_room(nav: &ThreadNav, room_slug: &str, thread_tag: Option<&str>
                 nav.room_url(),
                 false,
             ))
-            (bc_segment(&format!("#{t}"), &nav.thread_url(t), true))
+            @if let Some(idx) = focused_post {
+                (bc_segment(&format!("#{t}"), &nav.thread_url(t), false))
+                (bc_segment(&format!("post #{idx}"), &nav.post_url(t, idx), true))
+            } @else {
+                (bc_segment(&format!("#{t}"), &nav.thread_url(t), true))
+            }
         } @else {
             (bc_segment(
                 &format!("room:{room_slug}"),
