@@ -161,9 +161,11 @@ pub async fn thread_feed_region_markup(
     viewer: Option<&str>,
 ) -> Markup {
     let tag = canonicalize_tag(tag);
+    // `room_id` is the wire form (`short/slug` or `"public"`). `broadcast_web_refresh` passes
+    // `Some("public")` for the public forum; `ThreadNav::from_room_id` only accepts `short/slug`.
     let Some(nav) = (match room_id {
+        Some("public") | None => Some(ThreadNav::public()),
         Some(room_id) => ThreadNav::from_room_id(room_id),
-        None => Some(ThreadNav::public()),
     }) else {
         return html! { div id="thread-feed-region" { p class="muted" { "thread not found" } } };
     };

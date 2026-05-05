@@ -114,8 +114,82 @@
 
    nil))
 
+(defn sse-public-browser-flow! []
+  "Regression: SSE morph for `/t/:tag` must use public ThreadNav (not `Some(\"public\")` → thread not found)."
+  (println "\n━━━ browser SSE public-thread check ━━━\n")
+
+  (common/letlocals
+   (bind build (common/run-cargo-build-release! ["slugsocial-server"]))
+   (is (zero? (:exit build)) "cargo build succeeds")
+   (bind server-bin "target/release/slugsocial-server")
+
+   (bind tmp-dir (str (fs/create-temp-dir {:prefix "slug-browser-sse-pub-"})))
+   (bind slug-port (common/pick-port))
+   (bind google-port (common/pick-port))
+   (bind base-url (str "http://127.0.0.1:" slug-port))
+   (bind google-url (str "http://127.0.0.1:" google-port))
+
+   (bind !server (atom nil))
+   (bind !google (atom nil))
+   (bind server-env (common/slug-server-env tmp-dir base-url google-url slug-port))
+   (try
+     (reset! !google (oauth/start-mock-google google-port
+                                              :google-users ["google-user-alice" "google-user-bob"]))
+     (reset! !server (common/start-server server-bin server-env))
+     (is (common/wait-for-server base-url 10000) "server responds to /healthz")
+
+     (let [_alice-token (oauth/fetch-bearer-token! base-url :username "alice")
+           _bob-token   (oauth/fetch-bearer-token! base-url :username "bob")
+           thread-tag    "pub-sse-live"
+           thread-url    (str base-url "/t/" thread-tag)]
+       (core/with-playwright [pw]
+         (core/with-browser [browser (core/launch-chromium pw {:headless true :channel "chrome"})]
+           (core/with-context [alice-ctx (core/new-context browser)]
+             (core/with-context [bob-ctx (core/new-context browser)]
+               (core/with-page [alice-pg (core/new-page-from-context alice-ctx)]
+                 (core/with-page [bob-pg (core/new-page-from-context bob-ctx)]
+                   (login-user! alice-pg base-url "alice")
+                   (login-user! bob-pg base-url "bob")
+
+                   (page/navigate alice-pg base-url)
+                   (page/wait-for-load-state alice-pg :load)
+                   (is (wait-for-text alice-pg "#new-thread-ui-slot" "+" 30000)
+                       "home has new-thread slot")
+                   (locator/click (page/locator alice-pg "#new-thread-ui-slot button.form-toggle"))
+                   (is (wait-for-text alice-pg "#new-thread-compose" "create thread / post" 30000)
+                       "compose expanded on home")
+                   (locator/fill (page/locator alice-pg "#new-thread-tag") thread-tag)
+                   (locator/fill (page/locator alice-pg "#new-thread-compose textarea") "seed public thread")
+                   (locator/click (page/locator alice-pg "#new-thread-form button[type='submit']"))
+                   (page/wait-for-url alice-pg thread-url {:timeout 90000.0})
+                   (page/wait-for-load-state alice-pg :load)
+                   (is (wait-for-text alice-pg "#thread-feed-region" "seed public thread" 45000)
+                       "alice sees first post on public thread")
+
+                   (page/navigate bob-pg thread-url)
+                   (page/wait-for-load-state bob-pg :load)
+                   (is (wait-for-text bob-pg "#thread-feed-region" "seed public thread" 45000)
+                       "bob sees seeded body before live update")
+
+                   (locator/fill (page/locator alice-pg "#thread-compose textarea")
+                                 "hello public thread over sse")
+                   (locator/click (page/locator alice-pg "#thread-compose button[type='submit']"))
+
+                   (is (wait-for-text bob-pg "#thread-feed-region" "hello public thread over sse" 45000)
+                       "bob sees alice reply via sse without refresh (public /t)"))))))))
+
+     (finally
+       (when-some [s @!server] (common/kill-server s))
+       (when-some [g @!google] ((:stop-fn g)))
+       (fs/delete-tree tmp-dir)))
+
+   nil))
+
 (defn private-thread-sse-browser-test [& _args]
   (sse-browser-flow!))
 
 (deftest browser-sse-private-thread-check
   (sse-browser-flow!))
+
+(deftest browser-sse-public-thread-check
+  (sse-public-browser-flow!))
