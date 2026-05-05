@@ -176,6 +176,19 @@ impl BlockMasker {
         }
         token.to_string()
     }
+
+    /// True if this token was produced by masking a markdown ``` … ``` fence (first pass of
+    /// `mask_all`). Such a line must not set `pending_block` in `parse_full` — it is prose, not a
+    /// vote explanation placeholder.
+    fn is_code_fence_placeholder(&self, token: &str) -> bool {
+        self.replacements
+            .get(token)
+            .map(|orig| {
+                let u = self.unmask(orig);
+                u.trim_start().starts_with("```")
+            })
+            .unwrap_or(false)
+    }
 }
 
 fn mask_all(mut masker: BlockMasker, text: &str) -> (BlockMasker, String) {
@@ -572,7 +585,11 @@ pub fn parse_full(text: &str) -> Result<Document, DslError> {
 
             if let Some((tok, end)) = parse_block_token_at(stripped, 0) {
                 if stripped[end..].trim().is_empty() {
-                    pending_block = Some(tok);
+                    if masker.is_code_fence_placeholder(&tok) {
+                        prose_buffer.push(line);
+                    } else {
+                        pending_block = Some(tok);
+                    }
                     continue;
                 }
             }
@@ -617,6 +634,31 @@ mod tests {
         assert!(masked.contains("__BLOCK_"));
         let roundtrip = masker.unmask(&masked);
         assert_eq!(roundtrip, input);
+    }
+
+    /// Regression: a standalone ``` fence masks to `__BLOCK_*` on its own line; that must not be
+    /// treated as a vote-explanation placeholder (which would reject the next `{...}` line).
+    #[test]
+    fn parse_full_prose_code_fence_then_vote() {
+        let input = concat!(
+            "~/a { a }\n",
+            "~/b { b }\n",
+            "\n",
+            "Some prose.\n",
+            "\n",
+            "```python\n",
+            "x = 1\n",
+            "```\n",
+            "\n",
+            "{ because }\n",
+            "~/a > ~/b\n",
+        );
+        let doc = parse_full(input).unwrap();
+        assert!(
+            doc.statements.iter().any(|s| matches!(s, Stmt::Vote { .. })),
+            "expected a vote in statements: {:?}",
+            doc.statements
+        );
     }
 
     #[test]
