@@ -1,4 +1,5 @@
 use maud::html;
+use std::collections::HashMap;
 
 use crate::canonical_path::canonicalize_tag;
 use crate::reducer::{scope_from_room_wire, ScopeId};
@@ -47,6 +48,9 @@ pub(crate) async fn thread_ui_expand_post_full(
     if reduced.redacted_posts.contains(&ing.id) {
         return crate::html::ui_js_warn("post not found");
     }
+    let item_bodies: Option<HashMap<crate::path_types::ItemId, String>> = reduced
+        .content_for_scope(&scope)
+        .map(|c| c.item_bodies.clone());
     let ing_id = ing.id.clone();
     drop(reduced);
 
@@ -61,7 +65,11 @@ pub(crate) async fn thread_ui_expand_post_full(
                 now,
                 viewer == Some(ing.principal.as_str()),
             ))
-            (render_linkified_with_embeds_in_scope(&ing.raw, nav.garden_root_url()))
+            (render_linkified_with_embeds_in_scope(
+                &ing.raw,
+                nav.garden_root_url(),
+                item_bodies.as_ref(),
+            ))
         }
     };
 
@@ -108,13 +116,20 @@ pub(crate) async fn thread_ui_expand_redacted_post(
     if !reduced.redacted_posts.contains(&ing.id) {
         return crate::html::ui_js_warn("post not found");
     }
+    let item_bodies: Option<HashMap<crate::path_types::ItemId, String>> = reduced
+        .content_for_scope(&scope)
+        .map(|c| c.item_bodies.clone());
     let ing_id = ing.id.clone();
     drop(reduced);
 
     let full_html = html! {
         div class="ingest-entry ingest-redacted-expanded" data-ingest-id=(ing_id) {
             (redacted_header_row(&nav, &tag, post_index, &ing, now, true))
-            (render_linkified_with_embeds_in_scope(&ing.raw, nav.garden_root_url()))
+            (render_linkified_with_embeds_in_scope(
+                &ing.raw,
+                nav.garden_root_url(),
+                item_bodies.as_ref(),
+            ))
         }
     };
 
