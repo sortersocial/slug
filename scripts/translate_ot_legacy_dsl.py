@@ -13,8 +13,13 @@ prefixes (simulates posting ingests in order). `_no_thread.sorter` is skipped.
 
 **`--post-room`** creates a private room (`room create <slug>`), then posts each
 ingest in **JSONL order** as a separate forum message so cross-thread item refs
-stay valid. Posts use `#<thread>` only (delegate via `--delegate` / `SLUG_DELEGATE`;
-no `@` line in the body). Ingests without `#thread` use `--default-thread`.
+stay valid. Posts use `#<thread>` only (no `@` line in the body). Each post uses
+the **original delegate wire** from the dump (`@…` line, else `actor` /
+`voter_key_id`); the server binds each new delegate to your OAuth principal on
+first use. **`--delegate`** is only a fallback when that wire is missing.
+Code fences get an invisible U+200B before each ``` when posting so **current**
+production parses long ```clojure blocks (until the server ships the code-fence
+`parse_full` fix). Ingests without `#thread` use `--default-thread`.
 
 Install:  pip install -r scripts/requirements-translate.txt
 
@@ -382,6 +387,22 @@ def extract_thread_and_delegate(raw: str) -> Tuple[Optional[str], Optional[str]]
     return thread, delegate
 
 
+def delegate_wire_for_ingest(raw: str, ingest: dict) -> Optional[str]:
+    """
+    Canonical `uuid:rig:model` for forum `--delegate`.
+
+    Prefer the leading `@…` line in raw; otherwise `actor` or `voter_key_id` from JSON.
+    """
+    _tid, hdr = extract_thread_and_delegate(raw)
+    if hdr:
+        return strip_at_delegate(hdr) or None
+    for key in ("actor", "voter_key_id"):
+        v = ingest.get(key)
+        if isinstance(v, str) and v.strip():
+            return strip_at_delegate(v.strip()) or None
+    return None
+
+
 def strip_at_delegate(s: Optional[str]) -> str:
     if not s:
         return ""
@@ -393,15 +414,67 @@ def strip_at_delegate(s: Optional[str]) -> str:
     return t
 
 
+# Zero-width space: breaks ``` recognition in server mask_all until code-fence parse fix is deployed.
+_ZWSP = "\u200b"
+
+
+def escape_code_fences_for_production_parser(text: str) -> str:
+    """
+    Insert ZWSP before each ``` so production `mask_all` does not treat multiline
+    fences as vote-explanation placeholders (pending_block EOF error).
+
+    Safe for display (invisible). Remove when slug.social runs dsl fix from main.
+    """
+    if "```" not in text:
+        return text
+    parts: List[str] = []
+    i = 0
+    while i < len(text):
+        if text.startswith("```", i):
+            parts.append(_ZWSP)
+            parts.append("```")
+            i += 3
+        else:
+            parts.append(text[i])
+            i += 1
+    return "".join(parts)
+
+
+def wrap_bare_brace_essay_for_live_post(body: str) -> str:
+    """
+    Production parser (pre-lookahead fix) treats a multiline `{ ... }` as a vote
+    explanation and errors at EOF. Wrapping as a ```text fence makes it code prose;
+    escape_code_fences_for_production_parser then keeps parse safe.
+    """
+    t = body.strip()
+    if len(t) >= 2 and t.startswith("{") and t.endswith("}") and "```" not in body:
+        return f"```text\n{t}\n```\n"
+    return body
+
+
 def format_forum_post(translated_body: str, thread_tag: str) -> str:
     """Body for `forum post`: #thread then DSL/prose (no @ line — use CLI --delegate)."""
     tag = thread_tag.strip().lower()
-    return f"#{tag}\n\n{translated_body.strip()}\n"
+    core = wrap_bare_brace_essay_for_live_post(translated_body.strip())
+    return f"#{tag}\n\n{core}\n"
+
+
+def slugsocial_cmd(repo: Path) -> List[str]:
+    """Prefer release/debug binary; avoid `cargo run` per post (305× is too slow)."""
+    env_bin = os.environ.get("SLUGSOCIAL_BIN", "").strip()
+    if env_bin:
+        return [env_bin]
+    for rel in ("target/release/slugsocial", "target/debug/slugsocial"):
+        p = repo / rel
+        if p.is_file():
+            return [str(p)]
+    return ["cargo", "run", "-q", "-p", "slugsocial", "--"]
 
 
 def run_slugsocial(repo: Path, args: List[str]) -> subprocess.CompletedProcess[str]:
+    prefix = slugsocial_cmd(repo)
     return subprocess.run(
-        ["cargo", "run", "-q", "-p", "slugsocial", "--", *args],
+        [*prefix, *args],
         cwd=repo,
         capture_output=True,
         text=True,
@@ -411,23 +484,31 @@ def run_slugsocial(repo: Path, args: List[str]) -> subprocess.CompletedProcess[s
 def post_ingest_sequence(
     repo: Path,
     room_id: str,
-    delegate: str,
-    posts: List[Tuple[str, str]],
+    fallback_delegate: str,
+    posts: List[Tuple[str, str, str]],
     delay_s: float,
     dry_run: bool,
+    start_index: int = 0,
 ) -> int:
-    """posts: (thread_tag, body) in chronological order."""
-    del_st = strip_at_delegate(delegate)
-    if not del_st and not dry_run:
-        print("ERROR: --delegate or SLUG_DELEGATE is required for --post-room", file=sys.stderr)
-        return 1
+    """posts: (thread_tag, body, delegate_wire) in chronological order."""
+    fb = strip_at_delegate(fallback_delegate)
     scope = "public" if room_id == "public" else room_id
-    for i, (tag, body) in enumerate(posts):
+    for j, (tag, body, del_wire) in enumerate(posts):
+        i = start_index + j
+        del_st = strip_at_delegate(del_wire) or fb
+        if not del_st and not dry_run:
+            print(
+                f"ERROR: ingest {i + 1} has no delegate and --delegate / SLUG_DELEGATE is empty",
+                file=sys.stderr,
+            )
+            return 1
         if dry_run:
-            print(f"[dry-run] would post #{tag} ({i + 1}/{len(posts)})", file=sys.stderr)
+            dshort = (del_st[:48] + "…") if del_st and len(del_st) > 48 else (del_st or "(none)")
+            total = start_index + len(posts)
+            print(f"[dry-run] #{tag} as {dshort} ({i + 1}/{total})", file=sys.stderr)
             continue
         tmp = repo / f".ot-post-{i}.sorter"
-        tmp.write_text(body, encoding="utf-8")
+        tmp.write_text(escape_code_fences_for_production_parser(body), encoding="utf-8")
         try:
             cli_args = ["public", "forum", "post", tag, "--delegate", del_st, str(tmp)]
             if scope != "public":
@@ -436,8 +517,9 @@ def post_ingest_sequence(
         finally:
             tmp.unlink(missing_ok=True)
         if r.returncode != 0:
+            total = start_index + len(posts)
             print(
-                f"POST FAIL {i + 1}/{len(posts)} #{tag}:\n{r.stderr or r.stdout}",
+                f"POST FAIL {i + 1}/{total} #{tag}:\n{r.stderr or r.stdout}",
                 file=sys.stderr,
             )
             return 1
@@ -476,7 +558,8 @@ def main() -> int:
     ap.add_argument(
         "--delegate",
         default="",
-        help="Agent delegate for forum post (or SLUG_DELEGATE)",
+        help="Fallback agent delegate when ingest has none (or SLUG_DELEGATE); "
+        "default is per-ingest from @ line / actor / voter_key_id",
     )
     ap.add_argument(
         "--default-thread",
@@ -490,6 +573,12 @@ def main() -> int:
         help="Seconds between posts (rate limit cushion; default 0.25)",
     )
     ap.add_argument(
+        "--post-skip",
+        type=int,
+        default=0,
+        help="Skip first N ingests when --post-room (resume after partial import)",
+    )
+    ap.add_argument(
         "--dry-run",
         action="store_true",
         help="With --post-room: print post plan only, no RPC",
@@ -501,7 +590,7 @@ def main() -> int:
 
     by_thread: Dict[str, List[str]] = {}
     manifest: List[ManifestEntry] = []
-    chronological_posts: List[Tuple[str, str]] = []
+    chronological_posts: List[Tuple[str, str, str]] = []
 
     for ing in ingests:
         raw = ing["raw"]
@@ -511,7 +600,8 @@ def main() -> int:
             ManifestEntry(id=ing.get("id", ""), thread=tid, delegate=delegate, warnings=warns)
         )
         post_tag = tid or args.default_thread
-        chronological_posts.append((post_tag, format_forum_post(translated, post_tag)))
+        wire = delegate_wire_for_ingest(raw, ing)
+        chronological_posts.append((post_tag, format_forum_post(translated, post_tag), wire or ""))
         key = tid or "_no_thread"
         by_thread.setdefault(key, []).append(translated)
 
@@ -526,7 +616,7 @@ def main() -> int:
 
     (args.out_dir / "post_sequence.json").write_text(
         json.dumps(
-            [{"thread": t, "body": b} for t, b in chronological_posts],
+            [{"thread": t, "delegate": d or None, "body": b} for t, b, d in chronological_posts],
             indent=2,
         )
         + "\n",
@@ -570,19 +660,24 @@ def main() -> int:
                 return 1
             room_id = (r.stdout or "").strip().splitlines()[0].strip()
             print(f"Created room: {room_id}", file=sys.stderr)
-        delegate = args.delegate or os.environ.get("SLUG_DELEGATE", "")
+        fallback = args.delegate or os.environ.get("SLUG_DELEGATE", "")
+        to_post = chronological_posts[args.post_skip :]
+        if args.post_skip:
+            print(f"Resuming: skipping first {args.post_skip}, posting {len(to_post)} ingests", file=sys.stderr)
         rc = post_ingest_sequence(
             repo,
             room_id,
-            delegate,
-            chronological_posts,
+            fallback,
+            to_post,
             args.post_delay,
             args.dry_run,
+            start_index=args.post_skip,
         )
         if rc != 0:
             return rc
         if not args.dry_run:
-            print(f"Posted {len(chronological_posts)} ingests to {room_id}", file=sys.stderr)
+            n = len(chronological_posts) - args.post_skip
+            print(f"Posted {n} ingests to {room_id} (skip={args.post_skip})", file=sys.stderr)
 
     return 0
 

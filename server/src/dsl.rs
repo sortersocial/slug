@@ -537,6 +537,7 @@ fn parse_line(masked_line: &str, masker: &BlockMasker) -> Result<Vec<Stmt>, DslE
 /// Parse EmailDSL preserving prose for rendering; interleaves `Prose` with DSL nodes.
 pub fn parse_full(text: &str) -> Result<Document, DslError> {
     let (masker, masked) = mask_all(BlockMasker::new(), text);
+    let lines: Vec<&str> = masked.split('\n').collect();
     let mut statements: Vec<Stmt> = Vec::new();
     let mut prose_buffer: Vec<&str> = Vec::new();
     let mut pending_block: Option<String> = None;
@@ -551,10 +552,13 @@ pub fn parse_full(text: &str) -> Result<Document, DslError> {
         buf.clear();
     };
 
-    for line in masked.split('\n') {
+    let mut i = 0usize;
+    while i < lines.len() {
+        let line = lines[i];
         let stripped = line.trim_start();
         if let Some(tok) = pending_block.as_ref() {
             if stripped.is_empty() {
+                i += 1;
                 continue;
             }
             if stripped.starts_with("-/")
@@ -564,6 +568,7 @@ pub fn parse_full(text: &str) -> Result<Document, DslError> {
             {
                 statements.push(parse_block_prefixed_statement(tok, stripped, &masker)?);
                 pending_block = None;
+                i += 1;
                 continue;
             }
             return Err(DslError::Parse(
@@ -588,8 +593,43 @@ pub fn parse_full(text: &str) -> Result<Document, DslError> {
                     if masker.is_code_fence_placeholder(&tok) {
                         prose_buffer.push(line);
                     } else {
-                        pending_block = Some(tok);
+                        // Only treat a lone `{…}` / `__BLOCK__` line as vote preamble when the next
+                        // non-empty line is a vote-shaped `item comparison item` (not `~/item` alone,
+                        // which is the invalid `{body}\n~/item` pattern).
+                        let mut j = i + 1;
+                        while j < lines.len() && lines[j].trim_start().is_empty() {
+                            j += 1;
+                        }
+                        let is_vote_preamble = j < lines.len()
+                            && {
+                                let next = lines[j].trim_start();
+                                if !(next.starts_with("-/")
+                                    || next.starts_with("~/")
+                                    || next.starts_with("https://")
+                                    || next.starts_with("http://"))
+                                {
+                                    false
+                                } else if let Some((_, pos_after_item)) =
+                                    parse_item_name_at(next, 0)
+                                {
+                                    let k = skip_ws(next, pos_after_item);
+                                    if k >= next.len() {
+                                        // Next line is only an item path: keep legacy `{block}\n~/a` error.
+                                        true
+                                    } else {
+                                        parse_comparison_at(next, k).is_some()
+                                    }
+                                } else {
+                                    false
+                                }
+                            };
+                        if is_vote_preamble {
+                            pending_block = Some(tok);
+                        } else {
+                            prose_buffer.push(line);
+                        }
                     }
+                    i += 1;
                     continue;
                 }
             }
@@ -599,6 +639,7 @@ pub fn parse_full(text: &str) -> Result<Document, DslError> {
         } else {
             prose_buffer.push(line);
         }
+        i += 1;
     }
 
     if pending_block.is_some() {
