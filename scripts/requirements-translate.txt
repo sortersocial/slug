@@ -1,0 +1,2 @@
+# Optional: one-off legacy DSL translator (scripts/translate_ot_legacy_dsl.py)
+lark>=1.1.0,<2
