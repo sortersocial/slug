@@ -1115,6 +1115,76 @@ async fn test_sse_accepts_event_stream_same_url_as_room_page() {
 }
 
 #[tokio::test]
+async fn test_sse_public_thread_morph_includes_post_body_not_thread_not_found() {
+    let (addr, _tmp, _log, _state, _handle) = create_test_server_with_state().await;
+    let client = reqwest::Client::new();
+    let bearer = test_bearer();
+
+    let thread_tag = "sse-public-live";
+    let seed_text = "seed public thread for sse";
+
+    let rpc = ui_post_ingest_rpc("public", thread_tag, seed_text);
+    let _post = client
+        .post(format!("http://{addr}/ui"))
+        .header("Authorization", format!("Bearer {bearer}"))
+        .form(&[("__rpc__", rpc.as_str())])
+        .send()
+        .await
+        .unwrap();
+
+    let thread_path = format!("/t/{thread_tag}");
+    let sse_resp = client
+        .get(format!(
+            "http://{addr}/sse?path={}",
+            urlencoding::encode(&thread_path)
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert!(sse_resp.status().is_success());
+
+    let reply_text = "hello over sse from another tab";
+    let rpc2 = ui_post_ingest_rpc("public", thread_tag, reply_text);
+    let _post2 = client
+        .post(format!("http://{addr}/ui"))
+        .header("Authorization", format!("Bearer {bearer}"))
+        .form(&[("__rpc__", rpc2.as_str())])
+        .send()
+        .await
+        .unwrap();
+
+    let mut body = String::new();
+    let mut sse_resp = sse_resp;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while std::time::Instant::now() < deadline {
+        match tokio::time::timeout(std::time::Duration::from_millis(500), sse_resp.chunk()).await {
+            Ok(Ok(Some(chunk))) => {
+                body.push_str(&String::from_utf8_lossy(&chunk));
+                if body.contains("thread-feed-region") && body.contains(reply_text) {
+                    break;
+                }
+            }
+            Ok(Ok(None)) => break,
+            Ok(Err(err)) => panic!("sse read failed: {err}"),
+            Err(_) => {}
+        }
+    }
+    assert!(
+        body.contains(reply_text),
+        "sse morph should include new post text; got: {}",
+        if body.len() > 2000 {
+            format!("...{}", &body[body.len() - 2000..])
+        } else {
+            body.clone()
+        }
+    );
+    assert!(
+        !body.contains("thread not found"),
+        "public thread morph must not use broken nav (thread not found)"
+    );
+}
+
+#[tokio::test]
 async fn test_sse_private_feed_not_sent_to_home_without_membership() {
     let (addr, _tmp, _log, state, _handle) = create_test_server_with_state().await;
     seed_other_user_token(&state).await;

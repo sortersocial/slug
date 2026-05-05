@@ -171,7 +171,8 @@ pub async fn thread_feed_region_markup(
     viewer: Option<&str>,
 ) -> Markup {
     let tag = canonicalize_tag(tag);
-    // Wire id is `short/slug` or the literal `"public"`. `broadcast_web_refresh` passes `Some("public")`.
+    // Wire id is `short/slug` or `"public"`. `broadcast_web_refresh` passes `Some("public")`;
+    // `ThreadNav::from_room_id` only accepts `short/slug`.
     let Some(nav) = (match room_id {
         Some("public") | None => Some(ThreadNav::public()),
         Some(room_id) => ThreadNav::from_room_id(room_id),
