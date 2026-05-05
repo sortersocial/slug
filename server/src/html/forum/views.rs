@@ -26,7 +26,9 @@ use super::paginator::{render_thread_paginator, PAGE_SIZE};
 use super::room_members::room_members_section_markup;
 use crate::html::ui_action::UI_RPC_FIELD;
 use crate::html::{
-    bc_threads, cli_panel, layout, now_ms, theme_from_jar, theme_next_from_uri,
+    bc_threads, cli_panel, layout, live_sse_multi_topic, now_ms, subscriber_topics_public_thread,
+    subscriber_topics_room_forum, subscriber_topics_room_thread, theme_from_jar,
+    theme_next_from_uri, wants_event_stream,
 };
 
 fn compose_form(nav: &ThreadNav, thread_tag: &str, show: bool) -> Markup {
@@ -76,6 +78,17 @@ async fn thread_view_inner(
     uri: Uri,
 ) -> impl IntoResponse {
     let tag = canonicalize_tag(&tag);
+    if wants_event_stream(&headers) {
+        let topics = match nav.scope() {
+            ScopeId::Public => subscriber_topics_public_thread(&tag),
+            ScopeId::Room(ref rid) => subscriber_topics_room_thread(rid, &tag),
+        };
+        let gate = match nav.scope() {
+            ScopeId::Public => None,
+            ScopeId::Room(rid) => Some(rid.clone()),
+        };
+        return live_sse_multi_topic(State(state), headers, jar, topics, gate).await;
+    }
     let scope = nav.scope();
 
     let all_ids: Vec<String> = {
@@ -249,6 +262,16 @@ pub async fn room_page(
     let Some(room_id) = slug_types::room_id_from_route_segment(&room_key) else {
         return (StatusCode::NOT_FOUND, "room not found").into_response();
     };
+    if wants_event_stream(&headers) {
+        return live_sse_multi_topic(
+            State(state),
+            headers,
+            jar,
+            subscriber_topics_room_forum(&room_id),
+            Some(room_id.clone()),
+        )
+        .await;
+    }
     let now = now_ms();
     let reduced = state.reduced.read().await;
     if !reduced.rooms.contains(&room_id) {
@@ -273,8 +296,7 @@ pub async fn room_page(
         drop(reduced);
         return (StatusCode::NOT_FOUND, "room not found").into_response();
     };
-    let members_markup =
-        room_members_section_markup(&reduced, &room_id, false, user.as_deref());
+    let members_markup = room_members_section_markup(&reduced, &room_id, false, user.as_deref());
     let forum_cli = format!("npx slugsocial private {room_id} forum list");
     let garden_cli = format!("npx slugsocial private {room_id} garden tree");
     let audit_cli = format!("npx slugsocial private {room_id} audit");

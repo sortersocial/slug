@@ -19,7 +19,8 @@ use super::new_thread::{fragment_new_thread_slot, login_to_post_hint_markup};
 use super::page::auth_strip;
 use super::paginator::{render_thread_paginator, PAGE_SIZE};
 use crate::html::{
-    bc_threads, cli_panel, layout, now_ms, recency_class, theme_from_jar, theme_next_from_uri,
+    bc_threads, cli_panel, layout, live_sse_multi_topic, now_ms, recency_class,
+    subscriber_topics_public_home, theme_from_jar, theme_next_from_uri, wants_event_stream,
 };
 
 #[derive(Clone)]
@@ -213,6 +214,16 @@ pub async fn home(
     jar: CookieJar,
     uri: Uri,
 ) -> impl IntoResponse {
+    if wants_event_stream(&headers) {
+        return live_sse_multi_topic(
+            State(state.clone()),
+            headers,
+            jar,
+            subscriber_topics_public_home(),
+            None,
+        )
+        .await;
+    }
     let now = now_ms();
     let reduced = state.reduced.read().await;
     let user = optional_principal(&headers, &jar, &reduced);
@@ -271,5 +282,5 @@ pub async fn home(
         None,
         None,
     );
-    Html(page.into_string())
+    Html(page.into_string()).into_response()
 }

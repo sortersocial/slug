@@ -12,14 +12,14 @@ use crate::{
     identity::parse_agent,
     path_types::ItemId,
     reducer::{scope_from_room_wire, ReducerState, ScopeId},
-    state::AppState,
+    state::{AppState, JsSnippetAudience, LiveTopic},
     write_cmd::WriteCmd,
 };
 
 use super::auth::{issue_token_for_user, verify_token};
 use super::helpers::{now_ms, resolve_item};
 use super::validate::{normalize_room_and_thread, validate_ingest_document};
-use slug_types::{room_route_segment, RpcResult, ROOM_SHORT_ID_LEN};
+use slug_types::{RpcResult, ROOM_SHORT_ID_LEN};
 
 fn gen_short_id() -> String {
     use rand::Rng;
@@ -59,13 +59,6 @@ async fn broadcast_web_refresh(state: &AppState, room_key: &str, thread_id: &str
     } else {
         "room-thread-feed"
     };
-    let thread_url = if room_key == "public" {
-        format!("/t/{thread_id}")
-    } else if let Some(seg) = room_route_segment(room_key) {
-        format!("/r/{seg}/t/{thread_id}")
-    } else {
-        format!("/t/{thread_id}")
-    };
 
     let feed_markup = if room_key == "public" {
         crate::html::thread_feed_html(state).await
@@ -76,39 +69,57 @@ async fn broadcast_web_refresh(state: &AppState, room_key: &str, thread_id: &str
     let thread_feed_markup =
         crate::html::thread_feed_region_markup(state, Some(room_key), thread_id, None).await;
 
-    // Two SSE payloads: the bump-list morph must not ship private HTML to subscribers who only
-    // matched `/` (public) or lack room access — see [`crate::api::stream::get_html_stream`].
     let feed_builder = JsBuilder::new().morph_selector(&format!("#{feed_id}"), feed_markup);
     let feed_builder = feed_builder.qs("#new-thread-compose form").reset();
     let feed_js = feed_builder.build();
 
-    let thread_builder = JsBuilder::new().if_current_path_matches(&thread_url, |builder| {
-        builder.morph_selector("#thread-feed-region", thread_feed_markup)
-    });
+    let thread_builder = JsBuilder::new().morph_selector("#thread-feed-region", thread_feed_markup);
     let thread_js = thread_builder.build();
 
     let audience = if room_key == "public" {
-        crate::state::JsSnippetAudience::Public
+        JsSnippetAudience::Public
     } else {
-        crate::state::JsSnippetAudience::RoomViewers(room_key.to_string())
+        JsSnippetAudience::RoomViewers(room_key.to_string())
     };
 
-    let feed_prefixes = if room_key == "public" {
-        vec!["/".to_string(), thread_url.clone()]
-    } else if let Some(seg) = room_route_segment(room_key) {
-        vec![format!("/r/{seg}"), thread_url.clone()]
+    let feed_topics: Vec<LiveTopic> = if room_key == "public" {
+        vec![
+            LiveTopic::ForumHome,
+            LiveTopic::PublicThread {
+                tag: thread_id.to_string(),
+            },
+        ]
     } else {
-        vec!["/".to_string(), thread_url.clone()]
+        vec![
+            LiveTopic::RoomForum {
+                room_id: room_key.to_string(),
+            },
+            LiveTopic::RoomThread {
+                room_id: room_key.to_string(),
+                tag: thread_id.to_string(),
+            },
+        ]
+    };
+
+    let thread_topics: Vec<LiveTopic> = if room_key == "public" {
+        vec![LiveTopic::PublicThread {
+            tag: thread_id.to_string(),
+        }]
+    } else {
+        vec![LiveTopic::RoomThread {
+            room_id: room_key.to_string(),
+            tag: thread_id.to_string(),
+        }]
     };
 
     let _ = state.js_tx.send(crate::state::JsSnippet {
         code: feed_js,
-        path_prefixes: feed_prefixes,
+        topics: feed_topics,
         audience: audience.clone(),
     });
     let _ = state.js_tx.send(crate::state::JsSnippet {
         code: thread_js,
-        path_prefixes: vec![thread_url.clone()],
+        topics: thread_topics,
         audience,
     });
 }

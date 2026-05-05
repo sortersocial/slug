@@ -7,6 +7,44 @@ use crate::{
     event_log::EventLog, events::ThreadCapability, reducer::ReducerState, write_cmd::WriteCmd,
 };
 
+/// Coarse channel for server-push morphs (SSE topic subscription).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum LiveTopic {
+    ForumHome,
+    PublicThread {
+        tag: String,
+    },
+    RoomForum {
+        room_id: String,
+    },
+    RoomThread {
+        room_id: String,
+        tag: String,
+    },
+    PublicGardenRoot,
+    PublicGardenPath {
+        tail: String,
+    },
+    PublicGardenExternal {
+        tail: String,
+    },
+    RoomGardenRoot {
+        room_id: String,
+    },
+    RoomGardenPath {
+        room_id: String,
+        tail: String,
+    },
+    RoomGardenExternal {
+        room_id: String,
+        tail: String,
+    },
+    GardenItem {
+        room_wire: Option<String>,
+        item_storage: String,
+    },
+}
+
 /// Ephemeral invite link (24h TTL, in-memory only; not written to the event log).
 #[derive(Debug, Clone)]
 pub struct InviteState {
@@ -51,9 +89,8 @@ pub enum JsSnippetAudience {
 #[derive(Debug, Clone)]
 pub struct JsSnippet {
     pub code: String,
-    /// Only deliver to SSE streams whose subscribed path matches one of these prefixes.
-    /// Empty means broadcast to all connected pages.
-    pub path_prefixes: Vec<String>,
+    /// Deliver only to subscribers whose topic set intersects one of these topics.
+    pub topics: Vec<LiveTopic>,
     pub audience: JsSnippetAudience,
 }
 

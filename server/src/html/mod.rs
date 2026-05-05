@@ -15,12 +15,16 @@ mod breadcrumb_path;
 mod editor;
 mod forum;
 mod garden;
+mod live;
 pub mod routing;
 mod search;
 pub mod ui_action;
 use breadcrumb_path::{ExternalOntologyPath, OntologyPath};
 
-pub use auth::{auth_complete_page, auth_signed_in_fragment, choose_username_error_fragment, choose_username_page};
+pub use auth::{
+    auth_complete_page, auth_signed_in_fragment, choose_username_error_fragment,
+    choose_username_page,
+};
 pub use editor::{editor_check, editor_page};
 pub use forum::{
     home, room_page, room_thread_post_view, room_thread_view, thread_feed_html,
@@ -28,20 +32,28 @@ pub use forum::{
 };
 
 pub use forum::user_can_view_room;
+pub use forum::user_profile_page;
 pub(crate) use forum::{
     fragment_new_thread_slot, login_to_post_hint_markup, room_members_section_markup,
     thread_ui_collapse_redacted_post, thread_ui_expand_post_full, thread_ui_expand_redacted_post,
     user_can_post_room,
 };
+pub(crate) use garden::{encode_pin_cookie_value, vote_compare_post_success_js, GARDEN_PIN_COOKIE};
 pub use garden::{
     external_garden_index, external_ontology_path, garden_index, ontology_path,
-    room_external_garden_index, room_external_ontology_path, room_garden_index,
-    room_ontology_path, room_vote_compare_page, vote_compare_page,
+    room_external_garden_index, room_external_ontology_path, room_garden_index, room_ontology_path,
+    room_vote_compare_page, vote_compare_page,
 };
-pub(crate) use garden::{encode_pin_cookie_value, vote_compare_post_success_js, GARDEN_PIN_COOKIE};
+pub use live::{
+    live_sse_multi_topic, subscriber_topics_garden_item, subscriber_topics_public_external_path,
+    subscriber_topics_public_garden_path, subscriber_topics_public_garden_root,
+    subscriber_topics_public_home, subscriber_topics_public_thread,
+    subscriber_topics_room_external_path, subscriber_topics_room_forum,
+    subscriber_topics_room_garden_path, subscriber_topics_room_garden_root,
+    subscriber_topics_room_thread, topics_from_legacy_sse_path, wants_event_stream,
+};
 pub use routing::RouteContext;
 pub use search::{search_page, search_results_fragment};
-pub use forum::user_profile_page;
 pub use ui_action::{parse_html_ui_from_form, HtmlUiAction, HtmlUiParseError, UI_RPC_FIELD};
 
 /// Public profile URL path for a stored username (no `@`).
@@ -108,8 +120,8 @@ pub struct ThemeForm {
 pub async fn post_theme(Form(form): Form<ThemeForm>) -> impl IntoResponse {
     let theme = normalize_theme(&form.theme);
     let next = sanitize_theme_next(form.next.as_deref());
-    let loc = HeaderValue::try_from(next.as_str())
-        .unwrap_or_else(|_| HeaderValue::from_static("/"));
+    let loc =
+        HeaderValue::try_from(next.as_str()).unwrap_or_else(|_| HeaderValue::from_static("/"));
     Response::builder()
         .status(StatusCode::SEE_OTHER)
         .header(header::LOCATION, loc)
@@ -180,7 +192,9 @@ pub(crate) struct JsQueryBuilder {
 
 impl JsBuilder {
     pub(crate) fn new() -> Self {
-        Self { snippets: Vec::new() }
+        Self {
+            snippets: Vec::new(),
+        }
     }
 
     pub(crate) fn morph_selector(self, selector: &str, markup: Markup) -> Self {
@@ -196,7 +210,12 @@ impl JsBuilder {
         self.qs(selector).morph_inner(markup)
     }
 
-    pub(crate) fn morph_expr(mut self, expr: &str, markup: Markup, morph_style: Option<&str>) -> Self {
+    pub(crate) fn morph_expr(
+        mut self,
+        expr: &str,
+        markup: Markup,
+        morph_style: Option<&str>,
+    ) -> Self {
         let html = js_string_literal(&markup.into_string());
         let opts = morph_style
             .map(|style| format!(", {{morphStyle: {}}}", js_string_literal(style)))
@@ -218,7 +237,11 @@ impl JsBuilder {
         self.qs(&format!("#{id}"))
     }
 
-    pub(crate) fn if_current_path_matches(mut self, path: &str, f: impl FnOnce(JsBuilder) -> JsBuilder) -> Self {
+    pub(crate) fn if_current_path_matches(
+        mut self,
+        path: &str,
+        f: impl FnOnce(JsBuilder) -> JsBuilder,
+    ) -> Self {
         let inner = f(JsBuilder::new()).build();
         self.snippets.push(format!(
             "var __slugHere = window.location.pathname + window.location.search; var __slugPath = {path}; if (__slugHere === __slugPath || __slugHere.indexOf(__slugPath + '?') === 0) {{ {inner} }}",
@@ -227,7 +250,11 @@ impl JsBuilder {
         self
     }
 
-    pub(crate) fn if_current_path_not_matches(mut self, path: &str, f: impl FnOnce(JsBuilder) -> JsBuilder) -> Self {
+    pub(crate) fn if_current_path_not_matches(
+        mut self,
+        path: &str,
+        f: impl FnOnce(JsBuilder) -> JsBuilder,
+    ) -> Self {
         let inner = f(JsBuilder::new()).build();
         self.snippets.push(format!(
             "var __slugHere = window.location.pathname + window.location.search; var __slugPath = {path}; if (!(__slugHere === __slugPath || __slugHere.indexOf(__slugPath + '?') === 0)) {{ {inner} }}",
@@ -302,7 +329,17 @@ pub(super) fn layout(
     garden_room_wire: Option<&str>,
     garden_path_prefix: Option<&str>,
 ) -> Markup {
-    layout_embed_controls(title, view, body, views, theme, theme_next, garden_room_wire, garden_path_prefix, true)
+    layout_embed_controls(
+        title,
+        view,
+        body,
+        views,
+        theme,
+        theme_next,
+        garden_room_wire,
+        garden_path_prefix,
+        true,
+    )
 }
 
 /// Minimal document shell: no bottom controls, no garden HUD data attributes (`data-garden-room` /
@@ -316,15 +353,7 @@ pub(super) fn layout_full_bleed_chromeless(
     theme_next: &str,
 ) -> Markup {
     layout_embed_controls(
-        title,
-        view,
-        body,
-        views,
-        theme,
-        theme_next,
-        None,
-        None,
-        false,
+        title, view, body, views, theme, theme_next, None, None, false,
     )
 }
 
@@ -358,7 +387,9 @@ fn layout_embed_controls(
                     span class="view-meta muted" { (n) " views" }
                 }
                 div id="errors" {}
+                div id="slug-live-main" {
                 (body)
+                }
                 @if show_controls {
                 div id="controls" {
                     a href="https://github.com/sortersocial/slug" id="src-link" { "src" }
@@ -639,7 +670,13 @@ fn spotify_embed_src(url: &str) -> Option<EmbedFrame> {
     if !(host == "open.spotify.com" || host == "www.open.spotify.com") {
         return None;
     }
-    let path = tail.split('#').next().unwrap_or(tail).split('?').next().unwrap_or(tail);
+    let path = tail
+        .split('#')
+        .next()
+        .unwrap_or(tail)
+        .split('?')
+        .next()
+        .unwrap_or(tail);
     let mut segs: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
     if segs.first().is_some_and(|s| s.starts_with("intl-")) {
         segs.remove(0);
@@ -671,8 +708,16 @@ fn youtube_embed_src(url: &str) -> Option<EmbedFrame> {
     let host = host.to_lowercase();
 
     let video_id = if host == "youtu.be" || host == "www.youtu.be" {
-        clean_media_id(tail.split(['?', '#']).next().unwrap_or(tail).trim_matches('/'))
-    } else if matches!(host.as_str(), "youtube.com" | "www.youtube.com" | "m.youtube.com" | "music.youtube.com") {
+        clean_media_id(
+            tail.split(['?', '#'])
+                .next()
+                .unwrap_or(tail)
+                .trim_matches('/'),
+        )
+    } else if matches!(
+        host.as_str(),
+        "youtube.com" | "www.youtube.com" | "m.youtube.com" | "music.youtube.com"
+    ) {
         let path = format!("/{}", tail.split('#').next().unwrap_or(tail));
         if path.starts_with("/watch") {
             clean_media_id(&query_param(url, "v")?)
@@ -746,10 +791,7 @@ pub(super) fn render_linkified_with_embeds_in_scope(
 /// CLI strings are embedded in a single-quoted JS literal; they must never need escaping.
 fn assert_cli_panel_cmd_js_single_quote_safe(s: &str) {
     assert!(
-        !s.contains('\\')
-            && !s.contains('\'')
-            && !s.contains('\n')
-            && !s.contains('\r'),
+        !s.contains('\\') && !s.contains('\'') && !s.contains('\n') && !s.contains('\r'),
         "cli_panel cmd must not contain `\\`, `'`, or newlines (got {s:?})"
     );
 }
@@ -806,11 +848,7 @@ mod linkify_title_tests {
         let mut bodies = HashMap::new();
         let key = ItemId::parse(&slug_types::canonicalize_item("~/foo/bar")).unwrap();
         bodies.insert(key, "Hello  world\nline".to_string());
-        let html = linkify_slugs_with_prefix(
-            "see ~/foo/bar ok",
-            "/r/x/~",
-            Some(&bodies),
-        );
+        let html = linkify_slugs_with_prefix("see ~/foo/bar ok", "/r/x/~", Some(&bodies));
         assert!(html.contains("title=\"Hello world line\""));
         assert!(html.contains("href=\"/r/x/~/foo/bar\""));
     }

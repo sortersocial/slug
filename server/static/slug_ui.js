@@ -233,10 +233,10 @@
       syncVoteRatio();
     }
 
-    // SSE: server-pushed JS
+    // SSE: same URL as the HTML page (Accept: text/event-stream).
     function connectSSE() {
-      var ssePath = window.location.pathname + window.location.search;
-      var es = new EventSource('/sse?path=' + encodeURIComponent(ssePath));
+      var url = window.location.pathname + window.location.search;
+      var es = new EventSource(url);
       es.onmessage = function (e) {
         evalJs(e.data);
       };

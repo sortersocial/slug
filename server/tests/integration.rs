@@ -1052,6 +1052,69 @@ async fn test_sse_private_room_requires_valid_room_path_or_auth() {
 }
 
 #[tokio::test]
+async fn test_sse_accepts_event_stream_same_url_as_room_page() {
+    let (addr, _tmp, _log, _handle) = create_test_server().await;
+    let client = reqwest::Client::new();
+    let bearer = test_bearer();
+
+    let create = rpc_batch(
+        &client,
+        addr,
+        Some(&bearer),
+        serde_json::json!([{ "RoomCreate": { "slug": "sse-accept-room" } }]),
+    )
+    .await;
+    let room_id = create["results"][0]["result"]["RoomCreated"]["room_id"]
+        .as_str()
+        .unwrap();
+    let seg = room_route_segment(room_id).unwrap();
+    let room_url = format!("http://{addr}/r/{seg}");
+
+    let sse_resp = client
+        .get(&room_url)
+        .header(reqwest::header::ACCEPT, "text/event-stream")
+        .header("Authorization", format!("Bearer {bearer}"))
+        .send()
+        .await
+        .unwrap();
+    assert!(sse_resp.status().is_success());
+
+    let rpc = ui_post_ingest_rpc(
+        room_id,
+        "accept-stream-thread",
+        "hello via accept header sse",
+    );
+    let _post = client
+        .post(format!("http://{addr}/ui"))
+        .header("Authorization", format!("Bearer {bearer}"))
+        .form(&[("__rpc__", rpc.as_str())])
+        .send()
+        .await
+        .unwrap();
+
+    let mut body = String::new();
+    let mut sse_resp = sse_resp;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while std::time::Instant::now() < deadline {
+        match tokio::time::timeout(std::time::Duration::from_millis(500), sse_resp.chunk()).await {
+            Ok(Ok(Some(chunk))) => {
+                body.push_str(&String::from_utf8_lossy(&chunk));
+                if body.contains("room-thread-feed") && body.contains("accept-stream-thread") {
+                    break;
+                }
+            }
+            Ok(Ok(None)) => break,
+            Ok(Err(err)) => panic!("sse read failed: {err}"),
+            Err(_) => {}
+        }
+    }
+    assert!(
+        body.contains("accept-stream-thread"),
+        "Accept-based SSE should receive thread feed morphs"
+    );
+}
+
+#[tokio::test]
 async fn test_sse_private_feed_not_sent_to_home_without_membership() {
     let (addr, _tmp, _log, state, _handle) = create_test_server_with_state().await;
     seed_other_user_token(&state).await;

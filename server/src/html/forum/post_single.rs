@@ -15,10 +15,13 @@ use crate::state::AppState;
 use super::access::user_can_view_room;
 use super::ingest::ingest_entry_markup;
 use super::nav::ThreadNav;
-use super::paginator::render_post_permalink_nav;
 use super::page::bc_room;
+use super::paginator::render_post_permalink_nav;
 use super::views::room_not_found_page;
-use crate::html::{bc_threads, layout, now_ms, theme_from_jar, theme_next_from_uri};
+use crate::html::{
+    bc_threads, layout, live_sse_multi_topic, now_ms, subscriber_topics_public_thread,
+    subscriber_topics_room_thread, theme_from_jar, theme_next_from_uri, wants_event_stream,
+};
 use maud::Markup;
 
 async fn thread_post_view_inner(
@@ -27,10 +30,22 @@ async fn thread_post_view_inner(
     index_str: String,
     nav: ThreadNav,
     viewer: Option<String>,
+    headers: HeaderMap,
     jar: CookieJar,
     uri: Uri,
 ) -> impl IntoResponse {
     let tag = canonicalize_tag(&tag);
+    if wants_event_stream(&headers) {
+        let topics = match nav.scope() {
+            ScopeId::Public => subscriber_topics_public_thread(&tag),
+            ScopeId::Room(ref rid) => subscriber_topics_room_thread(rid, &tag),
+        };
+        let gate = match nav.scope() {
+            ScopeId::Public => None,
+            ScopeId::Room(rid) => Some(rid.clone()),
+        };
+        return live_sse_multi_topic(State(state), headers, jar, topics, gate).await;
+    }
     let index: usize = index_str.parse().unwrap_or(0);
     let scope = nav.scope();
     let now = now_ms();
@@ -51,7 +66,12 @@ async fn thread_post_view_inner(
             ingest_entry_markup(&nav, &tag, nav_index, i, viewer.as_deref(), now, &reduced)
         });
         let permalink_nav = if total_posts > 1 {
-            Some(render_post_permalink_nav(&nav, &tag, nav_index, total_posts))
+            Some(render_post_permalink_nav(
+                &nav,
+                &tag,
+                nav_index,
+                total_posts,
+            ))
         } else {
             None
         };
@@ -110,8 +130,17 @@ pub async fn thread_post_view(
     let reduced = state.reduced.read().await;
     let viewer = optional_principal(&headers, &jar, &reduced);
     drop(reduced);
-    thread_post_view_inner(state, tag, index_str, ThreadNav::public(), viewer, jar, uri)
-        .await
+    thread_post_view_inner(
+        state,
+        tag,
+        index_str,
+        ThreadNav::public(),
+        viewer,
+        headers,
+        jar,
+        uri,
+    )
+    .await
 }
 
 pub async fn room_thread_post_view(
@@ -124,6 +153,23 @@ pub async fn room_thread_post_view(
     let Some(room_id) = slug_types::room_id_from_route_segment(&room_key) else {
         return (StatusCode::NOT_FOUND, "bad room path").into_response();
     };
+    if wants_event_stream(&headers) {
+        let reduced = state.reduced.read().await;
+        let user = optional_principal(&headers, &jar, &reduced);
+        if !user_can_view_room(&reduced, &room_id, user.as_deref()) {
+            drop(reduced);
+            return room_not_found_page(&jar, &uri).into_response();
+        }
+        drop(reduced);
+        return live_sse_multi_topic(
+            State(state),
+            headers,
+            jar,
+            subscriber_topics_room_thread(&room_id, &tag),
+            Some(room_id),
+        )
+        .await;
+    }
     let reduced = state.reduced.read().await;
     let user = optional_principal(&headers, &jar, &reduced);
     if !user_can_view_room(&reduced, &room_id, user.as_deref()) {
@@ -134,7 +180,7 @@ pub async fn room_thread_post_view(
     let Some(nav) = ThreadNav::from_room_id(&room_id) else {
         return (StatusCode::NOT_FOUND, "bad room path").into_response();
     };
-    thread_post_view_inner(state, tag, index_str, nav, user, jar, uri)
+    thread_post_view_inner(state, tag, index_str, nav, user, headers, jar, uri)
         .await
         .into_response()
 }
