@@ -164,10 +164,11 @@ pub(crate) fn ingest_entry_markup(
         } else {
             "ingest-entry"
         };
+        let item_bodies = reduced.content_for_scope(&nav.scope()).map(|c| &c.item_bodies);
         html! {
             div class=(entry_class) data-ingest-id=(ing.id) {
                 (post_header_row(nav, tag, post_idx, ing, viewer, now, show_delete))
-                (render_linkified_with_embeds_in_scope(display_body, nav.garden_root_url()))
+                (render_linkified_with_embeds_in_scope(display_body, nav.garden_root_url(), item_bodies))
                 @if truncated {
                     div class="post-truncation-banner" role="note" {
                         p.post-truncation-title { "Long post — preview ends here" }

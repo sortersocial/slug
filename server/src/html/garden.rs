@@ -1094,7 +1094,11 @@ async fn render_scope_view(
                 }
                 @if let Some(body) = &model.body {
                     div class="ont-item-content" {
-                        (render_linkified_with_embeds_in_scope(body, nav.garden_root_url()))
+                        (render_linkified_with_embeds_in_scope(
+                            body,
+                            nav.garden_root_url(),
+                            Some(&scope_content.item_bodies),
+                        ))
                     }
                 } @else if external_empty_body {
                     div class="ont-item-content ont-external-empty" {

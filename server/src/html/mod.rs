@@ -8,7 +8,7 @@ use axum::{
 use axum_extra::extract::cookie::CookieJar;
 use maud::{html, Markup, DOCTYPE};
 use serde::Deserialize;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 mod auth;
 mod breadcrumb_path;
@@ -511,8 +511,49 @@ fn escape_html(s: &str) -> String {
     out
 }
 
+/// Max characters from an item body placed in a `title` tooltip (native hover).
+const ITEM_LINK_TITLE_MAX_CHARS: usize = 500;
+
+fn collapse_whitespace_for_title(s: &str) -> String {
+    let mut out = String::with_capacity(s.len().min(ITEM_LINK_TITLE_MAX_CHARS + 8));
+    let mut last_was_space = true;
+    for c in s.chars() {
+        if c.is_whitespace() {
+            if !last_was_space {
+                out.push(' ');
+                last_was_space = true;
+            }
+        } else {
+            out.push(c);
+            last_was_space = false;
+        }
+    }
+    out.trim().to_string()
+}
+
+fn item_body_title_snippet(body: &str) -> Option<String> {
+    let s = collapse_whitespace_for_title(body);
+    if s.is_empty() {
+        return None;
+    }
+    let truncated: String = s.chars().take(ITEM_LINK_TITLE_MAX_CHARS).collect();
+    let ellipsis = if s.chars().count() > ITEM_LINK_TITLE_MAX_CHARS {
+        "…"
+    } else {
+        ""
+    };
+    Some(format!("{truncated}{ellipsis}"))
+}
+
 /// Replace ~/path slugs in raw text with clickable links.
-pub(super) fn linkify_slugs_with_prefix(raw: &str, garden_prefix: &str) -> String {
+///
+/// When `item_bodies` is set, matching ontology items get a `title` attribute with a truncated
+/// body preview for native browser tooltips (forum posts, item pages).
+pub(super) fn linkify_slugs_with_prefix(
+    raw: &str,
+    garden_prefix: &str,
+    item_bodies: Option<&HashMap<crate::path_types::ItemId, String>>,
+) -> String {
     let escaped = escape_html(raw);
     let mut out = String::with_capacity(escaped.len() + 64);
     let mut i = 0;
@@ -531,7 +572,23 @@ pub(super) fn linkify_slugs_with_prefix(raw: &str, garden_prefix: &str) -> Strin
                 out.push_str(&escape_html(garden_prefix.trim_end_matches('/')));
                 out.push('/');
                 out.push_str(path);
-                out.push_str(r#"" class="pre-link">~/"#);
+                out.push('"');
+                out.push_str(r#" class="pre-link""#);
+                if let Some(bodies) = item_bodies {
+                    let tilde_ref = format!("~/{}", path);
+                    let key = slug_types::canonicalize_item(&tilde_ref);
+                    if let Some(id) = crate::path_types::ItemId::parse(&key) {
+                        if let Some(body) = bodies.get(&id) {
+                            if let Some(snippet) = item_body_title_snippet(body) {
+                                out.push_str(r#" title=""#);
+                                out.push_str(&escape_html(&snippet));
+                                out.push('"');
+                            }
+                        }
+                    }
+                }
+                out.push('>');
+                out.push_str("~/");
                 out.push_str(path);
                 out.push_str("</a>");
                 i += 2 + path_len;
@@ -659,10 +716,14 @@ fn extract_embed_frames(raw: &str) -> Vec<EmbedFrame> {
     out
 }
 
-pub(super) fn render_linkified_with_embeds_in_scope(raw: &str, garden_prefix: &str) -> Markup {
+pub(super) fn render_linkified_with_embeds_in_scope(
+    raw: &str,
+    garden_prefix: &str,
+    item_bodies: Option<&HashMap<crate::path_types::ItemId, String>>,
+) -> Markup {
     let embeds = extract_embed_frames(raw);
     html! {
-        pre { (maud::PreEscaped(linkify_slugs_with_prefix(raw, garden_prefix))) }
+        pre { (maud::PreEscaped(linkify_slugs_with_prefix(raw, garden_prefix, item_bodies))) }
         @if !embeds.is_empty() {
             div class="rich-embeds" {
                 @for e in embeds {
@@ -730,5 +791,32 @@ pub(super) fn recency_class(now_ms: i64, ts_ms: i64) -> &'static str {
         "age-week" // < 1 week
     } else {
         "age-old" // >= 1 week
+    }
+}
+
+#[cfg(test)]
+mod linkify_title_tests {
+    use super::*;
+    use crate::path_types::ItemId;
+    use std::collections::HashMap;
+
+    #[test]
+    fn tilde_link_gets_title_from_item_bodies() {
+        let mut bodies = HashMap::new();
+        let key = ItemId::parse(&slug_types::canonicalize_item("~/foo/bar")).unwrap();
+        bodies.insert(key, "Hello  world\nline".to_string());
+        let html = linkify_slugs_with_prefix(
+            "see ~/foo/bar ok",
+            "/r/x/~",
+            Some(&bodies),
+        );
+        assert!(html.contains("title=\"Hello world line\""));
+        assert!(html.contains("href=\"/r/x/~/foo/bar\""));
+    }
+
+    #[test]
+    fn no_title_when_body_missing_or_empty() {
+        let html = linkify_slugs_with_prefix("x ~/a/b y", "/~", Some(&HashMap::new()));
+        assert!(!html.contains(" title="));
     }
 }
