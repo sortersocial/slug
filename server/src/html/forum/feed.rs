@@ -30,7 +30,11 @@ pub(super) struct ThreadRow {
     pub(super) ingests: usize,
 }
 
-pub(super) fn collect_thread_rows_for_scope(reduced: &ReducerState, scope: &ScopeId, now: i64) -> Vec<ThreadRow> {
+pub(super) fn collect_thread_rows_for_scope(
+    reduced: &ReducerState,
+    scope: &ScopeId,
+    now: i64,
+) -> Vec<ThreadRow> {
     let _ = now;
     reduced
         .forum_threads
@@ -64,7 +68,12 @@ pub(super) fn rooms_for_user(reduced: &ReducerState, username: &str) -> Vec<Stri
 }
 
 /// `feed_id` is e.g. `thread-feed` (public bump list, SSE) or `room-thread-feed`.
-pub(super) fn render_thread_feed(nav: Option<&ThreadNav>, feed_id: &str, rows: &[ThreadRow], now: i64) -> Markup {
+pub(super) fn render_thread_feed(
+    nav: Option<&ThreadNav>,
+    feed_id: &str,
+    rows: &[ThreadRow],
+    now: i64,
+) -> Markup {
     html! {
         div id=(feed_id) {
             @if rows.is_empty() {
@@ -161,9 +170,10 @@ pub async fn thread_feed_region_markup(
     viewer: Option<&str>,
 ) -> Markup {
     let tag = canonicalize_tag(tag);
+    // Wire id is `short/slug` or the literal `"public"`. `broadcast_web_refresh` passes `Some("public")`.
     let Some(nav) = (match room_id {
+        Some("public") | None => Some(ThreadNav::public()),
         Some(room_id) => ThreadNav::from_room_id(room_id),
-        None => Some(ThreadNav::public()),
     }) else {
         return html! { div id="thread-feed-region" { p class="muted" { "thread not found" } } };
     };

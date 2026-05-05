@@ -54,7 +54,11 @@ fn content_for_room<'a>(reduced: &'a ReducerState, room: &str) -> &'a crate::red
 }
 
 async fn broadcast_web_refresh(state: &AppState, room_key: &str, thread_id: &str) {
-    let feed_id = if room_key == "public" { "thread-feed" } else { "room-thread-feed" };
+    let feed_id = if room_key == "public" {
+        "thread-feed"
+    } else {
+        "room-thread-feed"
+    };
     let thread_url = if room_key == "public" {
         format!("/t/{thread_id}")
     } else if let Some(seg) = room_route_segment(room_key) {
@@ -72,21 +76,41 @@ async fn broadcast_web_refresh(state: &AppState, room_key: &str, thread_id: &str
     let thread_feed_markup =
         crate::html::thread_feed_region_markup(state, Some(room_key), thread_id, None).await;
 
-    let builder = JsBuilder::new().morph_selector(&format!("#{feed_id}"), feed_markup);
-    let builder = builder.qs("#new-thread-compose form").reset();
-    let builder = builder.if_current_path_matches(&thread_url, |builder| {
+    // Two SSE payloads: the bump-list morph must not ship private HTML to subscribers who only
+    // matched `/` (public) or lack room access — see [`crate::api::stream::get_html_stream`].
+    let feed_builder = JsBuilder::new().morph_selector(&format!("#{feed_id}"), feed_markup);
+    let feed_builder = feed_builder.qs("#new-thread-compose form").reset();
+    let feed_js = feed_builder.build();
+
+    let thread_builder = JsBuilder::new().if_current_path_matches(&thread_url, |builder| {
         builder.morph_selector("#thread-feed-region", thread_feed_markup)
     });
-    let js = builder.build();
-    let mut path_prefixes = vec![if room_key == "public" {
-        "/".to_string()
-    } else if let Some(seg) = room_route_segment(room_key) {
-        format!("/r/{seg}")
+    let thread_js = thread_builder.build();
+
+    let audience = if room_key == "public" {
+        crate::state::JsSnippetAudience::Public
     } else {
-        "/".to_string()
-    }];
-    path_prefixes.push(thread_url.clone());
-    let _ = state.js_tx.send(crate::state::JsSnippet { code: js, path_prefixes });
+        crate::state::JsSnippetAudience::RoomViewers(room_key.to_string())
+    };
+
+    let feed_prefixes = if room_key == "public" {
+        vec!["/".to_string(), thread_url.clone()]
+    } else if let Some(seg) = room_route_segment(room_key) {
+        vec![format!("/r/{seg}"), thread_url.clone()]
+    } else {
+        vec!["/".to_string(), thread_url.clone()]
+    };
+
+    let _ = state.js_tx.send(crate::state::JsSnippet {
+        code: feed_js,
+        path_prefixes: feed_prefixes,
+        audience: audience.clone(),
+    });
+    let _ = state.js_tx.send(crate::state::JsSnippet {
+        code: thread_js,
+        path_prefixes: vec![thread_url.clone()],
+        audience,
+    });
 }
 
 fn compute_scope_rank_changes(
@@ -104,7 +128,13 @@ fn compute_scope_rank_changes(
         for comp in &rankings.component_rankings {
             let total = comp.ranked.len();
             for (i, item) in comp.ranked.iter().enumerate() {
-                map.insert(item.item.clone(), Some(RankPosition { rank: i + 1, of: total }));
+                map.insert(
+                    item.item.clone(),
+                    Some(RankPosition {
+                        rank: i + 1,
+                        of: total,
+                    }),
+                );
             }
         }
         for item in &rankings.unranked_items {
@@ -158,7 +188,11 @@ fn compute_scope_rank_changes(
     })
 }
 
-async fn redeem_invite_grant(state: &AppState, invite_token: &str, grantee_username: &str) -> Result<(), String> {
+async fn redeem_invite_grant(
+    state: &AppState,
+    invite_token: &str,
+    grantee_username: &str,
+) -> Result<(), String> {
     let now = now_ms();
     let ga = {
         let mut invites = state.invites.write().await;
@@ -220,14 +254,14 @@ pub async fn writer_actor(mut rx: mpsc::Receiver<WriteCmd>, state: AppState) {
                 let out = async {
                     let mut reduced = state.reduced.write().await;
 
-                    let principal =
-                        verify_token(&reduced, &bearer).map_err(|(_, m)| (m, None))?;
+                    let principal = verify_token(&reduced, &bearer).map_err(|(_, m)| (m, None))?;
 
                     let delegate: Option<String> = match delegate_opt {
                         None => None,
                         Some(ref s) if s.trim().is_empty() => None,
                         Some(s) => Some(
-                            parse_agent(&s).map_err(|msg| (format!("invalid delegate format"), Some(msg)))?,
+                            parse_agent(&s)
+                                .map_err(|msg| (format!("invalid delegate format"), Some(msg)))?,
                         ),
                     };
 
@@ -241,11 +275,12 @@ pub async fn writer_actor(mut rx: mpsc::Receiver<WriteCmd>, state: AppState) {
                         ));
                     }
 
-                    let v = validate_ingest_document(&reduced, &text, &scope)
-                        .map_err(|(st, m, h)| {
+                    let v = validate_ingest_document(&reduced, &text, &scope).map_err(
+                        |(st, m, h)| {
                             let _ = st;
                             (m, h)
-                        })?;
+                        },
+                    )?;
 
                     if is_private {
                         use crate::events::ThreadCapability;
@@ -276,7 +311,10 @@ pub async fn writer_actor(mut rx: mpsc::Receiver<WriteCmd>, state: AppState) {
                     if let Some(ref d) = delegate {
                         match reduced.agent_bindings.get(d) {
                             Some(u) if u != &principal => {
-                                return Err(("delegate already bound to another user".into(), None));
+                                return Err((
+                                    "delegate already bound to another user".into(),
+                                    None,
+                                ));
                             }
                             _ => {}
                         }
@@ -434,8 +472,7 @@ pub async fn writer_actor(mut rx: mpsc::Receiver<WriteCmd>, state: AppState) {
             } => {
                 let out = async {
                     let mut reduced = state.reduced.write().await;
-                    let principal =
-                        verify_token(&reduced, &bearer).map_err(|(_, m)| (m, None))?;
+                    let principal = verify_token(&reduced, &bearer).map_err(|(_, m)| (m, None))?;
                     let post_id = post_id.trim().to_string();
                     let Some(ing) = reduced.ingests_by_id.get(&post_id).cloned() else {
                         return Err(("post not found".into(), None));
@@ -450,7 +487,11 @@ pub async fn writer_actor(mut rx: mpsc::Receiver<WriteCmd>, state: AppState) {
                     let scope = scope_from_room_wire(&room_key);
                     if matches!(scope, ScopeId::Room(_))
                         && (!reduced.rooms.contains(&room_key)
-                            || !reduced.user_has_cap(&room_key, &principal, crate::events::ThreadCapability::View))
+                            || !reduced.user_has_cap(
+                                &room_key,
+                                &principal,
+                                crate::events::ThreadCapability::View,
+                            ))
                     {
                         return Err(("room not found".into(), None));
                     }
@@ -484,14 +525,16 @@ pub async fn writer_actor(mut rx: mpsc::Receiver<WriteCmd>, state: AppState) {
             } => {
                 let out = async {
                     let mut reduced = state.reduced.write().await;
-                    let principal =
-                        verify_token(&reduced, &bearer).map_err(|(_, m)| (m, None))?;
+                    let principal = verify_token(&reduced, &bearer).map_err(|(_, m)| (m, None))?;
                     let slug = slug.trim().to_lowercase();
                     if slug.is_empty() || slug.len() > 64 {
                         return Err(("slug must be 1-64 characters".into(), None));
                     }
                     if !slug.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
-                        return Err(("slug must be lowercase alphanumeric with hyphens".into(), None));
+                        return Err((
+                            "slug must be lowercase alphanumeric with hyphens".into(),
+                            None,
+                        ));
                     }
                     let short_id = loop {
                         let id = gen_short_id();
@@ -539,13 +582,16 @@ pub async fn writer_actor(mut rx: mpsc::Receiver<WriteCmd>, state: AppState) {
                 let _ = reply.send(out);
             }
 
-            WriteCmd::RoomDelete { room, bearer, reply } => {
+            WriteCmd::RoomDelete {
+                room,
+                bearer,
+                reply,
+            } => {
                 let out = async {
                     use crate::events::ThreadCapability;
 
                     let mut reduced = state.reduced.write().await;
-                    let principal =
-                        verify_token(&reduced, &bearer).map_err(|(_, m)| (m, None))?;
+                    let principal = verify_token(&reduced, &bearer).map_err(|(_, m)| (m, None))?;
                     let room = room.trim().to_string();
                     if !reduced.rooms.contains(&room) {
                         return Err(("unknown room".into(), None));
@@ -589,15 +635,15 @@ pub async fn writer_actor(mut rx: mpsc::Receiver<WriteCmd>, state: AppState) {
                     use crate::identity::parse_username;
 
                     let mut reduced = state.reduced.write().await;
-                    let principal =
-                        verify_token(&reduced, &bearer).map_err(|(_, m)| (m, None))?;
+                    let principal = verify_token(&reduced, &bearer).map_err(|(_, m)| (m, None))?;
                     if !reduced.user_has_cap(&room, &principal, ThreadCapability::Manage) {
                         return Err(("requires Manage capability".into(), None));
                     }
                     if capabilities.is_empty() {
                         return Err(("capabilities must not be empty".into(), None));
                     }
-                    let target = parse_username(&username).map_err(|msg| ("invalid username".into(), Some(msg)))?;
+                    let target = parse_username(&username)
+                        .map_err(|msg| ("invalid username".into(), Some(msg)))?;
                     if !reduced.users_by_provider.values().any(|u| u == &target) {
                         return Err((format!("user @{target} not found"), None));
                     }
@@ -637,12 +683,12 @@ pub async fn writer_actor(mut rx: mpsc::Receiver<WriteCmd>, state: AppState) {
                     use crate::identity::parse_username;
 
                     let mut reduced = state.reduced.write().await;
-                    let principal =
-                        verify_token(&reduced, &bearer).map_err(|(_, m)| (m, None))?;
+                    let principal = verify_token(&reduced, &bearer).map_err(|(_, m)| (m, None))?;
                     if !reduced.user_has_cap(&room, &principal, ThreadCapability::Manage) {
                         return Err(("requires Manage capability".into(), None));
                     }
-                    let target = parse_username(&username).map_err(|msg| ("invalid username".into(), Some(msg)))?;
+                    let target = parse_username(&username)
+                        .map_err(|msg| ("invalid username".into(), Some(msg)))?;
                     if !reduced.users_by_provider.values().any(|u| u == &target) {
                         return Err((format!("user @{target} not found"), None));
                     }

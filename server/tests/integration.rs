@@ -8,9 +8,9 @@ use slugsocial_server::{
     spawn_writer_actor_for_test,
     state::{AppConfig, AppState},
 };
+use std::net::SocketAddr;
 use tempfile::TempDir;
 use tokio::net::TcpListener;
-use std::net::SocketAddr;
 
 fn sha256_hex(s: &str) -> String {
     let mut hasher = Sha256::new();
@@ -94,7 +94,43 @@ async fn seed_test_token(state: &AppState) {
     r.apply_event(ev);
 }
 
-async fn create_test_server_with_state() -> (SocketAddr, TempDir, EventLog, AppState, tokio::task::JoinHandle<()>) {
+async fn seed_other_user_token(state: &AppState) {
+    let registered = Event::UserRegistered(UserRegistered {
+        ts: 1,
+        username: "otheruser".to_string(),
+        provider: "test".to_string(),
+        provider_id: "otheruser".to_string(),
+    });
+    let token_id = "othertok";
+    let secret = "othersecret";
+    let salt = "salt2";
+    let token_hash = sha256_hex(&format!("{salt}:{secret}"));
+    let ev = Event::TokenIssued(TokenIssued {
+        ts: 1,
+        username: "otheruser".to_string(),
+        token_id: token_id.to_string(),
+        token_hash,
+        salt: salt.to_string(),
+        issued_via: "test".to_string(),
+    });
+    let mut r = state.reduced.write().await;
+    r.apply_event(registered);
+    r.apply_event(ev);
+}
+
+fn other_test_bearer() -> String {
+    let token_id = "othertok";
+    let secret = "othersecret";
+    format!("slug_{token_id}_{secret}")
+}
+
+async fn create_test_server_with_state() -> (
+    SocketAddr,
+    TempDir,
+    EventLog,
+    AppState,
+    tokio::task::JoinHandle<()>,
+) {
     let tmp = TempDir::new().unwrap();
     let log_path = tmp.path().join("events.jsonl");
     let log = EventLog::new(&log_path);
@@ -131,7 +167,11 @@ async fn create_test_server() -> (SocketAddr, TempDir, EventLog, tokio::task::Jo
 async fn test_healthz() {
     let (addr, _tmp, _log, _handle) = create_test_server().await;
     let client = reqwest::Client::new();
-    let response = client.get(&format!("http://{}/healthz", addr)).send().await.unwrap();
+    let response = client
+        .get(&format!("http://{}/healthz", addr))
+        .send()
+        .await
+        .unwrap();
     assert!(response.status().is_success());
     assert_eq!(response.text().await.unwrap(), "ok");
 }
@@ -189,7 +229,13 @@ async fn test_room_delete_rpc() {
         del["results"][0]
     );
 
-    let list = rpc_batch(&client, addr, Some(&bearer), serde_json::json!(["RoomList"])).await;
+    let list = rpc_batch(
+        &client,
+        addr,
+        Some(&bearer),
+        serde_json::json!(["RoomList"]),
+    )
+    .await;
     let rooms = list["results"][0]["result"]["RoomList"]["rooms"]
         .as_array()
         .unwrap();
@@ -278,7 +324,11 @@ async fn test_private_room_forum_read_requires_bearer() {
     )
     .await;
     let line_na = &no_auth["results"][0];
-    assert_eq!(line_na["ok"], false, "expected failure without bearer: {:?}", line_na);
+    assert_eq!(
+        line_na["ok"], false,
+        "expected failure without bearer: {:?}",
+        line_na
+    );
     assert_eq!(line_na["error"], "room not found");
 
     let with_auth = rpc_batch(
@@ -300,7 +350,11 @@ async fn test_private_room_forum_read_requires_bearer() {
     )
     .await;
     let line_ok = &with_auth["results"][0];
-    assert_eq!(line_ok["ok"], true, "expected success with bearer: {:?}", line_ok);
+    assert_eq!(
+        line_ok["ok"], true,
+        "expected success with bearer: {:?}",
+        line_ok
+    );
     let total = line_ok["result"]["ForumThread"]["total"].as_u64().unwrap();
     assert!(total >= 1);
 }
@@ -499,7 +553,11 @@ async fn test_feed_since_last_post_is_scoped_to_delegate() {
     )
     .await;
     let steal_line = &steal["results"][0];
-    assert_eq!(steal_line["ok"], false, "expected rejection for unbound delegate: {:?}", steal_line);
+    assert_eq!(
+        steal_line["ok"], false,
+        "expected rejection for unbound delegate: {:?}",
+        steal_line
+    );
     assert_eq!(steal_line["error"], "not your delegate");
 
     let no_auth = rpc_batch(
@@ -852,24 +910,24 @@ async fn test_choose_username_returns_evalable_js() {
 
     {
         let mut sessions = state.pending_sessions.write().await;
-        let pending = sessions.get_mut(session).expect("pending session must exist");
+        let pending = sessions
+            .get_mut(session)
+            .expect("pending session must exist");
         pending.provider = Some("google".to_string());
         pending.provider_id = Some("google-user-123".to_string());
     }
 
     let choose = client
         .post(format!("http://{addr}/auth/choose-username"))
-        .form(&[
-            ("session", session),
-            ("username", "webuser"),
-        ])
+        .form(&[("session", session), ("username", "webuser")])
         .send()
         .await
         .unwrap();
 
     assert_eq!(choose.status(), reqwest::StatusCode::OK);
     assert_eq!(
-        choose.headers()
+        choose
+            .headers()
             .get(reqwest::header::CONTENT_TYPE)
             .and_then(|v| v.to_str().ok()),
         Some("text/javascript; charset=utf-8")
@@ -903,7 +961,11 @@ async fn test_sse_stream_emits_evalable_js_after_post() {
     let room_path = format!("/r/{room_seg}");
 
     let sse_resp = client
-        .get(format!("http://{addr}/sse?path={}", urlencoding::encode(&room_path)))
+        .get(format!(
+            "http://{addr}/sse?path={}",
+            urlencoding::encode(&room_path)
+        ))
+        .header("Authorization", format!("Bearer {bearer}"))
         .send()
         .await
         .unwrap();
@@ -936,6 +998,177 @@ async fn test_sse_stream_emits_evalable_js_after_post() {
     }
     assert!(body.contains("room-thread-feed"));
     assert!(body.contains("live-thread"));
+}
+
+#[tokio::test]
+async fn test_sse_private_room_requires_valid_room_path_or_auth() {
+    let (addr, _tmp, _log, _handle) = create_test_server().await;
+    let client = reqwest::Client::new();
+
+    // Segment too short to decode as `short/slug` → reject subscription (no JS execution).
+    let bad_seg = client
+        .get(format!(
+            "http://{addr}/sse?path={}",
+            urlencoding::encode("/r/abcdefg")
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(bad_seg.status(), reqwest::StatusCode::FORBIDDEN);
+
+    let room_ok = rpc_batch(
+        &client,
+        addr,
+        Some(&test_bearer()),
+        serde_json::json!([{ "RoomCreate": { "slug": "sse-auth-room" } }]),
+    )
+    .await;
+    let room_id = room_ok["results"][0]["result"]["RoomCreated"]["room_id"]
+        .as_str()
+        .unwrap();
+    let seg = room_route_segment(room_id).unwrap();
+    let room_path = format!("/r/{seg}");
+
+    let no_cookie = client
+        .get(format!(
+            "http://{addr}/sse?path={}",
+            urlencoding::encode(&room_path)
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(no_cookie.status(), reqwest::StatusCode::FORBIDDEN);
+
+    let with_auth = client
+        .get(format!(
+            "http://{addr}/sse?path={}",
+            urlencoding::encode(&room_path)
+        ))
+        .header("Authorization", format!("Bearer {}", test_bearer()))
+        .send()
+        .await
+        .unwrap();
+    assert!(with_auth.status().is_success());
+}
+
+#[tokio::test]
+async fn test_sse_private_feed_not_sent_to_home_without_membership() {
+    let (addr, _tmp, _log, state, _handle) = create_test_server_with_state().await;
+    seed_other_user_token(&state).await;
+
+    let client = reqwest::Client::new();
+    let owner = test_bearer();
+
+    let create = rpc_batch(
+        &client,
+        addr,
+        Some(&owner),
+        serde_json::json!([{ "RoomCreate": { "slug": "sse-acl-home" } }]),
+    )
+    .await;
+    let room_id = create["results"][0]["result"]["RoomCreated"]["room_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let sse_resp = client
+        .get(format!(
+            "http://{addr}/sse?path={}",
+            urlencoding::encode("/")
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert!(sse_resp.status().is_success());
+
+    let secret_phrase = "PRIVATE_SSE_HOME_LEAK_TEST_UNIQUE";
+    let rpc = ui_post_ingest_rpc(&room_id, "acl-thread", secret_phrase);
+    let _post = client
+        .post(format!("http://{addr}/ui"))
+        .header("Authorization", format!("Bearer {owner}"))
+        .form(&[("__rpc__", rpc.as_str())])
+        .send()
+        .await
+        .unwrap();
+
+    let mut body = String::new();
+    let mut sse_resp = sse_resp;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    while std::time::Instant::now() < deadline {
+        match tokio::time::timeout(std::time::Duration::from_millis(400), sse_resp.chunk()).await {
+            Ok(Ok(Some(chunk))) => {
+                body.push_str(&String::from_utf8_lossy(&chunk));
+            }
+            Ok(Ok(None)) => break,
+            Ok(Err(err)) => panic!("sse read failed: {err}"),
+            Err(_) => {}
+        }
+    }
+    assert!(
+        !body.contains(secret_phrase),
+        "anonymous home SSE must not receive private room morph payload"
+    );
+}
+
+#[tokio::test]
+async fn test_sse_private_feed_masked_for_non_member_even_with_bearer() {
+    let (addr, _tmp, _log, state, _handle) = create_test_server_with_state().await;
+    seed_other_user_token(&state).await;
+
+    let client = reqwest::Client::new();
+    let owner = test_bearer();
+    let other = other_test_bearer();
+
+    let create = rpc_batch(
+        &client,
+        addr,
+        Some(&owner),
+        serde_json::json!([{ "RoomCreate": { "slug": "sse-acl-other" } }]),
+    )
+    .await;
+    let room_id = create["results"][0]["result"]["RoomCreated"]["room_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let sse_resp = client
+        .get(format!(
+            "http://{addr}/sse?path={}",
+            urlencoding::encode("/")
+        ))
+        .header("Authorization", format!("Bearer {other}"))
+        .send()
+        .await
+        .unwrap();
+    assert!(sse_resp.status().is_success());
+
+    let secret_phrase = "PRIVATE_SSE_OTHER_USER_LEAK";
+    let rpc = ui_post_ingest_rpc(&room_id, "leak-thread", secret_phrase);
+    let _post = client
+        .post(format!("http://{addr}/ui"))
+        .header("Authorization", format!("Bearer {owner}"))
+        .form(&[("__rpc__", rpc.as_str())])
+        .send()
+        .await
+        .unwrap();
+
+    let mut body = String::new();
+    let mut sse_resp = sse_resp;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    while std::time::Instant::now() < deadline {
+        match tokio::time::timeout(std::time::Duration::from_millis(400), sse_resp.chunk()).await {
+            Ok(Ok(Some(chunk))) => {
+                body.push_str(&String::from_utf8_lossy(&chunk));
+            }
+            Ok(Ok(None)) => break,
+            Ok(Err(err)) => panic!("sse read failed: {err}"),
+            Err(_) => {}
+        }
+    }
+    assert!(
+        !body.contains(secret_phrase),
+        "non-member must not receive private room SSE payloads even when subscribed from `/` with a bearer"
+    );
 }
 
 #[tokio::test]
@@ -1083,7 +1316,9 @@ async fn test_post_redact_removes_garden_and_marks_thread() {
     .await;
     let ra_line = &rank_after["results"][0];
     assert_eq!(ra_line["ok"], true);
-    let comps = ra_line["result"]["GardenRank"]["components"].as_array().unwrap();
+    let comps = ra_line["result"]["GardenRank"]["components"]
+        .as_array()
+        .unwrap();
     assert!(
         comps.is_empty() || comps[0]["ranking"].as_array().unwrap().is_empty(),
         "votes from redacted post should be removed: {:?}",
@@ -1197,7 +1432,9 @@ async fn test_check_endpoint_does_not_commit() {
     let threads_body = rpc_batch(&client, addr, None, list_batch).await;
     let tline = &threads_body["results"][0];
     assert_eq!(tline["ok"], true);
-    let threads = tline["result"]["ForumThreads"]["threads"].as_array().unwrap();
+    let threads = tline["result"]["ForumThreads"]["threads"]
+        .as_array()
+        .unwrap();
     assert!(threads.is_empty());
 }
 
@@ -1246,7 +1483,11 @@ async fn test_garden_item_pair_matchup_include_threads() {
         .iter()
         .filter_map(|t| t.as_str())
         .collect();
-    assert!(threads.contains(&"sorting-hat"), "item threads should contain sorting-hat: {:?}", threads);
+    assert!(
+        threads.contains(&"sorting-hat"),
+        "item threads should contain sorting-hat: {:?}",
+        threads
+    );
 
     let pair_body = rpc_batch(
         &client,
@@ -1267,7 +1508,11 @@ async fn test_garden_item_pair_matchup_include_threads() {
         .iter()
         .filter_map(|t| t.as_str())
         .collect();
-    assert!(pair_threads.contains(&"sorting-hat"), "pair threads should contain sorting-hat: {:?}", pair_threads);
+    assert!(
+        pair_threads.contains(&"sorting-hat"),
+        "pair threads should contain sorting-hat: {:?}",
+        pair_threads
+    );
 
     let matchup_body = rpc_batch(
         &client,
@@ -1359,7 +1604,11 @@ async fn test_garden_pair_and_rank_path_not_found_consistent() {
     )
     .await;
     let pair2_line = &pair2["results"][0];
-    assert_eq!(pair2_line["ok"], true, "GetPair after parent materialized: {:?}", pair2_line);
+    assert_eq!(
+        pair2_line["ok"], true,
+        "GetPair after parent materialized: {:?}",
+        pair2_line
+    );
     assert!(pair2_line["result"]["Pair"].is_object());
 }
 
@@ -1420,7 +1669,11 @@ async fn test_view_counts_increment_and_display() {
         .send()
         .await
         .unwrap();
-    assert!(v1.status().is_success(), "vote compare GET 1: {}", v1.status());
+    assert!(
+        v1.status().is_success(),
+        "vote compare GET 1: {}",
+        v1.status()
+    );
     let v1_body = v1.text().await.unwrap();
     assert!(
         v1_body.contains("1 views"),
@@ -1432,7 +1685,11 @@ async fn test_view_counts_increment_and_display() {
         .send()
         .await
         .unwrap();
-    assert!(v2.status().is_success(), "vote compare GET 2: {}", v2.status());
+    assert!(
+        v2.status().is_success(),
+        "vote compare GET 2: {}",
+        v2.status()
+    );
     let v2_body = v2.text().await.unwrap();
     assert!(
         v2_body.contains("2 views"),
@@ -1506,13 +1763,18 @@ async fn test_rank_history() {
     let history = resp["history"].as_array().unwrap();
     assert_eq!(history.len(), 1, "one ingest → one history entry");
     let entry = &history[0];
-    assert_eq!(entry["scope_rank"], 1, "rust should be #1 in scope after first ingest");
-    assert_eq!(entry["scope_rank_delta"], 0, "delta is 0 on first appearance");
+    assert_eq!(
+        entry["scope_rank"], 1,
+        "rust should be #1 in scope after first ingest"
+    );
+    assert_eq!(
+        entry["scope_rank_delta"], 0,
+        "delta is 0 on first appearance"
+    );
     let caused_by = entry["caused_by"].as_array().unwrap();
     assert_eq!(caused_by.len(), 2, "both votes in the ingest touched rust");
     assert_eq!(
-        entry["thread_post_index"],
-        0,
+        entry["thread_post_index"], 0,
         "rank history links use same 0-based index as /t/hist-test/0"
     );
 
@@ -1540,16 +1802,16 @@ async fn test_rank_history() {
 
     let caused_by2 = hist2[1]["caused_by"].as_array().unwrap();
     assert_eq!(caused_by2.len(), 1);
-    assert!(caused_by2[0]["a"].as_str().unwrap().ends_with("python") ||
-            caused_by2[0]["b"].as_str().unwrap().ends_with("python"));
+    assert!(
+        caused_by2[0]["a"].as_str().unwrap().ends_with("python")
+            || caused_by2[0]["b"].as_str().unwrap().ends_with("python")
+    );
     assert_eq!(
-        hist2[0]["thread_post_index"],
-        0,
+        hist2[0]["thread_post_index"], 0,
         "first hist-test post is chronological index 0"
     );
     assert_eq!(
-        hist2[1]["thread_post_index"],
-        1,
+        hist2[1]["thread_post_index"], 1,
         "second ingest is chronological index 1"
     );
 
@@ -1605,12 +1867,27 @@ async fn pair_returns_connectivity_stats() {
     let pair = &pair_body["results"][0]["result"]["Pair"];
 
     let conn = &pair["connectivity"];
-    assert!(!conn.is_null(), "pair response should include connectivity stats");
+    assert!(
+        !conn.is_null(),
+        "pair response should include connectivity stats"
+    );
     assert_eq!(conn["items"].as_u64().unwrap(), 4, "4 items in scope");
-    assert_eq!(conn["components"].as_u64().unwrap(), 3, "3 components (1 connected + 2 isolates)");
-    assert_eq!(conn["comparisons_until_connected"].as_u64().unwrap(), 2, "need 2 more comparisons");
+    assert_eq!(
+        conn["components"].as_u64().unwrap(),
+        3,
+        "3 components (1 connected + 2 isolates)"
+    );
+    assert_eq!(
+        conn["comparisons_until_connected"].as_u64().unwrap(),
+        2,
+        "need 2 more comparisons"
+    );
     assert_eq!(conn["pairs_voted"].as_u64().unwrap(), 1, "1 pair voted");
-    assert_eq!(conn["pairs_possible"].as_u64().unwrap(), 6, "4*3/2 = 6 possible pairs");
+    assert_eq!(
+        conn["pairs_possible"].as_u64().unwrap(),
+        6,
+        "4*3/2 = 6 possible pairs"
+    );
 
     let doc2 = serde_json::json!([{
         "Post": {
@@ -1623,8 +1900,7 @@ async fn pair_returns_connectivity_stats() {
     }]);
     let resp2 = rpc_batch(&client, addr, Some(&test_bearer()), doc2).await;
     assert_eq!(
-        resp2["results"][0]["ok"],
-        true,
+        resp2["results"][0]["ok"], true,
         "second ingest failed: {:?}",
         resp2
     );
@@ -1643,8 +1919,19 @@ async fn pair_returns_connectivity_stats() {
     .await;
     let pair2 = &pair_body2["results"][0]["result"]["Pair"];
     let conn2 = &pair2["connectivity"];
-    assert_eq!(conn2["components"].as_u64().unwrap(), 2, "2 components after connecting c");
-    assert_eq!(conn2["comparisons_until_connected"].as_u64().unwrap(), 1, "1 more comparison to connect");
-    assert_eq!(conn2["pairs_voted"].as_u64().unwrap(), 2, "2 pairs voted now");
+    assert_eq!(
+        conn2["components"].as_u64().unwrap(),
+        2,
+        "2 components after connecting c"
+    );
+    assert_eq!(
+        conn2["comparisons_until_connected"].as_u64().unwrap(),
+        1,
+        "1 more comparison to connect"
+    );
+    assert_eq!(
+        conn2["pairs_voted"].as_u64().unwrap(),
+        2,
+        "2 pairs voted now"
+    );
 }
-

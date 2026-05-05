@@ -27,10 +27,11 @@ pub use forum::{
     thread_feed_html_for_room, thread_feed_region_markup, thread_post_view, thread_view, ThreadNav,
 };
 
+pub use forum::user_can_view_room;
 pub(crate) use forum::{
     fragment_new_thread_slot, login_to_post_hint_markup, room_members_section_markup,
     thread_ui_collapse_redacted_post, thread_ui_expand_post_full, thread_ui_expand_redacted_post,
-    user_can_post_room, user_can_view_room,
+    user_can_post_room,
 };
 pub use garden::{
     external_garden_index, external_ontology_path, garden_index, ontology_path,

@@ -3,7 +3,9 @@ use std::sync::Arc;
 
 use tokio::sync::{broadcast, mpsc, RwLock};
 
-use crate::{event_log::EventLog, events::ThreadCapability, reducer::ReducerState, write_cmd::WriteCmd};
+use crate::{
+    event_log::EventLog, events::ThreadCapability, reducer::ReducerState, write_cmd::WriteCmd,
+};
 
 /// Ephemeral invite link (24h TTL, in-memory only; not written to the event log).
 #[derive(Debug, Clone)]
@@ -24,7 +26,7 @@ pub struct PendingSession {
     pub provider_id: Option<String>,
     /// When set, successful OAuth completion redeems this invite token and appends [`crate::events::GrantAdded`].
     pub redeem_invite: Option<String>,
-    pub complete: Option<(String /*username*/, String /*bearer*/ )>,
+    pub complete: Option<(String /*username*/, String /*bearer*/)>,
 }
 
 /// An SSE event broadcast to all live stream subscribers when an ingest occurs.
@@ -36,6 +38,15 @@ pub struct StreamEvent {
     pub snippet: String,
 }
 
+/// Who may receive a [`JsSnippet`] over `/sse` (matches private-room HTML visibility).
+#[derive(Debug, Clone)]
+pub enum JsSnippetAudience {
+    /// Public forum + pages not tied to a specific room (home, `/t/…`, etc.).
+    Public,
+    /// Members with [`crate::events::ThreadCapability::View`] on this room (`short/slug` wire id).
+    RoomViewers(String),
+}
+
 /// JavaScript snippet broadcast to web SSE subscribers and `eval`'d client-side.
 #[derive(Debug, Clone)]
 pub struct JsSnippet {
@@ -43,6 +54,7 @@ pub struct JsSnippet {
     /// Only deliver to SSE streams whose subscribed path matches one of these prefixes.
     /// Empty means broadcast to all connected pages.
     pub path_prefixes: Vec<String>,
+    pub audience: JsSnippetAudience,
 }
 
 #[derive(Debug, Clone)]
@@ -97,4 +109,3 @@ impl AppState {
         }
     }
 }
-
