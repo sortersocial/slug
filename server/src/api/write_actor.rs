@@ -12,6 +12,7 @@ use crate::{
     identity::parse_agent,
     path_types::ItemId,
     reducer::{scope_from_room_wire, ReducerState, ScopeId},
+    resolver_sync::RESOLVER_PRINCIPAL,
     state::AppState,
     write_cmd::WriteCmd,
 };
@@ -422,6 +423,48 @@ pub async fn writer_actor(mut rx: mpsc::Receiver<WriteCmd>, state: AppState) {
                             web: web_url,
                         },
                     })
+                }
+                .await;
+                let _ = reply.send(out);
+            }
+
+            WriteCmd::ResolverIngest {
+                room,
+                thread_tag,
+                raw,
+                reply,
+            } => {
+                let out: Result<(), String> = async {
+                    let mut reduced = state.reduced.write().await;
+                    let (room_key, thread_id) = normalize_room_and_thread(&room, &thread_tag);
+                    let scope = scope_from_room_wire(&room_key);
+                    let is_private = !matches!(scope, ScopeId::Public);
+                    if is_private && !reduced.rooms.contains(&room_key) {
+                        return Err(format!("unknown room `{room_key}`"));
+                    }
+                    let v = validate_ingest_document(&reduced, &raw, &scope)
+                        .map_err(|(_, m, _)| m)?;
+                    let new_post_id = uuid::Uuid::new_v4().to_string();
+                    let ingest_event = Event::Ingest(Ingest {
+                        ts: v.ts,
+                        id: new_post_id,
+                        raw: v.raw_text,
+                        principal: RESOLVER_PRINCIPAL.to_string(),
+                        delegate: None,
+                        room_id: room_key.clone(),
+                        thread_tag: thread_id.clone(),
+                    });
+                    state
+                        .event_log
+                        .append(&ingest_event)
+                        .await
+                        .map_err(|e| format!("{e}"))?;
+                    reduced.apply_event(ingest_event);
+                    drop(reduced);
+                    use crate::canonical_path::canonicalize_tag;
+                    let thread_tag_canon = canonicalize_tag(&thread_id);
+                    broadcast_web_refresh(&state, &room_key, &thread_tag_canon).await;
+                    Ok(())
                 }
                 .await;
                 let _ = reply.send(out);

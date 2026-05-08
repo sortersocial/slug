@@ -55,6 +55,13 @@ pub enum WriteCmd {
         redeem_invite: Option<String>,
         reply: oneshot::Sender<Result<(), String>>,
     },
+    /// Synthetic ingest from a domain resolver (no user bearer; principal is fixed).
+    ResolverIngest {
+        room: String,
+        thread_tag: String,
+        raw: String,
+        reply: oneshot::Sender<Result<(), String>>,
+    },
     RedeemInvite {
         token: String,
         grantee_username: String,

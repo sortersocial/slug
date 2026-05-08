@@ -3,7 +3,8 @@ pub mod paths;
 pub mod api;
 pub mod canonical_path;
 pub mod dsl;
-pub mod external_resolver;
+pub mod domain_resolver;
+mod github_resolver;
 pub mod form_template;
 pub mod html;
 pub mod event_log;
@@ -13,18 +14,20 @@ pub mod middleware;
 pub mod path_types;
 pub mod ranking;
 pub mod reducer;
+pub mod resolver_sync;
 pub mod scope_rank;
 pub mod state;
 pub mod timeago;
 pub mod views;
 pub mod write_cmd;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use axum::Router;
-use tokio::sync::{broadcast, mpsc, RwLock};
+use tokio::sync::{broadcast, mpsc, Mutex, RwLock};
 
+use crate::domain_resolver::ResolverRegistry;
 use crate::state::{AppConfig, AppState};
 use crate::write_cmd::WriteCmd;
 use axum::routing::{get, post};
@@ -40,6 +43,7 @@ pub fn create_app_state(cfg: AppConfig) -> AppState {
     let (write_tx, write_rx) = mpsc::channel::<WriteCmd>(256);
     let views_path = format!("{}/views.json", cfg.data_dir);
     let views = crate::views::ViewStore::new(&views_path);
+    let resolver_registry = Arc::new(ResolverRegistry::from_env());
     let state = AppState {
         cfg: Arc::new(cfg),
         event_log: Arc::new(event_log),
@@ -50,6 +54,9 @@ pub fn create_app_state(cfg: AppConfig) -> AppState {
         js_tx,
         write_tx,
         views,
+        resolver_registry,
+        resolver_last_sync_ms: Arc::new(RwLock::new(HashMap::new())),
+        resolver_inflight: Arc::new(Mutex::new(HashSet::new())),
     };
     tokio::spawn(crate::api::write_actor::writer_actor(write_rx, state.clone()));
     state

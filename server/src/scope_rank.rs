@@ -146,8 +146,7 @@ pub fn build_rankings_for_item_set(content: &ContentState, items_in_scope: &[Ite
     }
 }
 
-/// Build connected-component rankings for direct children of parent_scope.
-/// Matches the HTML garden view: multiple components, isolates, no-vote items.
+/// Build connected-component rankings for direct children of `parent`.
 pub fn build_children_rankings(content: &ContentState, parent: &ItemId) -> ChildrenRankings {
     let parent = parent.clone().normalized_storage();
     let items: Vec<ItemId> = content
@@ -155,6 +154,14 @@ pub fn build_children_rankings(content: &ContentState, parent: &ItemId) -> Child
         .get(&parent)
         .map(|s| s.iter().cloned().collect())
         .unwrap_or_default();
+    build_rankings_for_item_set(content, &items)
+}
+
+/// Build rankings for descendants of `parent` up to `depth` levels (1 = direct children only).
+pub fn build_children_rankings_depth(content: &ContentState, parent: &ItemId, depth: usize) -> ChildrenRankings {
+    let depth = depth.max(1);
+    let parent = parent.clone().normalized_storage();
+    let items = resolve_scope_recursive(content, &[parent.to_string()], depth);
     build_rankings_for_item_set(content, &items)
 }
 

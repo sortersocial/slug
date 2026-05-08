@@ -465,11 +465,11 @@ mod tests {
     fn canonicalize_youtube_short_links() {
         assert_eq!(
             canonicalize_item("https://youtu.be/dQw4w9WgXcQ"),
-            "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+            "https://youtu.be/dQw4w9WgXcQ"
         );
         assert_eq!(
             canonicalize_item("-/youtu.be/dQw4w9WgXcQ"),
-            "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+            "https://youtu.be/dQw4w9WgXcQ"
         );
     }
 

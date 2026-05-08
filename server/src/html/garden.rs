@@ -20,7 +20,8 @@ use crate::{
     html::{JsBuilder, ui_action::UI_RPC_FIELD, user_can_post_room},
     path_types::ItemId,
     reducer::{ContentState, ReducerState, ScopeId},
-    scope_rank::{ChildrenRankings, build_children_rankings},
+    resolver_sync::maybe_spawn_resolver_import,
+    scope_rank::{ChildrenRankings, build_children_rankings, build_children_rankings_depth},
     state::AppState,
     timeago,
 };
@@ -249,6 +250,23 @@ fn item_display_path(item: &str) -> String {
     ItemId::parse(item)
         .map(|c| c.display_path())
         .unwrap_or_else(|| canonicalize_item(item))
+}
+
+/// `?depth=N` on garden scope pages: flatten descendant rankings up to N levels (default 1).
+fn garden_rank_depth(uri: &Uri) -> usize {
+    const MAX: usize = 12;
+    uri.query()
+        .and_then(|q| {
+            for pair in q.split('&') {
+                let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
+                if k == "depth" {
+                    return v.parse::<usize>().ok();
+                }
+            }
+            None
+        })
+        .unwrap_or(1)
+        .clamp(1, MAX)
 }
 
 /// Garden href for an item path string in this nav scope.
@@ -1018,13 +1036,14 @@ fn build_item_page_view_model(
     reduced: &crate::reducer::ReducerState,
     scope: &ScopeId,
     item: &str,
+    rank_depth: usize,
 ) -> ItemPageViewModel {
     let content = content_for_garden_view(reduced, scope);
     let item_key = ItemId::parse(item)
         .unwrap_or_else(|| ItemId::parse("~/").unwrap())
         .normalized_storage();
     let item_has_parent = item_key.parent().is_some();
-    let child_rankings = build_children_rankings(content, &item_key);
+    let child_rankings = build_children_rankings_depth(content, &item_key, rank_depth);
     let sibling_nav = build_sibling_nav(reduced, scope, &item_key);
 
     let rank_history = build_rank_history(reduced, scope, item_key.as_str());
@@ -1060,9 +1079,18 @@ async fn render_scope_view(
 ) -> axum::response::Response {
     let scope = nav.scope();
     let pin_ref = pinned_item_from_jar(&jar);
+    let rank_depth = garden_rank_depth(&uri);
     let reduced = state.reduced.read().await;
-    let model = build_item_page_view_model(&reduced, &scope, browse.item());
+    let model = build_item_page_view_model(&reduced, &scope, browse.item(), rank_depth);
     let scope_content = content_for_garden_view(&reduced, &scope);
+    let item_key_import =
+        ItemId::parse(&model.item).unwrap_or_else(|| ItemId::parse("~/").unwrap());
+    let child_count_import = scope_content
+        .item_children
+        .get(&item_key_import)
+        .map(|s| s.len())
+        .unwrap_or(0);
+    let import_display_path = item_display_path(&model.item);
     let thread_href = |tag: &str| nav.thread_url(tag);
     let external_empty_body = browse.is_external() && model.body.is_none();
     let cli_path_arg = item_display_path(&model.item);
@@ -1101,11 +1129,20 @@ async fn render_scope_view(
                         ))
                     }
                 } @else if external_empty_body {
+                    @let ext_url = model.item.as_str();
                     div class="ont-item-content ont-external-empty" {
                         p { "This is an external scope." }
-                        p class="muted" {
-                            button type="button" disabled { "Kick off an Agent Run to import and rank items" }
+                        p {
+                            a href=(ext_url) rel="noopener noreferrer" { "Open this URL in a new tab" }
                         }
+                        iframe
+                            class="ont-external-iframe"
+                            src=(ext_url)
+                            title="External page preview"
+                            sandbox="allow-same-origin allow-scripts allow-popups allow-popups-to-escape-sandbox"
+                            loading="lazy"
+                            {}
+                        p class="muted" { "Many sites block embedding; use the link if the frame is blank." }
                     }
                 } @else {
                     div class="ont-item-content" { p class="muted" { "no body yet" } }
@@ -1233,6 +1270,21 @@ async fn render_scope_view(
         Some(&garden_room),
         Some(&garden_prefix),
     );
+
+    drop(reduced);
+
+    if browse.is_external() {
+        if matches!(&item_key_import, ItemId::Web(_)) {
+            maybe_spawn_resolver_import(
+                state.clone(),
+                nav.room_wire.clone(),
+                item_key_import.clone().normalized_storage(),
+                import_display_path,
+                child_count_import,
+            )
+            .await;
+        }
+    }
 
     Html(page.into_string()).into_response()
 }
@@ -1516,7 +1568,7 @@ mod tests {
              ~/topic/b {beta}\n",
         );
 
-        let model = build_item_page_view_model(&reduced, &ScopeId::Public, "~/topic/a");
+        let model = build_item_page_view_model(&reduced, &ScopeId::Public, "~/topic/a", 1);
         assert_eq!(model.body.as_deref(), Some("alpha"));
         assert!(model.sibling_nav.is_some());
         assert!(model.child_rankings.component_rankings.is_empty());
@@ -1536,7 +1588,7 @@ mod tests {
              {a beats b}\n             ~/topic/a 2:1 ~/topic/b\n",
         );
 
-        let model = build_item_page_view_model(&reduced, &ScopeId::Public, "~/topic/a");
+        let model = build_item_page_view_model(&reduced, &ScopeId::Public, "~/topic/a", 1);
         let nav = model.sibling_nav.expect("expected sibling nav");
         assert_eq!(nav.groups.len(), 2);
         assert_eq!(nav.groups[0].links.len(), 2);
@@ -1558,7 +1610,7 @@ mod tests {
              {a beats b}\n             ~/topic/a 2:1 ~/topic/b\n",
         );
 
-        let model = build_item_page_view_model(&reduced, &ScopeId::Public, "~/topic/a");
+        let model = build_item_page_view_model(&reduced, &ScopeId::Public, "~/topic/a", 1);
         let nav = model.sibling_nav.expect("expected sibling nav");
         assert_eq!(nav.groups.len(), 3);
         assert_eq!(nav.groups[0].links.len(), 2);
@@ -1582,7 +1634,7 @@ mod tests {
              ~/topic/kid1/leaf {leaf}\n",
         );
 
-        let model = build_item_page_view_model(&reduced, &ScopeId::Public, "~/topic");
+        let model = build_item_page_view_model(&reduced, &ScopeId::Public, "~/topic", 1);
         assert_eq!(model.child_rankings.component_rankings.len(), 1);
         assert_eq!(model.child_rankings.component_rankings[0].pairs, 1);
         let names: Vec<&str> = model.child_rankings.component_rankings[0]
@@ -1625,6 +1677,7 @@ mod tests {
             &reduced,
             &ScopeId::Room("9ab12cd/my-room".to_string()),
             root.as_str(),
+            1,
         );
         assert!(!model.item_has_parent);
         assert_eq!(model.child_rankings.unranked_items.len(), 2);
@@ -1655,6 +1708,7 @@ mod tests {
             &reduced,
             &ScopeId::Room("9ab12cd/my-room".to_string()),
             root.as_str(),
+            1,
         );
         assert_eq!(model.child_rankings.component_rankings.len(), 1);
         assert_eq!(model.child_rankings.component_rankings[0].pairs, 1);
@@ -1680,7 +1734,7 @@ mod tests {
             "@00000000-0000-0000-0000-000000000000:test:local/test\n~/x {x}\n",
         );
         let model =
-            build_item_page_view_model(&reduced, &ScopeId::Public, "https://slug.social/~/");
+            build_item_page_view_model(&reduced, &ScopeId::Public, "https://slug.social/~/", 1);
         assert_eq!(model.child_rankings.unranked_items.len(), 1);
         assert_eq!(
             model.child_rankings.unranked_items[0].as_str(),

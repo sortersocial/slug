@@ -1,9 +1,12 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use tokio::sync::{broadcast, mpsc, RwLock};
+use tokio::sync::{broadcast, mpsc, Mutex, RwLock};
 
-use crate::{event_log::EventLog, events::ThreadCapability, reducer::ReducerState, write_cmd::WriteCmd};
+use crate::{
+    domain_resolver::ResolverRegistry, event_log::EventLog, events::ThreadCapability, reducer::ReducerState,
+    write_cmd::WriteCmd,
+};
 
 /// Ephemeral invite link (24h TTL, in-memory only; not written to the event log).
 #[derive(Debug, Clone)]
@@ -68,6 +71,11 @@ pub struct AppState {
     /// All durable writes and reducer mutations are serialized through this channel.
     pub write_tx: mpsc::Sender<WriteCmd>,
     pub views: crate::views::ViewStore,
+    /// Domain-specific external URL resolvers (GitHub, …).
+    pub resolver_registry: Arc<ResolverRegistry>,
+    /// Last successful resolver ingest per `room_wire|item_storage` (ephemeral).
+    pub resolver_last_sync_ms: Arc<RwLock<HashMap<String, i64>>>,
+    pub resolver_inflight: Arc<Mutex<HashSet<String>>>,
 }
 
 impl AppState {
@@ -84,6 +92,7 @@ impl AppState {
         let (js_tx, _) = broadcast::channel(64);
         let views_path = format!("{}/views.json", cfg.data_dir);
         let views = crate::views::ViewStore::new(&views_path);
+        let resolver_registry = Arc::new(ResolverRegistry::from_env());
         Self {
             cfg: Arc::new(cfg),
             event_log: Arc::new(event_log),
@@ -94,6 +103,9 @@ impl AppState {
             js_tx,
             write_tx,
             views,
+            resolver_registry,
+            resolver_last_sync_ms: Arc::new(RwLock::new(HashMap::new())),
+            resolver_inflight: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 }

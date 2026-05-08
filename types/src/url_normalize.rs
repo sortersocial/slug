@@ -2,7 +2,13 @@
 //!
 //! Policy (intentional, extend here as new domains need treatment):
 //! - Query pairs sorted lexicographically by **lowercased** key, then value.
-//! - YouTube family → stable `www.youtube.com` shapes where possible.
+//! - YouTube family → stable shapes: **standard videos** canonicalize to path-based
+//!   `https://youtu.be/{videoId}` (embed /v /watch?v= /m.youtube all fold there); **shorts** stay
+//!   `https://www.youtube.com/shorts/{id}`; `music.youtube.com` unchanged.
+//! - Fragments stripped (anchors are not distinct resources for identity).
+//! - Known tracking and pagination query params removed (resolver-specific rules can re-add).
+//! - `http://` upgraded to `https://` for stable keys (opt-out via resolver `normalize` if needed).
+//! - `twitter.com` / `www.twitter.com` → `x.com` (canonical X host).
 
 use url::Url;
 
@@ -23,9 +29,76 @@ pub fn normalize_http_identity_url(s: &str) -> Option<String> {
     if !matches!(u.scheme(), "http" | "https") {
         return None;
     }
+    if u.scheme() == "http" {
+        let _ = u.set_scheme("https").ok()?;
+    }
+    rewrite_twitter_host(&mut u);
     rewrite_youtube(&mut u);
+    strip_fragment(&mut u);
+    strip_noise_query_params(&mut u);
+    strip_trailing_path_slash(&mut u);
     sort_query_pairs(&mut u);
     Some(u.to_string())
+}
+
+fn rewrite_twitter_host(u: &mut Url) {
+    let Some(host_raw) = u.host_str() else {
+        return;
+    };
+    let h = host_raw.trim().to_ascii_lowercase();
+    let base = h.strip_prefix("www.").unwrap_or(h.as_str());
+    if base == "twitter.com" {
+        let _ = u.set_host(Some("x.com"));
+    }
+}
+
+fn strip_fragment(u: &mut Url) {
+    u.set_fragment(None);
+}
+
+/// Drop trailing `/` on non-root paths (`…/repo/` → `…/repo`).
+fn strip_trailing_path_slash(u: &mut Url) {
+    let path = u.path().to_string();
+    if path.len() > 1 && path.ends_with('/') {
+        u.set_path(path.trim_end_matches('/'));
+    }
+}
+
+fn strip_noise_query_params(u: &mut Url) {
+    let pairs: Vec<(String, String)> = u.query_pairs().into_owned().collect();
+    if pairs.is_empty() {
+        return;
+    }
+    let drop_key = |k: &str| {
+        let kl = k.to_ascii_lowercase();
+        matches!(
+            kl.as_str(),
+            "utm_source"
+                | "utm_medium"
+                | "utm_campaign"
+                | "utm_term"
+                | "utm_content"
+                | "fbclid"
+                | "gclid"
+                | "ref"
+                | "ref_src"
+                | "ref_cta"
+                | "ref_loc"
+                | "si"
+        ) || matches!(
+            kl.as_str(),
+            "page" | "per_page" | "offset" | "limit" | "cursor" | "after" | "before"
+        )
+    };
+    let kept: Vec<(String, String)> = pairs.into_iter().filter(|(k, _)| !drop_key(k)).collect();
+    u.set_query(None);
+    if kept.is_empty() {
+        return;
+    }
+    let mut q = u.query_pairs_mut();
+    for (k, v) in kept {
+        q.append_pair(&k, &v);
+    }
 }
 
 fn base_host(host: &str) -> String {
@@ -34,6 +107,22 @@ fn base_host(host: &str) -> String {
         .strip_prefix("www.")
         .unwrap_or(lower.as_str())
         .to_string()
+}
+
+fn merge_youtube_query_except_v(target: &mut Url, saved: &[(String, String)]) {
+    let extra: Vec<(String, String)> = saved
+        .iter()
+        .filter(|(k, _)| !k.eq_ignore_ascii_case("v"))
+        .cloned()
+        .collect();
+    target.set_query(None);
+    if extra.is_empty() {
+        return;
+    }
+    let mut q = target.query_pairs_mut();
+    for (k, v) in extra {
+        q.append_pair(&k, &v);
+    }
 }
 
 fn rewrite_youtube(u: &mut Url) {
@@ -50,23 +139,15 @@ fn rewrite_youtube(u: &mut Url) {
                 return;
             }
             let saved: Vec<(String, String)> = u.query_pairs().into_owned().collect();
-            let Ok(mut out) = Url::parse(&format!("https://www.youtube.com/watch?v={id}")) else {
+            let Ok(mut out) = Url::parse(&format!("https://youtu.be/{id}")) else {
                 return;
             };
-            {
-                let mut q = out.query_pairs_mut();
-                for (k, v) in saved {
-                    if k.eq_ignore_ascii_case("v") {
-                        continue;
-                    }
-                    q.append_pair(&k, &v);
-                }
-            }
+            merge_youtube_query_except_v(&mut out, &saved);
             *u = out;
         }
         "youtube.com" | "m.youtube.com" => {
             if base == "m.youtube.com" {
-                let _ = u.set_host(Some("www.youtube.com"));
+                let _ = u.set_host(Some("youtube.com"));
             }
             if path.starts_with("/embed/") {
                 let id = path
@@ -81,19 +162,10 @@ fn rewrite_youtube(u: &mut Url) {
                     return;
                 }
                 let saved: Vec<(String, String)> = u.query_pairs().into_owned().collect();
-                let Ok(mut out) = Url::parse(&format!("https://www.youtube.com/watch?v={id}"))
-                else {
+                let Ok(mut out) = Url::parse(&format!("https://youtu.be/{id}")) else {
                     return;
                 };
-                {
-                    let mut q = out.query_pairs_mut();
-                    for (k, v) in saved {
-                        if k.eq_ignore_ascii_case("v") {
-                            continue;
-                        }
-                        q.append_pair(&k, &v);
-                    }
-                }
+                merge_youtube_query_except_v(&mut out, &saved);
                 *u = out;
                 return;
             }
@@ -110,23 +182,28 @@ fn rewrite_youtube(u: &mut Url) {
                     return;
                 }
                 let saved: Vec<(String, String)> = u.query_pairs().into_owned().collect();
-                let Ok(mut out) = Url::parse(&format!("https://www.youtube.com/watch?v={id}"))
-                else {
+                let Ok(mut out) = Url::parse(&format!("https://youtu.be/{id}")) else {
                     return;
                 };
-                {
-                    let mut q = out.query_pairs_mut();
-                    for (k, v) in saved {
-                        if k.eq_ignore_ascii_case("v") {
-                            continue;
-                        }
-                        q.append_pair(&k, &v);
-                    }
-                }
+                merge_youtube_query_except_v(&mut out, &saved);
                 *u = out;
                 return;
             }
             if path.starts_with("/watch") {
+                let saved: Vec<(String, String)> = u.query_pairs().into_owned().collect();
+                let v_val = saved
+                    .iter()
+                    .find(|(k, _)| k.eq_ignore_ascii_case("v"))
+                    .map(|(_, v)| v.clone())
+                    .filter(|s| !s.is_empty());
+                if let Some(id) = v_val {
+                    let Ok(mut out) = Url::parse(&format!("https://youtu.be/{id}")) else {
+                        return;
+                    };
+                    merge_youtube_query_except_v(&mut out, &saved);
+                    *u = out;
+                    return;
+                }
                 let _ = u.set_host(Some("www.youtube.com"));
                 return;
             }
@@ -189,30 +266,30 @@ mod tests {
     use super::*;
 
     #[test]
-    fn youtube_youtu_be_to_watch() {
+    fn youtube_youtu_be_canonical_path() {
         assert_eq!(
             normalize_http_identity_url("https://youtu.be/dQw4w9WgXcQ").as_deref(),
-            Some("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+            Some("https://youtu.be/dQw4w9WgXcQ")
         );
     }
 
     #[test]
-    fn youtube_watch_query_sorted() {
+    fn youtube_watch_folds_to_youtu_be_with_sorted_extra_query() {
         assert_eq!(
             normalize_http_identity_url("https://youtube.com/watch?v=Z&a=1&b=2").as_deref(),
-            Some("https://www.youtube.com/watch?a=1&b=2&v=Z")
+            Some("https://youtu.be/Z?a=1&b=2")
         );
         assert_eq!(
             normalize_http_identity_url("https://youtube.com/watch?b=2&a=1&v=Z").as_deref(),
-            Some("https://www.youtube.com/watch?a=1&b=2&v=Z")
+            Some("https://youtu.be/Z?a=1&b=2")
         );
     }
 
     #[test]
-    fn youtube_embed_to_watch() {
+    fn youtube_embed_folds_to_youtu_be() {
         assert_eq!(
             normalize_http_identity_url("https://www.youtube.com/embed/dQw4w9WgXcQ").as_deref(),
-            Some("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+            Some("https://youtu.be/dQw4w9WgXcQ")
         );
     }
 
@@ -229,6 +306,53 @@ mod tests {
         assert_eq!(
             normalize_http_identity_url("https://example.com/x?z=1&a=2").as_deref(),
             Some("https://example.com/x?a=2&z=1")
+        );
+    }
+
+    #[test]
+    fn strips_fragment_for_identity() {
+        assert_eq!(
+            normalize_http_identity_url("https://github.com/a/b/c#issue-1").as_deref(),
+            Some("https://github.com/a/b/c")
+        );
+    }
+
+    #[test]
+    fn strips_tracking_and_pagination_params() {
+        assert_eq!(
+            normalize_http_identity_url(
+                "https://example.com/p?utm_source=x&page=2&fbclid=1&keep=9"
+            )
+            .as_deref(),
+            Some("https://example.com/p?keep=9")
+        );
+    }
+
+    #[test]
+    fn twitter_host_rewrites_to_x() {
+        assert_eq!(
+            normalize_http_identity_url("https://twitter.com/user/status/123").as_deref(),
+            Some("https://x.com/user/status/123")
+        );
+        assert_eq!(
+            normalize_http_identity_url("https://www.twitter.com/a/b").as_deref(),
+            Some("https://x.com/a/b")
+        );
+    }
+
+    #[test]
+    fn http_scheme_upgrades_to_https() {
+        assert_eq!(
+            normalize_http_identity_url("http://example.com/foo").as_deref(),
+            Some("https://example.com/foo")
+        );
+    }
+
+    #[test]
+    fn strips_trailing_slash_on_path() {
+        assert_eq!(
+            normalize_http_identity_url("https://github.com/org/repo/").as_deref(),
+            Some("https://github.com/org/repo")
         );
     }
 }
