@@ -361,13 +361,14 @@ mod tests {
             SLUG_TILDE_ONTOLOGY_ROOT.to_string()
         );
         assert_eq!(
-            ItemId::parse("https://slug.social/~/")
-                .unwrap()
-                .as_str(),
+            ItemId::parse("https://slug.social/~/").unwrap().as_str(),
             SLUG_TILDE_ONTOLOGY_ROOT
         );
         let legacy = ItemId::opaque("https://slug.social/~/".to_string());
-        assert_eq!(legacy.normalized_storage().as_str(), SLUG_TILDE_ONTOLOGY_ROOT);
+        assert_eq!(
+            legacy.normalized_storage().as_str(),
+            SLUG_TILDE_ONTOLOGY_ROOT
+        );
     }
 
     #[test]
@@ -423,7 +424,8 @@ mod tests {
     #[test]
     fn garden_private_room_prefixes_ontology() {
         assert_eq!(
-            GardenItemUrl::from_storage_str("https://slug.social/~/topic/x", "9ab12cd/my-room").as_str(),
+            GardenItemUrl::from_storage_str("https://slug.social/~/topic/x", "9ab12cd/my-room")
+                .as_str(),
             "https://slug.social/r/9ab12cdmy-room/~/topic/x"
         );
     }
@@ -465,11 +467,11 @@ mod tests {
     fn canonicalize_youtube_short_links() {
         assert_eq!(
             canonicalize_item("https://youtu.be/dQw4w9WgXcQ"),
-            "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+            "https://youtu.be/dQw4w9WgXcQ"
         );
         assert_eq!(
             canonicalize_item("-/youtu.be/dQw4w9WgXcQ"),
-            "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+            "https://youtu.be/dQw4w9WgXcQ"
         );
     }
 
@@ -487,14 +489,14 @@ mod tests {
     }
 
     #[test]
-    fn canonicalize_external_url_strips_fragment_and_tracking_params() {
+    fn canonicalize_external_url_strips_fragment_and_query_params() {
         assert_eq!(
             canonicalize_item("https://example.com/path?utm_source=newsletter&b=2#section"),
-            "https://example.com/path?b=2"
+            "https://example.com/path"
         );
         assert_eq!(
             canonicalize_item("-/example.com/path?FbClId=abc&a=1"),
-            "https://example.com/path?a=1"
+            "https://example.com/path"
         );
     }
 
@@ -509,10 +511,7 @@ mod tests {
     #[test]
     fn item_id_parent_external_strips_last_segment() {
         let c = ItemId::parse("https://spotify.com/track/1").unwrap();
-        assert_eq!(
-            c.parent().unwrap().as_str(),
-            "https://spotify.com/track"
-        );
+        assert_eq!(c.parent().unwrap().as_str(), "https://spotify.com/track");
         assert_eq!(
             ItemId::parse("https://github.com/iss/1")
                 .unwrap()
@@ -521,7 +520,10 @@ mod tests {
                 .as_str(),
             "https://github.com/iss"
         );
-        assert!(ItemId::parse("https://github.com").unwrap().parent().is_none());
+        assert!(ItemId::parse("https://github.com")
+            .unwrap()
+            .parent()
+            .is_none());
     }
 
     #[test]

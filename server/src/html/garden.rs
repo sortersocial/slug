@@ -9,14 +9,14 @@ use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashSet;
 
-use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD as B64_ENGINE};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD as B64_ENGINE, Engine as _};
 
 use crate::{
     api::optional_principal,
     canonical_path::{canonicalize_item, canonicalize_tag},
     events::ThreadCapability,
     form_template::template_json_compact,
-    html::{JsBuilder, ui_action::UI_RPC_FIELD, user_can_post_room},
+    html::{ui_action::UI_RPC_FIELD, user_can_post_room, JsBuilder},
     middleware::canonical_view_url,
     path_types::ItemId,
     reducer::{ContentState, ReducerState, ScopeId},
@@ -131,7 +131,11 @@ fn left_share_normalized(ratio_left: i32, ratio_right: i32) -> f64 {
     let l = ratio_left.max(0) as f64;
     let r = ratio_right.max(0) as f64;
     let sum = l + r;
-    if sum <= 0.0 { 0.5 } else { l / sum }
+    if sum <= 0.0 {
+        0.5
+    } else {
+        l / sum
+    }
 }
 
 /// Stronger preference for **`page_left` first**; ties **newer first**.
@@ -1079,6 +1083,30 @@ fn child_depth_from_uri(uri: &Uri) -> usize {
         .clamp(1, 5)
 }
 
+fn external_source_href(item: &str) -> String {
+    let Ok(mut url) = url::Url::parse(item) else {
+        return item.to_string();
+    };
+    let is_youtube = url
+        .host_str()
+        .map(|h| h.eq_ignore_ascii_case("www.youtube.com"))
+        .unwrap_or(false);
+    if is_youtube {
+        let segments: Vec<String> = url
+            .path_segments()
+            .map(|s| s.map(|seg| seg.to_string()).collect())
+            .unwrap_or_default();
+        if segments.len() == 3 && segments[0] == "watch" && segments[1] == "v" {
+            let id = segments[2].clone();
+            url.set_path("/watch");
+            url.set_query(None);
+            url.query_pairs_mut().append_pair("v", &id);
+            return url.to_string();
+        }
+    }
+    item.to_string()
+}
+
 async fn render_scope_view(
     state: AppState,
     browse: GardenBrowsePath,
@@ -1095,6 +1123,7 @@ async fn render_scope_view(
     let thread_href = |tag: &str| nav.thread_url(tag);
     let external_empty_body = browse.is_external() && model.body.is_none();
     let cli_path_arg = item_display_path(&model.item);
+    let external_href = external_source_href(&model.item);
     let (garden_room, garden_prefix) = garden_layout_meta(&nav);
     let next_for_pin = uri
         .path_and_query()
@@ -1136,14 +1165,14 @@ async fn render_scope_view(
                             "Open the source page while this scope has no imported body yet."
                         }
                         p {
-                            a href=(model.item.as_str()) target="_blank" rel="noopener noreferrer" {
+                            a href=(external_href.as_str()) target="_blank" rel="noopener noreferrer" {
                                 "Open external URL"
                             }
                         }
                         p class="muted" { "Best-effort embedded preview:" }
                         iframe
                             class="ont-external-frame"
-                            src=(model.item.as_str())
+                            src=(external_href.as_str())
                             sandbox=""
                             loading="lazy"
                             referrerpolicy="no-referrer"
@@ -1761,5 +1790,17 @@ mod tests {
         assert!(items.contains("https://slug.social/~/topic/a"));
         assert!(items.contains("https://slug.social/~/topic/a/leaf"));
         assert!(items.contains("https://slug.social/~/topic/b"));
+    }
+
+    #[test]
+    fn external_source_href_maps_youtube_path_identity_back_to_watch_url() {
+        assert_eq!(
+            external_source_href("https://www.youtube.com/watch/v/dQw4w9WgXcQ"),
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+        );
+        assert_eq!(
+            external_source_href("https://github.com/sortersocial/slug"),
+            "https://github.com/sortersocial/slug"
+        );
     }
 }
