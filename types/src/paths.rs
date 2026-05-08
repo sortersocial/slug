@@ -487,6 +487,26 @@ mod tests {
     }
 
     #[test]
+    fn canonicalize_external_url_strips_fragment_and_tracking_params() {
+        assert_eq!(
+            canonicalize_item("https://example.com/path?utm_source=newsletter&b=2#section"),
+            "https://example.com/path?b=2"
+        );
+        assert_eq!(
+            canonicalize_item("-/example.com/path?FbClId=abc&a=1"),
+            "https://example.com/path?a=1"
+        );
+    }
+
+    #[test]
+    fn canonicalize_github_external_url_normalizes_repo_identity() {
+        assert_eq!(
+            canonicalize_item("https://github.com/ORG/REPO.git?tab=issues&q=is%3Aopen"),
+            "https://github.com/org/repo"
+        );
+    }
+
+    #[test]
     fn item_id_parent_external_strips_last_segment() {
         let c = ItemId::parse("https://spotify.com/track/1").unwrap();
         assert_eq!(

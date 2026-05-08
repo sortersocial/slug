@@ -2,6 +2,7 @@
 //!
 //! Policy (intentional, extend here as new domains need treatment):
 //! - Query pairs sorted lexicographically by **lowercased** key, then value.
+//! - Tracking/noise query pairs and fragments are stripped from identity.
 //! - YouTube family → stable `www.youtube.com` shapes where possible.
 
 use url::Url;
@@ -23,8 +24,10 @@ pub fn normalize_http_identity_url(s: &str) -> Option<String> {
     if !matches!(u.scheme(), "http" | "https") {
         return None;
     }
+    u.set_fragment(None);
     rewrite_youtube(&mut u);
-    sort_query_pairs(&mut u);
+    normalize_github(&mut u);
+    normalize_query_pairs(&mut u);
     Some(u.to_string())
 }
 
@@ -163,8 +166,58 @@ fn rewrite_youtube(u: &mut Url) {
     }
 }
 
-fn sort_query_pairs(u: &mut Url) {
-    let pairs: Vec<(String, String)> = u.query_pairs().into_owned().collect();
+fn normalize_github(u: &mut Url) {
+    let Some(host_raw) = u.host_str() else {
+        return;
+    };
+    if host_raw.to_ascii_lowercase() != "github.com" {
+        return;
+    }
+
+    let Some(segments) = u.path_segments() else {
+        return;
+    };
+    let mut segments: Vec<String> = segments
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_ascii_lowercase())
+        .collect();
+    if let Some(repo) = segments.get_mut(1) {
+        if let Some(stripped) = repo.strip_suffix(".git") {
+            *repo = stripped.to_string();
+        }
+    }
+
+    if segments.is_empty() {
+        u.set_path("/");
+    } else {
+        u.set_path(&format!("/{}", segments.join("/")));
+    }
+}
+
+fn is_tracking_query_key(key: &str) -> bool {
+    let key = key.to_ascii_lowercase();
+    key.starts_with("utm_")
+        || matches!(
+            key.as_str(),
+            "fbclid" | "gclid" | "ref" | "ref_src" | "ref_cta" | "ref_loc" | "si"
+        )
+}
+
+fn is_domain_noise_query_key(host: Option<&str>, key: &str) -> bool {
+    let key = key.to_ascii_lowercase();
+    matches!(host, Some(host) if host.eq_ignore_ascii_case("github.com"))
+        && matches!(key.as_str(), "tab" | "q")
+}
+
+fn normalize_query_pairs(u: &mut Url) {
+    let host = u.host_str().map(|s| s.to_string());
+    let pairs: Vec<(String, String)> = u
+        .query_pairs()
+        .into_owned()
+        .filter(|(k, _)| {
+            !is_tracking_query_key(k) && !is_domain_noise_query_key(host.as_deref(), k)
+        })
+        .collect();
     if pairs.is_empty() {
         u.set_query(None);
         return;
@@ -229,6 +282,52 @@ mod tests {
         assert_eq!(
             normalize_http_identity_url("https://example.com/x?z=1&a=2").as_deref(),
             Some("https://example.com/x?a=2&z=1")
+        );
+    }
+
+    #[test]
+    fn fragment_is_stripped_from_identity() {
+        assert_eq!(
+            normalize_http_identity_url("https://example.com/path?b=2#a-section").as_deref(),
+            Some("https://example.com/path?b=2")
+        );
+    }
+
+    #[test]
+    fn tracking_query_params_are_stripped_case_insensitively() {
+        assert_eq!(
+            normalize_http_identity_url(
+                "https://example.com/x?z=1&utm_source=newsletter&FbClId=abc&ref=share&a=2"
+            )
+            .as_deref(),
+            Some("https://example.com/x?a=2&z=1")
+        );
+    }
+
+    #[test]
+    fn stripping_tracking_params_removes_empty_query() {
+        assert_eq!(
+            normalize_http_identity_url("https://example.com/x?utm_medium=email&si=share")
+                .as_deref(),
+            Some("https://example.com/x")
+        );
+    }
+
+    #[test]
+    fn youtube_identity_query_survives_tracking_cleanup() {
+        assert_eq!(
+            normalize_http_identity_url("https://youtu.be/dQw4w9WgXcQ?si=share&v=ignored&t=12")
+                .as_deref(),
+            Some("https://www.youtube.com/watch?t=12&v=dQw4w9WgXcQ")
+        );
+    }
+
+    #[test]
+    fn github_repo_suffix_and_noise_query_are_normalized() {
+        assert_eq!(
+            normalize_http_identity_url("https://github.com/ORG/REPO.git?tab=readme&q=is%3Aopen")
+                .as_deref(),
+            Some("https://github.com/org/repo")
         );
     }
 }
