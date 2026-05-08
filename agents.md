@@ -55,6 +55,7 @@ Strict **CSP** that blocks `eval` would break the current app. Other projects ma
 | Ingests, grants, rooms, identity tokens, agent binds, redactions, etc. | **JSONL** | Appended in `server/src/api/rpc.rs`, `server/src/api/auth.rs` (and related paths) before updating `ReducerState` |
 | **`RoomMintInvite` links** | **RAM only** | `AppState.invites` — not appended as `InviteMinted` today; **lost on restart** (`server/src/state.rs`, `server/src/api/rpc.rs`). Event types `InviteMinted` / `InviteRedeemed` exist for replay and a possible future persisted mint (`server/src/reducer.rs`). |
 | **OAuth / pending sessions** | **RAM only** | `AppState.pending_sessions` (`server/src/state.rs`, `server/src/api/auth.rs`) |
+| **External resolver cooldowns** | **RAM only** | `AppState.resolver_runs` — debounce/rate-limit guard for on-demand resolver buttons. Resolver results themselves are durable synthetic `Ingest` events in `events.jsonl`. |
 | **Reducer projection** | **Derived** | Rebuilt from log on startup; not separately persisted |
 
 If you add a new ephemeral map or start persisting something that was RAM-only, **update this table and the code comments** (`server/src/state.rs` is a good anchor).

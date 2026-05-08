@@ -66,10 +66,17 @@ pub enum HtmlUiAction {
         #[serde(default = "default_ui_form_action")]
         form_action: String,
     },
-    /// Author redacts own post via `POST /ui`.
-    RedactPost {
-        post_id: String,
+    /// Resolve children or siblings for an external garden item.
+    ResolveExternal {
+        room_wire: String,
+        item_storage: String,
+        mode: String,
+        next: String,
+        #[serde(default = "default_ui_form_action")]
+        form_action: String,
     },
+    /// Author redacts own post via `POST /ui`.
+    RedactPost { post_id: String },
     /// Morph `#room-members-section` — members list open or collapsed (server-rendered).
     SetRoomMembersExpanded {
         room_wire: String,
@@ -77,9 +84,7 @@ pub enum HtmlUiAction {
         expanded: bool,
     },
     /// Delete the private room (Manage only); redirects to `/` on success.
-    DeleteRoom {
-        room: String,
-    },
+    DeleteRoom { room: String },
     /// Morph `#new-thread-ui-slot` inner — compose open or collapsed (`room_wire: "public"` for home).
     SetNewThreadComposeExpanded {
         room_wire: String,
@@ -117,13 +122,14 @@ pub enum HtmlUiParseError {
 }
 
 /// Parse `__rpc__` JSON, apply `$form` holes from the rest of the form map, deserialize.
-pub fn parse_html_ui_from_form(form: &HashMap<String, String>) -> Result<HtmlUiAction, HtmlUiParseError> {
-    let template = form
-        .get(UI_RPC_FIELD)
-        .ok_or(HtmlUiParseError::MissingRpc)?;
+pub fn parse_html_ui_from_form(
+    form: &HashMap<String, String>,
+) -> Result<HtmlUiAction, HtmlUiParseError> {
+    let template = form.get(UI_RPC_FIELD).ok_or(HtmlUiParseError::MissingRpc)?;
     let mut hole_map = form.clone();
     hole_map.remove(UI_RPC_FIELD);
-    let v: Value = fill_template_from_form(template, &hole_map).map_err(HtmlUiParseError::Template)?;
+    let v: Value =
+        fill_template_from_form(template, &hole_map).map_err(HtmlUiParseError::Template)?;
     serde_json::from_value(v).map_err(HtmlUiParseError::Action)
 }
 

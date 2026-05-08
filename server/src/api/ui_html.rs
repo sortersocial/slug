@@ -18,14 +18,15 @@ use crate::{
         rpc::{rpc_post_redact, rpc_post_with_bearer, rpc_room_delete},
     },
     canonical_path::canonicalize_tag,
-    html::{
-        fragment_new_thread_slot, login_to_post_hint_markup,
-        parse_html_ui_from_form, room_members_section_markup, thread_feed_html,
-        thread_feed_html_for_room, thread_feed_region_markup, thread_ui_collapse_redacted_post,
-        thread_ui_expand_post_full, thread_ui_expand_redacted_post, ui_js_warn, user_can_post_room,
-        user_can_view_room, HtmlUiAction, JsBuilder, ThreadNav,
-    },
+    external_resolver::resolve_github_children,
     html::vote_compare_post_success_js,
+    html::{
+        fragment_new_thread_slot, login_to_post_hint_markup, parse_html_ui_from_form,
+        room_members_section_markup, thread_feed_html, thread_feed_html_for_room,
+        thread_feed_region_markup, thread_ui_collapse_redacted_post, thread_ui_expand_post_full,
+        thread_ui_expand_redacted_post, ui_js_warn, user_can_post_room, user_can_view_room,
+        HtmlUiAction, JsBuilder, ThreadNav,
+    },
     reducer::{scope_from_room_wire, ScopeId},
     state::AppState,
 };
@@ -104,26 +105,35 @@ async fn dispatch_ui_action(
                 )
                 .into_response();
             }
-            match rpc_post_with_bearer(state, &session.bearer, room.clone(), thread_tag.clone(), text).await {
-                Ok(RpcResult::PostOk { .. }) => {
-                    post_success_response(
-                        state,
-                        &room,
-                        &thread_tag,
-                        error_target.as_ref(),
-                        form_id.as_ref(),
-                        Some(session.username.as_str()),
-                    )
-                    .await
-                    .into_response()
-                }
+            match rpc_post_with_bearer(
+                state,
+                &session.bearer,
+                room.clone(),
+                thread_tag.clone(),
+                text,
+            )
+            .await
+            {
+                Ok(RpcResult::PostOk { .. }) => post_success_response(
+                    state,
+                    &room,
+                    &thread_tag,
+                    error_target.as_ref(),
+                    form_id.as_ref(),
+                    Some(session.username.as_str()),
+                )
+                .await
+                .into_response(),
                 Ok(_) => form_js_error(
                     error_target.as_ref(),
                     "unexpected response",
                     "Post did not return PostOk.",
                 )
                 .into_response(),
-                Err((msg, hint)) => form_js_error(error_target.as_ref(), &msg, hint.as_deref().unwrap_or("")).into_response(),
+                Err((msg, hint)) => {
+                    form_js_error(error_target.as_ref(), &msg, hint.as_deref().unwrap_or(""))
+                        .into_response()
+                }
             }
         }
         HtmlUiAction::CheckIngest {
@@ -150,9 +160,19 @@ async fn dispatch_ui_action(
                 return js_clear_errors(&form_error_target(error_target.as_ref())).into_response();
             }
             match rpc_check_with_bearer(state, &session.bearer, room, text.clone()).await {
-                Ok(RpcResult::CheckOk { .. }) => js_clear_errors(&form_error_target(error_target.as_ref())).into_response(),
-                Ok(_) => form_js_error(error_target.as_ref(), "unexpected response", "Check did not return CheckOk.").into_response(),
-                Err((msg, hint)) => form_js_error(error_target.as_ref(), &msg, hint.as_deref().unwrap_or("")).into_response(),
+                Ok(RpcResult::CheckOk { .. }) => {
+                    js_clear_errors(&form_error_target(error_target.as_ref())).into_response()
+                }
+                Ok(_) => form_js_error(
+                    error_target.as_ref(),
+                    "unexpected response",
+                    "Check did not return CheckOk.",
+                )
+                .into_response(),
+                Err((msg, hint)) => {
+                    form_js_error(error_target.as_ref(), &msg, hint.as_deref().unwrap_or(""))
+                        .into_response()
+                }
             }
         }
         HtmlUiAction::VoteComparePost {
@@ -167,7 +187,11 @@ async fn dispatch_ui_action(
             form_action,
         } => {
             if form_action != "/ui" {
-                return (StatusCode::BAD_REQUEST, "invalid vote_compare_post form_action").into_response();
+                return (
+                    StatusCode::BAD_REQUEST,
+                    "invalid vote_compare_post form_action",
+                )
+                    .into_response();
             }
             let Some(session) = session else {
                 return js_redirect("/login").into_response();
@@ -195,23 +219,15 @@ async fn dispatch_ui_action(
             let left_id = match crate::path_types::ItemId::parse(left_item.trim()) {
                 Some(i) => i.normalized_storage(),
                 None => {
-                    return form_js_error(
-                        err_tgt.as_ref(),
-                        "bad item",
-                        "Invalid left item path.",
-                    )
-                    .into_response();
+                    return form_js_error(err_tgt.as_ref(), "bad item", "Invalid left item path.")
+                        .into_response();
                 }
             };
             let right_id = match crate::path_types::ItemId::parse(right_item.trim()) {
                 Some(i) => i.normalized_storage(),
                 None => {
-                    return form_js_error(
-                        err_tgt.as_ref(),
-                        "bad item",
-                        "Invalid right item path.",
-                    )
-                    .into_response();
+                    return form_js_error(err_tgt.as_ref(), "bad item", "Invalid right item path.")
+                        .into_response();
                 }
             };
             let mut rl = ratio_left.trim().parse::<i32>().unwrap_or(0).max(0);
@@ -231,7 +247,15 @@ async fn dispatch_ui_action(
                 right_id.as_str()
             );
 
-            match rpc_post_with_bearer(state, &session.bearer, room.clone(), thread_tag.clone(), text).await {
+            match rpc_post_with_bearer(
+                state,
+                &session.bearer,
+                room.clone(),
+                thread_tag.clone(),
+                text,
+            )
+            .await
+            {
                 Ok(RpcResult::PostOk {
                     post_id,
                     post_index,
@@ -277,7 +301,10 @@ async fn dispatch_ui_action(
                     "Post did not return PostOk.",
                 )
                 .into_response(),
-                Err((msg, hint)) => form_js_error(err_tgt.as_ref(), &msg, hint.as_deref().unwrap_or("")).into_response(),
+                Err((msg, hint)) => {
+                    form_js_error(err_tgt.as_ref(), &msg, hint.as_deref().unwrap_or(""))
+                        .into_response()
+                }
             }
         }
         HtmlUiAction::SetGardenPin {
@@ -288,7 +315,11 @@ async fn dispatch_ui_action(
             form_action,
         } => {
             if form_action != "/ui" {
-                return (StatusCode::BAD_REQUEST, "invalid set_garden_pin form_action").into_response();
+                return (
+                    StatusCode::BAD_REQUEST,
+                    "invalid set_garden_pin form_action",
+                )
+                    .into_response();
             }
             let next_path = sanitize_garden_pin_next(&next);
             use crate::html::{encode_pin_cookie_value, GARDEN_PIN_COOKIE};
@@ -301,7 +332,11 @@ async fn dispatch_ui_action(
             if room.is_empty() {
                 return (StatusCode::BAD_REQUEST, "missing room").into_response();
             }
-            let Some(raw) = item_storage.as_ref().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) else {
+            let Some(raw) = item_storage
+                .as_ref()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+            else {
                 return (StatusCode::BAD_REQUEST, "missing item").into_response();
             };
             let Some(item) = ItemId::parse(&raw) else {
@@ -309,8 +344,55 @@ async fn dispatch_ui_action(
             };
             let item = item.normalized_storage();
             let val = encode_pin_cookie_value(&room, item.as_str());
-            let cookie = format!("{GARDEN_PIN_COOKIE}={val}; Path=/; SameSite=Lax; Max-Age=7776000");
+            let cookie =
+                format!("{GARDEN_PIN_COOKIE}={val}; Path=/; SameSite=Lax; Max-Age=7776000");
             redirect_with_pin_cookie(&cookie, &next_path)
+        }
+        HtmlUiAction::ResolveExternal {
+            room_wire,
+            item_storage,
+            mode,
+            next,
+            form_action,
+        } => {
+            if form_action != "/ui" {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    "invalid resolve_external form_action",
+                )
+                    .into_response();
+            }
+            let Some(session) = session else {
+                return js_redirect("/login").into_response();
+            };
+            let room = room_wire.trim();
+            if room.is_empty() {
+                return ui_js_warn("missing room").into_response();
+            }
+            let reduced = state.reduced.read().await;
+            if matches!(scope_from_room_wire(room), ScopeId::Room(_)) {
+                if !user_can_post_room(&reduced, room, &session.username) {
+                    drop(reduced);
+                    return ui_js_warn("forbidden").into_response();
+                }
+            }
+            drop(reduced);
+
+            let Some(item) = crate::path_types::ItemId::parse(item_storage.trim()) else {
+                return ui_js_warn("bad item").into_response();
+            };
+            let target = if mode.trim() == "siblings" {
+                match item.parent() {
+                    Some(parent) => parent.normalized_storage(),
+                    None => return ui_js_warn("no parent to resolve siblings").into_response(),
+                }
+            } else {
+                item.normalized_storage()
+            };
+            match resolve_github_children(state, room, &target).await {
+                Ok(_) => js_redirect(&sanitize_garden_pin_next(&next)).into_response(),
+                Err(msg) => ui_js_warn(&msg).into_response(),
+            }
         }
         HtmlUiAction::RedactPost { post_id } => {
             let Some(session) = session else {
@@ -318,7 +400,9 @@ async fn dispatch_ui_action(
             };
             let h = headers_from_bearer(&session.bearer);
             match rpc_post_redact(state, &h, post_id).await {
-                Ok(RpcResult::RedactPostOk {}) => redact_success_response(state).await.into_response(),
+                Ok(RpcResult::RedactPostOk {}) => {
+                    redact_success_response(state).await.into_response()
+                }
                 Ok(_) => (StatusCode::BAD_REQUEST, "unexpected response").into_response(),
                 Err((msg, hint)) => {
                     let detail = hint.as_deref().unwrap_or("");
@@ -326,7 +410,10 @@ async fn dispatch_ui_action(
                 }
             }
         }
-        HtmlUiAction::SetRoomMembersExpanded { room_wire, expanded } => {
+        HtmlUiAction::SetRoomMembersExpanded {
+            room_wire,
+            expanded,
+        } => {
             let room_wire = room_wire.trim().to_string();
             if room_wire.is_empty() {
                 return ui_js_warn("missing room").into_response();
@@ -365,7 +452,10 @@ async fn dispatch_ui_action(
                 }
             }
         }
-        HtmlUiAction::SetNewThreadComposeExpanded { room_wire, expanded } => {
+        HtmlUiAction::SetNewThreadComposeExpanded {
+            room_wire,
+            expanded,
+        } => {
             let room_wire = room_wire.trim().to_string();
             if room_wire.is_empty() {
                 return ui_js_warn("missing room").into_response();
@@ -614,7 +704,9 @@ async fn post_success_response(
             };
             builder
         })
-        .if_current_path_not_matches(&thread_location, |builder| builder.redirect(&thread_location));
+        .if_current_path_not_matches(&thread_location, |builder| {
+            builder.redirect(&thread_location)
+        });
 
     builder.into_response()
 }
@@ -625,4 +717,3 @@ async fn redact_success_response(state: &AppState) -> Response {
         .morph_selector("#thread-feed", feed_markup)
         .into_response()
 }
-

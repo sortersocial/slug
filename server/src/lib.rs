@@ -3,11 +3,11 @@ pub mod paths;
 pub mod api;
 pub mod canonical_path;
 pub mod dsl;
+pub mod event_log;
+pub mod events;
 pub mod external_resolver;
 pub mod form_template;
 pub mod html;
-pub mod event_log;
-pub mod events;
 pub mod identity;
 pub mod middleware;
 pub mod path_types;
@@ -50,16 +50,18 @@ pub fn create_app_state(cfg: AppConfig) -> AppState {
         js_tx,
         write_tx,
         views,
+        resolver_runs: Arc::new(RwLock::new(HashMap::new())),
+        github_resolver: Arc::new(crate::external_resolver::GitHubResolver::from_env()),
     };
-    tokio::spawn(crate::api::write_actor::writer_actor(write_rx, state.clone()));
+    tokio::spawn(crate::api::write_actor::writer_actor(
+        write_rx,
+        state.clone(),
+    ));
     state
 }
 
 /// Spawn the serialized writer. Used by integration tests after seeding reducer state in-process.
-pub fn spawn_writer_actor_for_test(
-    state: AppState,
-    rx: tokio::sync::mpsc::Receiver<WriteCmd>,
-) {
+pub fn spawn_writer_actor_for_test(state: AppState, rx: tokio::sync::mpsc::Receiver<WriteCmd>) {
     tokio::spawn(crate::api::write_actor::writer_actor(rx, state));
 }
 
@@ -89,10 +91,7 @@ pub fn create_app(state: AppState) -> Router {
         .route("/-", get(crate::html::external_garden_index))
         .route("/-/*path", get(crate::html::external_ontology_path))
         .route("/r/:room_key/~", get(crate::html::room_garden_index))
-        .route(
-            "/r/:room_key/~/*path",
-            get(crate::html::room_ontology_path),
-        )
+        .route("/r/:room_key/~/*path", get(crate::html::room_ontology_path))
         .route(
             "/r/:room_key/-",
             get(crate::html::room_external_garden_index),

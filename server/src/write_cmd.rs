@@ -14,6 +14,13 @@ pub enum WriteCmd {
         bearer: String,
         reply: oneshot::Sender<WriteCmdResult>,
     },
+    SystemIngest {
+        room: String,
+        thread_tag: String,
+        text: String,
+        principal: String,
+        reply: oneshot::Sender<WriteCmdResult>,
+    },
     Redact {
         post_id: String,
         bearer: String,
