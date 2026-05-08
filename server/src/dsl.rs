@@ -450,8 +450,8 @@ fn parse_block_prefixed_statement(
 }
 
 fn parse_item_definition_statement(stripped: &str, masker: &BlockMasker) -> Result<Stmt, DslError> {
-    let (item1, j) =
-        parse_item_name_at(stripped, 0).ok_or_else(|| DslError::Parse("invalid item name".to_string()))?;
+    let (item1, j) = parse_item_name_at(stripped, 0)
+        .ok_or_else(|| DslError::Parse("invalid item name".to_string()))?;
     let i = skip_ws(stripped, j);
 
     if i >= stripped.len() {
@@ -628,6 +628,19 @@ mod tests {
             vec![Stmt::Item {
                 title: "~/rust".to_string(),
                 body: Some("Systems language".to_string()),
+            }]
+        );
+    }
+
+    #[test]
+    fn parse_item_with_fenced_json_body_preserves_braces() {
+        let input = "~/item/in/url ```json\n{\"test\": true}\n```";
+        let doc = parse_full(input).unwrap();
+        assert_eq!(
+            doc.statements,
+            vec![Stmt::Item {
+                title: "~/item/in/url".to_string(),
+                body: Some("```json\n{\"test\": true}\n```".to_string()),
             }]
         );
     }

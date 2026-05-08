@@ -118,18 +118,10 @@ impl GitHubResolver {
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_ascii_lowercase())
                 .unwrap_or_else(|| format!("{owner}/{name}").to_ascii_lowercase());
-            let description = repo
-                .get("description")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
             out.push(ResolvedChild {
                 url: format!("https://github.com/{full_name}"),
                 title: full_name.clone(),
-                body: Some(if description.trim().is_empty() {
-                    format!("GitHub repository `{full_name}`.")
-                } else {
-                    format!("GitHub repository `{full_name}`.\n\n{description}")
-                }),
+                body: Some(github_json_body(repo)),
             });
         }
         out.sort_by(|a, b| a.url.cmp(&b.url));
@@ -157,15 +149,10 @@ impl GitHubResolver {
                 .get("title")
                 .and_then(|v| v.as_str())
                 .unwrap_or("Untitled issue");
-            let body = issue.get("body").and_then(|v| v.as_str()).unwrap_or("");
             out.push(ResolvedChild {
                 url: format!("https://github.com/{owner}/{repo}/issues/{number}"),
                 title: format!("#{number} {title}"),
-                body: Some(if body.trim().is_empty() {
-                    format!("#{number} {title}")
-                } else {
-                    format!("#{number} {title}\n\n{body}")
-                }),
+                body: Some(github_json_body(issue)),
             });
         }
         out.sort_by(|a, b| a.url.cmp(&b.url));
@@ -190,15 +177,10 @@ impl GitHubResolver {
                 .get("title")
                 .and_then(|v| v.as_str())
                 .unwrap_or("Untitled pull request");
-            let body = pull.get("body").and_then(|v| v.as_str()).unwrap_or("");
             out.push(ResolvedChild {
                 url: format!("https://github.com/{owner}/{repo}/pulls/{number}"),
                 title: format!("#{number} {title}"),
-                body: Some(if body.trim().is_empty() {
-                    format!("#{number} {title}")
-                } else {
-                    format!("#{number} {title}\n\n{body}")
-                }),
+                body: Some(github_json_body(pull)),
             });
         }
         out.sort_by(|a, b| a.url.cmp(&b.url));
@@ -258,6 +240,13 @@ fn sanitize_body(s: &str) -> String {
         .collect()
 }
 
+fn github_json_body(value: &Value) -> String {
+    let json = serde_json::to_string_pretty(value)
+        .unwrap_or_else(|_| value.to_string())
+        .replace("```", "` ` `");
+    format!("```json\n{json}\n```")
+}
+
 fn children_to_dsl(children: &[ResolvedChild]) -> String {
     let mut out = String::new();
     for child in children {
@@ -266,11 +255,15 @@ fn children_to_dsl(children: &[ResolvedChild]) -> String {
             .as_deref()
             .filter(|s| !s.trim().is_empty())
             .unwrap_or(child.title.as_str());
-        out.push_str(&format!(
-            "{} {{\n{}\n}}\n\n",
-            child.url,
-            sanitize_body(body)
-        ));
+        if body.trim_start().starts_with("```") {
+            out.push_str(&format!("{} {}\n\n", child.url, body.trim()));
+        } else {
+            out.push_str(&format!(
+                "{} {{\n{}\n}}\n\n",
+                child.url,
+                sanitize_body(body)
+            ));
+        }
     }
     out
 }
@@ -376,5 +369,16 @@ mod tests {
         }]);
         assert!(dsl.contains("https://github.com/o/r/issues/1"));
         assert!(dsl.contains("body with (braces)"));
+    }
+
+    #[test]
+    fn children_to_dsl_preserves_fenced_json_bodies() {
+        let dsl = children_to_dsl(&[ResolvedChild {
+            url: "https://github.com/o/r/issues/1".into(),
+            title: "#1 title".into(),
+            body: Some("```json\n{\"test\": true}\n```".into()),
+        }]);
+        assert!(dsl.contains("https://github.com/o/r/issues/1 ```json"));
+        assert!(dsl.contains("{\"test\": true}"));
     }
 }
