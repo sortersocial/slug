@@ -1492,7 +1492,7 @@ async fn vote_compare_inner(
 
 #[cfg(test)]
 mod tests {
-    use super::build_item_page_view_model;
+    use super::{build_item_page_view_model, external_source_href};
     use crate::{
         events::{Event, Ingest},
         reducer::{ReducerState, ScopeId},
