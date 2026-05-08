@@ -9,18 +9,21 @@ use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashSet;
 
-use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD as B64_ENGINE};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD as B64_ENGINE, Engine as _};
 
 use crate::{
     api::optional_principal,
     canonical_path::{canonicalize_item, canonicalize_tag},
-    middleware::canonical_view_url,
     events::ThreadCapability,
     form_template::template_json_compact,
-    html::{JsBuilder, ui_action::UI_RPC_FIELD, user_can_post_room},
+    html::{ui_action::UI_RPC_FIELD, user_can_post_room, HtmlUiAction, JsBuilder},
+    middleware::canonical_view_url,
     path_types::ItemId,
     reducer::{ContentState, ReducerState, ScopeId},
-    scope_rank::{ChildrenRankings, build_children_rankings},
+    scope_rank::{
+        build_children_rankings, build_rankings_for_item_set, resolve_scope_recursive,
+        ChildrenRankings,
+    },
     state::AppState,
     timeago,
 };
@@ -128,7 +131,11 @@ fn left_share_normalized(ratio_left: i32, ratio_right: i32) -> f64 {
     let l = ratio_left.max(0) as f64;
     let r = ratio_right.max(0) as f64;
     let sum = l + r;
-    if sum <= 0.0 { 0.5 } else { l / sum }
+    if sum <= 0.0 {
+        0.5
+    } else {
+        l / sum
+    }
 }
 
 /// Stronger preference for **`page_left` first**; ties **newer first**.
@@ -864,6 +871,7 @@ struct ItemPageViewModel {
     /// False at the tilde ontology root (`~/`): sibling-rank footnote does not apply.
     item_has_parent: bool,
     child_rankings: ChildrenRankings,
+    child_depth: usize,
     rank_history: Vec<RankHistoryEntryView>,
     /// Forum threads that mention or vote on this item.
     threads: Vec<String>,
@@ -1018,13 +1026,20 @@ fn build_item_page_view_model(
     reduced: &crate::reducer::ReducerState,
     scope: &ScopeId,
     item: &str,
+    child_depth: usize,
 ) -> ItemPageViewModel {
     let content = content_for_garden_view(reduced, scope);
     let item_key = ItemId::parse(item)
         .unwrap_or_else(|| ItemId::parse("~/").unwrap())
         .normalized_storage();
     let item_has_parent = item_key.parent().is_some();
-    let child_rankings = build_children_rankings(content, &item_key);
+    let child_depth = child_depth.clamp(1, 5);
+    let child_rankings = if child_depth > 1 {
+        let items = resolve_scope_recursive(content, &[item_key.as_str().to_string()], child_depth);
+        build_rankings_for_item_set(content, &items)
+    } else {
+        build_children_rankings(content, &item_key)
+    };
     let sibling_nav = build_sibling_nav(reduced, scope, &item_key);
 
     let rank_history = build_rank_history(reduced, scope, item_key.as_str());
@@ -1046,9 +1061,109 @@ fn build_item_page_view_model(
         sibling_nav,
         item_has_parent,
         child_rankings,
+        child_depth,
         rank_history,
         threads,
     }
+}
+
+fn child_depth_from_uri(uri: &Uri) -> usize {
+    uri.query()
+        .into_iter()
+        .flat_map(|q| q.split('&'))
+        .filter_map(|pair| pair.split_once('='))
+        .find_map(|(k, v)| {
+            if k == "depth" {
+                v.parse::<usize>().ok()
+            } else {
+                None
+            }
+        })
+        .unwrap_or(1)
+        .clamp(1, 5)
+}
+
+fn external_source_href(item: &str) -> String {
+    let Ok(mut url) = url::Url::parse(item) else {
+        return item.to_string();
+    };
+    let is_youtube = url
+        .host_str()
+        .map(|h| h.eq_ignore_ascii_case("www.youtube.com"))
+        .unwrap_or(false);
+    if is_youtube {
+        let segments: Vec<String> = url
+            .path_segments()
+            .map(|s| s.map(|seg| seg.to_string()).collect())
+            .unwrap_or_default();
+        if segments.len() == 3 && segments[0] == "watch" && segments[1] == "v" {
+            let id = segments[2].clone();
+            url.set_path("/watch");
+            url.set_query(None);
+            url.query_pairs_mut().append_pair("v", &id);
+            return url.to_string();
+        }
+    }
+    item.to_string()
+}
+
+fn external_frame_allowed(item: &str) -> bool {
+    let Ok(url) = url::Url::parse(item) else {
+        return false;
+    };
+    let host = url.host_str().unwrap_or_default();
+    !matches!(host, "github.com" | "www.github.com")
+}
+
+fn github_resolver_controls(item: &str, nav: &ThreadNav, next: &str) -> Option<maud::Markup> {
+    let item_id = ItemId::parse(item)?.normalized_storage();
+    let url = url::Url::parse(item_id.as_str()).ok()?;
+    if !url
+        .host_str()
+        .map(|h| h.eq_ignore_ascii_case("github.com"))
+        .unwrap_or(false)
+    {
+        return None;
+    }
+    let children_rpc = template_json_compact(&HtmlUiAction::ResolveExternal {
+        room_wire: nav.room_wire.clone(),
+        item_storage: item_id.as_str().to_string(),
+        mode: "children".to_string(),
+        next: next.to_string(),
+        form_action: "/ui".to_string(),
+    })
+    .ok()?;
+    let siblings_rpc = item_id.parent().and_then(|_| {
+        template_json_compact(&HtmlUiAction::ResolveExternal {
+            room_wire: nav.room_wire.clone(),
+            item_storage: item_id.as_str().to_string(),
+            mode: "siblings".to_string(),
+            next: next.to_string(),
+            form_action: "/ui".to_string(),
+        })
+        .ok()
+    });
+
+    Some(html! {
+        section id="external-resolver-panel" class="ont-tab-panel ont-external-resolver" {
+            h3 { "GitHub resolver" }
+            p class="muted" {
+                "Import GitHub neighbors on demand. Results are saved as system ingests."
+            }
+            div class="resolver-actions" {
+                form method="POST" action="/ui" {
+                    input type="hidden" name=(UI_RPC_FIELD) value=(children_rpc);
+                    button type="submit" data-testid="github-resolve-children" { "Load children from GitHub" }
+                }
+                @if let Some(rpc) = siblings_rpc {
+                    form method="POST" action="/ui" {
+                        input type="hidden" name=(UI_RPC_FIELD) value=(rpc);
+                        button type="submit" data-testid="github-resolve-siblings" { "Load siblings from GitHub" }
+                    }
+                }
+            }
+        }
+    })
 }
 
 async fn render_scope_view(
@@ -1061,11 +1176,14 @@ async fn render_scope_view(
     let scope = nav.scope();
     let pin_ref = pinned_item_from_jar(&jar);
     let reduced = state.reduced.read().await;
-    let model = build_item_page_view_model(&reduced, &scope, browse.item());
+    let child_depth = child_depth_from_uri(&uri);
+    let model = build_item_page_view_model(&reduced, &scope, browse.item(), child_depth);
     let scope_content = content_for_garden_view(&reduced, &scope);
     let thread_href = |tag: &str| nav.thread_url(tag);
     let external_empty_body = browse.is_external() && model.body.is_none();
     let cli_path_arg = item_display_path(&model.item);
+    let external_href = external_source_href(&model.item);
+    let external_can_embed = external_frame_allowed(&model.item);
     let (garden_room, garden_prefix) = garden_layout_meta(&nav);
     let next_for_pin = uri
         .path_and_query()
@@ -1104,12 +1222,33 @@ async fn render_scope_view(
                     div class="ont-item-content ont-external-empty" {
                         p { "This is an external scope." }
                         p class="muted" {
-                            button type="button" disabled { "Kick off an Agent Run to import and rank items" }
+                            "This scope has no imported body yet. Open the source page directly."
+                        }
+                        p {
+                            a href=(external_href.as_str()) target="_blank" rel="noopener noreferrer" {
+                                "Open external URL"
+                            }
+                        }
+                        @if external_can_embed {
+                            p class="muted" { "Best-effort embedded preview:" }
+                            iframe
+                                class="ont-external-frame"
+                                src=(external_href.as_str())
+                                sandbox=""
+                                loading="lazy"
+                                referrerpolicy="no-referrer"
+                                style="width:100%;height:360px;border:1px solid currentColor;" {}
+                        } @else {
+                            p class="muted" { "Embedded preview is unavailable for this host." }
                         }
                     }
                 } @else {
                     div class="ont-item-content" { p class="muted" { "no body yet" } }
                 }
+            }
+
+            @if let Some(markup) = github_resolver_controls(&model.item, &nav, &next_for_pin) {
+                (markup)
             }
 
             @if !model.rank_history.is_empty() {
@@ -1182,7 +1321,13 @@ async fn render_scope_view(
             }
 
             section class="ont-tab-panel ont-tab-panel-children" {
-                h3 { "ranked child groups" }
+                h3 {
+                    "ranked child groups"
+                    @if model.child_depth > 1 {
+                        " "
+                        span class="muted" { (format!("(depth {})", model.child_depth)) }
+                    }
+                }
                 @if model.child_rankings.component_rankings.is_empty() {
                     p class="muted" { "no voted pairs yet in this scope" }
                 } @else {
@@ -1415,7 +1560,7 @@ async fn vote_compare_inner(
 
 #[cfg(test)]
 mod tests {
-    use super::build_item_page_view_model;
+    use super::{build_item_page_view_model, external_source_href};
     use crate::{
         events::{Event, Ingest},
         reducer::{ReducerState, ScopeId},
@@ -1516,7 +1661,7 @@ mod tests {
              ~/topic/b {beta}\n",
         );
 
-        let model = build_item_page_view_model(&reduced, &ScopeId::Public, "~/topic/a");
+        let model = build_item_page_view_model(&reduced, &ScopeId::Public, "~/topic/a", 1);
         assert_eq!(model.body.as_deref(), Some("alpha"));
         assert!(model.sibling_nav.is_some());
         assert!(model.child_rankings.component_rankings.is_empty());
@@ -1536,7 +1681,7 @@ mod tests {
              {a beats b}\n             ~/topic/a 2:1 ~/topic/b\n",
         );
 
-        let model = build_item_page_view_model(&reduced, &ScopeId::Public, "~/topic/a");
+        let model = build_item_page_view_model(&reduced, &ScopeId::Public, "~/topic/a", 1);
         let nav = model.sibling_nav.expect("expected sibling nav");
         assert_eq!(nav.groups.len(), 2);
         assert_eq!(nav.groups[0].links.len(), 2);
@@ -1558,7 +1703,7 @@ mod tests {
              {a beats b}\n             ~/topic/a 2:1 ~/topic/b\n",
         );
 
-        let model = build_item_page_view_model(&reduced, &ScopeId::Public, "~/topic/a");
+        let model = build_item_page_view_model(&reduced, &ScopeId::Public, "~/topic/a", 1);
         let nav = model.sibling_nav.expect("expected sibling nav");
         assert_eq!(nav.groups.len(), 3);
         assert_eq!(nav.groups[0].links.len(), 2);
@@ -1582,7 +1727,7 @@ mod tests {
              ~/topic/kid1/leaf {leaf}\n",
         );
 
-        let model = build_item_page_view_model(&reduced, &ScopeId::Public, "~/topic");
+        let model = build_item_page_view_model(&reduced, &ScopeId::Public, "~/topic", 1);
         assert_eq!(model.child_rankings.component_rankings.len(), 1);
         assert_eq!(model.child_rankings.component_rankings[0].pairs, 1);
         let names: Vec<&str> = model.child_rankings.component_rankings[0]
@@ -1625,6 +1770,7 @@ mod tests {
             &reduced,
             &ScopeId::Room("9ab12cd/my-room".to_string()),
             root.as_str(),
+            1,
         );
         assert!(!model.item_has_parent);
         assert_eq!(model.child_rankings.unranked_items.len(), 2);
@@ -1655,6 +1801,7 @@ mod tests {
             &reduced,
             &ScopeId::Room("9ab12cd/my-room".to_string()),
             root.as_str(),
+            1,
         );
         assert_eq!(model.child_rankings.component_rankings.len(), 1);
         assert_eq!(model.child_rankings.component_rankings[0].pairs, 1);
@@ -1680,11 +1827,56 @@ mod tests {
             "@00000000-0000-0000-0000-000000000000:test:local/test\n~/x {x}\n",
         );
         let model =
-            build_item_page_view_model(&reduced, &ScopeId::Public, "https://slug.social/~/");
+            build_item_page_view_model(&reduced, &ScopeId::Public, "https://slug.social/~/", 1);
         assert_eq!(model.child_rankings.unranked_items.len(), 1);
         assert_eq!(
             model.child_rankings.unranked_items[0].as_str(),
             "https://slug.social/~/x"
         );
+    }
+
+    #[test]
+    fn item_page_model_depth_includes_descendants() {
+        let mut reduced = ReducerState::default();
+        apply_ingest(
+            &mut reduced,
+            1,
+            "@00000000-0000-0000-0000-000000000000:test:local/test\n\
+             ~/topic {root}\n\
+             ~/topic/a {alpha}\n\
+             ~/topic/a/leaf {leaf}\n\
+             ~/topic/b {beta}\n",
+        );
+
+        let model = build_item_page_view_model(&reduced, &ScopeId::Public, "~/topic", 2);
+        let items: std::collections::HashSet<&str> = model
+            .child_rankings
+            .unranked_items
+            .iter()
+            .map(|u| u.as_str())
+            .collect();
+        assert!(items.contains("https://slug.social/~/topic/a"));
+        assert!(items.contains("https://slug.social/~/topic/a/leaf"));
+        assert!(items.contains("https://slug.social/~/topic/b"));
+    }
+
+    #[test]
+    fn external_source_href_maps_youtube_path_identity_back_to_watch_url() {
+        assert_eq!(
+            external_source_href("https://www.youtube.com/watch/v/dQw4w9WgXcQ"),
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+        );
+        assert_eq!(
+            external_source_href("https://github.com/sortersocial/slug"),
+            "https://github.com/sortersocial/slug"
+        );
+    }
+
+    #[test]
+    fn external_frame_allowed_skips_known_blocked_hosts() {
+        assert!(!super::external_frame_allowed(
+            "https://github.com/sortersocial/slug"
+        ));
+        assert!(super::external_frame_allowed("https://example.com/path"));
     }
 }

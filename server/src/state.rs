@@ -3,7 +3,10 @@ use std::sync::Arc;
 
 use tokio::sync::{broadcast, mpsc, RwLock};
 
-use crate::{event_log::EventLog, events::ThreadCapability, reducer::ReducerState, write_cmd::WriteCmd};
+use crate::{
+    event_log::EventLog, events::ThreadCapability, external_resolver::GitHubResolver,
+    reducer::ReducerState, write_cmd::WriteCmd,
+};
 
 /// Ephemeral invite link (24h TTL, in-memory only; not written to the event log).
 #[derive(Debug, Clone)]
@@ -24,7 +27,7 @@ pub struct PendingSession {
     pub provider_id: Option<String>,
     /// When set, successful OAuth completion redeems this invite token and appends [`crate::events::GrantAdded`].
     pub redeem_invite: Option<String>,
-    pub complete: Option<(String /*username*/, String /*bearer*/ )>,
+    pub complete: Option<(String /*username*/, String /*bearer*/)>,
 }
 
 /// An SSE event broadcast to all live stream subscribers when an ingest occurs.
@@ -68,6 +71,9 @@ pub struct AppState {
     /// All durable writes and reducer mutations are serialized through this channel.
     pub write_tx: mpsc::Sender<WriteCmd>,
     pub views: crate::views::ViewStore,
+    /// Ephemeral resolver cooldowns keyed by `room + item`: not persisted; durable results are JSONL ingests.
+    pub resolver_runs: Arc<RwLock<HashMap<String, i64>>>,
+    pub github_resolver: Arc<GitHubResolver>,
 }
 
 impl AppState {
@@ -94,7 +100,8 @@ impl AppState {
             js_tx,
             write_tx,
             views,
+            resolver_runs: Arc::new(RwLock::new(HashMap::new())),
+            github_resolver: Arc::new(GitHubResolver::from_env()),
         }
     }
 }
-

@@ -1,7 +1,9 @@
 //! Normalization for external `http(s)://` item identity (not slug tilde ontology).
 //!
 //! Policy (intentional, extend here as new domains need treatment):
-//! - Query pairs sorted lexicographically by **lowercased** key, then value.
+//! - Query pairs are navigation/filter state by default and are stripped from identity.
+//! - Known query-primary resources may canonicalize to path-based short links (YouTube `youtu.be/:id`).
+//! - Fragments are stripped from identity.
 //! - YouTube family → stable `www.youtube.com` shapes where possible.
 
 use url::Url;
@@ -23,8 +25,10 @@ pub fn normalize_http_identity_url(s: &str) -> Option<String> {
     if !matches!(u.scheme(), "http" | "https") {
         return None;
     }
+    u.set_fragment(None);
     rewrite_youtube(&mut u);
-    sort_query_pairs(&mut u);
+    normalize_github(&mut u);
+    u.set_query(None);
     Some(u.to_string())
 }
 
@@ -45,23 +49,18 @@ fn rewrite_youtube(u: &mut Url) {
 
     match base.as_str() {
         "youtu.be" => {
-            let id = path.trim_start_matches('/').split('/').next().unwrap_or("").to_string();
+            let id = path
+                .trim_start_matches('/')
+                .split('/')
+                .next()
+                .unwrap_or("")
+                .to_string();
             if id.is_empty() {
                 return;
             }
-            let saved: Vec<(String, String)> = u.query_pairs().into_owned().collect();
-            let Ok(mut out) = Url::parse(&format!("https://www.youtube.com/watch?v={id}")) else {
+            let Ok(out) = Url::parse(&format!("https://youtu.be/{id}")) else {
                 return;
             };
-            {
-                let mut q = out.query_pairs_mut();
-                for (k, v) in saved {
-                    if k.eq_ignore_ascii_case("v") {
-                        continue;
-                    }
-                    q.append_pair(&k, &v);
-                }
-            }
             *u = out;
         }
         "youtube.com" | "m.youtube.com" => {
@@ -80,20 +79,9 @@ fn rewrite_youtube(u: &mut Url) {
                 if id.is_empty() {
                     return;
                 }
-                let saved: Vec<(String, String)> = u.query_pairs().into_owned().collect();
-                let Ok(mut out) = Url::parse(&format!("https://www.youtube.com/watch?v={id}"))
-                else {
+                let Ok(out) = Url::parse(&format!("https://youtu.be/{id}")) else {
                     return;
                 };
-                {
-                    let mut q = out.query_pairs_mut();
-                    for (k, v) in saved {
-                        if k.eq_ignore_ascii_case("v") {
-                            continue;
-                        }
-                        q.append_pair(&k, &v);
-                    }
-                }
                 *u = out;
                 return;
             }
@@ -109,25 +97,21 @@ fn rewrite_youtube(u: &mut Url) {
                 if id.is_empty() {
                     return;
                 }
-                let saved: Vec<(String, String)> = u.query_pairs().into_owned().collect();
-                let Ok(mut out) = Url::parse(&format!("https://www.youtube.com/watch?v={id}"))
-                else {
+                let Ok(out) = Url::parse(&format!("https://youtu.be/{id}")) else {
                     return;
                 };
-                {
-                    let mut q = out.query_pairs_mut();
-                    for (k, v) in saved {
-                        if k.eq_ignore_ascii_case("v") {
-                            continue;
-                        }
-                        q.append_pair(&k, &v);
-                    }
-                }
                 *u = out;
                 return;
             }
             if path.starts_with("/watch") {
                 let _ = u.set_host(Some("www.youtube.com"));
+                if let Some((_, id)) = u.query_pairs().find(|(k, _)| k.eq_ignore_ascii_case("v")) {
+                    if !id.is_empty() {
+                        if let Ok(out) = Url::parse(&format!("https://youtu.be/{id}")) {
+                            *u = out;
+                        }
+                    }
+                }
                 return;
             }
             if path.starts_with("/shorts/") {
@@ -142,17 +126,9 @@ fn rewrite_youtube(u: &mut Url) {
                 if id.is_empty() {
                     return;
                 }
-                let saved: Vec<(String, String)> = u.query_pairs().into_owned().collect();
-                let Ok(mut out) = Url::parse(&format!("https://www.youtube.com/shorts/{id}"))
-                else {
+                let Ok(out) = Url::parse(&format!("https://www.youtube.com/shorts/{id}")) else {
                     return;
                 };
-                {
-                    let mut q = out.query_pairs_mut();
-                    for (k, v) in saved {
-                        q.append_pair(&k, &v);
-                    }
-                }
                 *u = out;
                 return;
             }
@@ -163,24 +139,31 @@ fn rewrite_youtube(u: &mut Url) {
     }
 }
 
-fn sort_query_pairs(u: &mut Url) {
-    let pairs: Vec<(String, String)> = u.query_pairs().into_owned().collect();
-    if pairs.is_empty() {
-        u.set_query(None);
+fn normalize_github(u: &mut Url) {
+    let Some(host_raw) = u.host_str() else {
+        return;
+    };
+    if host_raw.to_ascii_lowercase() != "github.com" {
         return;
     }
-    let mut pairs = pairs;
-    pairs.sort_by(|a, b| {
-        a.0.to_ascii_lowercase()
-            .cmp(&b.0.to_ascii_lowercase())
-            .then_with(|| a.1.cmp(&b.1))
-    });
-    u.set_query(None);
-    {
-        let mut q = u.query_pairs_mut();
-        for (k, v) in pairs {
-            q.append_pair(&k, &v);
+
+    let Some(segments) = u.path_segments() else {
+        return;
+    };
+    let mut segments: Vec<String> = segments
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_ascii_lowercase())
+        .collect();
+    if let Some(repo) = segments.get_mut(1) {
+        if let Some(stripped) = repo.strip_suffix(".git") {
+            *repo = stripped.to_string();
         }
+    }
+
+    if segments.is_empty() {
+        u.set_path("/");
+    } else {
+        u.set_path(&format!("/{}", segments.join("/")));
     }
 }
 
@@ -192,19 +175,19 @@ mod tests {
     fn youtube_youtu_be_to_watch() {
         assert_eq!(
             normalize_http_identity_url("https://youtu.be/dQw4w9WgXcQ").as_deref(),
-            Some("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+            Some("https://youtu.be/dQw4w9WgXcQ")
         );
     }
 
     #[test]
-    fn youtube_watch_query_sorted() {
+    fn youtube_watch_v_query_becomes_path_child() {
         assert_eq!(
             normalize_http_identity_url("https://youtube.com/watch?v=Z&a=1&b=2").as_deref(),
-            Some("https://www.youtube.com/watch?a=1&b=2&v=Z")
+            Some("https://youtu.be/Z")
         );
         assert_eq!(
             normalize_http_identity_url("https://youtube.com/watch?b=2&a=1&v=Z").as_deref(),
-            Some("https://www.youtube.com/watch?a=1&b=2&v=Z")
+            Some("https://youtu.be/Z")
         );
     }
 
@@ -212,7 +195,7 @@ mod tests {
     fn youtube_embed_to_watch() {
         assert_eq!(
             normalize_http_identity_url("https://www.youtube.com/embed/dQw4w9WgXcQ").as_deref(),
-            Some("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+            Some("https://youtu.be/dQw4w9WgXcQ")
         );
     }
 
@@ -225,10 +208,56 @@ mod tests {
     }
 
     #[test]
-    fn arbitrary_query_sorted() {
+    fn arbitrary_query_is_stripped() {
         assert_eq!(
             normalize_http_identity_url("https://example.com/x?z=1&a=2").as_deref(),
-            Some("https://example.com/x?a=2&z=1")
+            Some("https://example.com/x")
+        );
+    }
+
+    #[test]
+    fn fragment_is_stripped_from_identity() {
+        assert_eq!(
+            normalize_http_identity_url("https://example.com/path?b=2#a-section").as_deref(),
+            Some("https://example.com/path")
+        );
+    }
+
+    #[test]
+    fn all_generic_query_params_are_stripped() {
+        assert_eq!(
+            normalize_http_identity_url(
+                "https://example.com/x?z=1&utm_source=newsletter&FbClId=abc&ref=share&a=2"
+            )
+            .as_deref(),
+            Some("https://example.com/x")
+        );
+    }
+
+    #[test]
+    fn stripping_tracking_params_removes_empty_query() {
+        assert_eq!(
+            normalize_http_identity_url("https://example.com/x?utm_medium=email&si=share")
+                .as_deref(),
+            Some("https://example.com/x")
+        );
+    }
+
+    #[test]
+    fn youtube_identity_query_is_promoted_before_query_cleanup() {
+        assert_eq!(
+            normalize_http_identity_url("https://youtu.be/dQw4w9WgXcQ?si=share&v=ignored&t=12")
+                .as_deref(),
+            Some("https://youtu.be/dQw4w9WgXcQ")
+        );
+    }
+
+    #[test]
+    fn github_repo_suffix_and_noise_query_are_normalized() {
+        assert_eq!(
+            normalize_http_identity_url("https://github.com/ORG/REPO.git?tab=readme&q=is%3Aopen")
+                .as_deref(),
+            Some("https://github.com/org/repo")
         );
     }
 }
@@ -324,7 +353,10 @@ mod url_identity_tests {
     fn empty_path_vs_slash_only_path_may_differ() {
         let root = Url::parse("https://example.com").unwrap();
         let slash = Url::parse("https://example.com/").unwrap();
-        assert_eq!(root, slash, "root and trailing-slash-only merge for this parser");
+        assert_eq!(
+            root, slash,
+            "root and trailing-slash-only merge for this parser"
+        );
     }
 
     #[test]
@@ -353,6 +385,9 @@ mod url_identity_tests {
 
         let plus = Url::parse("https://example.com/?q=a+b").unwrap();
         let encoded = Url::parse("https://example.com/?q=a%20b").unwrap();
-        assert_ne!(plus, encoded, "space as + vs %20 — different keys unless normalized");
+        assert_ne!(
+            plus, encoded,
+            "space as + vs %20 — different keys unless normalized"
+        );
     }
 }
