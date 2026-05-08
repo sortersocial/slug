@@ -1107,6 +1107,14 @@ fn external_source_href(item: &str) -> String {
     item.to_string()
 }
 
+fn external_frame_allowed(item: &str) -> bool {
+    let Ok(url) = url::Url::parse(item) else {
+        return false;
+    };
+    let host = url.host_str().unwrap_or_default();
+    !matches!(host, "github.com" | "www.github.com")
+}
+
 async fn render_scope_view(
     state: AppState,
     browse: GardenBrowsePath,
@@ -1124,6 +1132,7 @@ async fn render_scope_view(
     let external_empty_body = browse.is_external() && model.body.is_none();
     let cli_path_arg = item_display_path(&model.item);
     let external_href = external_source_href(&model.item);
+    let external_can_embed = external_frame_allowed(&model.item);
     let (garden_room, garden_prefix) = garden_layout_meta(&nav);
     let next_for_pin = uri
         .path_and_query()
@@ -1169,14 +1178,18 @@ async fn render_scope_view(
                                 "Open external URL"
                             }
                         }
-                        p class="muted" { "Best-effort embedded preview:" }
-                        iframe
-                            class="ont-external-frame"
-                            src=(external_href.as_str())
-                            sandbox=""
-                            loading="lazy"
-                            referrerpolicy="no-referrer"
-                            style="width:100%;height:360px;border:1px solid currentColor;" {}
+                        @if external_can_embed {
+                            p class="muted" { "Best-effort embedded preview:" }
+                            iframe
+                                class="ont-external-frame"
+                                src=(external_href.as_str())
+                                sandbox=""
+                                loading="lazy"
+                                referrerpolicy="no-referrer"
+                                style="width:100%;height:360px;border:1px solid currentColor;" {}
+                        } @else {
+                            p class="muted" { "Embedded preview is unavailable for this host." }
+                        }
                     }
                 } @else {
                     div class="ont-item-content" { p class="muted" { "no body yet" } }
@@ -1802,5 +1815,11 @@ mod tests {
             external_source_href("https://github.com/sortersocial/slug"),
             "https://github.com/sortersocial/slug"
         );
+    }
+
+    #[test]
+    fn external_frame_allowed_skips_known_blocked_hosts() {
+        assert!(!super::external_frame_allowed("https://github.com/sortersocial/slug"));
+        assert!(super::external_frame_allowed("https://example.com/path"));
     }
 }
