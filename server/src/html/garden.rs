@@ -1171,7 +1171,7 @@ async fn render_scope_view(
                     div class="ont-item-content ont-external-empty" {
                         p { "This is an external scope." }
                         p class="muted" {
-                            "Open the source page while this scope has no imported body yet."
+                            "This scope has no imported body yet. Open the source page directly."
                         }
                         p {
                             a href=(external_href.as_str()) target="_blank" rel="noopener noreferrer" {
