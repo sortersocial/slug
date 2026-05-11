@@ -20,27 +20,30 @@ mod search;
 pub mod ui_action;
 use breadcrumb_path::{ExternalOntologyPath, OntologyPath};
 
-pub use auth::{auth_complete_page, auth_signed_in_fragment, choose_username_error_fragment, choose_username_page};
+pub use auth::{
+    auth_complete_page, auth_signed_in_fragment, choose_username_error_fragment,
+    choose_username_page,
+};
 pub use editor::{editor_check, editor_page};
 pub use forum::{
     home, room_page, room_thread_post_view, room_thread_view, thread_feed_html,
     thread_feed_html_for_room, thread_feed_region_markup, thread_post_view, thread_view, ThreadNav,
 };
 
+pub use forum::user_profile_page;
 pub(crate) use forum::{
     fragment_new_thread_slot, login_to_post_hint_markup, room_members_section_markup,
     thread_ui_collapse_redacted_post, thread_ui_expand_post_full, thread_ui_expand_redacted_post,
     user_can_post_room, user_can_view_room,
 };
+pub(crate) use garden::{encode_pin_cookie_value, vote_compare_post_success_js, GARDEN_PIN_COOKIE};
 pub use garden::{
     external_garden_index, external_ontology_path, garden_index, ontology_path,
-    room_external_garden_index, room_external_ontology_path, room_garden_index,
-    room_ontology_path, room_vote_compare_page, vote_compare_page,
+    room_external_garden_index, room_external_ontology_path, room_garden_index, room_ontology_path,
+    room_vote_compare_page, vote_compare_page,
 };
-pub(crate) use garden::{encode_pin_cookie_value, vote_compare_post_success_js, GARDEN_PIN_COOKIE};
 pub use routing::RouteContext;
 pub use search::{search_page, search_results_fragment};
-pub use forum::user_profile_page;
 pub use ui_action::{parse_html_ui_from_form, HtmlUiAction, HtmlUiParseError, UI_RPC_FIELD};
 
 /// Public profile URL path for a stored username (no `@`).
@@ -107,8 +110,8 @@ pub struct ThemeForm {
 pub async fn post_theme(Form(form): Form<ThemeForm>) -> impl IntoResponse {
     let theme = normalize_theme(&form.theme);
     let next = sanitize_theme_next(form.next.as_deref());
-    let loc = HeaderValue::try_from(next.as_str())
-        .unwrap_or_else(|_| HeaderValue::from_static("/"));
+    let loc =
+        HeaderValue::try_from(next.as_str()).unwrap_or_else(|_| HeaderValue::from_static("/"));
     Response::builder()
         .status(StatusCode::SEE_OTHER)
         .header(header::LOCATION, loc)
@@ -179,7 +182,9 @@ pub(crate) struct JsQueryBuilder {
 
 impl JsBuilder {
     pub(crate) fn new() -> Self {
-        Self { snippets: Vec::new() }
+        Self {
+            snippets: Vec::new(),
+        }
     }
 
     pub(crate) fn morph_selector(self, selector: &str, markup: Markup) -> Self {
@@ -195,7 +200,12 @@ impl JsBuilder {
         self.qs(selector).morph_inner(markup)
     }
 
-    pub(crate) fn morph_expr(mut self, expr: &str, markup: Markup, morph_style: Option<&str>) -> Self {
+    pub(crate) fn morph_expr(
+        mut self,
+        expr: &str,
+        markup: Markup,
+        morph_style: Option<&str>,
+    ) -> Self {
         let html = js_string_literal(&markup.into_string());
         let opts = morph_style
             .map(|style| format!(", {{morphStyle: {}}}", js_string_literal(style)))
@@ -217,7 +227,11 @@ impl JsBuilder {
         self.qs(&format!("#{id}"))
     }
 
-    pub(crate) fn if_current_path_matches(mut self, path: &str, f: impl FnOnce(JsBuilder) -> JsBuilder) -> Self {
+    pub(crate) fn if_current_path_matches(
+        mut self,
+        path: &str,
+        f: impl FnOnce(JsBuilder) -> JsBuilder,
+    ) -> Self {
         let inner = f(JsBuilder::new()).build();
         self.snippets.push(format!(
             "var __slugHere = window.location.pathname + window.location.search; var __slugPath = {path}; if (__slugHere === __slugPath || __slugHere.indexOf(__slugPath + '?') === 0) {{ {inner} }}",
@@ -226,7 +240,11 @@ impl JsBuilder {
         self
     }
 
-    pub(crate) fn if_current_path_not_matches(mut self, path: &str, f: impl FnOnce(JsBuilder) -> JsBuilder) -> Self {
+    pub(crate) fn if_current_path_not_matches(
+        mut self,
+        path: &str,
+        f: impl FnOnce(JsBuilder) -> JsBuilder,
+    ) -> Self {
         let inner = f(JsBuilder::new()).build();
         self.snippets.push(format!(
             "var __slugHere = window.location.pathname + window.location.search; var __slugPath = {path}; if (!(__slugHere === __slugPath || __slugHere.indexOf(__slugPath + '?') === 0)) {{ {inner} }}",
@@ -301,7 +319,17 @@ pub(super) fn layout(
     garden_room_wire: Option<&str>,
     garden_path_prefix: Option<&str>,
 ) -> Markup {
-    layout_embed_controls(title, view, body, views, theme, theme_next, garden_room_wire, garden_path_prefix, true)
+    layout_embed_controls(
+        title,
+        view,
+        body,
+        views,
+        theme,
+        theme_next,
+        garden_room_wire,
+        garden_path_prefix,
+        true,
+    )
 }
 
 /// Minimal document shell: no bottom controls, no garden HUD data attributes (`data-garden-room` /
@@ -315,15 +343,7 @@ pub(super) fn layout_full_bleed_chromeless(
     theme_next: &str,
 ) -> Markup {
     layout_embed_controls(
-        title,
-        view,
-        body,
-        views,
-        theme,
-        theme_next,
-        None,
-        None,
-        false,
+        title, view, body, views, theme, theme_next, None, None, false,
     )
 }
 
@@ -545,7 +565,58 @@ fn item_body_title_snippet(body: &str) -> Option<String> {
     Some(format!("{truncated}{ellipsis}"))
 }
 
-/// Replace ~/path slugs in raw text with clickable links.
+fn garden_href_for_item_ref(
+    raw_ref: &str,
+    garden_prefix: &str,
+) -> Option<(crate::path_types::ItemId, String)> {
+    let key = slug_types::canonicalize_item(raw_ref);
+    let id = crate::path_types::ItemId::parse(&key)?;
+    let href = if let Some(tail) = id.tilde_tail() {
+        if tail.is_empty() {
+            garden_prefix.trim_end_matches('/').to_string()
+        } else {
+            format!("{}/{}", garden_prefix.trim_end_matches('/'), tail)
+        }
+    } else if id.as_str().starts_with("https://") || id.as_str().starts_with("http://") {
+        let display = id.display_path();
+        let rest = display.strip_prefix("-/").unwrap_or(display.as_str());
+        let ext_prefix = format!("{}-", garden_prefix.trim_end_matches('~'));
+        format!("{}/{}", ext_prefix, rest)
+    } else {
+        return None;
+    };
+    Some((id, href))
+}
+
+fn push_item_ref_anchor(
+    out: &mut String,
+    raw_ref: &str,
+    garden_prefix: &str,
+    item_bodies: Option<&HashMap<crate::path_types::ItemId, String>>,
+) -> bool {
+    let Some((id, href)) = garden_href_for_item_ref(raw_ref, garden_prefix) else {
+        return false;
+    };
+    out.push_str(r#"<a href=""#);
+    out.push_str(&escape_html(&href));
+    out.push('"');
+    out.push_str(r#" class="pre-link""#);
+    if let Some(bodies) = item_bodies {
+        if let Some(body) = bodies.get(&id) {
+            if let Some(snippet) = item_body_title_snippet(body) {
+                out.push_str(r#" title=""#);
+                out.push_str(&escape_html(&snippet));
+                out.push('"');
+            }
+        }
+    }
+    out.push('>');
+    out.push_str(&escape_html(raw_ref));
+    out.push_str("</a>");
+    true
+}
+
+/// Replace item refs in raw prose with clickable garden links.
 ///
 /// When `item_bodies` is set, matching ontology items get a `title` attribute with a truncated
 /// body preview for native browser tooltips (forum posts, item pages).
@@ -554,52 +625,15 @@ pub(super) fn linkify_slugs_with_prefix(
     garden_prefix: &str,
     item_bodies: Option<&HashMap<crate::path_types::ItemId, String>>,
 ) -> String {
-    let escaped = escape_html(raw);
-    let mut out = String::with_capacity(escaped.len() + 64);
-    let mut i = 0;
-    let s = escaped.as_str();
-    while i < s.len() {
-        let rest = &s[i..];
-        if let Some(after_tilde) = rest.strip_prefix("~/") {
-            let path_len = after_tilde
-                .chars()
-                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-' || *c == '/')
-                .map(|c| c.len_utf8())
-                .sum::<usize>();
-            if path_len > 0 {
-                let path = &after_tilde[..path_len];
-                out.push_str(r#"<a href=""#);
-                out.push_str(&escape_html(garden_prefix.trim_end_matches('/')));
-                out.push('/');
-                out.push_str(path);
-                out.push('"');
-                out.push_str(r#" class="pre-link""#);
-                if let Some(bodies) = item_bodies {
-                    let tilde_ref = format!("~/{}", path);
-                    let key = slug_types::canonicalize_item(&tilde_ref);
-                    if let Some(id) = crate::path_types::ItemId::parse(&key) {
-                        if let Some(body) = bodies.get(&id) {
-                            if let Some(snippet) = item_body_title_snippet(body) {
-                                out.push_str(r#" title=""#);
-                                out.push_str(&escape_html(&snippet));
-                                out.push('"');
-                            }
-                        }
-                    }
+    let mut out = String::with_capacity(raw.len() + 64);
+    for token in crate::dsl::tokenize_prose_item_refs(raw) {
+        match token {
+            crate::dsl::ProseToken::Text(text) => out.push_str(&escape_html(&text)),
+            crate::dsl::ProseToken::ItemRef(raw_ref) => {
+                if !push_item_ref_anchor(&mut out, &raw_ref, garden_prefix, item_bodies) {
+                    out.push_str(&escape_html(&raw_ref));
                 }
-                out.push('>');
-                out.push_str("~/");
-                out.push_str(path);
-                out.push_str("</a>");
-                i += 2 + path_len;
-                continue;
             }
-        }
-        if let Some((j, c)) = rest.char_indices().next() {
-            out.push(c);
-            i += j + c.len_utf8();
-        } else {
-            break;
         }
     }
     out
@@ -638,7 +672,13 @@ fn spotify_embed_src(url: &str) -> Option<EmbedFrame> {
     if !(host == "open.spotify.com" || host == "www.open.spotify.com") {
         return None;
     }
-    let path = tail.split('#').next().unwrap_or(tail).split('?').next().unwrap_or(tail);
+    let path = tail
+        .split('#')
+        .next()
+        .unwrap_or(tail)
+        .split('?')
+        .next()
+        .unwrap_or(tail);
     let mut segs: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
     if segs.first().is_some_and(|s| s.starts_with("intl-")) {
         segs.remove(0);
@@ -670,8 +710,16 @@ fn youtube_embed_src(url: &str) -> Option<EmbedFrame> {
     let host = host.to_lowercase();
 
     let video_id = if host == "youtu.be" || host == "www.youtu.be" {
-        clean_media_id(tail.split(['?', '#']).next().unwrap_or(tail).trim_matches('/'))
-    } else if matches!(host.as_str(), "youtube.com" | "www.youtube.com" | "m.youtube.com" | "music.youtube.com") {
+        clean_media_id(
+            tail.split(['?', '#'])
+                .next()
+                .unwrap_or(tail)
+                .trim_matches('/'),
+        )
+    } else if matches!(
+        host.as_str(),
+        "youtube.com" | "www.youtube.com" | "m.youtube.com" | "music.youtube.com"
+    ) {
         let path = format!("/{}", tail.split('#').next().unwrap_or(tail));
         if path.starts_with("/watch") {
             clean_media_id(&query_param(url, "v")?)
@@ -745,10 +793,7 @@ pub(super) fn render_linkified_with_embeds_in_scope(
 /// CLI strings are embedded in a single-quoted JS literal; they must never need escaping.
 fn assert_cli_panel_cmd_js_single_quote_safe(s: &str) {
     assert!(
-        !s.contains('\\')
-            && !s.contains('\'')
-            && !s.contains('\n')
-            && !s.contains('\r'),
+        !s.contains('\\') && !s.contains('\'') && !s.contains('\n') && !s.contains('\r'),
         "cli_panel cmd must not contain `\\`, `'`, or newlines (got {s:?})"
     );
 }
@@ -805,13 +850,38 @@ mod linkify_title_tests {
         let mut bodies = HashMap::new();
         let key = ItemId::parse(&slug_types::canonicalize_item("~/foo/bar")).unwrap();
         bodies.insert(key, "Hello  world\nline".to_string());
-        let html = linkify_slugs_with_prefix(
-            "see ~/foo/bar ok",
-            "/r/x/~",
-            Some(&bodies),
-        );
+        let html = linkify_slugs_with_prefix("see ~/foo/bar ok", "/r/x/~", Some(&bodies));
         assert!(html.contains("title=\"Hello world line\""));
         assert!(html.contains("href=\"/r/x/~/foo/bar\""));
+    }
+
+    #[test]
+    fn raw_url_links_to_public_external_garden_page() {
+        let html = linkify_slugs_with_prefix("see https://example.com/z.", "/~", None);
+        assert!(html
+            .contains(r#"<a href="/-/example.com/z" class="pre-link">https://example.com/z</a>."#));
+    }
+
+    #[test]
+    fn dash_ref_links_to_room_external_garden_page_with_title() {
+        let mut bodies = HashMap::new();
+        let key = ItemId::parse(&slug_types::canonicalize_item("-/example.com/z")).unwrap();
+        bodies.insert(key, "External body\npreview".to_string());
+        let html =
+            linkify_slugs_with_prefix("see -/example.com/z", "/r/9ab12cdroom/~", Some(&bodies));
+        assert!(html.contains(r#"href="/r/9ab12cdroom/-/example.com/z""#));
+        assert!(html.contains(r#"title="External body preview""#));
+    }
+
+    #[test]
+    fn code_fence_urls_are_not_linkified() {
+        let html = linkify_slugs_with_prefix(
+            "```json\n{\"url\":\"https://example.com/z\"}\n```\nthen https://example.com/a",
+            "/~",
+            None,
+        );
+        assert!(!html.contains(r#"href="/-/example.com/z""#));
+        assert!(html.contains(r#"href="/-/example.com/a""#));
     }
 
     #[test]

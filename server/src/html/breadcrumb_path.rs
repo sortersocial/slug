@@ -88,16 +88,12 @@ impl ExternalOntologyPath {
             .filter(|x| !x.is_empty())
             .map(|x| x.to_string())
             .collect();
-        let segments = if segments == ["."] {
-            vec![]
-        } else {
-            segments
-        };
+        let segments = if segments == ["."] { vec![] } else { segments };
         Self { item, segments }
     }
 
     pub(super) fn is_root(&self) -> bool {
-        self.segments.len() <= 1
+        self.segments.is_empty()
     }
 
     pub(super) fn segments(&self) -> &[String] {
@@ -106,5 +102,30 @@ impl ExternalOntologyPath {
 
     pub(super) fn as_str(&self) -> &str {
         self.item.as_str()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn external_root_and_host_paths_are_distinct() {
+        let root = ExternalOntologyPath::from_input("");
+        assert!(root.is_root());
+        assert!(root.segments().is_empty());
+
+        let host = ExternalOntologyPath::from_input("example.com");
+        assert!(!host.is_root());
+        assert_eq!(host.segments(), &["example.com".to_string()]);
+    }
+
+    #[test]
+    fn external_path_keeps_each_url_segment_for_breadcrumbs() {
+        let path = ExternalOntologyPath::from_input("https://example.com/a/b");
+        assert_eq!(
+            path.segments(),
+            &["example.com".to_string(), "a".to_string(), "b".to_string()]
+        );
     }
 }

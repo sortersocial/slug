@@ -1,7 +1,5 @@
 use std::collections::HashMap;
 
-use rand::Rng;
-
 /// Parsed DSL document.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Document {
@@ -39,31 +37,57 @@ pub enum DslError {
 /// Matches the legacy Python parser behavior:
 /// - Supports toggle markers (open == close), e.g. ```...```
 /// - Supports nested markers (open != close), e.g. { ... { ... } ... }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BlockKind {
+    CodeFence,
+    DoubleBrace,
+    Brace,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MaskedBlock {
+    kind: BlockKind,
+}
+
 #[derive(Debug, Default, Clone)]
 pub struct BlockMasker {
     pub replacements: HashMap<String, String>,
+    blocks: HashMap<String, MaskedBlock>,
+    next_id: u32,
 }
 
 impl BlockMasker {
     pub fn new() -> Self {
         Self {
             replacements: HashMap::new(),
+            blocks: HashMap::new(),
+            next_id: 0,
         }
     }
 
-    fn new_token(&mut self) -> String {
-        let mut rng = rand::thread_rng();
-        let n: u32 = rng.gen();
-        let token = format!("__BLOCK_{:08x}__", n);
-        // Extremely unlikely collision; if it happens, regenerate.
-        if self.replacements.contains_key(&token) {
-            return self.new_token();
+    fn new_token(&mut self, haystack: &str) -> String {
+        loop {
+            let token = format!("__BLOCK_{:08x}__", self.next_id);
+            self.next_id = self.next_id.wrapping_add(1);
+            if !self.replacements.contains_key(&token) && !haystack.contains(&token) {
+                return token;
+            }
         }
-        token
     }
 
     /// Replace outermost balanced blocks with tokens.
     pub fn mask(&mut self, text: &str, open_marker: &str, close_marker: &str) -> String {
+        self.mask_kind(text, open_marker, close_marker, BlockKind::Brace)
+    }
+
+    /// Replace outermost balanced blocks with typed deterministic tokens.
+    pub fn mask_kind(
+        &mut self,
+        text: &str,
+        open_marker: &str,
+        close_marker: &str,
+        kind: BlockKind,
+    ) -> String {
         if text.is_empty() {
             return text.to_string();
         }
@@ -97,9 +121,10 @@ impl BlockMasker {
                     // Found end of outermost block
                     let s = start_idx.max(0) as usize;
                     let original_block = &text[s..i];
-                    let token = self.new_token();
+                    let token = self.new_token(text);
                     self.replacements
                         .insert(token.clone(), original_block.to_string());
+                    self.blocks.insert(token.clone(), MaskedBlock { kind });
                     result_parts.push(token);
                     current_idx = i;
                 }
@@ -176,13 +201,22 @@ impl BlockMasker {
         }
         token.to_string()
     }
+
+    pub fn block_kind(&self, token: &str) -> Option<BlockKind> {
+        self.blocks.get(token).map(|b| b.kind)
+    }
 }
 
 fn mask_all(mut masker: BlockMasker, text: &str) -> (BlockMasker, String) {
     // Mask hierarchy: Code -> Double Brace -> Single Brace.
-    let t = masker.mask(text, "```", "```");
-    let t = masker.mask(&t, "{{", "}}");
-    let t = masker.mask(&t, "{", "}");
+    let t = masker.mask_kind(text, "```", "```", BlockKind::CodeFence);
+    let t = masker.mask_kind(&t, "{{", "}}", BlockKind::DoubleBrace);
+    let t = masker.mask_kind(&t, "{", "}", BlockKind::Brace);
+    (masker, t)
+}
+
+fn mask_code_fences(mut masker: BlockMasker, text: &str) -> (BlockMasker, String) {
+    let t = masker.mask_kind(text, "```", "```", BlockKind::CodeFence);
     (masker, t)
 }
 
@@ -253,7 +287,34 @@ fn skip_ws(s: &str, mut i: usize) -> usize {
     i
 }
 
-fn parse_item_name_at(s: &str, i: usize) -> Option<(String, usize)> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProseToken {
+    Text(String),
+    ItemRef(String),
+}
+
+fn trim_prose_item_ref_end(s: &str, mut end: usize) -> usize {
+    while end > 0 {
+        let Some((idx, c)) = s[..end].char_indices().next_back() else {
+            break;
+        };
+        if matches!(
+            c,
+            '.' | ',' | ';' | ':' | '!' | '?' | ')' | ']' | '}' | '"' | '\''
+        ) {
+            end = idx;
+        } else {
+            break;
+        }
+    }
+    end
+}
+
+fn parse_item_name_at_with_mode(
+    s: &str,
+    i: usize,
+    trim_trailing_punctuation: bool,
+) -> Option<(String, usize)> {
     let bytes = s.as_bytes();
     if i >= bytes.len() {
         return None;
@@ -270,6 +331,12 @@ fn parse_item_name_at(s: &str, i: usize) -> Option<(String, usize)> {
         }
         if j <= i {
             return None;
+        }
+        if trim_trailing_punctuation {
+            j = trim_prose_item_ref_end(s, j);
+            if j <= i {
+                return None;
+            }
         }
         return Some((s[i..j].to_string(), j));
     }
@@ -295,6 +362,12 @@ fn parse_item_name_at(s: &str, i: usize) -> Option<(String, usize)> {
         }
         if j <= i + 2 {
             return None;
+        }
+        if trim_trailing_punctuation {
+            j = trim_prose_item_ref_end(s, j);
+            if j <= i + 2 {
+                return None;
+            }
         }
         let raw = &s[i..j];
         if !is_item_name(raw) {
@@ -334,6 +407,46 @@ fn parse_item_name_at(s: &str, i: usize) -> Option<(String, usize)> {
         return None;
     }
     Some((format!("~/{}", name), j))
+}
+
+fn parse_item_name_at(s: &str, i: usize) -> Option<(String, usize)> {
+    parse_item_name_at_with_mode(s, i, false)
+}
+
+pub fn parse_prose_item_ref_at(s: &str, i: usize) -> Option<(String, usize)> {
+    parse_item_name_at_with_mode(s, i, true)
+}
+
+pub fn tokenize_prose_item_refs(text: &str) -> Vec<ProseToken> {
+    if text.is_empty() {
+        return Vec::new();
+    }
+    let (masker, masked) = mask_code_fences(BlockMasker::new(), text);
+    let mut tokens = Vec::new();
+    let mut text_start = 0usize;
+    let mut i = 0usize;
+
+    while i < masked.len() {
+        if let Some((raw, end)) = parse_prose_item_ref_at(&masked, i) {
+            if text_start < i {
+                tokens.push(ProseToken::Text(masker.unmask(&masked[text_start..i])));
+            }
+            tokens.push(ProseToken::ItemRef(masker.unmask(&raw)));
+            i = end;
+            text_start = i;
+            continue;
+        }
+
+        let Some((_, c)) = masked[i..].char_indices().next() else {
+            break;
+        };
+        i += c.len_utf8();
+    }
+
+    if text_start < masked.len() {
+        tokens.push(ProseToken::Text(masker.unmask(&masked[text_start..])));
+    }
+    tokens
 }
 
 fn parse_block_token_at(s: &str, i: usize) -> Option<(String, usize)> {
@@ -620,6 +733,57 @@ mod tests {
     }
 
     #[test]
+    fn blockmasker_tokens_are_deterministic_and_typed() {
+        let input = "x ```code``` y {body}";
+        let (masker, masked) = mask_all(BlockMasker::new(), input);
+        assert!(masked.contains("__BLOCK_00000000__"));
+        assert!(masked.contains("__BLOCK_00000001__"));
+        assert_eq!(
+            masker.block_kind("__BLOCK_00000000__"),
+            Some(BlockKind::CodeFence)
+        );
+        assert_eq!(
+            masker.block_kind("__BLOCK_00000001__"),
+            Some(BlockKind::Brace)
+        );
+        assert_eq!(masker.unmask(&masked), input);
+    }
+
+    #[test]
+    fn prose_tokenizer_finds_tilde_dash_and_raw_url_refs() {
+        let tokens =
+            tokenize_prose_item_refs("see ~/a/b then -/example.com/x and https://Example.com/A/B.");
+        assert_eq!(
+            tokens,
+            vec![
+                ProseToken::Text("see ".to_string()),
+                ProseToken::ItemRef("~/a/b".to_string()),
+                ProseToken::Text(" then ".to_string()),
+                ProseToken::ItemRef("-/example.com/x".to_string()),
+                ProseToken::Text(" and ".to_string()),
+                ProseToken::ItemRef("https://Example.com/A/B".to_string()),
+                ProseToken::Text(".".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn prose_tokenizer_does_not_linkify_inside_code_fences() {
+        let tokens = tokenize_prose_item_refs(
+            "before ```json\n{\"url\":\"https://example.com\"}\n``` after ~/x",
+        );
+        assert_eq!(
+            tokens,
+            vec![
+                ProseToken::Text(
+                    "before ```json\n{\"url\":\"https://example.com\"}\n``` after ".to_string()
+                ),
+                ProseToken::ItemRef("~/x".to_string()),
+            ]
+        );
+    }
+
+    #[test]
     fn parse_item_with_body_strips_outer_braces() {
         let input = "~/rust { Systems language }";
         let doc = parse_full(input).unwrap();
@@ -640,6 +804,19 @@ mod tests {
             doc.statements,
             vec![Stmt::Item {
                 title: "~/item/in/url".to_string(),
+                body: Some("```json\n{\"test\": true}\n```".to_string()),
+            }]
+        );
+    }
+
+    #[test]
+    fn parse_external_dash_item_with_singleton_fenced_json_body() {
+        let input = "-/example.com/itembody/slug ```json\n{\"test\": true}\n```";
+        let doc = parse_full(input).unwrap();
+        assert_eq!(
+            doc.statements,
+            vec![Stmt::Item {
+                title: "-/example.com/itembody/slug".to_string(),
                 body: Some("```json\n{\"test\": true}\n```".to_string()),
             }]
         );
