@@ -324,6 +324,9 @@ fn parse_item_name_at_with_mode(
     if s[i..].starts_with("https://") || s[i..].starts_with("http://") {
         let mut j = i;
         while j < bytes.len() {
+            if trim_trailing_punctuation && bytes[j] == b'\n' {
+                break;
+            }
             if bytes[j..].starts_with(b"__BLOCK_") || is_ws_byte(bytes[j]) {
                 break;
             }
@@ -763,6 +766,19 @@ mod tests {
                 ProseToken::Text(" and ".to_string()),
                 ProseToken::ItemRef("https://Example.com/A/B".to_string()),
                 ProseToken::Text(".".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn prose_tokenizer_stops_raw_urls_at_newlines() {
+        let tokens = tokenize_prose_item_refs("https://example.com/a/b.\n-/example.com/a/b");
+        assert_eq!(
+            tokens,
+            vec![
+                ProseToken::ItemRef("https://example.com/a/b".to_string()),
+                ProseToken::Text(".\n".to_string()),
+                ProseToken::ItemRef("-/example.com/a/b".to_string()),
             ]
         );
     }
