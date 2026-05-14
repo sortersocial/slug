@@ -720,22 +720,32 @@ fn test_thread_timestamp_bump() {
     let key = (ScopeId::Public, "my-thread".to_string());
     let mut ev1 = match ingest_event(100, "~/t/a {a}\n") { Event::Ingest(i) => i, _ => unreachable!() };
     ev1.thread_tag = "my-thread".to_string();
+    ev1.principal = "alice".to_string();
     state.apply_event(Event::Ingest(ev1));
     assert_eq!(state.forum_threads.get(&key).unwrap().last_activity_ts, 100);
+    assert_eq!(state.forum_threads.get(&key).unwrap().last_actor, "alice");
 
     let mut ev2 = match ingest_event(200, "~/t/b {b}\n") { Event::Ingest(i) => i, _ => unreachable!() };
     ev2.thread_tag = "my-thread".to_string();
+    ev2.principal = "bob".to_string();
     state.apply_event(Event::Ingest(ev2));
     assert_eq!(state.forum_threads.get(&key).unwrap().last_activity_ts, 200);
+    assert_eq!(state.forum_threads.get(&key).unwrap().last_actor, "bob");
 
-    // Ingest with earlier timestamp should NOT regress
+    // Ingest with earlier timestamp should NOT regress ts or actor
     let mut ev3 = match ingest_event(150, "~/t/c {c}\n") { Event::Ingest(i) => i, _ => unreachable!() };
     ev3.thread_tag = "my-thread".to_string();
+    ev3.principal = "charlie".to_string();
     state.apply_event(Event::Ingest(ev3));
     assert_eq!(
         state.forum_threads.get(&key).unwrap().last_activity_ts,
         200,
         "thread timestamp should not regress to an earlier value"
+    );
+    assert_eq!(
+        state.forum_threads.get(&key).unwrap().last_actor,
+        "bob",
+        "last_actor should not change when timestamp does not advance"
     );
 }
 

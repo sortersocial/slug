@@ -197,12 +197,15 @@ pub struct RoomTimelineEntry {
 #[derive(Debug, Clone)]
 pub struct ForumThreadState {
     pub last_activity_ts: i64,
+    /// Username of the most recent person who bumped this thread.
+    pub last_actor: String,
 }
 
 impl Default for ForumThreadState {
     fn default() -> Self {
         Self {
             last_activity_ts: 0,
+            last_actor: String::new(),
         }
     }
 }
@@ -730,7 +733,10 @@ impl ReducerState {
 
                 let ft = self.forum_threads.entry(scope_thread_key.clone()).or_default();
                 let prev_ts = ft.last_activity_ts;
-                nav!(ft.last_activity_ts, selected(ing.ts > prev_ts, setval(ing.ts)));
+                if ing.ts > prev_ts {
+                    ft.last_activity_ts = ing.ts;
+                    ft.last_actor = ing.principal.clone();
+                }
 
                 nav!(self.ingests_by_scope_thread, keypath(scope_thread_key), push_front(ing.id.clone()));
 

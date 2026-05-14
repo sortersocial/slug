@@ -27,6 +27,7 @@ pub(super) struct ThreadRow {
     pub(super) tag: String,
     pub(super) subtitle: Option<String>,
     pub(super) last_ts: i64,
+    pub(super) last_actor: String,
     pub(super) ingests: usize,
 }
 
@@ -46,6 +47,7 @@ pub(super) fn collect_thread_rows_for_scope(reduced: &ReducerState, scope: &Scop
                 tag: tag.clone(),
                 subtitle: None,
                 last_ts: thread.last_activity_ts,
+                last_actor: thread.last_actor.clone(),
                 ingests,
             }
         })
@@ -88,6 +90,9 @@ pub(super) fn render_thread_feed(nav: Option<&ThreadNav>, feed_id: &str, rows: &
                                 " "
                                 span class="muted" title=(hover) {
                                     (ago)
+                                    @if !r.last_actor.is_empty() {
+                                        " by @" (r.last_actor)
+                                    }
                                     " · "
                                     (format!("{}n", r.ingests))
                                 }

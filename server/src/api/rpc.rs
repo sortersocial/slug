@@ -432,6 +432,7 @@ fn rpc_list_forum_threads(reduced: &ReducerState, room: &str) -> ThreadsResponse
         .map(|((_, tag), ts)| ThreadSummary {
             thread: format!("#{tag}"),
             last_activity_ts: ts.last_activity_ts,
+            last_actor: ts.last_actor.clone(),
             web: ForumThreadUrl::from_room_tag(room, tag),
         })
         .collect();
