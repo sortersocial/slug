@@ -517,6 +517,12 @@ fn parse_block_prefixed_statement(
     tail: &str,
     masker: &BlockMasker,
 ) -> Result<Stmt, DslError> {
+    if masker.block_kind(block_token) == Some(BlockKind::CodeFence) {
+        return Err(DslError::Parse(
+            "vote explanations must use `{ ... }`; code fences belong inside body blocks"
+                .to_string(),
+        ));
+    }
     // vote: block item_ref comparison item_ref
     let s = tail.trim_start();
     if s.is_empty() {
@@ -578,6 +584,11 @@ fn parse_item_definition_statement(stripped: &str, masker: &BlockMasker) -> Resu
     }
 
     if let Some((tok, end)) = parse_block_token_at(stripped, i) {
+        if masker.block_kind(&tok) == Some(BlockKind::CodeFence) {
+            return Err(DslError::Parse(
+                "item bodies must use `{ ... }`; code fences belong inside body blocks".to_string(),
+            ));
+        }
         let body = masker.extract_body(&tok);
         let tail = stripped[end..].trim();
         if !tail.is_empty() {
@@ -688,6 +699,10 @@ pub fn parse_full(text: &str) -> Result<Document, DslError> {
 
             if let Some((tok, end)) = parse_block_token_at(stripped, 0) {
                 if stripped[end..].trim().is_empty() {
+                    if masker.block_kind(&tok) == Some(BlockKind::CodeFence) {
+                        prose_buffer.push(line);
+                        continue;
+                    }
                     pending_block = Some(tok);
                     continue;
                 }
@@ -813,8 +828,8 @@ mod tests {
     }
 
     #[test]
-    fn parse_item_with_fenced_json_body_preserves_braces() {
-        let input = "~/item/in/url ```json\n{\"test\": true}\n```";
+    fn parse_item_with_braced_fenced_json_body_preserves_braces() {
+        let input = "~/item/in/url {\n```json\n{\"test\": true}\n```\n}";
         let doc = parse_full(input).unwrap();
         assert_eq!(
             doc.statements,
@@ -826,13 +841,45 @@ mod tests {
     }
 
     #[test]
-    fn parse_external_dash_item_with_singleton_fenced_json_body() {
-        let input = "-/example.com/itembody/slug ```json\n{\"test\": true}\n```";
+    fn parse_rejects_singleton_fenced_json_item_body() {
+        let input = "~/item/in/url ```json\n{\"test\": true}\n```";
+        let err = parse_full(input).unwrap_err().to_string();
+        assert!(
+            err.contains("item bodies must use"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn parse_keeps_standalone_code_fence_as_prose() {
+        let input = "```json\n{\"test\": true}\n```";
+        let doc = parse_full(input).unwrap();
+        assert_eq!(
+            doc.statements,
+            vec![Stmt::Prose {
+                text: input.to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn parse_rejects_code_fence_vote_explanation() {
+        let input = "```json\n{\"why\": true}\n```\n~/a 2:1 ~/b";
+        let err = parse_full(input).unwrap_err().to_string();
+        assert!(
+            err.contains("vote explanations must start"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn parse_raw_url_item_with_braced_fenced_json_body() {
+        let input = "https://example.com/itembody/slug {\n```json\n{\"test\": true}\n```\n}";
         let doc = parse_full(input).unwrap();
         assert_eq!(
             doc.statements,
             vec![Stmt::Item {
-                title: "-/example.com/itembody/slug".to_string(),
+                title: "https://example.com/itembody/slug".to_string(),
                 body: Some("```json\n{\"test\": true}\n```".to_string()),
             }]
         );
