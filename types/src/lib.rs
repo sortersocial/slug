@@ -131,6 +131,7 @@ pub struct ThreadsResponse {
 pub struct ThreadSummary {
     pub thread: String,
     pub last_activity_ts: i64,
+    pub last_actor: String,
     pub web: ForumThreadUrl,
 }
 
