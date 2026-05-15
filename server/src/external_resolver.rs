@@ -256,7 +256,7 @@ fn children_to_dsl(children: &[ResolvedChild]) -> String {
             .filter(|s| !s.trim().is_empty())
             .unwrap_or(child.title.as_str());
         if body.trim_start().starts_with("```") {
-            out.push_str(&format!("{} {}\n\n", child.url, body.trim()));
+            out.push_str(&format!("{} {{\n{}\n}}\n\n", child.url, body.trim()));
         } else {
             out.push_str(&format!(
                 "{} {{\n{}\n}}\n\n",
@@ -378,7 +378,8 @@ mod tests {
             title: "#1 title".into(),
             body: Some("```json\n{\"test\": true}\n```".into()),
         }]);
-        assert!(dsl.contains("https://github.com/o/r/issues/1 ```json"));
+        assert!(dsl.contains("https://github.com/o/r/issues/1 {\n```json"));
         assert!(dsl.contains("{\"test\": true}"));
+        assert!(dsl.contains("```\n}\n"));
     }
 }
