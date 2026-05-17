@@ -21,6 +21,18 @@
             (do (Thread/sleep 200) (recur))
             false))))))
 
+(defn- wait-for-http-text [url expected timeout-ms]
+  (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
+    (loop []
+      (let [text (try
+                   (:body (oauth/http-get url))
+                   (catch Exception _ nil))]
+        (if (and (string? text) (str/includes? text expected))
+          true
+          (if (< (System/currentTimeMillis) deadline)
+            (do (Thread/sleep 200) (recur))
+            false))))))
+
 (defn- start-mock-github [port]
   (let [!paths (atom [])
         handler (fn [req]
@@ -119,9 +131,14 @@
 
                (page/navigate pg (str base-url "/-/github.com/octo/hello/issues/42"))
                (locator/click (page/locator pg "[data-testid=\"github-resolve-siblings\"]"))
-               (page/navigate pg (str base-url "/-/github.com/octo/hello/issues"))
-               (is (wait-for-text pg "body" "-/github.com/octo/hello/issues/43" 15000)
-                   "issue sibling resolver imports issue siblings")))))
+               (is (wait-for-http-text (str base-url "/-/github.com/octo/hello/issues")
+                                       "-/github.com/octo/hello/issues/43"
+                                       15000)
+                   "issue sibling resolver persisted issue siblings")
+               (core/with-page [pg2 (core/new-page-from-context ctx)]
+                 (page/navigate pg2 (str base-url "/-/github.com/octo/hello/issues"))
+                 (is (wait-for-text pg2 "body" "-/github.com/octo/hello/issues/43" 15000)
+                     "issue sibling resolver imports issue siblings"))))))
 
        (is (some #{"/users/octo/repos"} @(:paths @!github))
            "mock GitHub saw user repos request")
