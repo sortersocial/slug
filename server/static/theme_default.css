@@ -949,6 +949,15 @@ button.ont-garden-pin-ico:focus-visible {
 .vote-compare-next:hover {
   color: var(--signal);
 }
+.resolver-status {
+  margin-top: 8px;
+}
+.resolver-status p {
+  margin: 0;
+}
+.resolver-status-error {
+  color: var(--danger, #b00020);
+}
 body.view-ontology-light ol.ont-ranking-list li,
 body.view-ontology-light ul.ont-group-list li {
   display: flex;

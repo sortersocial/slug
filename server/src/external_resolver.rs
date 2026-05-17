@@ -6,6 +6,7 @@ use crate::{path_types::ItemId, state::AppState, write_cmd::WriteCmd};
 
 const GITHUB_SYSTEM_PRINCIPAL: &str = "system:github-resolver";
 const GITHUB_RESOLVER_COOLDOWN_MS: i64 = 15_000;
+const GITHUB_MAX_PAGES: usize = 3;
 
 fn now_ms() -> i64 {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -69,6 +70,10 @@ impl GitHubResolver {
             [owner, repo] => Ok(github_repo_sections(owner, repo)),
             [owner, repo, section] if section == "issues" => self.list_issues(owner, repo).await,
             [owner, repo, section] if section == "pulls" => self.list_pulls(owner, repo).await,
+            [owner, repo, section] if section == "commits" => self.list_commits(owner, repo).await,
+            [owner, repo, section] if section == "releases" => {
+                self.list_releases(owner, repo).await
+            }
             _ => Ok(vec![]),
         }
     }
@@ -95,17 +100,31 @@ impl GitHubResolver {
             .map_err(|e| format!("GitHub response JSON failed: {e}"))
     }
 
+    async fn get_json_array_pages(&self, path: &str) -> Result<Vec<Value>, String> {
+        let sep = if path.contains('?') { '&' } else { '?' };
+        let mut out = Vec::new();
+        for page in 1..=GITHUB_MAX_PAGES {
+            let value = self.get_json(&format!("{path}{sep}page={page}")).await?;
+            let arr = value
+                .as_array()
+                .ok_or_else(|| "GitHub paged response was not an array".to_string())?;
+            let n = arr.len();
+            out.extend(arr.iter().cloned());
+            if n < 100 {
+                break;
+            }
+        }
+        Ok(out)
+    }
+
     async fn list_repos(&self, owner: &str) -> Result<Vec<ResolvedChild>, String> {
-        let value = self
-            .get_json(&format!(
+        let arr = self
+            .get_json_array_pages(&format!(
                 "/users/{owner}/repos?per_page=100&sort=updated&type=owner"
             ))
             .await?;
-        let arr = value
-            .as_array()
-            .ok_or_else(|| "GitHub repos response was not an array".to_string())?;
         let mut out = Vec::new();
-        for repo in arr {
+        for repo in &arr {
             let name = repo
                 .get("name")
                 .and_then(|v| v.as_str())
@@ -129,16 +148,13 @@ impl GitHubResolver {
     }
 
     async fn list_issues(&self, owner: &str, repo: &str) -> Result<Vec<ResolvedChild>, String> {
-        let value = self
-            .get_json(&format!(
+        let arr = self
+            .get_json_array_pages(&format!(
                 "/repos/{owner}/{repo}/issues?state=open&per_page=100"
             ))
             .await?;
-        let arr = value
-            .as_array()
-            .ok_or_else(|| "GitHub issues response was not an array".to_string())?;
         let mut out = Vec::new();
-        for issue in arr {
+        for issue in &arr {
             if issue.get("pull_request").is_some() {
                 continue;
             }
@@ -160,16 +176,13 @@ impl GitHubResolver {
     }
 
     async fn list_pulls(&self, owner: &str, repo: &str) -> Result<Vec<ResolvedChild>, String> {
-        let value = self
-            .get_json(&format!(
+        let arr = self
+            .get_json_array_pages(&format!(
                 "/repos/{owner}/{repo}/pulls?state=open&per_page=100"
             ))
             .await?;
-        let arr = value
-            .as_array()
-            .ok_or_else(|| "GitHub pulls response was not an array".to_string())?;
         let mut out = Vec::new();
-        for pull in arr {
+        for pull in &arr {
             let Some(number) = pull.get("number").and_then(|v| v.as_i64()) else {
                 continue;
             };
@@ -181,6 +194,59 @@ impl GitHubResolver {
                 url: format!("https://github.com/{owner}/{repo}/pulls/{number}"),
                 title: format!("#{number} {title}"),
                 body: Some(github_issue_body(pull, "pull request")),
+            });
+        }
+        out.sort_by(|a, b| a.url.cmp(&b.url));
+        Ok(out)
+    }
+
+    async fn list_commits(&self, owner: &str, repo: &str) -> Result<Vec<ResolvedChild>, String> {
+        let arr = self
+            .get_json_array_pages(&format!("/repos/{owner}/{repo}/commits?per_page=100"))
+            .await?;
+        let mut out = Vec::new();
+        for commit in &arr {
+            let Some(sha) = github_string(commit, "sha") else {
+                continue;
+            };
+            let short = sha.chars().take(7).collect::<String>();
+            let title = commit
+                .get("commit")
+                .and_then(|c| c.get("message"))
+                .and_then(|v| v.as_str())
+                .and_then(|m| m.lines().next())
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or("commit");
+            let url = github_string(commit, "html_url")
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| format!("https://github.com/{owner}/{repo}/commit/{sha}"));
+            out.push(ResolvedChild {
+                url,
+                title: format!("{short} {title}"),
+                body: Some(github_commit_body(commit)),
+            });
+        }
+        out.sort_by(|a, b| a.url.cmp(&b.url));
+        Ok(out)
+    }
+
+    async fn list_releases(&self, owner: &str, repo: &str) -> Result<Vec<ResolvedChild>, String> {
+        let arr = self
+            .get_json_array_pages(&format!("/repos/{owner}/{repo}/releases?per_page=100"))
+            .await?;
+        let mut out = Vec::new();
+        for release in &arr {
+            let Some(tag) = github_string(release, "tag_name") else {
+                continue;
+            };
+            let title = github_string(release, "name").unwrap_or(tag);
+            let url = github_string(release, "html_url")
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| format!("https://github.com/{owner}/{repo}/releases/tag/{tag}"));
+            out.push(ResolvedChild {
+                url,
+                title: title.to_string(),
+                body: Some(github_release_body(release)),
             });
         }
         out.sort_by(|a, b| a.url.cmp(&b.url));
@@ -307,6 +373,76 @@ fn github_issue_body(issue: &Value, kind: &str) -> String {
         lines.push(format!("Source: {url}"));
     }
     if let Some(body) = github_string(issue, "body") {
+        lines.push(String::new());
+        lines.push(body.to_string());
+    }
+    lines.join("\n")
+}
+
+fn github_commit_body(commit: &Value) -> String {
+    let sha = github_string(commit, "sha").unwrap_or("unknown");
+    let short = sha.chars().take(7).collect::<String>();
+    let commit_obj = commit.get("commit");
+    let message = commit_obj
+        .and_then(|c| c.get("message"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("commit");
+    let mut lines = vec![format!("commit {short}")];
+    if let Some(author) = commit_obj
+        .and_then(|c| c.get("author"))
+        .and_then(|a| a.get("name"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+    {
+        lines.push(format!("Author: {author}"));
+    }
+    if let Some(login) = github_user_login(commit) {
+        lines.push(format!("GitHub user: @{login}"));
+    }
+    if let Some(date) = commit_obj
+        .and_then(|c| c.get("author"))
+        .and_then(|a| a.get("date"))
+        .and_then(|v| v.as_str())
+    {
+        lines.push(format!("Date: {date}"));
+    }
+    if let Some(url) = github_string(commit, "html_url") {
+        lines.push(format!("Source: {url}"));
+    }
+    lines.push(String::new());
+    lines.push(message.to_string());
+    lines.join("\n")
+}
+
+fn github_release_body(release: &Value) -> String {
+    let tag = github_string(release, "tag_name").unwrap_or("untagged");
+    let title = github_string(release, "name").unwrap_or(tag);
+    let mut lines = vec![format!("release {title}")];
+    lines.push(format!("Tag: {tag}"));
+    if release
+        .get("draft")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        lines.push("Draft: yes".to_string());
+    }
+    if release
+        .get("prerelease")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        lines.push("Prerelease: yes".to_string());
+    }
+    if let Some(author) = github_user_login(release) {
+        lines.push(format!("Author: @{author}"));
+    }
+    if let Some(published) = github_string(release, "published_at") {
+        lines.push(format!("Published: {published}"));
+    }
+    if let Some(url) = github_string(release, "html_url") {
+        lines.push(format!("Source: {url}"));
+    }
+    if let Some(body) = github_string(release, "body") {
         lines.push(String::new());
         lines.push(body.to_string());
     }
@@ -465,5 +601,30 @@ mod tests {
         assert!(body.contains("Author: @octo"));
         assert!(body.contains("The issue body."));
         assert!(!body.trim_start().starts_with("```json"));
+    }
+
+    #[test]
+    fn github_commit_and_release_bodies_are_readable() {
+        let commit = serde_json::json!({
+            "sha": "abcdef123456",
+            "html_url": "https://github.com/o/r/commit/abcdef123456",
+            "author": {"login": "octo"},
+            "commit": {
+                "message": "Fix vote page\n\nDetails here.",
+                "author": {"name": "Octo Dev", "date": "2026-05-17T00:00:00Z"}
+            }
+        });
+        let release = serde_json::json!({
+            "tag_name": "v1.2.3",
+            "name": "Release 1.2.3",
+            "html_url": "https://github.com/o/r/releases/tag/v1.2.3",
+            "author": {"login": "octo"},
+            "prerelease": true,
+            "body": "Release notes."
+        });
+        assert!(github_commit_body(&commit).contains("commit abcdef1"));
+        assert!(github_commit_body(&commit).contains("Fix vote page"));
+        assert!(github_release_body(&release).contains("release Release 1.2.3"));
+        assert!(github_release_body(&release).contains("Prerelease: yes"));
     }
 }

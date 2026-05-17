@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::path_types::ItemId;
 use crate::ranking::{connected_components_from_voted_pairs, ranked_items_subset, RankedItem};
-use crate::reducer::ContentState;
+use crate::reducer::{ContentState, GroupState};
 
 #[derive(Debug, Clone)]
 pub struct ScopedComponent {
@@ -49,15 +49,16 @@ pub fn resolve_scope(content: &ContentState, specs: &[String]) -> Vec<ItemId> {
 /// Resolve scope specs recursively up to `depth` levels deep.
 /// depth=1 is equivalent to resolve_scope (direct children only).
 /// depth=2 includes grandchildren, etc.
-pub fn resolve_scope_recursive(content: &ContentState, specs: &[String], depth: usize) -> Vec<ItemId> {
+pub fn resolve_scope_recursive(
+    content: &ContentState,
+    specs: &[String],
+    depth: usize,
+) -> Vec<ItemId> {
     if depth == 0 {
         return vec![];
     }
     let mut visited: HashSet<ItemId> = HashSet::new();
-    let mut frontier: Vec<ItemId> = specs
-        .iter()
-        .filter_map(|s| ItemId::parse(s))
-        .collect();
+    let mut frontier: Vec<ItemId> = specs.iter().filter_map(|s| ItemId::parse(s)).collect();
 
     for _level in 0..depth {
         let mut next_frontier: Vec<ItemId> = Vec::new();
@@ -83,7 +84,10 @@ pub fn resolve_scope_recursive(content: &ContentState, specs: &[String], depth: 
 
 /// Build connected-component rankings for an explicit set of item paths.
 /// Use this when scope comes from multiple parents (resolve_scope).
-pub fn build_rankings_for_item_set(content: &ContentState, items_in_scope: &[ItemId]) -> ChildrenRankings {
+pub fn build_rankings_for_item_set(
+    content: &ContentState,
+    items_in_scope: &[ItemId],
+) -> ChildrenRankings {
     let group = &content.ranking_group;
     let mut items_in_scope: Vec<ItemId> = items_in_scope.to_vec();
     items_in_scope.sort();
@@ -158,6 +162,67 @@ pub fn build_children_rankings(content: &ContentState, parent: &ItemId) -> Child
     build_rankings_for_item_set(content, &items)
 }
 
+pub fn is_pair_voted_in_group(group: &GroupState, a: &ItemId, b: &ItemId) -> bool {
+    let Some(&a_idx) = group.item_to_idx.get(a) else {
+        return false;
+    };
+    let Some(&b_idx) = group.item_to_idx.get(b) else {
+        return false;
+    };
+    let (i, j) = if a_idx < b_idx {
+        (a_idx, b_idx)
+    } else {
+        (b_idx, a_idx)
+    };
+    group.voted_pairs.contains(&(i, j))
+}
+
+fn canonical_pair(a: &ItemId, b: &ItemId) -> (ItemId, ItemId) {
+    let ac = a.clone().normalized_storage();
+    let bc = b.clone().normalized_storage();
+    if ac.as_str() <= bc.as_str() {
+        (ac, bc)
+    } else {
+        (bc, ac)
+    }
+}
+
+pub fn suggest_next_pair_in_pool(
+    group: &GroupState,
+    pool: &[ItemId],
+    current_pair: Option<(&ItemId, &ItemId)>,
+) -> Option<(ItemId, ItemId)> {
+    let current = current_pair.map(|(a, b)| canonical_pair(a, b));
+    let mut pool = pool.to_vec();
+    pool.sort();
+    pool.dedup();
+    if pool.len() < 2 {
+        return None;
+    }
+
+    for i in 0..pool.len() {
+        for j in (i + 1)..pool.len() {
+            let pair = canonical_pair(&pool[i], &pool[j]);
+            if current.as_ref() == Some(&pair) {
+                continue;
+            }
+            if !is_pair_voted_in_group(group, &pool[i], &pool[j]) {
+                return Some((pool[i].clone(), pool[j].clone()));
+            }
+        }
+    }
+
+    for i in 0..pool.len() {
+        for j in (i + 1)..pool.len() {
+            let pair = canonical_pair(&pool[i], &pool[j]);
+            if current.as_ref() != Some(&pair) {
+                return Some((pool[i].clone(), pool[j].clone()));
+            }
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -167,10 +232,7 @@ mod tests {
         let mut item_children: HashMap<ItemId, HashSet<ItemId>> = HashMap::new();
         for (parent, children) in edges {
             let parent = ItemId::parse(parent).unwrap();
-            let set: HashSet<ItemId> = children
-                .iter()
-                .map(|s| ItemId::parse(s).unwrap())
-                .collect();
+            let set: HashSet<ItemId> = children.iter().map(|s| ItemId::parse(s).unwrap()).collect();
             item_children.insert(parent, set);
         }
         ContentState {
@@ -187,9 +249,13 @@ mod tests {
 
     #[test]
     fn resolve_one_scope_literal() {
-        let content = content_with_children(&[
-            ("https://slug.social/models", &["https://slug.social/models/x", "https://slug.social/models/y"]),
-        ]);
+        let content = content_with_children(&[(
+            "https://slug.social/models",
+            &[
+                "https://slug.social/models/x",
+                "https://slug.social/models/y",
+            ],
+        )]);
         let out = resolve_one_scope(&content, "models");
         assert_eq!(out.len(), 2);
         assert!(out.contains(&ItemId::parse("https://slug.social/models/x").unwrap()));
@@ -199,8 +265,14 @@ mod tests {
     #[test]
     fn resolve_scope_multiple_parents_merges() {
         let content = content_with_children(&[
-            ("https://slug.social/a", &["https://slug.social/a/1", "https://slug.social/a/2"]),
-            ("https://slug.social/b", &["https://slug.social/b/1", "https://slug.social/b/2"]),
+            (
+                "https://slug.social/a",
+                &["https://slug.social/a/1", "https://slug.social/a/2"],
+            ),
+            (
+                "https://slug.social/b",
+                &["https://slug.social/b/1", "https://slug.social/b/2"],
+            ),
         ]);
         let out = resolve_scope(&content, &["a".into(), "b".into()]);
         assert_eq!(out.len(), 4);
@@ -208,5 +280,29 @@ mod tests {
         assert!(out.contains(&ItemId::parse("https://slug.social/a/2").unwrap()));
         assert!(out.contains(&ItemId::parse("https://slug.social/b/1").unwrap()));
         assert!(out.contains(&ItemId::parse("https://slug.social/b/2").unwrap()));
+    }
+
+    #[test]
+    fn suggest_next_pair_skips_current_and_voted_pairs() {
+        let mut group = crate::reducer::GroupState::new();
+        let a = ItemId::parse("~/a").unwrap().normalized_storage();
+        let b = ItemId::parse("~/b").unwrap().normalized_storage();
+        let c = ItemId::parse("~/c").unwrap().normalized_storage();
+        group.apply_vote(crate::reducer::VoteData {
+            ts: 1,
+            a: a.clone(),
+            b: b.clone(),
+            ratio_left: 2,
+            ratio_right: 1,
+            body: "a beats b".to_string(),
+            principal: "tester".to_string(),
+            delegate: None,
+            thread_tag: "vote".to_string(),
+        });
+        let next =
+            suggest_next_pair_in_pool(&group, &[a.clone(), b.clone(), c.clone()], Some((&a, &b)))
+                .expect("next pair");
+        assert!(next.0 == c || next.1 == c);
+        assert_ne!(canonical_pair(&next.0, &next.1), canonical_pair(&a, &b));
     }
 }

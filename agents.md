@@ -36,11 +36,17 @@ Strict **CSP** that blocks `eval` would break the current app. Other projects ma
 
 - **`HtmlUiAction` / `POST /ui`** (`server/src/html/ui_action.rs`, `server/src/api/ui_html.rs`): **Browser session** (cookie) UI commands. Payload is `__rpc__` + form fields. Most responses are **JS morphs**; some actions return **HTTP redirects** (see below).
 
+- **Do not add one-off POST routes** for browser mutations. New browser actions belong in **`HtmlUiAction`** behind **`POST /ui`**; new programmatic verbs belong in **`RpcCommand`** behind **`POST /api/v0/rpc`**. Ordinary shareable pages remain normal **`GET`** routes.
+
 - **Non-morph `POST /ui` responses:** **`SetGardenPin`** returns **`303 See Other`** and **`Set-Cookie`** (same as **`POST /theme`**). Garden pin/unpin is a normal **`<form method="POST" action="/ui" data-navigate="full">`** — browser navigation applies cookies reliably (see **`test/browser_garden_pin.clj`**). Each **`__rpc__`** payload includes **`form_action: "/ui"`**; **`post_ui_html`** rejects mismatches to bind tokens to the UI endpoint.
 
-- **`VoteComparePost`:** On success returns **`text/javascript`** that **morphs** **`#vote-compare-preview`** (new ingest card), **`#vote-edge-history-region`** (recomputed **`<ul>`** — ratios match **`left`/`right`** query order, bullets, sorted by strength toward **`left`** then newer). The compare **`GET`** page uses **`layout_full_bleed_chromeless`** (no breadcrumbs, no **`#controls`**, no **`slug-pin-hud`**; **`view-vote-compare-fullscreen`** full-width **`body`**). **`__rpc__`** carries **`form_action: "/ui"`**; **`thread_tag`** and ratio fields come from the same form as **`$form`** holes.
+- **`VoteComparePost`:** On success returns **`text/javascript`** that **morphs** **`#vote-edge-history-region`** (recomputed **`<ul>`** — ratios match **`left`/`right`** query order, bullets, sorted by strength toward **`left`** then newer) and **`.vote-compare-nav`** (fresh next-pair link). The compare **`GET`** page uses **`layout_full_bleed_chromeless`** (no breadcrumbs, no **`#controls`**, no **`slug-pin-hud`**; **`view-vote-compare-fullscreen`** full-width **`body`**). **`__rpc__`** carries **`form_action: "/ui"`**; **`thread_tag`** and ratio fields come from the same form as **`$form`** holes.
+
+- **`ResolveExternal`:** GitHub resolver buttons are browser actions through **`POST /ui`**. Success/error responses morph **`#external-resolver-status`** and keep a normal refresh link for the shareable **`GET`** page; resolver results are durable system ingests, while cooldown state is RAM-only.
 
 - **Garden pin / compare voting:** Cookie **`slug_garden_pin`** via **`set_garden_pin`**. Pairwise UI: **`GET /vote/compare?…`** / **`GET /r/:room_key/vote/compare?…`** (fullscreen **`GET`** page: no HUD; other garden pages). HUD (**`#slug-pin-hud`**): only when **`layout`** passes garden metadata on **`body`**; the label is **`POST /ui`** **`set_garden_pin`** **`clear:true`** (**`slug_ui.js`**), not a permalink to the item.
+
+- **Browser auth redirects:** `/login`, `/join/:token`, `/auth/login`, and `/auth/choose-username` may carry **`next`** (or legacy **`redirect`**) as a **safe local path only**. The value is stored on the RAM-only pending session and applied after OAuth / username selection.
 
 **Rule of thumb:** New **CLI or API** verbs → `RpcCommand`. New **in-page morph or form-driven** behavior that only makes sense in the browser → `HtmlUiAction`. If both need the same operation, implement the real work once (e.g. call shared RPC helpers from `post_ui_html`) and keep the wire shapes separate.
 

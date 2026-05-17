@@ -760,6 +760,15 @@ body.view-ontology .resolver-refresh-link:hover {
   border-color: #a68e6b;
   color: #1a1814;
 }
+body.view-ontology .resolver-status {
+  margin-top: 0.5rem;
+}
+body.view-ontology .resolver-status p {
+  margin: 0;
+}
+body.view-ontology .resolver-status-error {
+  color: #8b1f1f;
+}
 
 body.view-ontology ol.ont-ranking-list {
   counter-reset: ont-rank;

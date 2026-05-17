@@ -153,6 +153,15 @@ body.view-ontology .vote-compare-next.is-disabled {
   color: #666;
   opacity: 0.65;
 }
+body.view-ontology .resolver-status {
+  margin-top: 0.5rem;
+}
+body.view-ontology .resolver-status p {
+  margin: 0;
+}
+body.view-ontology .resolver-status-error {
+  color: #9b1c1c;
+}
 
 body.view-ontology ol.ont-ranking-list {
   counter-reset: ont-rank;

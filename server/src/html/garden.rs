@@ -22,7 +22,7 @@ use crate::{
     reducer::{ContentState, ReducerState, ScopeId},
     scope_rank::{
         build_children_rankings, build_rankings_for_item_set, resolve_scope_recursive,
-        ChildrenRankings,
+        suggest_next_pair_in_pool, ChildrenRankings,
     },
     state::AppState,
     timeago,
@@ -174,21 +174,6 @@ fn edge_vote_count_for_pair(content: &ContentState, a: &ItemId, b: &ItemId) -> u
         .count()
 }
 
-fn is_pair_voted_in_group(group: &crate::reducer::GroupState, a: &ItemId, b: &ItemId) -> bool {
-    let Some(&a_idx) = group.item_to_idx.get(a) else {
-        return false;
-    };
-    let Some(&b_idx) = group.item_to_idx.get(b) else {
-        return false;
-    };
-    let (i, j) = if a_idx < b_idx {
-        (a_idx, b_idx)
-    } else {
-        (b_idx, a_idx)
-    };
-    group.voted_pairs.contains(&(i, j))
-}
-
 fn vote_thread_tags_for_pair(content: &ContentState, a: &ItemId, b: &ItemId) -> Vec<String> {
     let set: HashSet<String> = content
         .item_threads
@@ -252,7 +237,7 @@ pub(crate) async fn vote_compare_post_success_js(
     state: &AppState,
     nav: &ThreadNav,
     _room_wire: &str,
-    _thread_tag: &str,
+    thread_tag: &str,
     left: &ItemId,
     right: &ItemId,
     _post_id: &str,
@@ -261,9 +246,13 @@ pub(crate) async fn vote_compare_post_success_js(
     let reduced = state.reduced.read().await;
     let content = content_for_garden_view(&reduced, &nav.scope());
     let edge_history = vote_edge_history_markup(content, left, right);
+    let next_pair = suggest_next_vote_pair(content, left, right);
+    let nav_markup =
+        vote_compare_nav_markup(nav, next_pair.as_ref(), left, right, Some(thread_tag));
     drop(reduced);
     JsBuilder::new()
         .morph_inner_selector("#vote-edge-history-region", edge_history)
+        .morph_selector(".vote-compare-nav", nav_markup)
         .build()
 }
 
@@ -312,12 +301,32 @@ fn login_href_with_next(next: &str) -> String {
     format!("/login?next={}", urlencoding::encode(next))
 }
 
+fn vote_compare_nav_markup(
+    nav: &ThreadNav,
+    next_pair: Option<&(ItemId, ItemId)>,
+    left: &ItemId,
+    right: &ItemId,
+    thread_override: Option<&str>,
+) -> maud::Markup {
+    let next_pair_href = next_pair.map(|(nl, nr)| vote_compare_href(nav, nl, nr, None));
+    let swap_pair_href = vote_compare_href(nav, right, left, thread_override);
+    html! {
+        div class="vote-compare-nav" {
+            @if let Some(href) = &next_pair_href {
+                a class="vote-compare-next" data-testid="vote-next-pair" href=(href) { "next pair" }
+            } @else {
+                span class="vote-compare-next is-disabled" { "no next pair" }
+            }
+            a class="vote-compare-next" href=(swap_pair_href) { "swap sides" }
+        }
+    }
+}
+
 fn suggest_next_vote_pair(
     content: &ContentState,
     current_left: &ItemId,
     current_right: &ItemId,
 ) -> Option<(ItemId, ItemId)> {
-    let current = canonical_edge_items(current_left, current_right);
     let mut pool: Vec<ItemId> = if current_left.parent().as_ref().map(|p| p.as_str())
         == current_right.parent().as_ref().map(|p| p.as_str())
     {
@@ -337,33 +346,11 @@ fn suggest_next_vote_pair(
     if pool.len() < 2 {
         pool = content.items.iter().cloned().collect();
     }
-    pool.sort();
-    pool.dedup();
-    if pool.len() < 2 {
-        return None;
-    }
-
-    for i in 0..pool.len() {
-        for j in (i + 1)..pool.len() {
-            let pair = canonical_edge_items(&pool[i], &pool[j]);
-            if pair == current {
-                continue;
-            }
-            if !is_pair_voted_in_group(&content.ranking_group, &pool[i], &pool[j]) {
-                return Some((pool[i].clone(), pool[j].clone()));
-            }
-        }
-    }
-
-    for i in 0..pool.len() {
-        for j in (i + 1)..pool.len() {
-            let pair = canonical_edge_items(&pool[i], &pool[j]);
-            if pair != current {
-                return Some((pool[i].clone(), pool[j].clone()));
-            }
-        }
-    }
-    None
+    suggest_next_pair_in_pool(
+        &content.ranking_group,
+        &pool,
+        Some((current_left, current_right)),
+    )
 }
 
 fn vote_compare_item_card(
@@ -1267,8 +1254,38 @@ fn github_resolver_controls(item: &str, nav: &ThreadNav, next: &str) -> Option<m
                 }
                 a class="resolver-refresh-link" href=(next) { "Refresh page" }
             }
+            div id="external-resolver-status" class="resolver-status muted" aria-live="polite" {}
         }
     })
+}
+
+pub(crate) fn external_resolver_status_markup(
+    imported: Result<usize, &str>,
+    next: &str,
+) -> maud::Markup {
+    let next = if next.trim().starts_with('/') && !next.trim().starts_with("//") {
+        next.trim()
+    } else {
+        "/"
+    };
+    html! {
+        @match imported {
+            Ok(n) => {
+                p class="resolver-status-ok" {
+                    @if n == 0 {
+                        "No GitHub children found. "
+                    } @else {
+                        (format!("Imported {n} GitHub item{}.", if n == 1 { "" } else { "s" })) " "
+                    }
+                    a href=(next) { "Refresh page" }
+                    " to render the updated ontology."
+                }
+            }
+            Err(msg) => {
+                p class="resolver-status-error" { (msg) }
+            }
+        }
+    }
 }
 
 async fn render_scope_view(
@@ -1602,11 +1619,6 @@ async fn vote_compare_inner(
     }))
     .expect("vote compare rpc json");
 
-    let next_pair_href = next_pair
-        .as_ref()
-        .map(|(nl, nr)| vote_compare_href(&nav, nl, nr, None));
-    let swap_pair_href = vote_compare_href(&nav, &right, &left, q.thread.as_deref());
-
     let body = html! {
     section class="vote-compare-shell" {
         h2 { "compare" }
@@ -1615,14 +1627,7 @@ async fn vote_compare_inner(
             span class="vote-compare-vs" { "vs" }
             (vote_compare_item_card(&nav, &right, right_body.as_ref(), "vote-compare-right"))
         }
-        div class="vote-compare-nav" {
-            @if let Some(href) = &next_pair_href {
-                a class="vote-compare-next" data-testid="vote-next-pair" href=(href) { "next pair" }
-            } @else {
-                span class="vote-compare-next is-disabled" { "no next pair" }
-            }
-            a class="vote-compare-next" href=(swap_pair_href) { "swap sides" }
-        }
+        (vote_compare_nav_markup(&nav, next_pair.as_ref(), &left, &right, q.thread.as_deref()))
         div id="vote-edge-history-region" {
             (edge_history)
         }
@@ -1795,6 +1800,13 @@ mod tests {
             next.0.as_str().ends_with("/c") || next.1.as_str().ends_with("/c"),
             "next pair should include the unvoted sibling: {next:?}"
         );
+    }
+
+    #[test]
+    fn external_resolver_status_markup_reports_success_and_refresh() {
+        let html = super::external_resolver_status_markup(Ok(2), "/-/github.com/o/r").into_string();
+        assert!(html.contains("Imported 2 GitHub items."));
+        assert!(html.contains("href=\"/-/github.com/o/r\""));
     }
 
     #[test]
