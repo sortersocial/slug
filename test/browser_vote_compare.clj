@@ -50,9 +50,11 @@
            thread-tag "browser-vote-compare"
            left-url "https://slug.social/~/gp-vote-a"
            right-url "https://slug.social/~/gp-vote-b"
+           third-url "https://slug.social/~/gp-vote-c"
            raw (str "# " thread-tag "\n\n"
                     "~/gp-vote-a {one}\n"
                     "~/gp-vote-b {two}\n"
+                    "~/gp-vote-c {three}\n"
                     "{seed edge vote}\n"
                     "~/gp-vote-a 1:1 ~/gp-vote-b\n")
            post-resp (oauth/http-post-json
@@ -64,7 +66,7 @@
                       :headers {"Authorization" (str "Bearer " alice-token)})
            post-json (json/parse-string (:body post-resp) false)
            _ (is (true? (get-in post-json ["results" 0 "ok"])) "seed items + edge vote via rpc")
-           cmp-url (str base-url "/vote/compare?left=" (enc left-url) "&right=" (enc right-url))]
+           cmp-url (str base-url "/vote/compare?left=" (enc left-url) "&right=" (enc third-url))]
        (core/with-playwright [pw]
          (core/with-browser [browser (core/launch-chromium pw {:headless true :channel "chrome"})]
            (core/with-context [ctx (core/new-context browser)]
@@ -74,12 +76,17 @@
                (page/navigate pg cmp-url)
                ;; No .vote-compare-shell wrapper — wait on stable vote-compare UI instead.
                (is (wait-for-text pg "body.view-vote-compare" "compare" 15000) "vote compare page")
-               (is (wait-for-text pg "ul.vote-edge-history" "seed edge vote" 15000)
-                   "edge history lists canonical-order vote")
+               (is (wait-for-text pg "#vote-edge-history-region" "no votes on this pair" 15000)
+                   "current pair starts without edge history")
                (locator/fill (page/locator pg "#vote-explain") "because playwright says so")
                (locator/click (page/locator pg "#vote-compare-form button[type=submit]"))
                (is (wait-for-text pg "ul.vote-edge-history" "because playwright" 20000)
-                   "new vote appears in edge history after morph"))))))
+                   "new vote appears in edge history after morph")
+               (locator/click (page/locator pg "[data-testid=\"vote-next-pair\"]"))
+               (is (wait-for-text pg ".vote-compare-pair" "~/gp-vote-b" 15000)
+                   "post-success next-pair nav points to a different pair")
+               (is (wait-for-text pg ".vote-compare-pair" "~/gp-vote-c" 15000)
+                   "next pair keeps the unvoted third item"))))))
 
      (finally
        (when-some [s @!server] (common/kill-server s))

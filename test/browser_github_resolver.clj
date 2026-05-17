@@ -112,6 +112,10 @@
                (locator/click (page/locator pg "[data-testid=\"github-resolve-children\"]"))
                (is (wait-for-text pg "body" "-/github.com/octo/hello/pulls" 15000)
                    "repo resolver imports structural children")
+               (is (wait-for-text pg "body" "-/github.com/octo/hello/commits" 15000)
+                   "repo resolver imports commits section")
+               (is (wait-for-text pg "body" "-/github.com/octo/hello/releases" 15000)
+                   "repo resolver imports releases section")
 
                (page/navigate pg (str base-url "/-/github.com/octo/hello/issues/42"))
                (locator/click (page/locator pg "[data-testid=\"github-resolve-siblings\"]"))

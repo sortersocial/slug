@@ -402,6 +402,7 @@ async fn dispatch_ui_action(
                         "#external-resolver-status",
                         external_resolver_status_markup(Ok(n), &sanitize_garden_pin_next(&next)),
                     )
+                    .redirect(&sanitize_garden_pin_next(&next))
                     .into_response(),
                 Err(msg) => JsBuilder::new()
                     .morph_inner_selector(
