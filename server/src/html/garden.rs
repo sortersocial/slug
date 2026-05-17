@@ -12,6 +12,7 @@ use std::collections::HashSet;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD as B64_ENGINE, Engine as _};
 
 use crate::{
+    api::helpers::is_pair_voted,
     api::optional_principal,
     canonical_path::{canonicalize_item, canonicalize_tag},
     events::ThreadCapability,
@@ -285,6 +286,95 @@ fn vote_compare_href(
         format!("{}&thread={}", base, urlencoding::encode(t))
     } else {
         base
+    }
+}
+
+fn login_href_with_next(next: &str) -> String {
+    let next = if next.trim().starts_with('/') && !next.trim().starts_with("//") {
+        next.trim()
+    } else {
+        "/"
+    };
+    format!("/login?next={}", urlencoding::encode(next))
+}
+
+fn suggest_next_vote_pair(
+    content: &ContentState,
+    current_left: &ItemId,
+    current_right: &ItemId,
+) -> Option<(ItemId, ItemId)> {
+    let current = canonical_edge_items(current_left, current_right);
+    let mut pool: Vec<ItemId> = if current_left.parent().as_ref().map(|p| p.as_str())
+        == current_right.parent().as_ref().map(|p| p.as_str())
+    {
+        current_left
+            .parent()
+            .and_then(|parent| {
+                content
+                    .item_children
+                    .get(&parent.normalized_storage())
+                    .cloned()
+            })
+            .map(|children| children.into_iter().collect())
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    if pool.len() < 2 {
+        pool = content.items.iter().cloned().collect();
+    }
+    pool.sort();
+    pool.dedup();
+    if pool.len() < 2 {
+        return None;
+    }
+
+    for i in 0..pool.len() {
+        for j in (i + 1)..pool.len() {
+            let pair = canonical_edge_items(&pool[i], &pool[j]);
+            if pair == current {
+                continue;
+            }
+            if !is_pair_voted(&content.ranking_group, pool[i].as_str(), pool[j].as_str()) {
+                return Some((pool[i].clone(), pool[j].clone()));
+            }
+        }
+    }
+
+    for i in 0..pool.len() {
+        for j in (i + 1)..pool.len() {
+            let pair = canonical_edge_items(&pool[i], &pool[j]);
+            if pair != current {
+                return Some((pool[i].clone(), pool[j].clone()));
+            }
+        }
+    }
+    None
+}
+
+fn vote_compare_item_card(
+    nav: &ThreadNav,
+    item: &ItemId,
+    body: Option<&String>,
+    side_class: &str,
+) -> maud::Markup {
+    html! {
+        div class=(format!("vote-compare-side {side_class}")) {
+            a class=(format!("vote-compare-item {side_class}")) href=(nav.garden_item_href(item)) {
+                code { (item_display_path(item.as_str())) }
+            }
+            @if let Some(body) = body.filter(|b| !b.trim().is_empty()) {
+                div class="vote-compare-item-body" {
+                    (render_linkified_with_embeds_in_scope(
+                        body,
+                        nav.garden_root_url(),
+                        None,
+                    ))
+                }
+            } @else {
+                p class="muted vote-compare-item-body-empty" { "no body yet" }
+            }
+        }
     }
 }
 
@@ -1153,7 +1243,7 @@ fn github_resolver_controls(item: &str, nav: &ThreadNav, next: &str) -> Option<m
             div class="resolver-actions" {
                 form method="POST" action="/ui" {
                     input type="hidden" name=(UI_RPC_FIELD) value=(children_rpc);
-                    button type="submit" data-testid="github-resolve-children" { "Load children from GitHub" }
+                    button type="submit" data-testid="github-resolve-children" { "Load / refresh children from GitHub" }
                 }
                 @if let Some(rpc) = siblings_rpc {
                     form method="POST" action="/ui" {
@@ -1161,6 +1251,7 @@ fn github_resolver_controls(item: &str, nav: &ThreadNav, next: &str) -> Option<m
                         button type="submit" data-testid="github-resolve-siblings" { "Load siblings from GitHub" }
                     }
                 }
+                a class="resolver-refresh-link" href=(next) { "Refresh page" }
             }
         }
     })
@@ -1468,6 +1559,9 @@ async fn vote_compare_inner(
         .unwrap_or_else(|| pick_autothread_for_vote_pair(content, &left, &right));
     let thread_tags = vote_thread_tags_for_pair(content, &left, &right);
     let edge_history = vote_edge_history_markup(content, &left, &right);
+    let left_body = content.item_bodies.get(&left).cloned();
+    let right_body = content.item_bodies.get(&right).cloned();
+    let next_pair = suggest_next_vote_pair(content, &left, &right);
     drop(reduced);
 
     let title = format!(
@@ -1494,53 +1588,64 @@ async fn vote_compare_inner(
     }))
     .expect("vote compare rpc json");
 
+    let next_pair_href = next_pair
+        .as_ref()
+        .map(|(nl, nr)| vote_compare_href(&nav, nl, nr, None));
+    let swap_pair_href = vote_compare_href(&nav, &right, &left, q.thread.as_deref());
+
     let body = html! {
-    h2 { "compare" }
-    div class="vote-compare-pair" {
-        a class="vote-compare-item" href=(nav.garden_item_href(&left)) {
-            code { (item_display_path(left.as_str())) }
+    section class="vote-compare-shell" {
+        h2 { "compare" }
+        div class="vote-compare-pair" {
+            (vote_compare_item_card(&nav, &left, left_body.as_ref(), "vote-compare-left"))
+            span class="vote-compare-vs" { "vs" }
+            (vote_compare_item_card(&nav, &right, right_body.as_ref(), "vote-compare-right"))
         }
-        span class="vote-compare-vs" { "vs" }
-        a class="vote-compare-item" href=(nav.garden_item_href(&right)) {
-            code { (item_display_path(right.as_str())) }
+        div class="vote-compare-nav" {
+            @if let Some(href) = &next_pair_href {
+                a class="vote-compare-next" data-testid="vote-next-pair" href=(href) { "next pair" }
+            } @else {
+                span class="vote-compare-next is-disabled" { "no next pair" }
+            }
+            a class="vote-compare-next" href=(swap_pair_href) { "swap sides" }
         }
-    }
-    div id="vote-edge-history-region" {
-        (edge_history)
-    }
-    @if can_post {
-        form id="vote-compare-form" method="POST" action="/ui" {
-            input type="hidden" name=(UI_RPC_FIELD) value=(rpc_json);
-            div class="vote-thread-picker" {
-                label class="vote-thread-picker-label" { "thread" }
-                select id="vote-thread-select" name="thread_tag" aria-label="Thread to post vote into" {
-                    @if thread_tags.is_empty() {
-                        option value="vote" selected { "#vote" }
-                    }
-                    @for t in &thread_tags {
-                        @if *t == auto_thread {
-                            option value=(t) selected { "#" (t) }
-                        } @else {
-                            option value=(t) { "#" (t) }
+        div id="vote-edge-history-region" {
+            (edge_history)
+        }
+        @if can_post {
+            form id="vote-compare-form" method="POST" action="/ui" {
+                input type="hidden" name=(UI_RPC_FIELD) value=(rpc_json);
+                div class="vote-thread-picker" {
+                    label class="vote-thread-picker-label" { "thread" }
+                    select id="vote-thread-select" name="thread_tag" aria-label="Thread to post vote into" {
+                        @if thread_tags.is_empty() {
+                            option value="vote" selected { "#vote" }
+                        }
+                        @for t in &thread_tags {
+                            @if *t == auto_thread {
+                                option value=(t) selected { "#" (t) }
+                            } @else {
+                                option value=(t) { "#" (t) }
+                            }
                         }
                     }
                 }
+                input type="hidden" name="ratio_left" id="vote-ratio-left" value="50";
+                input type="hidden" name="ratio_right" id="vote-ratio-right" value="50";
+                label class="vote-compare-slider-label" {
+                    span id="vote-slider-left-label" { (item_display_path(left.as_str())) }
+                    input type="range" id="vote-preference-slider" min="0" max="100" value="50"
+                        aria-valuemin="0" aria-valuemax="100";
+                    span id="vote-slider-right-label" { (item_display_path(right.as_str())) }
+                }
+                label class="vote-explain-label" { "reason (required)" }
+                textarea name="explanation" id="vote-explain" rows="5" placeholder="why this split?" required {}
+                div id="vote-compare-errors" {}
+                p { button type="submit" { "post vote" } }
             }
-            input type="hidden" name="ratio_left" id="vote-ratio-left" value="50";
-            input type="hidden" name="ratio_right" id="vote-ratio-right" value="50";
-            label class="vote-compare-slider-label" {
-                span id="vote-slider-left-label" { (item_display_path(left.as_str())) }
-                input type="range" id="vote-preference-slider" min="0" max="100" value="50"
-                    aria-valuemin="0" aria-valuemax="100";
-                span id="vote-slider-right-label" { (item_display_path(right.as_str())) }
-            }
-            label class="vote-explain-label" { "reason (required)" }
-            textarea name="explanation" id="vote-explain" rows="5" placeholder="why this split?" required {}
-            div id="vote-compare-errors" {}
-            p { button type="submit" { "post vote" } }
+        } @else {
+            p class="muted" { a href=(login_href_with_next(&next_path)) { "log in" } " to post this vote." }
         }
-    } @else {
-        p class="muted" { a href="/login" { "log in" } " to post this vote." }
     }
     };
 
@@ -1647,6 +1752,35 @@ mod tests {
             edge_vote_entries_for_pair(content, &a, &b).len()
         );
         assert_eq!(edge_vote_entries_for_pair(content, &a, &b).len(), 2);
+    }
+
+    #[test]
+    fn suggest_next_vote_pair_prefers_unvoted_sibling_pair() {
+        use super::{content_for_garden_view, suggest_next_vote_pair};
+        use crate::path_types::ItemId;
+        let mut reduced = ReducerState::default();
+        apply_ingest(
+            &mut reduced,
+            1,
+            "@00000000-0000-0000-0000-000000000000:test:local/test\n\
+             ~/topic {root}\n\
+             ~/topic/a {alpha}\n\
+             ~/topic/b {beta}\n\
+             ~/topic/c {gamma}\n\
+             {a beats b}\n             ~/topic/a 2:1 ~/topic/b\n",
+        );
+        let content = content_for_garden_view(&reduced, &ScopeId::Public);
+        let a = ItemId::parse("~/topic/a").unwrap().normalized_storage();
+        let b = ItemId::parse("~/topic/b").unwrap().normalized_storage();
+        let next = suggest_next_vote_pair(content, &a, &b).expect("next sibling pair");
+        assert_ne!(
+            super::canonical_edge_items(&next.0, &next.1),
+            super::canonical_edge_items(&a, &b)
+        );
+        assert!(
+            next.0.as_str().ends_with("/c") || next.1.as_str().ends_with("/c"),
+            "next pair should include the unvoted sibling: {next:?}"
+        );
     }
 
     #[test]

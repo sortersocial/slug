@@ -742,6 +742,25 @@ body.view-ontology button.ont-garden-pin-ico:focus-visible {
   outline-offset: 2px;
 }
 
+body.view-ontology .resolver-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+body.view-ontology .resolver-refresh-link {
+  border: 1px solid #c8c4bc;
+  color: #3d3a34;
+  font-family: var(--font-ui);
+  font-size: 0.72rem;
+  padding: 0.25rem 0.55rem;
+  text-decoration: none;
+}
+body.view-ontology .resolver-refresh-link:hover {
+  border-color: #a68e6b;
+  color: #1a1814;
+}
+
 body.view-ontology ol.ont-ranking-list {
   counter-reset: ont-rank;
   list-style: none;
@@ -809,20 +828,25 @@ body.view-ontology.view-vote-compare .vote-compare-shell {
 body.view-ontology.view-vote-compare.view-vote-compare-fullscreen .vote-compare-shell {
   max-width: none;
   width: 100%;
-  min-height: calc(100dvh - clamp(20px, 5vw, 56px));
+  min-height: 100dvh;
   margin: 0;
+  padding: 0;
   box-sizing: border-box;
 }
 body.view-vote-compare-fullscreen {
   max-width: none !important;
   width: 100%;
   margin: 0 !important;
-  padding: clamp(6px, 2vw, 1.75rem);
-  padding-bottom: max(1.25rem, env(safe-area-inset-bottom, 0px));
-  padding-top: max(6px, env(safe-area-inset-top, 0px));
+  padding: 0;
   min-height: 100vh;
   min-height: 100dvh;
   box-sizing: border-box;
+}
+body.view-vote-compare-fullscreen > .view-meta {
+  bottom: 0.25rem;
+  position: fixed;
+  right: 0.35rem;
+  z-index: 20;
 }
 body.view-ontology.view-vote-compare .vote-compare-shell > h2 {
   margin-top: 0;
@@ -831,12 +855,15 @@ body.view-ontology.view-vote-compare .vote-compare-shell > h2 {
   text-transform: uppercase;
   color: #5c574e;
 }
+body.view-ontology.view-vote-compare-fullscreen .vote-compare-shell > h2 {
+  display: none;
+}
 body.view-ontology .vote-compare-pair {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: start;
   gap: 0.65rem 1rem;
-  margin: 0.65rem 0 0.85rem;
+  margin: 0 0 0.85rem;
 }
 body.view-ontology .vote-compare-vs {
   color: #8a857a;
@@ -844,13 +871,61 @@ body.view-ontology .vote-compare-vs {
   font-size: 0.72rem;
   letter-spacing: 0.1em;
   text-transform: uppercase;
+  padding-top: 0.18rem;
 }
 body.view-ontology .vote-compare-item {
+  display: inline-block;
   text-decoration: none;
+}
+body.view-ontology .vote-compare-right {
+  text-align: right;
 }
 body.view-ontology .vote-compare-item:hover code {
   border-color: #a68e6b;
   background: #f0ebe3;
+}
+body.view-ontology .vote-compare-item-body {
+  margin-top: 0.45rem;
+  max-height: 42dvh;
+  overflow: auto;
+}
+body.view-ontology .vote-compare-item-body pre {
+  background: #fdfcfa;
+  border: 1px solid #d4cfc4;
+  border-left: 3px solid #a68e6b;
+  color: #1a1814;
+  font-size: 0.82rem;
+  line-height: 1.35;
+  padding: 0.55rem 0.65rem;
+}
+body.view-ontology .vote-compare-item-body-empty {
+  font-size: 0.78rem;
+  margin: 0.45rem 0 0;
+}
+body.view-ontology .vote-compare-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  justify-content: center;
+  margin: 0.75rem 0;
+}
+body.view-ontology .vote-compare-next {
+  border: 1px solid #c8c4bc;
+  color: #3d3a34;
+  font-family: var(--font-ui);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  padding: 0.25rem 0.65rem;
+  text-decoration: none;
+}
+body.view-ontology .vote-compare-next:hover {
+  border-color: #a68e6b;
+  color: #1a1814;
+}
+body.view-ontology .vote-compare-next.is-disabled {
+  color: #8a857a;
+  cursor: default;
+  opacity: 0.65;
 }
 
 body.view-ontology .vote-thread-picker {

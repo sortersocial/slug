@@ -121,7 +121,7 @@ impl GitHubResolver {
             out.push(ResolvedChild {
                 url: format!("https://github.com/{full_name}"),
                 title: full_name.clone(),
-                body: Some(github_json_body(repo)),
+                body: Some(github_repo_body(repo)),
             });
         }
         out.sort_by(|a, b| a.url.cmp(&b.url));
@@ -152,7 +152,7 @@ impl GitHubResolver {
             out.push(ResolvedChild {
                 url: format!("https://github.com/{owner}/{repo}/issues/{number}"),
                 title: format!("#{number} {title}"),
-                body: Some(github_json_body(issue)),
+                body: Some(github_issue_body(issue, "issue")),
             });
         }
         out.sort_by(|a, b| a.url.cmp(&b.url));
@@ -180,7 +180,7 @@ impl GitHubResolver {
             out.push(ResolvedChild {
                 url: format!("https://github.com/{owner}/{repo}/pulls/{number}"),
                 title: format!("#{number} {title}"),
-                body: Some(github_json_body(pull)),
+                body: Some(github_issue_body(pull, "pull request")),
             });
         }
         out.sort_by(|a, b| a.url.cmp(&b.url));
@@ -240,11 +240,77 @@ fn sanitize_body(s: &str) -> String {
         .collect()
 }
 
-fn github_json_body(value: &Value) -> String {
-    let json = serde_json::to_string_pretty(value)
-        .unwrap_or_else(|_| value.to_string())
-        .replace("```", "` ` `");
-    format!("```json\n{json}\n```")
+fn github_string<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
+    value
+        .get(key)
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+}
+
+fn github_user_login(value: &Value) -> Option<&str> {
+    value
+        .get("user")
+        .and_then(|u| u.get("login"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+}
+
+fn github_labels(value: &Value) -> Vec<String> {
+    value
+        .get("labels")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flat_map(|labels| labels.iter())
+        .filter_map(|label| label.get("name").and_then(|v| v.as_str()))
+        .filter(|name| !name.trim().is_empty())
+        .map(|name| name.to_string())
+        .collect()
+}
+
+fn github_repo_body(repo: &Value) -> String {
+    let full_name = github_string(repo, "full_name")
+        .or_else(|| github_string(repo, "name"))
+        .unwrap_or("GitHub repository");
+    let mut lines = vec![full_name.to_string()];
+    if let Some(desc) = github_string(repo, "description") {
+        lines.push(String::new());
+        lines.push(desc.to_string());
+    }
+    if let Some(url) = github_string(repo, "html_url") {
+        lines.push(String::new());
+        lines.push(format!("Source: {url}"));
+    }
+    if let Some(lang) = github_string(repo, "language") {
+        lines.push(format!("Language: {lang}"));
+    }
+    lines.join("\n")
+}
+
+fn github_issue_body(issue: &Value, kind: &str) -> String {
+    let number = issue
+        .get("number")
+        .and_then(|v| v.as_i64())
+        .map(|n| format!("#{n} "))
+        .unwrap_or_default();
+    let title = github_string(issue, "title").unwrap_or("Untitled");
+    let state = github_string(issue, "state").unwrap_or("unknown");
+    let mut lines = vec![format!("{kind} {number}{title}")];
+    lines.push(format!("State: {state}"));
+    if let Some(author) = github_user_login(issue) {
+        lines.push(format!("Author: @{author}"));
+    }
+    let labels = github_labels(issue);
+    if !labels.is_empty() {
+        lines.push(format!("Labels: {}", labels.join(", ")));
+    }
+    if let Some(url) = github_string(issue, "html_url") {
+        lines.push(format!("Source: {url}"));
+    }
+    if let Some(body) = github_string(issue, "body") {
+        lines.push(String::new());
+        lines.push(body.to_string());
+    }
+    lines.join("\n")
 }
 
 fn children_to_dsl(children: &[ResolvedChild]) -> String {
@@ -381,5 +447,23 @@ mod tests {
         assert!(dsl.contains("https://github.com/o/r/issues/1 {\n```json"));
         assert!(dsl.contains("{\"test\": true}"));
         assert!(dsl.contains("```\n}\n"));
+    }
+
+    #[test]
+    fn github_issue_body_is_readable_text_not_json_dump() {
+        let issue = serde_json::json!({
+            "number": 12,
+            "title": "Render children",
+            "state": "open",
+            "html_url": "https://github.com/o/r/issues/12",
+            "user": {"login": "octo"},
+            "labels": [{"name": "bug"}],
+            "body": "The issue body."
+        });
+        let body = github_issue_body(&issue, "issue");
+        assert!(body.contains("issue #12 Render children"));
+        assert!(body.contains("Author: @octo"));
+        assert!(body.contains("The issue body."));
+        assert!(!body.trim_start().starts_with("```json"));
     }
 }

@@ -68,6 +68,13 @@ fn sanitize_garden_pin_next(next: &str) -> String {
     }
 }
 
+fn login_redirect_for(next: &str) -> String {
+    format!(
+        "/login?next={}",
+        urlencoding::encode(&sanitize_garden_pin_next(next))
+    )
+}
+
 fn redirect_with_pin_cookie(cookie_header_value: &str, location: &str) -> Response {
     let loc = HeaderValue::try_from(location).unwrap_or_else(|_| HeaderValue::from_static("/"));
     let hv = HeaderValue::try_from(cookie_header_value).expect("set-cookie header");
@@ -194,7 +201,7 @@ async fn dispatch_ui_action(
                     .into_response();
             }
             let Some(session) = session else {
-                return js_redirect("/login").into_response();
+                return js_redirect(&login_redirect_for(&next)).into_response();
             };
             let err_tgt = Some("vote-compare-errors".to_string());
             let room = room.trim().to_string();
@@ -363,7 +370,7 @@ async fn dispatch_ui_action(
                     .into_response();
             }
             let Some(session) = session else {
-                return js_redirect("/login").into_response();
+                return js_redirect(&login_redirect_for(&next)).into_response();
             };
             let room = room_wire.trim();
             if room.is_empty() {
