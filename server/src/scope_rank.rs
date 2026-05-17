@@ -162,6 +162,45 @@ pub fn build_children_rankings(content: &ContentState, parent: &ItemId) -> Child
     build_rankings_for_item_set(content, &items)
 }
 
+/// Host-only `https://…` roots for the external garden index (`/-/`).
+///
+/// Includes every `https://host` ancestor of any [`ItemId::Web`] item that appears in
+/// `content.items`, as a parent key in `item_children`, or as a child in `item_children`
+/// (so implied “ghost” parents created only via [`ReducerState::add_child_edge`] still show up).
+pub fn external_root_host_items(content: &ContentState) -> Vec<ItemId> {
+    let mut hosts: HashSet<ItemId> = HashSet::new();
+
+    let mut consider = |id: ItemId| {
+        let id = id.normalized_storage();
+        if !matches!(&id, ItemId::Web(_)) {
+            return;
+        }
+        let mut cur = id;
+        while let Some(p) = cur.parent() {
+            cur = p.normalized_storage();
+        }
+        if matches!(cur, ItemId::Web(_)) {
+            hosts.insert(cur);
+        }
+    };
+
+    for it in &content.items {
+        consider(it.clone());
+    }
+    for parent in content.item_children.keys() {
+        consider(parent.clone());
+    }
+    for set in content.item_children.values() {
+        for ch in set {
+            consider(ch.clone());
+        }
+    }
+
+    let mut out: Vec<ItemId> = hosts.into_iter().collect();
+    out.sort();
+    out
+}
+
 pub fn is_pair_voted_in_group(group: &GroupState, a: &ItemId, b: &ItemId) -> bool {
     let Some(&a_idx) = group.item_to_idx.get(a) else {
         return false;
@@ -304,5 +343,30 @@ mod tests {
                 .expect("next pair");
         assert!(next.0 == c || next.1 == c);
         assert_ne!(canonical_pair(&next.0, &next.1), canonical_pair(&a, &b));
+    }
+
+    #[test]
+    fn external_root_hosts_include_ghost_chain_hosts() {
+        use crate::reducer::ContentState;
+        let gh = ItemId::parse("https://github.com").unwrap();
+        let org = ItemId::parse("https://github.com/org").unwrap();
+        let repo = ItemId::parse("https://github.com/org/rep").unwrap();
+        let mut item_children: HashMap<ItemId, HashSet<ItemId>> = HashMap::new();
+        item_children.entry(gh.clone()).or_default().insert(org.clone());
+        item_children.entry(org.clone()).or_default().insert(repo.clone());
+        let mut items = HashSet::new();
+        items.insert(repo.clone());
+        let content = ContentState {
+            ranking_group: crate::reducer::GroupState::new(),
+            items,
+            item_bodies: HashMap::new(),
+            item_children,
+            item_votes: HashMap::new(),
+            item_snippets: HashMap::new(),
+            item_threads: HashMap::new(),
+            rank_history: HashMap::new(),
+        };
+        let roots = external_root_host_items(&content);
+        assert_eq!(roots, vec![gh]);
     }
 }

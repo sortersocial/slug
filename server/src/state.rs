@@ -4,7 +4,7 @@ use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc, RwLock};
 
 use crate::{
-    event_log::EventLog, events::ThreadCapability, external_resolver::GitHubResolver,
+    event_log::EventLog, events::ThreadCapability, resolvers::GitHubResolver,
     reducer::ReducerState, write_cmd::WriteCmd,
 };
 

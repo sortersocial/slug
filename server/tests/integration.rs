@@ -3,7 +3,7 @@ use sha2::{Digest, Sha256};
 use slug_types::{room_route_segment, ItemId};
 use slugsocial_server::{
     event_log::EventLog,
-    events::{Event, TokenIssued, UserRegistered},
+    events::{Event, Ingest, TokenIssued, UserRegistered},
     middleware::canonical_view_url,
     spawn_writer_actor_for_test,
     state::{AppConfig, AppState},
@@ -1612,6 +1612,71 @@ async fn test_view_counts_increment_and_display() {
         2,
         "permuted vote/compare URLs should share one ViewStore key ({vote_key:?})"
     );
+}
+
+#[tokio::test]
+async fn test_vote_compare_renders_github_import_cards() {
+    let (addr, _tmp, _log, state, _handle) = create_test_server_with_state().await;
+    let client = reqwest::Client::new();
+
+    let raw = "@00000000-0000-0000-0000-000000000000:test:local/test\n\
+https://github.com/ghvotehi/a/issues/9 {\n\
+```slug-github-card\n\
+{\"v\":1,\"schema\":\"slug_github_import\",\"kind\":\"issue\",\"url\":\"https://github.com/ghvotehi/a/issues/9\",\"headline\":\"#9 Left corner\",\"sublines\":[\"State: open\"]}\n\
+```\n\
+}\n\
+\n\
+https://github.com/ghvotehi/a/issues/10 {\n\
+```slug-github-card\n\
+{\"v\":1,\"schema\":\"slug_github_import\",\"kind\":\"issue\",\"url\":\"https://github.com/ghvotehi/a/issues/10\",\"headline\":\"#10 Right corner\",\"sublines\":[\"State: open\"]}\n\
+```\n\
+}\n";
+
+    {
+        let mut w = state.reduced.write().await;
+        w.apply_event(Event::Ingest(Ingest {
+            ts: 10,
+            id: "ing-vote-github-cards".to_string(),
+            raw: raw.to_string(),
+            principal: "testuser".to_string(),
+            delegate: Some(
+                "00000000-0000-0000-0000-000000000000:test:local/test".to_string(),
+            ),
+            room_id: "public".to_string(),
+            thread_tag: "gh-vote-cards".to_string(),
+        }));
+    }
+
+    let left = ItemId::parse("https://github.com/ghvotehi/a/issues/9")
+        .unwrap()
+        .normalized_storage()
+        .to_storage_string();
+    let right = ItemId::parse("https://github.com/ghvotehi/a/issues/10")
+        .unwrap()
+        .normalized_storage()
+        .to_storage_string();
+    let q = format!(
+        "/vote/compare?left={}&right={}",
+        urlencoding::encode(&left),
+        urlencoding::encode(&right)
+    );
+    let resp = client
+        .get(format!("http://{addr}{q}"))
+        .send()
+        .await
+        .unwrap();
+    assert!(resp.status().is_success(), "{}", resp.status());
+    let body = resp.text().await.unwrap();
+    let n_cards = body.matches("github-import-card").count();
+    assert!(
+        n_cards >= 2,
+        "expected two GitHub import cards on vote compare, count={n_cards}, snippet={}",
+        body.chars().take(1500).collect::<String>()
+    );
+    assert!(body.contains("vote-compare-left"));
+    assert!(body.contains("vote-compare-right"));
+    assert!(body.contains("#9 Left corner"));
+    assert!(body.contains("#10 Right corner"));
 }
 
 #[tokio::test]
