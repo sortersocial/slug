@@ -21,8 +21,8 @@ use crate::{
     path_types::ItemId,
     reducer::{ContentState, ReducerState, ScopeId},
     scope_rank::{
-        build_children_rankings, build_rankings_for_item_set, resolve_scope_recursive,
-        suggest_next_pair_in_pool, ChildrenRankings,
+        build_children_rankings, build_rankings_for_item_set, external_root_host_items,
+        resolve_scope_recursive, suggest_next_pair_in_pool, ChildrenRankings,
     },
     state::AppState,
     timeago,
@@ -33,7 +33,7 @@ use super::{
     breadcrumb_path::{ExternalOntologyPath, OntologyPath},
     cli_panel,
     forum::ThreadNav,
-    layout, layout_full_bleed_chromeless, now_ms, ratio_pct, render_linkified_with_embeds_in_scope,
+    layout, layout_full_bleed_chromeless, now_ms, ratio_pct, render_item_body_in_scope,
     theme_from_jar, theme_next_from_uri,
 };
 
@@ -366,7 +366,7 @@ fn vote_compare_item_card(
             }
             @if let Some(body) = body.filter(|b| !b.trim().is_empty()) {
                 div class="vote-compare-item-body" {
-                    (render_linkified_with_embeds_in_scope(
+                    (render_item_body_in_scope(
                         body,
                         nav.garden_root_url(),
                         None,
@@ -678,10 +678,11 @@ pub async fn external_garden_index(
 ) -> impl IntoResponse {
     let nav = ThreadNav::public();
     let ext_path = ExternalOntologyPath::from_input("");
-    let parent = ItemId::parse("https://.").unwrap();
     let child_rankings = {
         let reduced = state.reduced.read().await;
-        build_children_rankings(reduced.public(), &parent)
+        let content = reduced.public();
+        let hosts = external_root_host_items(content);
+        build_rankings_for_item_set(content, &hosts)
     };
 
     let url_key = canonical_view_url(&uri);
@@ -812,9 +813,11 @@ pub async fn room_external_garden_index(
         return room_not_found_page(&jar, &uri).into_response();
     }
     let ext_path = ExternalOntologyPath::from_input("");
-    let parent = ItemId::parse("https://.").unwrap();
-    let child_rankings =
-        build_children_rankings(content_for_garden_view(&reduced, &nav.scope()), &parent);
+    let child_rankings = {
+        let content = content_for_garden_view(&reduced, &nav.scope());
+        let hosts = external_root_host_items(content);
+        build_rankings_for_item_set(content, &hosts)
+    };
     drop(reduced);
 
     let url_key = canonical_view_url(&uri);
@@ -1334,7 +1337,7 @@ async fn render_scope_view(
                 }
                 @if let Some(body) = &model.body {
                     div class="ont-item-content" {
-                        (render_linkified_with_embeds_in_scope(
+                        (render_item_body_in_scope(
                             body,
                             nav.garden_root_url(),
                             Some(&scope_content.item_bodies),

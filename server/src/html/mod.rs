@@ -793,6 +793,20 @@ pub(super) fn render_linkified_with_embeds_in_scope(
     }
 }
 
+/// Item page / thread body: resolver-specific rich HTML, else linkified `<pre>` + media embeds.
+pub(super) fn render_item_body_in_scope(
+    raw: &str,
+    garden_prefix: &str,
+    item_bodies: Option<&HashMap<crate::path_types::ItemId, String>>,
+) -> Markup {
+    if let Some(m) = crate::resolvers::try_render_resolver_item_body(raw) {
+        return html! {
+            div class="item-body-rich" { (m) }
+        };
+    }
+    render_linkified_with_embeds_in_scope(raw, garden_prefix, item_bodies)
+}
+
 /// CLI strings are embedded in a single-quoted JS literal; they must never need escaping.
 fn assert_cli_panel_cmd_js_single_quote_safe(s: &str) {
     assert!(

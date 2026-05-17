@@ -5,7 +5,7 @@ pub mod canonical_path;
 pub mod dsl;
 pub mod event_log;
 pub mod events;
-pub mod external_resolver;
+pub mod resolvers;
 pub mod form_template;
 pub mod html;
 pub mod identity;
@@ -51,7 +51,7 @@ pub fn create_app_state(cfg: AppConfig) -> AppState {
         write_tx,
         views,
         resolver_runs: Arc::new(RwLock::new(HashMap::new())),
-        github_resolver: Arc::new(crate::external_resolver::GitHubResolver::from_env()),
+        github_resolver: Arc::new(crate::resolvers::GitHubResolver::from_env()),
     };
     tokio::spawn(crate::api::write_actor::writer_actor(
         write_rx,

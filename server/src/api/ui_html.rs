@@ -18,7 +18,7 @@ use crate::{
         rpc::{rpc_post_redact, rpc_post_with_bearer, rpc_room_delete},
     },
     canonical_path::canonicalize_tag,
-    external_resolver::resolve_github_children,
+    resolvers::resolve_github_children,
     html::vote_compare_post_success_js,
     html::{
         external_resolver_status_markup, fragment_new_thread_slot, login_to_post_hint_markup,
