@@ -1023,6 +1023,23 @@ body.view-vote-compare .vote-compare-shell > h2 {
   line-height: 1.35;
   padding: 8px 10px;
 }
+.vote-compare-item-body .item-body-rich {
+  min-width: 0;
+  text-align: start;
+}
+.vote-compare-right .vote-compare-item-body .item-body-rich {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+.vote-compare-item-body .item-body-rich article.github-import-card {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: min(100%, 420px);
+}
+.vote-compare-right .vote-compare-item-body .item-body-rich article.github-import-card {
+  margin-left: auto;
+}
 .vote-compare-item-body-empty {
   font-size: 12px;
   margin: 8px 0 0;

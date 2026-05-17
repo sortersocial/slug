@@ -278,3 +278,20 @@ body.view-ontology .vote-compare-item-body pre {
   border: 1px solid #ccc;
   padding: 0.5rem 0.65rem;
 }
+body.view-ontology .vote-compare-item-body .item-body-rich {
+  min-width: 0;
+  text-align: start;
+}
+body.view-ontology .vote-compare-right .vote-compare-item-body .item-body-rich {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+body.view-ontology .vote-compare-item-body .item-body-rich article.github-import-card {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: min(100%, 420px);
+}
+body.view-ontology .vote-compare-right .vote-compare-item-body .item-body-rich article.github-import-card {
+  margin-left: auto;
+}

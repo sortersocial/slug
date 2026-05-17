@@ -7,7 +7,7 @@ use axum_extra::extract::cookie::CookieJar;
 use maud::html;
 use serde::Deserialize;
 use serde_json::json;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD as B64_ENGINE, Engine as _};
 
@@ -358,6 +358,7 @@ fn vote_compare_item_card(
     item: &ItemId,
     body: Option<&String>,
     side_class: &str,
+    item_bodies: Option<&HashMap<ItemId, String>>,
 ) -> maud::Markup {
     html! {
         div class=(format!("vote-compare-side {side_class}")) {
@@ -369,7 +370,7 @@ fn vote_compare_item_card(
                     (render_item_body_in_scope(
                         body,
                         nav.garden_root_url(),
-                        None,
+                        item_bodies,
                     ))
                 }
             } @else {
@@ -1595,6 +1596,7 @@ async fn vote_compare_inner(
     let edge_history = vote_edge_history_markup(content, &left, &right);
     let left_body = content.item_bodies.get(&left).cloned();
     let right_body = content.item_bodies.get(&right).cloned();
+    let item_bodies_for_cards = content.item_bodies.clone();
     let next_pair = suggest_next_vote_pair(content, &left, &right);
     drop(reduced);
 
@@ -1626,9 +1628,21 @@ async fn vote_compare_inner(
     section class="vote-compare-shell" {
         h2 { "compare" }
         div class="vote-compare-pair" {
-            (vote_compare_item_card(&nav, &left, left_body.as_ref(), "vote-compare-left"))
+            (vote_compare_item_card(
+                &nav,
+                &left,
+                left_body.as_ref(),
+                "vote-compare-left",
+                Some(&item_bodies_for_cards),
+            ))
             span class="vote-compare-vs" { "vs" }
-            (vote_compare_item_card(&nav, &right, right_body.as_ref(), "vote-compare-right"))
+            (vote_compare_item_card(
+                &nav,
+                &right,
+                right_body.as_ref(),
+                "vote-compare-right",
+                Some(&item_bodies_for_cards),
+            ))
         }
         (vote_compare_nav_markup(&nav, next_pair.as_ref(), &left, &right, q.thread.as_deref()))
         div id="vote-edge-history-region" {
@@ -2021,6 +2035,40 @@ mod tests {
         assert!(items.contains("https://slug.social/~/topic/a"));
         assert!(items.contains("https://slug.social/~/topic/a/leaf"));
         assert!(items.contains("https://slug.social/~/topic/b"));
+    }
+
+    #[test]
+    fn vote_compare_item_card_renders_github_import_markup() {
+        use crate::html::forum::ThreadNav;
+        use super::vote_compare_item_card;
+        use crate::path_types::ItemId;
+
+        let nav = ThreadNav::public();
+        let item = ItemId::parse("https://github.com/o/r/issues/1").unwrap();
+        let json = serde_json::json!({
+            "v": 1,
+            "schema": "slug_github_import",
+            "kind": "issue",
+            "url": "https://github.com/o/r/issues/1",
+            "headline": "#1 Compare card",
+            "sublines": ["State: open"],
+        });
+        let body = format!("```slug-github-card\n{}\n```", json.to_string());
+        let html = vote_compare_item_card(
+            &nav,
+            &item,
+            Some(&body),
+            "vote-compare-left",
+            None,
+        )
+        .into_string();
+        assert!(
+            html.contains("github-import-card"),
+            "expected rich GitHub card markup, got: {html}"
+        );
+        assert!(html.contains("item-body-rich"));
+        assert!(html.contains("vote-compare-left"));
+        assert!(html.contains("#1 Compare card"));
     }
 
     #[test]
