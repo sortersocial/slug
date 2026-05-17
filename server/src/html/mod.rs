@@ -36,7 +36,10 @@ pub(crate) use forum::{
     thread_ui_collapse_redacted_post, thread_ui_expand_post_full, thread_ui_expand_redacted_post,
     user_can_post_room, user_can_view_room,
 };
-pub(crate) use garden::{encode_pin_cookie_value, vote_compare_post_success_js, GARDEN_PIN_COOKIE};
+pub(crate) use garden::{
+    encode_pin_cookie_value, external_resolver_status_markup, vote_compare_post_success_js,
+    GARDEN_PIN_COOKIE,
+};
 pub use garden::{
     external_garden_index, external_ontology_path, garden_index, ontology_path,
     room_external_garden_index, room_external_ontology_path, room_garden_index, room_ontology_path,

@@ -8,7 +8,10 @@ use axum::{
 use axum_extra::extract::cookie::CookieJar;
 use base64::Engine;
 use serde::Deserialize;
-use slug_types::{PendingSessionPollResponse, PendingSessionStartRequest, PendingSessionStartResponse, WhoamiResponse};
+use slug_types::{
+    PendingSessionPollResponse, PendingSessionStartRequest, PendingSessionStartResponse,
+    WhoamiResponse,
+};
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{oneshot, RwLock};
 
@@ -17,7 +20,8 @@ use crate::{
     events::{Event, TokenIssued},
     html::{
         auth_complete_page, auth_signed_in_fragment, choose_username_error_fragment,
-        choose_username_page, theme_cookie_header_from_jar, theme_from_jar, theme_next_from_uri, JsBuilder,
+        choose_username_page, theme_cookie_header_from_jar, theme_from_jar, theme_next_from_uri,
+        JsBuilder,
     },
     identity::{parse_agent, parse_username},
     reducer::ReducerState,
@@ -36,10 +40,24 @@ pub const SLUG_SESSION_COOKIE: &str = "slug_session";
 
 /// `Set-Cookie` header value (full attribute string).
 pub fn session_cookie_header_value(bearer: &str) -> HeaderValue {
-    let s = format!(
-        "{SLUG_SESSION_COOKIE}={bearer}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000"
-    );
+    let s =
+        format!("{SLUG_SESSION_COOKIE}={bearer}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000");
     HeaderValue::from_str(&s).expect("session cookie value must be ASCII")
+}
+
+fn safe_local_redirect(raw: Option<&str>) -> Option<String> {
+    let s = raw?.trim();
+    if s.starts_with('/') && !s.starts_with("//") && s.len() < 8192 {
+        Some(s.to_string())
+    } else {
+        None
+    }
+}
+
+fn redirect_query(next: Option<&str>) -> String {
+    safe_local_redirect(next)
+        .map(|n| format!("&next={}", urlencoding::encode(&n)))
+        .unwrap_or_default()
 }
 
 fn js_form_error_fragment(session: &str, error: &str) -> Response {
@@ -49,11 +67,11 @@ fn js_form_error_fragment(session: &str, error: &str) -> Response {
         .into_response()
 }
 
-fn js_signed_in_fragment(bearer: &str, jar: &CookieJar) -> Response {
+fn js_signed_in_fragment(bearer: &str, jar: &CookieJar, redirect_to: &str) -> Response {
     let mut response = JsBuilder::new()
         .id("choose-username-form")
         .morph_inner(auth_signed_in_fragment())
-        .redirect("/auth/complete")
+        .redirect(redirect_to)
         .into_response();
     let headers = response.headers_mut();
     headers.append(header::SET_COOKIE, session_cookie_header_value(bearer));
@@ -64,7 +82,11 @@ fn js_signed_in_fragment(bearer: &str, jar: &CookieJar) -> Response {
 }
 
 /// Resolve the signed-in username from `Authorization: Bearer` or `slug_session` cookie.
-pub fn optional_principal(headers: &HeaderMap, jar: &CookieJar, reduced: &ReducerState) -> Option<String> {
+pub fn optional_principal(
+    headers: &HeaderMap,
+    jar: &CookieJar,
+    reduced: &ReducerState,
+) -> Option<String> {
     if let Ok(u) = verify_bearer_principal(headers, reduced) {
         return Some(u);
     }
@@ -80,7 +102,11 @@ pub struct WebSession {
 }
 
 /// Resolve username and bearer together for `POST /ui` dispatch (one read of headers + jar).
-pub fn resolve_web_session(headers: &HeaderMap, jar: &CookieJar, reduced: &ReducerState) -> Option<WebSession> {
+pub fn resolve_web_session(
+    headers: &HeaderMap,
+    jar: &CookieJar,
+    reduced: &ReducerState,
+) -> Option<WebSession> {
     let username = optional_principal(headers, jar, reduced)?;
     let bearer = headers
         .get(header::AUTHORIZATION)
@@ -90,7 +116,12 @@ pub fn resolve_web_session(headers: &HeaderMap, jar: &CookieJar, reduced: &Reduc
     Some(WebSession { username, bearer })
 }
 
-fn redirect_with_session_cookie(public_url: &str, path_and_query: &str, bearer: &str, jar: &CookieJar) -> Response {
+fn redirect_with_session_cookie(
+    public_url: &str,
+    path_and_query: &str,
+    bearer: &str,
+    jar: &CookieJar,
+) -> Response {
     let mut res = Response::builder()
         .status(StatusCode::TEMPORARY_REDIRECT)
         .header(header::LOCATION, format!("{public_url}{path_and_query}"))
@@ -112,21 +143,32 @@ fn pending_sessions(state: &AppState) -> Arc<RwLock<HashMap<String, PendingSessi
 /// Safe here because the token was received directly from Google's token endpoint over TLS.
 fn extract_jwt_sub(jwt: &str) -> Option<String> {
     let payload_b64 = jwt.split('.').nth(1)?;
-    let decoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(payload_b64).ok()?;
+    let decoded = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(payload_b64)
+        .ok()?;
     let v: serde_json::Value = serde_json::from_slice(&decoded).ok()?;
     v.get("sub")?.as_str().map(|s| s.to_string())
 }
 
 pub(crate) fn parse_bearer(headers: &HeaderMap) -> Result<String, (StatusCode, String)> {
     let Some(value) = headers.get(axum::http::header::AUTHORIZATION) else {
-        return Err((StatusCode::UNAUTHORIZED, "missing Authorization header".to_string()));
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            "missing Authorization header".to_string(),
+        ));
     };
     let Ok(s) = value.to_str() else {
-        return Err((StatusCode::UNAUTHORIZED, "invalid Authorization header".to_string()));
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            "invalid Authorization header".to_string(),
+        ));
     };
     let s = s.trim();
     let Some(rest) = s.strip_prefix("Bearer ") else {
-        return Err((StatusCode::UNAUTHORIZED, "Authorization must be Bearer".to_string()));
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            "Authorization must be Bearer".to_string(),
+        ));
     };
     Ok(rest.trim().to_string())
 }
@@ -140,7 +182,10 @@ pub fn verify_bearer_principal(
     verify_token(reduced, &bearer)
 }
 
-pub(crate) fn verify_token(reduced: &crate::reducer::ReducerState, bearer: &str) -> Result<String, (StatusCode, String)> {
+pub(crate) fn verify_token(
+    reduced: &crate::reducer::ReducerState,
+    bearer: &str,
+) -> Result<String, (StatusCode, String)> {
     // slug_<token_id>_<secret>
     let Some(rest) = bearer.strip_prefix("slug_") else {
         return Err((StatusCode::UNAUTHORIZED, "invalid token format".to_string()));
@@ -199,9 +244,25 @@ pub(crate) fn issue_token_for_user(stored_username: &str) -> (String, TokenIssue
 #[derive(Debug, Deserialize)]
 pub struct AuthLoginQuery {
     pub session: String,
+    #[serde(default)]
+    pub next: Option<String>,
+    #[serde(default)]
+    pub redirect: Option<String>,
 }
 
-pub async fn get_join_invite(Path(token): Path<String>, State(state): State<AppState>) -> impl IntoResponse {
+#[derive(Debug, Deserialize)]
+pub struct JoinInviteQuery {
+    #[serde(default)]
+    pub next: Option<String>,
+    #[serde(default)]
+    pub redirect: Option<String>,
+}
+
+pub async fn get_join_invite(
+    Path(token): Path<String>,
+    Query(q): Query<JoinInviteQuery>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
     let token = token.trim().to_string();
     if token.is_empty() {
         return api_error(StatusCode::NOT_FOUND, "invite invalid or expired", None).into_response();
@@ -219,37 +280,57 @@ pub async fn get_join_invite(Path(token): Path<String>, State(state): State<AppS
     }
 
     let session = format!("p_{}", uuid::Uuid::new_v4().simple());
+    let redirect_next = safe_local_redirect(q.next.as_deref().or(q.redirect.as_deref()));
     let s = PendingSession {
         agent: INVITE_BROWSER_AGENT.to_string(),
         created_ts: now_ms(),
         provider: None,
         provider_id: None,
         redeem_invite: Some(token),
+        redirect_next: redirect_next.clone(),
         complete: None,
     };
-    state.pending_sessions.write().await.insert(session.clone(), s);
+    state
+        .pending_sessions
+        .write()
+        .await
+        .insert(session.clone(), s);
 
-    let public_url = std::env::var("SLUG_PUBLIC_URL").unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
+    let public_url =
+        std::env::var("SLUG_PUBLIC_URL").unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
+    let next_q = redirect_next
+        .as_deref()
+        .map(|n| redirect_query(Some(n)))
+        .unwrap_or_default();
     Redirect::temporary(&format!(
-        "{public_url}/auth/login?session={}",
-        urlencoding::encode(&session)
+        "{public_url}/auth/login?session={}{}",
+        urlencoding::encode(&session),
+        next_q
     ))
     .into_response()
 }
 
-pub async fn get_auth_login(Query(q): Query<AuthLoginQuery>, State(state): State<AppState>) -> impl IntoResponse {
+pub async fn get_auth_login(
+    Query(q): Query<AuthLoginQuery>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
     // Redirect to Google auth endpoint.
     let sessions = pending_sessions(&state);
-    let sessions_read = sessions.read().await;
-    let Some(_s) = sessions_read.get(&q.session) else {
-        return api_error(StatusCode::NOT_FOUND, "unknown session", None).into_response();
-    };
-    drop(sessions_read);
+    {
+        let mut sessions_write = sessions.write().await;
+        let Some(s) = sessions_write.get_mut(&q.session) else {
+            return api_error(StatusCode::NOT_FOUND, "unknown session", None).into_response();
+        };
+        if let Some(next) = safe_local_redirect(q.next.as_deref().or(q.redirect.as_deref())) {
+            s.redirect_next = Some(next);
+        }
+    }
 
     let auth_url_base = std::env::var("SLUG_GOOGLE_AUTH_URL")
         .unwrap_or_else(|_| "https://accounts.google.com/o/oauth2/v2/auth".to_string());
     let client_id = std::env::var("SLUG_GOOGLE_CLIENT_ID").unwrap_or_else(|_| "dev".to_string());
-    let public_url = std::env::var("SLUG_PUBLIC_URL").unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
+    let public_url =
+        std::env::var("SLUG_PUBLIC_URL").unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
     let redirect_uri = format!("{public_url}/auth/callback");
     let auth_url = format!(
         "{auth_url_base}?client_id={}&redirect_uri={}&response_type=code&scope=openid%20email&state={}",
@@ -282,8 +363,10 @@ pub async fn get_auth_callback(
     let token_url = std::env::var("SLUG_GOOGLE_TOKEN_URL")
         .unwrap_or_else(|_| "https://oauth2.googleapis.com/token".to_string());
     let client_id = std::env::var("SLUG_GOOGLE_CLIENT_ID").unwrap_or_else(|_| "dev".to_string());
-    let client_secret = std::env::var("SLUG_GOOGLE_CLIENT_SECRET").unwrap_or_else(|_| "dev".to_string());
-    let public_url = std::env::var("SLUG_PUBLIC_URL").unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
+    let client_secret =
+        std::env::var("SLUG_GOOGLE_CLIENT_SECRET").unwrap_or_else(|_| "dev".to_string());
+    let public_url =
+        std::env::var("SLUG_PUBLIC_URL").unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
     let redirect_uri = format!("{public_url}/auth/callback");
 
     // Exchange code for id_token + access_token.
@@ -306,16 +389,37 @@ pub async fn get_auth_callback(
     {
         Ok(resp) => match resp.json().await {
             Ok(v) => v,
-            Err(err) => return api_error(StatusCode::BAD_GATEWAY, "oauth token exchange failed", Some(format!("{err}"))).into_response(),
+            Err(err) => {
+                return api_error(
+                    StatusCode::BAD_GATEWAY,
+                    "oauth token exchange failed",
+                    Some(format!("{err}")),
+                )
+                .into_response()
+            }
         },
-        Err(err) => return api_error(StatusCode::BAD_GATEWAY, "oauth token exchange failed", Some(format!("{err}"))).into_response(),
+        Err(err) => {
+            return api_error(
+                StatusCode::BAD_GATEWAY,
+                "oauth token exchange failed",
+                Some(format!("{err}")),
+            )
+            .into_response()
+        }
     };
 
     // Extract sub from the id_token JWT payload (base64-decode middle segment).
     // The token arrived directly from Google over TLS — no need for an extra userinfo roundtrip.
     let sub = match extract_jwt_sub(&tr.id_token) {
         Some(s) => s,
-        None => return api_error(StatusCode::BAD_GATEWAY, "oauth: could not extract sub from id_token", None).into_response(),
+        None => {
+            return api_error(
+                StatusCode::BAD_GATEWAY,
+                "oauth: could not extract sub from id_token",
+                None,
+            )
+            .into_response()
+        }
     };
 
     // If user exists, issue token and complete session. Otherwise redirect to choose-username.
@@ -327,7 +431,9 @@ pub async fn get_auth_callback(
 
     {
         let mut sessions_write = sessions.write().await;
-        let s = sessions_write.get_mut(&q.state).expect("session checked above");
+        let s = sessions_write
+            .get_mut(&q.state)
+            .expect("session checked above");
         s.provider = Some("google".to_string());
         s.provider_id = Some(sub.clone());
         if let Some(username) = existing {
@@ -345,31 +451,61 @@ pub async fn get_auth_callback(
                 .await
                 .is_err()
             {
-                return api_error(StatusCode::INTERNAL_SERVER_ERROR, "writer unavailable", None).into_response();
+                return api_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "writer unavailable",
+                    None,
+                )
+                .into_response();
             }
             match rx.await {
                 Err(_) => {
-                    return api_error(StatusCode::INTERNAL_SERVER_ERROR, "writer dropped", None).into_response();
+                    return api_error(StatusCode::INTERNAL_SERVER_ERROR, "writer dropped", None)
+                        .into_response();
                 }
                 Ok(Err(err)) => {
-                    return api_error(StatusCode::INTERNAL_SERVER_ERROR, "failed to persist token", Some(err))
-                        .into_response();
+                    return api_error(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "failed to persist token",
+                        Some(err),
+                    )
+                    .into_response();
                 }
                 Ok(Ok(())) => {}
             }
+            let redirect_to =
+                safe_local_redirect(s.redirect_next.as_deref()).unwrap_or_else(|| "/".to_string());
             let cookie_bearer = bearer.clone();
             s.complete = Some((username, bearer));
-            return redirect_with_session_cookie(&public_url, "/", &cookie_bearer, &jar).into_response();
+            return redirect_with_session_cookie(&public_url, &redirect_to, &cookie_bearer, &jar)
+                .into_response();
         }
     }
 
-    Redirect::temporary(&format!("{public_url}/auth/choose-username?session={}", q.state)).into_response()
+    let next_q = {
+        let sessions_read = sessions.read().await;
+        sessions_read
+            .get(&q.state)
+            .and_then(|s| s.redirect_next.as_deref())
+            .map(|n| redirect_query(Some(n)))
+            .unwrap_or_default()
+    };
+    Redirect::temporary(&format!(
+        "{public_url}/auth/choose-username?session={}{}",
+        urlencoding::encode(&q.state),
+        next_q
+    ))
+    .into_response()
 }
 
 #[derive(Debug, Deserialize)]
 pub struct ChooseUsernameQuery {
     pub session: String,
     pub error: Option<String>,
+    #[serde(default)]
+    pub next: Option<String>,
+    #[serde(default)]
+    pub redirect: Option<String>,
 }
 
 pub async fn get_choose_username(
@@ -379,13 +515,18 @@ pub async fn get_choose_username(
     uri: Uri,
 ) -> impl IntoResponse {
     let sessions = pending_sessions(&state);
-    let sessions_read = sessions.read().await;
-    if !sessions_read.contains_key(&q.session) {
-        return api_error(StatusCode::NOT_FOUND, "unknown session", None).into_response();
+    {
+        let mut sessions_write = sessions.write().await;
+        let Some(s) = sessions_write.get_mut(&q.session) else {
+            return api_error(StatusCode::NOT_FOUND, "unknown session", None).into_response();
+        };
+        if let Some(next) = safe_local_redirect(q.next.as_deref().or(q.redirect.as_deref())) {
+            s.redirect_next = Some(next);
+        }
     }
-    drop(sessions_read);
     let next = theme_next_from_uri(&uri);
-    choose_username_page(&q.session, q.error.as_deref(), theme_from_jar(&jar), &next).into_response()
+    choose_username_page(&q.session, q.error.as_deref(), theme_from_jar(&jar), &next)
+        .into_response()
 }
 
 #[derive(Debug, Deserialize)]
@@ -401,7 +542,10 @@ pub async fn post_choose_username(
 ) -> impl IntoResponse {
     let canon_user = match parse_username(&form.username) {
         Ok(u) => u,
-        Err(msg) => return js_form_error_fragment(&form.session, &format!("invalid username — {msg}")).into_response(),
+        Err(msg) => {
+            return js_form_error_fragment(&form.session, &format!("invalid username — {msg}"))
+                .into_response()
+        }
     };
 
     let sessions = pending_sessions(&state);
@@ -420,12 +564,15 @@ pub async fn post_choose_username(
     };
 
     if let Err(msg) = parse_agent(&agent) {
-        return js_form_error_fragment(&form.session, &format!("invalid agent format — {msg}")).into_response();
+        return js_form_error_fragment(&form.session, &format!("invalid agent format — {msg}"))
+            .into_response();
     }
 
     let redeem_invite = {
         let sessions_read = sessions.read().await;
-        sessions_read.get(&form.session).and_then(|s| s.redeem_invite.clone())
+        sessions_read
+            .get(&form.session)
+            .and_then(|s| s.redeem_invite.clone())
     };
 
     let (tx, rx) = oneshot::channel();
@@ -441,12 +588,18 @@ pub async fn post_choose_username(
         .await
         .is_err()
     {
-        return api_error(StatusCode::INTERNAL_SERVER_ERROR, "writer unavailable", None).into_response();
+        return api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "writer unavailable",
+            None,
+        )
+        .into_response();
     }
 
     let bearer = match rx.await {
         Err(_) => {
-            return api_error(StatusCode::INTERNAL_SERVER_ERROR, "writer dropped", None).into_response();
+            return api_error(StatusCode::INTERNAL_SERVER_ERROR, "writer dropped", None)
+                .into_response();
         }
         Ok(Err(msg)) => {
             return js_form_error_fragment(&form.session, &msg).into_response();
@@ -454,31 +607,59 @@ pub async fn post_choose_username(
         Ok(Ok(b)) => b,
     };
 
-    {
+    let redirect_to = {
         let mut sessions_write = sessions.write().await;
-        let s = sessions_write.get_mut(&form.session).expect("session checked above");
+        let s = sessions_write
+            .get_mut(&form.session)
+            .expect("session checked above");
         s.complete = Some((canon_user.clone(), bearer.clone()));
-    }
+        safe_local_redirect(s.redirect_next.as_deref())
+            .unwrap_or_else(|| "/auth/complete".to_string())
+    };
 
-    js_signed_in_fragment(&bearer, &jar).into_response()
+    js_signed_in_fragment(&bearer, &jar, &redirect_to).into_response()
 }
 
 /// Start a browser-only OAuth flow (no CLI polling). Sets session cookie on success.
-pub async fn get_web_login(State(state): State<AppState>) -> impl IntoResponse {
+#[derive(Debug, Deserialize)]
+pub struct WebLoginQuery {
+    #[serde(default)]
+    pub next: Option<String>,
+    #[serde(default)]
+    pub redirect: Option<String>,
+}
+
+pub async fn get_web_login(
+    Query(q): Query<WebLoginQuery>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
     let session = format!("p_{}", uuid::Uuid::new_v4().simple());
+    let redirect_next = safe_local_redirect(q.next.as_deref().or(q.redirect.as_deref()))
+        .or_else(|| Some("/".to_string()));
     let s = PendingSession {
         agent: WEB_BROWSER_AGENT.to_string(),
         created_ts: now_ms(),
         provider: None,
         provider_id: None,
         redeem_invite: None,
+        redirect_next: redirect_next.clone(),
         complete: None,
     };
-    state.pending_sessions.write().await.insert(session.clone(), s);
-    let public_url = std::env::var("SLUG_PUBLIC_URL").unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
+    state
+        .pending_sessions
+        .write()
+        .await
+        .insert(session.clone(), s);
+    let public_url =
+        std::env::var("SLUG_PUBLIC_URL").unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
+    let next_q = redirect_next
+        .as_deref()
+        .map(|n| redirect_query(Some(n)))
+        .unwrap_or_default();
     Redirect::temporary(&format!(
-        "{public_url}/auth/login?session={}",
-        urlencoding::encode(&session)
+        "{public_url}/auth/login?session={}{}",
+        urlencoding::encode(&session),
+        next_q
     ))
     .into_response()
 }
@@ -504,12 +685,17 @@ pub async fn post_pending_session(
     let agent_naked = match parse_agent(&req.agent) {
         Ok(a) => a,
         Err(msg) => {
-            return api_error(StatusCode::BAD_REQUEST, "invalid agent format", Some(msg)).into_response();
+            return api_error(StatusCode::BAD_REQUEST, "invalid agent format", Some(msg))
+                .into_response();
         }
     };
     let session = format!("p_{}", uuid::Uuid::new_v4().simple());
-    let public_url = std::env::var("SLUG_PUBLIC_URL").unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
-    let login_url = format!("{public_url}/auth/login?session={}", urlencoding::encode(&session));
+    let public_url =
+        std::env::var("SLUG_PUBLIC_URL").unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
+    let login_url = format!(
+        "{public_url}/auth/login?session={}",
+        urlencoding::encode(&session)
+    );
     let poll_url = format!("/api/v0/pending-session/{}", session);
     let s = PendingSession {
         agent: agent_naked,
@@ -517,6 +703,7 @@ pub async fn post_pending_session(
         provider: None,
         provider_id: None,
         redeem_invite: None,
+        redirect_next: None,
         complete: None,
     };
     let sessions = pending_sessions(&state);
@@ -567,11 +754,14 @@ pub async fn get_whoami(State(state): State<AppState>, headers: HeaderMap) -> im
         Ok(u) => u,
         Err((st, msg)) => return api_error(st, msg, None).into_response(),
     };
-    let agents_bound = reduced.agent_bindings.values().filter(|u| *u == &username).count();
+    let agents_bound = reduced
+        .agent_bindings
+        .values()
+        .filter(|u| *u == &username)
+        .count();
     Json(WhoamiResponse {
         user: username,
         agents_bound,
     })
     .into_response()
 }
-

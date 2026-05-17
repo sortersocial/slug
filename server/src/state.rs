@@ -27,6 +27,8 @@ pub struct PendingSession {
     pub provider_id: Option<String>,
     /// When set, successful OAuth completion redeems this invite token and appends [`crate::events::GrantAdded`].
     pub redeem_invite: Option<String>,
+    /// Local path to navigate to after browser onboarding completes.
+    pub redirect_next: Option<String>,
     pub complete: Option<(String /*username*/, String /*bearer*/)>,
 }
 

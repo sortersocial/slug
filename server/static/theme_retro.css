@@ -135,6 +135,34 @@ body.view-ontology nav.breadcrumb a:hover {
 body.view-ontology nav.breadcrumb a.bc-current { color: #111; font-weight: 600; }
 body.view-ontology nav.breadcrumb .bc-sep { color: #888; padding: 0 2px; }
 
+body.view-ontology .resolver-actions,
+body.view-ontology .vote-compare-nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+body.view-ontology .resolver-refresh-link,
+body.view-ontology .vote-compare-next {
+  border: 1px solid #bbb;
+  color: #23a;
+  padding: 0.2rem 0.55rem;
+  text-decoration: none;
+}
+body.view-ontology .vote-compare-next.is-disabled {
+  color: #666;
+  opacity: 0.65;
+}
+body.view-ontology .resolver-status {
+  margin-top: 0.5rem;
+}
+body.view-ontology .resolver-status p {
+  margin: 0;
+}
+body.view-ontology .resolver-status-error {
+  color: #9b1c1c;
+}
+
 body.view-ontology ol.ont-ranking-list {
   counter-reset: ont-rank;
   list-style: none;
@@ -205,16 +233,48 @@ body.view-vote-compare-fullscreen {
   max-width: none;
   width: 100%;
   margin: 0;
-  padding: clamp(8px, 2.5vw, 20px);
-  padding-bottom: max(24px, env(safe-area-inset-bottom, 0px));
-  padding-top: max(8px, env(safe-area-inset-top, 0px));
+  padding: 0;
   min-height: 100vh;
   min-height: 100dvh;
   box-sizing: border-box;
+}
+body.view-vote-compare-fullscreen > .view-meta {
+  bottom: 4px;
+  position: fixed;
+  right: 6px;
+  z-index: 20;
 }
 body.view-vote-compare-fullscreen .vote-compare-shell {
   max-width: none;
   width: 100%;
   box-sizing: border-box;
   margin: 0;
+  min-height: 100dvh;
+  padding: 0;
+}
+body.view-vote-compare-fullscreen .vote-compare-shell > h2 {
+  display: none;
+}
+body.view-ontology .vote-compare-pair {
+  align-items: start;
+  display: grid;
+  gap: 0.65rem 1rem;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  margin: 0 0 0.75rem;
+}
+body.view-ontology .vote-compare-item {
+  display: inline-block;
+}
+body.view-ontology .vote-compare-right {
+  text-align: right;
+}
+body.view-ontology .vote-compare-item-body {
+  margin-top: 0.45rem;
+  max-height: 42dvh;
+  overflow: auto;
+}
+body.view-ontology .vote-compare-item-body pre {
+  background: #faf8f3;
+  border: 1px solid #ccc;
+  padding: 0.5rem 0.65rem;
 }

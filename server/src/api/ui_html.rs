@@ -21,11 +21,11 @@ use crate::{
     external_resolver::resolve_github_children,
     html::vote_compare_post_success_js,
     html::{
-        fragment_new_thread_slot, login_to_post_hint_markup, parse_html_ui_from_form,
-        room_members_section_markup, thread_feed_html, thread_feed_html_for_room,
-        thread_feed_region_markup, thread_ui_collapse_redacted_post, thread_ui_expand_post_full,
-        thread_ui_expand_redacted_post, ui_js_warn, user_can_post_room, user_can_view_room,
-        HtmlUiAction, JsBuilder, ThreadNav,
+        external_resolver_status_markup, fragment_new_thread_slot, login_to_post_hint_markup,
+        parse_html_ui_from_form, room_members_section_markup, thread_feed_html,
+        thread_feed_html_for_room, thread_feed_region_markup, thread_ui_collapse_redacted_post,
+        thread_ui_expand_post_full, thread_ui_expand_redacted_post, ui_js_warn, user_can_post_room,
+        user_can_view_room, HtmlUiAction, JsBuilder, ThreadNav,
     },
     reducer::{scope_from_room_wire, ScopeId},
     state::AppState,
@@ -66,6 +66,13 @@ fn sanitize_garden_pin_next(next: &str) -> String {
     } else {
         "/".to_string()
     }
+}
+
+fn login_redirect_for(next: &str) -> String {
+    format!(
+        "/login?next={}",
+        urlencoding::encode(&sanitize_garden_pin_next(next))
+    )
 }
 
 fn redirect_with_pin_cookie(cookie_header_value: &str, location: &str) -> Response {
@@ -194,7 +201,7 @@ async fn dispatch_ui_action(
                     .into_response();
             }
             let Some(session) = session else {
-                return js_redirect("/login").into_response();
+                return js_redirect(&login_redirect_for(&next)).into_response();
             };
             let err_tgt = Some("vote-compare-errors".to_string());
             let room = room.trim().to_string();
@@ -363,7 +370,7 @@ async fn dispatch_ui_action(
                     .into_response();
             }
             let Some(session) = session else {
-                return js_redirect("/login").into_response();
+                return js_redirect(&login_redirect_for(&next)).into_response();
             };
             let room = room_wire.trim();
             if room.is_empty() {
@@ -390,8 +397,19 @@ async fn dispatch_ui_action(
                 item.normalized_storage()
             };
             match resolve_github_children(state, room, &target).await {
-                Ok(_) => js_redirect(&sanitize_garden_pin_next(&next)).into_response(),
-                Err(msg) => ui_js_warn(&msg).into_response(),
+                Ok(n) => JsBuilder::new()
+                    .morph_inner_selector(
+                        "#external-resolver-status",
+                        external_resolver_status_markup(Ok(n), &sanitize_garden_pin_next(&next)),
+                    )
+                    .redirect(&sanitize_garden_pin_next(&next))
+                    .into_response(),
+                Err(msg) => JsBuilder::new()
+                    .morph_inner_selector(
+                        "#external-resolver-status",
+                        external_resolver_status_markup(Err(msg.as_str()), &next),
+                    )
+                    .into_response(),
             }
         }
         HtmlUiAction::RedactPost { post_id } => {

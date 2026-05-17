@@ -930,6 +930,34 @@ button.ont-garden-pin-ico:focus-visible {
   outline: 2px solid var(--link);
   outline-offset: 2px;
 }
+.resolver-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.resolver-refresh-link,
+.vote-compare-next {
+  border: var(--bv) solid;
+  border-color: var(--hi) var(--lo) var(--lo) var(--hi);
+  color: var(--ui);
+  font-size: 12px;
+  padding: 4px 10px;
+  text-decoration: none;
+}
+.resolver-refresh-link:hover,
+.vote-compare-next:hover {
+  color: var(--signal);
+}
+.resolver-status {
+  margin-top: 8px;
+}
+.resolver-status p {
+  margin: 0;
+}
+.resolver-status-error {
+  color: var(--danger, #b00020);
+}
 body.view-ontology-light ol.ont-ranking-list li,
 body.view-ontology-light ul.ont-group-list li {
   display: flex;
@@ -959,14 +987,18 @@ body.view-vote-compare .vote-compare-shell > h2 {
   color: var(--meta);
 }
 .vote-compare-pair {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: start;
   gap: 10px 16px;
-  margin: 10px 0;
+  margin: 0 0 10px;
 }
 .vote-compare-item {
+  display: inline-block;
   text-decoration: none;
+}
+.vote-compare-right {
+  text-align: right;
 }
 .vote-compare-item code {
   font-size: 13px;
@@ -979,6 +1011,33 @@ body.view-vote-compare .vote-compare-shell > h2 {
   font-size: 11px;
   letter-spacing: 0.1em;
   text-transform: uppercase;
+}
+.vote-compare-item-body {
+  margin-top: 8px;
+  max-height: 42dvh;
+  overflow: auto;
+}
+.vote-compare-item-body pre {
+  background: var(--g1);
+  font-size: 13px;
+  line-height: 1.35;
+  padding: 8px 10px;
+}
+.vote-compare-item-body-empty {
+  font-size: 12px;
+  margin: 8px 0 0;
+}
+.vote-compare-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+  margin: 12px 0;
+}
+.vote-compare-next.is-disabled {
+  color: var(--meta);
+  cursor: default;
+  opacity: 0.65;
 }
 .vote-compare-slider-label {
   display: flex;
@@ -1060,18 +1119,27 @@ body.view-vote-compare-fullscreen {
   width: 100%;
   margin-left: 0;
   margin-right: 0;
-  padding: clamp(8px, 2.5vw, 28px);
-  padding-bottom: max(20px, env(safe-area-inset-bottom, 0px));
-  padding-top: max(8px, env(safe-area-inset-top, 0px));
+  padding: 0;
   min-height: 100vh;
   min-height: 100dvh;
   box-sizing: border-box;
+}
+body.view-vote-compare-fullscreen > .view-meta {
+  bottom: 4px;
+  position: fixed;
+  right: 6px;
+  z-index: 20;
 }
 body.view-vote-compare-fullscreen .vote-compare-shell {
   max-width: none;
   width: 100%;
   box-sizing: border-box;
   margin: 0;
+  min-height: 100dvh;
+  padding: 0;
+}
+body.view-vote-compare-fullscreen .vote-compare-shell > h2 {
+  display: none;
 }
 
 .vote-edge-history-title {

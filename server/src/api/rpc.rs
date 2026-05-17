@@ -20,6 +20,7 @@ use crate::{
     path_types::ItemId,
     ranking::{connected_components_from_voted_pairs, ranked_items_subset},
     reducer::{scope_from_room_wire, ReducerState, ScopeId},
+    scope_rank::suggest_next_pair_in_pool,
     state::{AppState, InviteState},
     write_cmd::WriteCmd,
 };
@@ -759,7 +760,8 @@ async fn rpc_get_pair(state: &AppState, room: String, parent_path: String) -> Re
                     }
                 }
             }
-            pick.or_else(|| pick_random_distinct_item_pair(&pool))
+            pick.or_else(|| suggest_next_pair_in_pool(group, &pool, None))
+                .or_else(|| pick_random_distinct_item_pair(&pool))
         }
     };
     let Some((left, right)) = selected else {
