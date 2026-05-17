@@ -12,7 +12,6 @@ use std::collections::HashSet;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD as B64_ENGINE, Engine as _};
 
 use crate::{
-    api::helpers::is_pair_voted,
     api::optional_principal,
     canonical_path::{canonicalize_item, canonicalize_tag},
     events::ThreadCapability,
@@ -175,6 +174,21 @@ fn edge_vote_count_for_pair(content: &ContentState, a: &ItemId, b: &ItemId) -> u
         .count()
 }
 
+fn is_pair_voted_in_group(group: &crate::reducer::GroupState, a: &ItemId, b: &ItemId) -> bool {
+    let Some(&a_idx) = group.item_to_idx.get(a) else {
+        return false;
+    };
+    let Some(&b_idx) = group.item_to_idx.get(b) else {
+        return false;
+    };
+    let (i, j) = if a_idx < b_idx {
+        (a_idx, b_idx)
+    } else {
+        (b_idx, a_idx)
+    };
+    group.voted_pairs.contains(&(i, j))
+}
+
 fn vote_thread_tags_for_pair(content: &ContentState, a: &ItemId, b: &ItemId) -> Vec<String> {
     let set: HashSet<String> = content
         .item_threads
@@ -335,7 +349,7 @@ fn suggest_next_vote_pair(
             if pair == current {
                 continue;
             }
-            if !is_pair_voted(&content.ranking_group, pool[i].as_str(), pool[j].as_str()) {
+            if !is_pair_voted_in_group(&content.ranking_group, &pool[i], &pool[j]) {
                 return Some((pool[i].clone(), pool[j].clone()));
             }
         }
