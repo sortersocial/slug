@@ -533,7 +533,7 @@ fn dsl_parse_rejects_zero_zero_vote_ratio() {
 #[test]
 fn reducer_negative_ratio_clamped_to_zero() {
     let _state = ReducerState::default();
-    // GroupState::apply_vote clamps negatives to 0; when either side is 0 the vote is dropped.
+    // apply_vote clamps negatives to 0; add_edge_weight skips zero-weight edges.
     let mut group = GroupState::new();
     group.apply_vote(slugsocial_server::reducer::VoteData {
         ts: 1,
@@ -546,10 +546,9 @@ fn reducer_negative_ratio_clamped_to_zero() {
         delegate: Some("00000000-0000-0000-0000-000000000000:test:local/test".to_string()),
         thread_tag: "t".to_string(),
     });
-    // Nothing registered: zero-clamped vote is dropped before ensure_item.
-    assert!(group.idx_to_item.is_empty());
+    // Items and pair are registered; edges are absent because weight 0 is skipped.
+    assert_eq!(group.idx_to_item.len(), 2);
     assert!(group.edges.is_empty());
-    assert!(group.voted_pairs.is_empty());
 }
 
 
