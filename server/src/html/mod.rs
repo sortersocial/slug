@@ -312,6 +312,7 @@ impl JsQueryBuilder {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn layout(
     title: &str,
     view: &str,
@@ -350,6 +351,7 @@ pub(super) fn layout_full_bleed_chromeless(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn layout_embed_controls(
     title: &str,
     view: &str,
@@ -388,7 +390,7 @@ fn layout_embed_controls(
                         span { "spread" }
                         input type="range" id="spread-slider" min="0" max="1" step="0.05" value="1";
                     }
-                    @if let (Some(ref gr), Some(ref gpx)) = (garden_room_wire, garden_path_prefix) {
+                    @if let (Some(gr), Some(ref gpx)) = (garden_room_wire, garden_path_prefix) {
                         @if !gr.is_empty() {
                             div id="slug-pin-hud" class="slug-pin-hud" data-garden-prefix=(gpx) {}
                         }
@@ -515,7 +517,7 @@ pub(super) fn actor_label(agent_naked: &str) -> String {
 pub(super) fn authorship_address(principal: &str, delegate: &Option<String>) -> String {
     match delegate {
         Some(d) => format!("@@{}", actor_label(d)),
-        None => format!("@{}", principal),
+        None => format!("@{principal}"),
     }
 }
 
@@ -584,7 +586,7 @@ fn garden_href_for_item_ref(
         let display = id.display_path();
         let rest = display.strip_prefix("-/").unwrap_or(display.as_str());
         let ext_prefix = format!("{}-", garden_prefix.trim_end_matches('~'));
-        format!("{}/{}", ext_prefix, rest)
+        format!("{ext_prefix}/{rest}")
     } else {
         return None;
     };

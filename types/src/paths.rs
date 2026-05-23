@@ -100,7 +100,7 @@ pub fn tilde_http_path_to_item_id(path_segment: &str) -> ItemId {
     } else if p.is_empty() {
         "~/".to_string()
     } else {
-        format!("~/{}", p)
+        format!("~/{p}")
     };
     ItemId::parse(&raw).unwrap_or_else(ItemId::ontology_root)
 }
@@ -161,7 +161,7 @@ impl RelativePath {
                 format!("~/{}", self.0)
             }
         } else if self.0.is_empty() {
-            format!("~/{}", base)
+            format!("~/{base}")
         } else {
             format!("~/{}/{}", base.trim_end_matches('/'), self.0)
         };
@@ -183,7 +183,7 @@ fn api_path_or_url(item: &str) -> String {
     if item.starts_with("http://") || item.starts_with("https://") {
         item.to_string()
     } else {
-        format!("/{}", item)
+        format!("/{item}")
     }
 }
 
@@ -244,7 +244,7 @@ fn garden_href_string(c: &ItemId, room_wire: &str) -> String {
         return if tail.is_empty() {
             format!("https://slug.social/r/{room_seg}/~")
         } else {
-            format!("https://slug.social/r/{room_seg}/~/{}", tail)
+            format!("https://slug.social/r/{room_seg}/~/{tail}")
         };
     }
     if item_norm == root_norm {

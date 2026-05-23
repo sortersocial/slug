@@ -55,7 +55,7 @@ pub fn canonicalize_item(input: &str) -> String {
         }
         let preserve_case = host_preserves_dash_path_case(&host);
         return if tail.is_empty() {
-            finalize_external_identity_url(format!("https://{}", host))
+            finalize_external_identity_url(format!("https://{host}"))
         } else {
             let path = tail
                 .trim_start_matches('/')
@@ -73,7 +73,7 @@ pub fn canonicalize_item(input: &str) -> String {
                 })
                 .collect::<Vec<_>>()
                 .join("/");
-            finalize_external_identity_url(format!("https://{}/{}", host, path))
+            finalize_external_identity_url(format!("https://{host}/{path}"))
         };
     }
 
@@ -81,18 +81,18 @@ pub fn canonicalize_item(input: &str) -> String {
         let (host, tail) = rest.split_once('/').map_or((rest, ""), |(h, t)| (h, t));
         let host = host.trim().to_lowercase();
         return finalize_external_identity_url(if tail.is_empty() {
-            format!("https://{}", host)
+            format!("https://{host}")
         } else {
-            format!("https://{}/{}", host, tail)
+            format!("https://{host}/{tail}")
         });
     }
     if let Some(rest) = s.strip_prefix("http://") {
         let (host, tail) = rest.split_once('/').map_or((rest, ""), |(h, t)| (h, t));
         let host = host.trim().to_lowercase();
         return finalize_external_identity_url(if tail.is_empty() {
-            format!("http://{}", host)
+            format!("http://{host}")
         } else {
-            format!("http://{}/{}", host, tail)
+            format!("http://{host}/{tail}")
         });
     }
 
@@ -116,11 +116,11 @@ pub fn canonicalize_item(input: &str) -> String {
         if tail.is_empty() {
             return SLUG_TILDE_ONTOLOGY_ROOT.to_string();
         }
-        format!("https://slug.social/~/{}", tail)
+        format!("https://slug.social/~/{tail}")
     } else if tail.is_empty() {
         "https://slug.social".to_string()
     } else {
-        format!("https://slug.social/{}", tail)
+        format!("https://slug.social/{tail}")
     }
 }
 
@@ -177,8 +177,8 @@ pub(crate) fn external_display_dash_prefix(host_and_path: &str) -> String {
         .collect::<Vec<_>>()
         .join("/");
     if path.is_empty() {
-        format!("-/{}", host)
+        format!("-/{host}")
     } else {
-        format!("-/{}", format!("{}/{}", host, path))
+        format!("-/{host}/{path}")
     }
 }

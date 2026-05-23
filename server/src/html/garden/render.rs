@@ -232,8 +232,8 @@ pub(super) async fn render_scope_view(
                 }
             }
             @let cli = match &scope {
-                ScopeId::Public => format!("npx slugsocial public garden body {}", cli_path_arg),
-                ScopeId::Room(room_id) => format!("npx slugsocial private {room_id} garden body {}", cli_path_arg),
+                ScopeId::Public => format!("npx slugsocial public garden body {cli_path_arg}"),
+                ScopeId::Room(room_id) => format!("npx slugsocial private {room_id} garden body {cli_path_arg}"),
             };
             (cli_panel(std::slice::from_ref(&cli)))
         },

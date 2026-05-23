@@ -441,6 +441,7 @@ fn rpc_list_forum_threads(reduced: &ReducerState, room: &str) -> ThreadsResponse
     ThreadsResponse { threads: out }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn rpc_forum_thread_detail(
     reduced: &ReducerState,
     room: &str,
@@ -471,7 +472,7 @@ fn rpc_forum_thread_detail(
                     None
                 };
                 Ok(ThreadDetailResponse {
-                    thread: format!("#{}", tag),
+                    thread: format!("#{tag}"),
                     items: vec![ThreadItem::Post {
                         id: ing.id.clone(),
                         index: idx,
@@ -499,8 +500,8 @@ fn rpc_forum_thread_detail(
         .into_iter()
         .enumerate()
         .filter_map(|(idx, id)| reduced.ingests_by_id.get(&id).map(|ing| (idx, ing.clone())))
-        .filter(|(_, ing)| since.map_or(true, |s| ing.ts >= s))
-        .filter(|(_, ing)| before.map_or(true, |b| ing.ts < b))
+        .filter(|(_, ing)| since.is_none_or(|s| ing.ts >= s))
+        .filter(|(_, ing)| before.is_none_or(|b| ing.ts < b))
         .filter(|(_, ing)| actor_prefix.is_empty() || ing.principal.to_lowercase().starts_with(actor_prefix))
         .collect();
 
@@ -546,7 +547,7 @@ fn rpc_forum_thread_detail(
         .collect();
 
     Ok(ThreadDetailResponse {
-        thread: format!("#{}", tag),
+        thread: format!("#{tag}"),
         items,
         total,
         offset,
@@ -1009,7 +1010,7 @@ pub async fn handle_rpc_batch(
             } => {
                 let principal = {
                     let reduced = state.reduced.read().await;
-                    verify_bearer_principal(&headers, &*reduced)
+                    verify_bearer_principal(&headers, &reduced)
                 };
                 match principal {
                     Err((_, m)) => line_err(m, None),
@@ -1030,7 +1031,7 @@ pub async fn handle_rpc_batch(
                             {
                                 Err(msg) => line_err(msg, None),
                                 Ok(caps) => {
-                                    let max_uses = max_uses.max(1).min(100_000);
+                                    let max_uses = max_uses.clamp(1, 100_000);
                                     let now = now_ms();
                                     let expires_at_ms = now + INVITE_TTL_MS;
                                     let token = loop {
@@ -1069,7 +1070,7 @@ pub async fn handle_rpc_batch(
             RpcCommand::RoomAudit { room } => {
                 let principal = {
                     let reduced = state.reduced.read().await;
-                    verify_bearer_principal(&headers, &*reduced)
+                    verify_bearer_principal(&headers, &reduced)
                 };
                 match principal {
                     Err((_, m)) => line_err(m, None),
@@ -1112,7 +1113,7 @@ pub async fn handle_rpc_batch(
             RpcCommand::RoomList => {
                 let principal = {
                     let reduced = state.reduced.read().await;
-                    verify_bearer_principal(&headers, &*reduced)
+                    verify_bearer_principal(&headers, &reduced)
                 };
                 match principal {
                     Err((_, m)) => line_err(m, None),
@@ -1187,7 +1188,7 @@ pub async fn handle_rpc_batch(
                 let (mut comps, _) = connected_components_from_voted_pairs(
                     n, group.voted_pairs.iter().copied(),
                 );
-                comps.sort_by(|a, b| b.len().cmp(&a.len()));
+                comps.sort_by_key(|b| std::cmp::Reverse(b.len()));
 
                 let mut ranked: Vec<RankRow> = Vec::new();
                 for comp in &comps {
@@ -1313,7 +1314,7 @@ pub async fn handle_rpc_batch(
                                             ts: e.ts,
                                             a: GardenItemUrl::from_storage_str(&a, &room),
                                             b: GardenItemUrl::from_storage_str(&b, &room),
-                                            ratio: format!("{}:{}", ratio_left, ratio_right),
+                                            ratio: format!("{ratio_left}:{ratio_right}"),
                                             actor: reduced.ingests_by_id.get(&e.post_id).map(|ing| ing.principal.clone()),
                                             body: explanation,
                                             thread: Some(format!("#{}", e.thread)),
@@ -1431,7 +1432,7 @@ pub async fn handle_rpc_batch(
             },
             RpcCommand::Search { query } => {
                 let reduced = state.reduced.read().await;
-                let limit = 50usize.min(200);
+                let limit = 50usize;
                 match principal_from_optional_bearer(&headers, &reduced) {
                     Ok(principal) => line_ok(RpcResult::Search(rpc_search(&reduced, &query, limit, principal.as_deref()))),
                     Err((e, h)) => line_err(e, h),
@@ -1483,7 +1484,7 @@ pub async fn handle_rpc_batch(
                                     let limit = limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT);
                                     let matching: Vec<&str> = reduced.ingests_ordered.iter().rev()
                                         .map(|id| id.as_str())
-                                        .take_while(|id| reduced.ingests_by_id.get(*id).map_or(false, |ing| ing.ts > cutoff))
+                                        .take_while(|id| reduced.ingests_by_id.get(*id).is_some_and(|ing| ing.ts > cutoff))
                                         .filter(|id| {
                                             reduced.ingests_by_id.get(*id).is_some_and(|ing| {
                                                 let scope = scope_from_room_wire(&ing.room_id);
@@ -1544,7 +1545,7 @@ pub async fn handle_rpc_batch(
                                 let limit = limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT);
                                 let matching: Vec<&str> = reduced.ingests_ordered.iter().rev()
                                     .map(|id| id.as_str())
-                                    .take_while(|id| reduced.ingests_by_id.get(*id).map_or(false, |ing| ing.ts > cutoff))
+                                    .take_while(|id| reduced.ingests_by_id.get(*id).is_some_and(|ing| ing.ts > cutoff))
                                     .filter(|id| {
                                         reduced.ingests_by_id.get(*id).is_some_and(|ing| {
                                             let scope = scope_from_room_wire(&ing.room_id);

@@ -203,6 +203,7 @@ fn vote_edge_history_markup(content: &ContentState, left: &ItemId, right: &ItemI
 }
 
 /// After a successful vote post: refresh edge history (no in-page preview card).
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn vote_compare_post_success_js(
     state: &AppState,
     nav: &ThreadNav,

@@ -143,7 +143,7 @@ fn normalize_github(u: &mut Url) {
     let Some(host_raw) = u.host_str() else {
         return;
     };
-    if host_raw.to_ascii_lowercase() != "github.com" {
+    if !host_raw.eq_ignore_ascii_case("github.com") {
         return;
     }
 
