@@ -507,22 +507,16 @@ div.thread-paginator { margin-top: 10px; }
   padding: 2px 10px;
   text-decoration: none;
 }
-a.post-nav-btn:hover { color: var(--signal); }
-a.post-nav-btn:active {
+.post-nav-btn:hover { color: var(--signal); }
+.post-nav-btn:active {
   border-color: var(--lo) var(--hi) var(--hi) var(--lo);
   transform: translate(1px, 1px);
 }
 .post-nav-btn.disabled { color: var(--meta); cursor: default; }
 .post-nav-pos { font-size: 12px; }
-button.post-nav-btn.thread-copy-btn {
+button.post-nav-btn {
   cursor: pointer;
   font: inherit;
-  font-size: 11px;
-  padding: 1px 7px;
-}
-button.post-nav-btn.thread-copy-btn:active {
-  border-color: var(--lo) var(--hi) var(--hi) var(--lo);
-  transform: translate(1px, 1px);
 }
 
 /* ----------------------------------------------------------------

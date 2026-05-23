@@ -89,7 +89,7 @@ pub(super) fn thread_copy_button_markup(nav: &ThreadNav, tag: &str, top: bool) -
     })
     .expect("CopyThread serializes");
     html! {
-        button type="button" id=(copy_btn_id) class="post-nav-btn thread-copy-btn" title="Copy full thread"
+        button type="button" id=(copy_btn_id) class="post-nav-btn" title="Copy full thread"
             onclick=(thread_ui_fetch_onclick(&rpc)) {
             "copy"
         }
