@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::path_types::ItemId;
 use crate::reducer::GroupState;
@@ -143,23 +143,35 @@ fn compute_scores_from_edges(n: usize, edges: impl Iterator<Item = ((usize, usiz
         }
     }
 
+    // Rank Centrality (Negahban, Oh, Shah 2012, §3.1):
+    //   P_ij = (1/d_max) * A_ij           for i ≠ j compared
+    //   P_ii = 1 - (1/d_max) * Σ_k A_ik
+    // where d_i is the *degree* (number of distinct neighbors compared) and
+    // d_max = max_i d_i. Using the unweighted degree — not the sum of
+    // pairwise-normalized weights — is what guarantees aperiodicity: it
+    // forces P_ii > 0 for every non-maximum-degree node, and for max-degree
+    // nodes whenever any neighbor weight is below 1 (i.e. not a unanimous
+    // loss). Without this, regular comparison graphs (e.g. a pure star at
+    // ratio 2:1) produce a bipartite chain that oscillates instead of
+    // converging — see issue #146.
     let mut out_edges: Vec<Vec<(usize, f64)>> = vec![Vec::new(); n];
-    let mut out_deg: Vec<f64> = vec![0.0; n];
+    let mut neighbors: Vec<HashSet<usize>> = vec![HashSet::new(); n];
 
     for ((src, dst), w) in &normalized {
         out_edges[*src].push((*dst, *w));
-        out_deg[*src] += w;
+        neighbors[*src].insert(*dst);
+        neighbors[*dst].insert(*src);
     }
 
-    let mut max_out = 0.0f64;
-    for &d in &out_deg {
-        if d > max_out {
-            max_out = d;
-        }
-    }
-    if max_out <= 1e-12 {
+    let weight_sum: Vec<f64> = out_edges
+        .iter()
+        .map(|es| es.iter().map(|(_, w)| *w).sum())
+        .collect();
+    let d_max = neighbors.iter().map(|s| s.len()).max().unwrap_or(0);
+    if d_max == 0 {
         return vec![1.0 / n as f64; n];
     }
+    let d_max_f = d_max as f64;
 
     let mut scores = vec![1.0 / n as f64; n];
     let mut next = vec![0.0f64; n];
@@ -167,14 +179,14 @@ fn compute_scores_from_edges(n: usize, edges: impl Iterator<Item = ((usize, usiz
     for _ in 0..max_iters {
         next.fill(0.0);
         for i in 0..n {
-            let stay_prob = (max_out - out_deg[i]) / max_out;
+            let stay_prob = (d_max_f - weight_sum[i]) / d_max_f;
             next[i] += scores[i] * stay_prob;
 
             if out_edges[i].is_empty() {
                 continue;
             }
             for &(dst, w) in &out_edges[i] {
-                next[dst] += scores[i] * (w / max_out);
+                next[dst] += scores[i] * (w / d_max_f);
             }
         }
 
@@ -268,6 +280,38 @@ mod tests {
             delegate: Some("00000000-0000-0000-0000-000000000000:test:local/test".to_string()),
             thread_tag: "untagged".to_string(),
         }
+    }
+
+    /// Regression for issue #146: pure forward star at default `>` ratio (2:1).
+    /// Under the old (sum-of-weights) divisor every node had P_ii = 0 and the
+    /// chain was bipartite; power iteration oscillated and returned the
+    /// uniform initial distribution after an even number of steps. Using the
+    /// paper's degree-based d_max gives every node a positive self-loop and
+    /// the chain converges to the correct stationary distribution.
+    #[test]
+    fn star_topology_winner_at_top_via_subset() {
+        let mut g = mk_group();
+        g.apply_vote(vote(1, "zebra", "alpha", 2, 1));
+        g.apply_vote(vote(2, "zebra", "beta", 2, 1));
+
+        let mut items: Vec<(usize, String)> = g
+            .idx_to_item
+            .iter()
+            .enumerate()
+            .map(|(i, it)| (i, it.as_str().to_string()))
+            .collect();
+        items.sort_by(|a, b| a.1.cmp(&b.1));
+        let idxs: Vec<usize> = items.iter().map(|(i, _)| *i).collect();
+
+        let ranked = ranked_items_subset(&g, &idxs, 10000, 1e-8);
+        for r in &ranked {
+            eprintln!("{}: {}", r.item.as_str(), r.score);
+        }
+        assert_eq!(
+            ranked[0].item.as_str(),
+            "https://slug.social/zebra",
+            "zebra won both votes and should rank #1"
+        );
     }
 
     #[test]

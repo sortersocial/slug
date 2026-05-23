@@ -1,0 +1,12 @@
+#t4
+
+~/t4/a { node a }
+~/t4/b { node b }
+~/t4/c { node c }
+
+{ a > b }
+~/t4/a > ~/t4/b
+{ b > c }
+~/t4/b > ~/t4/c
+{ c > a }
+~/t4/c > ~/t4/a

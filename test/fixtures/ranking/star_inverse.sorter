@@ -1,0 +1,11 @@
+#t2
+
+~/t2/win { source of incoming edges (loses both) }
+~/t2/loss-a { winner }
+~/t2/loss-b { winner }
+
+{ loss-a beats win }
+~/t2/loss-a > ~/t2/win
+
+{ loss-b beats win }
+~/t2/loss-b > ~/t2/win

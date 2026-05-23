@@ -1,0 +1,11 @@
+#repro
+
+~/repro/zebra { winner — beats both others }
+~/repro/alpha { loser — alphabetically first }
+~/repro/beta { loser — alphabetically middle }
+
+{ zebra beats alpha }
+~/repro/zebra > ~/repro/alpha
+
+{ zebra beats beta }
+~/repro/zebra > ~/repro/beta
