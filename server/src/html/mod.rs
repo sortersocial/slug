@@ -33,7 +33,7 @@ pub use forum::{
 pub use forum::user_profile_page;
 pub(crate) use forum::{
     fragment_new_thread_slot, login_to_post_hint_markup, room_members_section_markup,
-    thread_ui_collapse_redacted_post, thread_ui_expand_post_full, thread_ui_expand_redacted_post,
+    thread_ui_collapse_redacted_post, thread_ui_copy_thread, thread_ui_expand_post_full, thread_ui_expand_redacted_post,
     user_can_post_room, user_can_view_room,
 };
 pub(crate) use garden::{
@@ -259,6 +259,21 @@ impl JsBuilder {
     pub(crate) fn redirect(mut self, to: &str) -> Self {
         self.snippets
             .push(format!("window.location = {};", js_string_literal(to)));
+        self
+    }
+
+    pub(crate) fn clipboard_write_text_and_label_btn(
+        mut self,
+        text: &str,
+        btn_id: &str,
+        copied_label: &str,
+    ) -> Self {
+        self.snippets.push(format!(
+            "navigator.clipboard.writeText({text}).then(function(){{ var __slugCopyBtn = document.getElementById({btn_id}); if (__slugCopyBtn) {{ __slugCopyBtn.textContent = {label}; }} }}).catch(function(__slugErr){{ console.warn(__slugErr); }});",
+            text = js_string_literal(text),
+            btn_id = js_string_literal(btn_id),
+            label = js_string_literal(copied_label),
+        ));
         self
     }
 

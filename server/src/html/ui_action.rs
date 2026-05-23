@@ -109,6 +109,12 @@ pub enum HtmlUiAction {
         thread_tag: String,
         post_index: usize,
     },
+    /// Copy full thread text (CLI `forum show` format) to the clipboard.
+    CopyThread {
+        room: String,
+        thread_tag: String,
+        copy_btn_id: String,
+    },
 }
 
 #[derive(Debug, Error)]
@@ -214,6 +220,29 @@ mod tests {
     }
 
     #[test]
+    fn copy_thread_round_trip() {
+        let template = serde_json::json!({
+            "action": "copy_thread",
+            "room": "public",
+            "thread_tag": "demo",
+            "copy_btn_id": "thread-copy-top",
+        });
+        let mut form = HashMap::new();
+        form.insert(
+            UI_RPC_FIELD.to_string(),
+            serde_json::to_string(&template).unwrap(),
+        );
+        let a = parse_html_ui_from_form(&form).unwrap();
+        assert_eq!(
+            a,
+            HtmlUiAction::CopyThread {
+                room: "public".into(),
+                thread_tag: "demo".into(),
+                copy_btn_id: "thread-copy-top".into(),
+            }
+        );
+    }
+
     fn set_new_thread_compose_expanded_true() {
         let template = serde_json::json!({
             "action": "set_new_thread_compose_expanded",
