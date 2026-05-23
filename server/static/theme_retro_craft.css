@@ -711,8 +711,7 @@ body.view-ontology span.ont-garden-vote-glyph {
   line-height: 1;
 }
 body.view-ontology button.ont-garden-pin-ico,
-body.view-ontology a.ont-garden-vote-ico,
-body.view-ontology span.ont-garden-pinned-here {
+body.view-ontology a.ont-garden-vote-ico {
   font-size: 0.95rem;
   line-height: 1;
   padding: 0.1rem 0.35rem;
@@ -732,10 +731,14 @@ body.view-ontology a.ont-garden-vote-ico:hover {
   border-color: #a68e6b;
   background: #ebe6dc;
 }
-body.view-ontology span.ont-garden-pinned-here {
+body.view-ontology button.ont-garden-pin-ico-active {
   border-color: #1a4a8c;
   background: color-mix(in srgb, #1a4a8c 10%, #f7f3eb);
-  cursor: default;
+  color: #0d2d5c;
+}
+body.view-ontology button.ont-garden-pin-ico-active:hover {
+  border-color: #a68e6b;
+  background: color-mix(in srgb, #1a4a8c 14%, #ebe6dc);
 }
 body.view-ontology form.ont-garden-pin-form {
   display: inline;

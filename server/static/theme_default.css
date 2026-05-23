@@ -891,8 +891,7 @@ button.ont-pin-btn-active {
   vertical-align: middle;
 }
 button.ont-garden-pin-ico,
-a.ont-garden-vote-ico,
-span.ont-garden-pinned-here {
+a.ont-garden-vote-ico {
   font-size: 13px;
   line-height: 1;
   padding: 2px 6px;
@@ -910,6 +909,11 @@ span.ont-garden-pinned-here {
   align-items: center;
   justify-content: center;
 }
+form.ont-garden-pin-form {
+  display: inline;
+  margin: 0;
+  padding: 0;
+}
 a.ont-garden-vote-ico {
   gap: 4px;
 }
@@ -925,10 +929,14 @@ a.ont-garden-vote-ico:hover {
 span.ont-garden-vote-glyph {
   line-height: 1;
 }
-span.ont-garden-pinned-here {
+button.ont-garden-pin-ico-active {
   border-color: var(--link);
   color: var(--signal);
-  cursor: default;
+  background: color-mix(in srgb, var(--link) 12%, var(--g3));
+}
+button.ont-garden-pin-ico-active:hover {
+  color: var(--signal);
+  background: color-mix(in srgb, var(--link) 18%, var(--g4));
 }
 button.ont-garden-pin-ico:focus-visible {
   outline: 2px solid var(--link);

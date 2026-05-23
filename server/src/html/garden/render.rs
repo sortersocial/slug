@@ -216,7 +216,7 @@ pub(super) async fn render_scope_view(
                                     @let item_url = item_href(r.item.as_str(), &nav);
                                     @let score_str = format!("{:.3}", r.score);
                                     li data-garden-item=(r.item.as_str()) {
-                                        (child_row_pin_or_vote(&nav, &r.item, pin_ref.as_ref(), scope_content))
+                                        (child_row_pin_or_vote(&nav, &r.item, pin_ref.as_ref(), scope_content, &next_for_pin))
                                         a class="item-link" href=(item_url) { code { (item_display_path(r.item.as_str())) } }
                                         span class="ont-rank-score" { (score_str) }
                                     }
@@ -232,7 +232,7 @@ pub(super) async fn render_scope_view(
                         ul class="ont-group-list" {
                             @for name in &model.child_rankings.unranked_items {
                                 li data-garden-item=(name.as_str()) {
-                                    (child_row_pin_or_vote(&nav, name, pin_ref.as_ref(), scope_content))
+                                    (child_row_pin_or_vote(&nav, name, pin_ref.as_ref(), scope_content, &next_for_pin))
                                     @let href = item_href(name.as_str(), &nav);
                                     a class="item-link" href=(href) { code { (item_display_path(name.as_str())) } }
                                 }

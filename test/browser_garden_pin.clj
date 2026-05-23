@@ -58,10 +58,11 @@
      (let [alice-token (oauth/fetch-bearer-token! base-url :username "alice")
            thread-tag "browser-garden-pin"
            raw (str "# " thread-tag "\n\n"
-                    "~/gp-pin-a {alpha}\n"
-                    "~/gp-pin-b {beta}\n"
+                    "~/gp-parent {parent}\n"
+                    "~/gp-parent/pin-a {alpha}\n"
+                    "~/gp-parent/pin-b {beta}\n"
                     "{pin test vote}\n"
-                    "~/gp-pin-a 2:1 ~/gp-pin-b\n")
+                    "~/gp-parent/pin-a 2:1 ~/gp-parent/pin-b\n")
            post-resp (oauth/http-post-json
                       (str base-url "/api/v0/rpc")
                       [{"Post" {"room" "public"
@@ -77,23 +78,43 @@
              (core/with-page [pg (core/new-page-from-context ctx)]
                (page/navigate pg (str base-url "/login"))
                (is (wait-for-text pg "body" "@alice" 15000) "alice session after login")
-               (page/navigate pg (str base-url "/~/gp-pin-a"))
-               (is (wait-for-text pg ".ont-item-shell" "~/gp-pin-a" 15000) "on item a page")
+               (page/navigate pg (str base-url "/~/gp-parent/pin-a"))
+               (is (wait-for-text pg ".ont-item-shell" "~/gp-parent/pin-a" 15000) "on item a page")
                ;; Native form POST /ui (data-navigate=full) — not fetch/eval
                (locator/click (page/locator pg ".ont-item-pin-zone form.ont-pin-form button[type=submit]"))
-               (is (wait-for-text pg "#slug-pin-hud" "gp-pin-a" 15000)
+               (is (wait-for-text pg "#slug-pin-hud" "gp-parent/pin-a" 15000)
                    "HUD shows pinned item label after redirect")
-               (page/navigate pg (str base-url "/~/gp-pin-b"))
-               (is (wait-for-text pg ".ont-item-shell" "~/gp-pin-b" 15000) "on item b page")
+               (page/navigate pg (str base-url "/~/gp-parent/pin-b"))
+               (is (wait-for-text pg ".ont-item-shell" "~/gp-parent/pin-b" 15000) "on item b page")
                (is (wait-for-text pg "a.ont-vote-compare-btn" "vote" 10000)
                    "vote link visible vs pinned item")
-               ;; HUD clears pin (POST set_garden_pin clear), not navigate to item
+               ;; Unpin from ranked child groups on parent page
+               (page/navigate pg (str base-url "/~/gp-parent"))
+               (is (wait-for-text pg ".ont-tab-panel-children" "ranked child groups" 15000)
+                   "parent page shows ranked child groups")
+               (is (wait-for-text pg ".ont-ranking-list button.ont-garden-pin-ico-active" "📌" 10000)
+                   "pinned row shows active pin in ranked list")
+               (locator/click (page/locator pg ".ont-ranking-list button.ont-garden-pin-ico-active"))
+               (is (wait-for-absence-substr pg "#slug-pin-hud" "gp-parent/pin-a" 15000)
+                   "HUD clears after unpin from ranked child list")
+               (is (wait-for-absence-substr pg ".ont-ranking-list" "ont-garden-vote-ico" 10000)
+                   "vote icons removed from ranked list after unpin")
+               (page/navigate pg (str base-url "/~/gp-parent/pin-b"))
+               (is (wait-for-text pg ".ont-item-shell" "~/gp-parent/pin-b" 15000) "on item b page again")
+               (is (wait-for-absence-substr pg "body" "ont-vote-compare-btn" 15000)
+                   "compare vote CTA removed after ranked-list unpin")
+               ;; HUD unpin still works from item page context
+               (page/navigate pg (str base-url "/~/gp-parent/pin-a"))
+               (locator/click (page/locator pg ".ont-item-pin-zone form.ont-pin-form button[type=submit]"))
+               (is (wait-for-text pg "#slug-pin-hud" "gp-parent/pin-a" 15000)
+                   "re-pin from item page for HUD unpin test")
+               (page/navigate pg (str base-url "/~/gp-parent/pin-b"))
                (locator/click (page/locator pg "#slug-pin-hud button.slug-pin-hud-unpin-btn"))
-               (is (wait-for-absence-substr pg "#slug-pin-hud" "gp-pin-a" 15000)
+               (is (wait-for-absence-substr pg "#slug-pin-hud" "gp-parent/pin-a" 15000)
                    "HUD clears after unpin from HUD button")
                (is (wait-for-absence-substr pg "body" "ont-vote-compare-btn" 15000)
                    "compare vote CTA removed after HUD unpin on same reload")
-               (is (str/includes? (or (page/url pg) "") "/~/gp-pin-b")
+               (is (str/includes? (or (page/url pg) "") "/~/gp-parent/pin-b")
                    "still on item b after HUD unpin"))))))
 
      (finally

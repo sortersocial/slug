@@ -101,6 +101,7 @@ pub(super) fn child_row_pin_or_vote(
     row_item: &ItemId,
     pinned_room_and_item: Option<&(String, ItemId)>,
     scope_content: &ContentState,
+    next_path: &str,
 ) -> maud::Markup {
     let pin_matches_scope = pinned_room_and_item
         .map(|(r, _)| r == nav.room_wire.as_str())
@@ -108,12 +109,25 @@ pub(super) fn child_row_pin_or_vote(
     let pinned_item = pinned_room_and_item
         .filter(|_| pin_matches_scope)
         .map(|(_, i)| i);
+    let unpin_rpc = template_json_compact(&json!({
+        "action": "set_garden_pin",
+        "clear": true,
+        "room_wire": "",
+        "next": next_path,
+        "form_action": "/ui",
+    }))
+    .expect("unpin rpc json");
 
     html! {
         @if let Some(pi) = pinned_item {
             span class="ont-garden-child-actions" data-garden-room=(nav.room_wire.as_str()) {
                 @if pi == row_item {
-                    span class="ont-garden-pinned-here" title="Pinned" aria-label="Pinned" { "📌" }
+                    form method="POST" action="/ui" data-navigate="full" class="ont-garden-pin-form" {
+                        input type="hidden" name=(UI_RPC_FIELD) value=(unpin_rpc);
+                        button type="submit" class="ont-garden-pin-ico ont-garden-pin-ico-active" title="Unpin" aria-label="Unpin from HUD" {
+                            span class="ont-garden-pin-glyph" aria-hidden="true" { "📌" }
+                        }
+                    }
                 } @else {
                     @let nv = edge_vote_count_for_pair(scope_content, pi, row_item);
                     @let tip = format!(
