@@ -6,8 +6,7 @@ use std::fmt;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::item_wire::{
-    canonicalize_item, external_display_dash_prefix, normalize_slug_ontology_storage_url,
-    SLUG_TILDE_ONTOLOGY_ROOT,
+    canonicalize_item, normalize_slug_ontology_storage_url, SLUG_TILDE_ONTOLOGY_ROOT,
 };
 
 /// Structural key for items in [`slug_types`] and the server reducer.
@@ -155,13 +154,13 @@ impl ItemId {
             if tail.starts_with("slug.social") {
                 return s.to_string();
             }
-            return external_display_dash_prefix(tail);
+            return format!("-/{}", s);
         }
         if let Some(tail) = s.strip_prefix("http://") {
             if tail.starts_with("slug.social") {
                 return s.to_string();
             }
-            return external_display_dash_prefix(tail);
+            return format!("-/{}", s);
         }
         s.to_string()
     }

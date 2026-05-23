@@ -23,10 +23,12 @@ pub(super) fn scoped_bc_path_external(path: &ExternalOntologyPath, nav: &ThreadN
                 a href="/" { "slug.social" }
                 (bc_segment(&format!("room:{slug}"), nav.room_url(), false))
                 (bc_segment("-", &ext_root, path.is_root()))
-                @for (i, seg) in path.segments().iter().enumerate() {
-                    @let href = format!("{}/{}", ext_root, path.segments()[..=i].join("/"));
-                    @let is_last = i == path.segments().len() - 1;
-                    (bc_segment(seg, &href, is_last))
+                @for (i, id) in path.breadcrumb_chain().iter().enumerate() {
+                    @let disp = id.display_path();
+                    @let tail = disp.strip_prefix("-/").unwrap_or(disp.as_str());
+                    @let href = format!("{}/{}", ext_root, tail);
+                    @let is_last = i + 1 == path.breadcrumb_chain().len();
+                    (bc_segment(id.last_segment(), &href, is_last))
                 }
             }
         }

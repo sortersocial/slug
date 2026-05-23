@@ -6,7 +6,7 @@
 //! - **[`canonicalize_item`] / [`crate::ItemId`]** — graph storage key and DSL form; tilde
 //!   ontology root is always [`SLUG_TILDE_ONTOLOGY_ROOT`] (no `…/~/` trailing slash only).
 //! - **[`TildeHttpPathTail`]** — capture from `GET /~/*path` or `…/r/{short}{slug}/~/…` (the `*path` segment).
-//! - **`-/…` wire form** — external items; see [`canonicalize_item`] dash branch.
+//! - **`-/…` wire form** — external items: legacy `/-/host/path` or `/-/https://host/path`; see [`canonicalize_item`] dash branch.
 //! - **[`GardenItemUrl`], [`ForumThreadUrl`]** — JSON / browser href surfaces.
 //! - **[`ROOM_SHORT_ID_LEN`] / [`room_route_segment`]** — `/r/{short}{slug}` vs wire `short/slug`.
 
@@ -447,7 +447,7 @@ mod tests {
         let u = "https://example.com/z";
         assert_eq!(
             GardenItemUrl::from_storage_str(u, "9ab12cd/my-room").as_str(),
-            "https://slug.social/r/9ab12cdmy-room/-/example.com/z"
+            "https://slug.social/r/9ab12cdmy-room/-/https://example.com/z"
         );
     }
 
@@ -485,6 +485,14 @@ mod tests {
         assert_eq!(
             canonicalize_item("-/example.com/foo/bar/"),
             "https://example.com/foo/bar"
+        );
+    }
+
+    #[test]
+    fn canonicalize_item_dash_prefix_with_full_https_url() {
+        assert_eq!(
+            canonicalize_item("-/https://BackPack.tf/item/123456"),
+            "https://backpack.tf/item/123456"
         );
     }
 
@@ -529,7 +537,7 @@ mod tests {
     #[test]
     fn display_path_roundtrips_dash_and_tilde() {
         let ext = ItemId::parse("https://GitHub.com/org/Issue").unwrap();
-        assert_eq!(ext.display_path(), "-/github.com/org/issue");
+        assert_eq!(ext.display_path(), "-/https://github.com/org/issue");
         let tilde = ItemId::parse("~/Rust/Doc").unwrap();
         assert_eq!(tilde.display_path(), "~/rust/doc");
     }

@@ -46,6 +46,12 @@ pub fn canonicalize_item(input: &str) -> String {
     }
 
     if let Some(rest) = s.strip_prefix("-/") {
+        let rest = rest.trim().trim_start_matches('/');
+        // New wire form: `/-/https://host/path` (full URL after the dash prefix).
+        if rest.starts_with("http://") || rest.starts_with("https://") {
+            return finalize_external_identity_url(rest.to_string());
+        }
+        // Legacy wire form: `/-/host/path` (host-first segments).
         let (host, tail) = rest
             .split_once('/')
             .map_or((rest, ""), |(h, t)| (h, t));
@@ -156,29 +162,4 @@ pub fn item_parent_path(input: &str) -> Option<String> {
         return None;
     }
     Some(segs[..segs.len() - 1].join("/"))
-}
-
-pub(crate) fn external_display_dash_prefix(host_and_path: &str) -> String {
-    let (host, path) = host_and_path
-        .split_once('/')
-        .map_or((host_and_path, ""), |(h, p)| (h, p));
-    let host = host.trim().to_lowercase();
-    let path = path
-        .trim_end_matches('/')
-        .split('/')
-        .filter_map(|seg| {
-            let t = seg.trim();
-            if t.is_empty() {
-                None
-            } else {
-                Some(t.to_lowercase())
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("/");
-    if path.is_empty() {
-        format!("-/{host}")
-    } else {
-        format!("-/{host}/{path}")
-    }
 }
