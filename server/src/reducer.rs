@@ -112,6 +112,10 @@ impl GroupState {
         if vote.ratio_right < 0 {
             vote.ratio_right = 0;
         }
+        if vote.ratio_left == 0 || vote.ratio_right == 0 {
+            // Zero on either side produces no valid edge; drop before registering items or pair.
+            return;
+        }
 
         let a_idx = self.ensure_item(&vote.a);
         let b_idx = self.ensure_item(&vote.b);
@@ -121,10 +125,6 @@ impl GroupState {
 
         let w_a = vote.ratio_left as f64;
         let w_b = vote.ratio_right as f64;
-        if w_a == 0.0 || w_b == 0.0 {
-            // Zero on either side produces no valid edge; drop the vote.
-            return;
-        }
 
         self.add_edge_weight(b_idx, a_idx, w_a);
         self.add_edge_weight(a_idx, b_idx, w_b);

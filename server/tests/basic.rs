@@ -546,12 +546,10 @@ fn reducer_negative_ratio_clamped_to_zero() {
         delegate: Some("00000000-0000-0000-0000-000000000000:test:local/test".to_string()),
         thread_tag: "t".to_string(),
     });
-    // Items are registered, but the zero-clamped vote produces no edges.
-    assert_eq!(group.idx_to_item.len(), 2);
-    let a_idx = group.item_to_idx[&item_id("https://slug.social/~/t/a")];
-    let b_idx = group.item_to_idx[&item_id("https://slug.social/~/t/b")];
-    assert!(!group.edges.contains_key(&(a_idx, b_idx)));
-    assert!(!group.edges.contains_key(&(b_idx, a_idx)));
+    // Nothing registered: zero-clamped vote is dropped before ensure_item.
+    assert!(group.idx_to_item.is_empty());
+    assert!(group.edges.is_empty());
+    assert!(group.voted_pairs.is_empty());
 }
 
 
