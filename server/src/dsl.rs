@@ -545,9 +545,14 @@ fn parse_block_prefixed_statement(
 
     let ((ratio_left, ratio_right), k) = parse_comparison_at(s, i)
         .ok_or_else(|| DslError::Parse(format!("invalid comparison near: {}", &s[i..])))?;
-    if ratio_left == 0 && ratio_right == 0 {
+    if ratio_left == 0 || ratio_right == 0 {
         return Err(DslError::Parse(
-            "vote ratio 0:0 is invalid; use 1:1 for a tie or omit the vote".to_string(),
+            "vote ratio sides must be ≥ 1; use 1:1 for a tie or omit the vote".to_string(),
+        ));
+    }
+    if ratio_left > 100 || ratio_right > 100 {
+        return Err(DslError::Parse(
+            "vote ratio sides must be ≤ 100".to_string(),
         ));
     }
     i = skip_ws(s, k);
@@ -929,9 +934,48 @@ mod tests {
         let err = parse_full("{tie placeholder}\n~/a 0:0 ~/b").unwrap_err();
         let DslError::Parse(msg) = err;
         assert!(
-            msg.contains("0:0"),
-            "expected 0:0 rejection message, got: {msg}"
+            msg.contains("≥ 1"),
+            "expected zero-side rejection message, got: {msg}"
         );
+    }
+
+    #[test]
+    fn parse_vote_rejects_left_zero_ratio() {
+        let err = parse_full("{prefer b}\n~/a 0:5 ~/b").unwrap_err();
+        let DslError::Parse(msg) = err;
+        assert!(
+            msg.contains("≥ 1"),
+            "expected zero-side rejection message, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn parse_vote_rejects_right_zero_ratio() {
+        let err = parse_full("{prefer a}\n~/a 5:0 ~/b").unwrap_err();
+        let DslError::Parse(msg) = err;
+        assert!(
+            msg.contains("≥ 1"),
+            "expected zero-side rejection message, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn parse_vote_rejects_over_max_ratio() {
+        let err = parse_full("{prefer a strongly}\n~/a 101:1 ~/b").unwrap_err();
+        let DslError::Parse(msg) = err;
+        assert!(
+            msg.contains("≤ 100"),
+            "expected max ratio rejection message, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn parse_vote_accepts_max_ratio() {
+        let doc = parse_full("{prefer a}\n~/a 100:1 ~/b").unwrap();
+        assert!(matches!(
+            doc.statements.last(),
+            Some(Stmt::Vote { ratio_left: 100, ratio_right: 1, .. })
+        ));
     }
 
     #[test]

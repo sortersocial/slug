@@ -243,11 +243,23 @@ async fn dispatch_ui_action(
             let pool_id = pool.as_deref().and_then(|p| {
                 crate::path_types::ItemId::parse(p.trim()).map(|i| i.normalized_storage())
             });
-            let mut rl = ratio_left.trim().parse::<i32>().unwrap_or(0).max(0);
-            let mut rr = ratio_right.trim().parse::<i32>().unwrap_or(0).max(0);
-            if rl == 0 && rr == 0 {
-                rl = 1;
-                rr = 1;
+            let rl = ratio_left.trim().parse::<i32>().unwrap_or(0).max(0);
+            let rr = ratio_right.trim().parse::<i32>().unwrap_or(0).max(0);
+            if rl == 0 || rr == 0 {
+                return form_js_error(
+                    err_tgt.as_ref(),
+                    "invalid ratio",
+                    "Both ratio sides must be ≥ 1.",
+                )
+                .into_response();
+            }
+            if rl > 100 || rr > 100 {
+                return form_js_error(
+                    err_tgt.as_ref(),
+                    "invalid ratio",
+                    "Ratio sides must be ≤ 100.",
+                )
+                .into_response();
             }
 
             let text = format!(

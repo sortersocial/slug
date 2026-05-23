@@ -175,14 +175,14 @@ fn reducer_clamps_score_bounds() {
     let mut state = ReducerState::default();
     state.apply_event(ingest_event(
         1,
-        "@00000000-0000-0000-0000-000000000000:test:local/test\n~/t/a {a}\n~/t/b {b}\n{huge}\n~/t/a 1000:1 ~/t/b\n",
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n~/t/a {a}\n~/t/b {b}\n{huge}\n~/t/a 100:1 ~/t/b\n",
     ));
     state.apply_event(ingest_event(
         2,
-        "@00000000-0000-0000-0000-000000000000:test:local/test\n{huge}\n~/t/a 1:1000 ~/t/b\n",
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n{huge}\n~/t/a 1:100 ~/t/b\n",
     ));
 
-    assert_eq!(state.public().ranking_group.idx_to_item.len(), 2); // Should still work, scores clamped internally
+    assert_eq!(state.public().ranking_group.idx_to_item.len(), 2); // Should still work, scores handled internally
 }
 
 // ============================================================================
@@ -513,8 +513,8 @@ fn dsl_parse_rejects_zero_zero_vote_ratio() {
     .expect_err("0:0 vote must be rejected by the parser");
     let slugsocial_server::dsl::DslError::Parse(msg) = err;
     assert!(
-        msg.contains("0:0"),
-        "expected message about invalid 0:0 ratio, got: {msg}"
+        msg.contains("≥ 1"),
+        "expected message about invalid zero ratio, got: {msg}"
     );
 
     let mut state = ReducerState::default();
@@ -533,7 +533,7 @@ fn dsl_parse_rejects_zero_zero_vote_ratio() {
 #[test]
 fn reducer_negative_ratio_clamped_to_zero() {
     let _state = ReducerState::default();
-    // GroupState::apply_vote clamps negatives to 0, then 0:0 -> 1:1
+    // GroupState::apply_vote clamps negatives to 0; when either side is 0 the vote is dropped.
     let mut group = GroupState::new();
     group.apply_vote(slugsocial_server::reducer::VoteData {
         ts: 1,
@@ -546,12 +546,12 @@ fn reducer_negative_ratio_clamped_to_zero() {
         delegate: Some("00000000-0000-0000-0000-000000000000:test:local/test".to_string()),
         thread_tag: "t".to_string(),
     });
+    // Items are registered, but the zero-clamped vote produces no edges.
     assert_eq!(group.idx_to_item.len(), 2);
-    // Both edges should exist (negatives clamped to 0, then 0:0 -> 1:1)
     let a_idx = group.item_to_idx[&item_id("https://slug.social/~/t/a")];
     let b_idx = group.item_to_idx[&item_id("https://slug.social/~/t/b")];
-    assert!(group.edges.contains_key(&(a_idx, b_idx)));
-    assert!(group.edges.contains_key(&(b_idx, a_idx)));
+    assert!(!group.edges.contains_key(&(a_idx, b_idx)));
+    assert!(!group.edges.contains_key(&(b_idx, a_idx)));
 }
 
 

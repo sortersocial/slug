@@ -256,3 +256,96 @@ async fn test_sse_public_thread_morph_includes_post_body_not_thread_not_found() 
     );
 }
 
+fn ui_vote_compare_post_rpc(
+    room: &str,
+    thread_tag: &str,
+    left: &str,
+    right: &str,
+    ratio_left: &str,
+    ratio_right: &str,
+    explanation: &str,
+) -> String {
+    serde_json::json!({
+        "action": "vote_compare_post",
+        "room": room,
+        "thread_tag": thread_tag,
+        "left_item": left,
+        "right_item": right,
+        "ratio_left": ratio_left,
+        "ratio_right": ratio_right,
+        "explanation": explanation,
+        "next": "/vote",
+    })
+    .to_string()
+}
+
+#[tokio::test]
+async fn test_vote_compare_post_rejects_zero_left_ratio() {
+    let (addr, _tmp, _log, _handle) = create_test_server().await;
+    let client = reqwest::Client::new();
+    let bearer = test_bearer();
+
+    let rpc = ui_vote_compare_post_rpc("public", "test-vote", "~/a", "~/b", "0", "5", "prefer b");
+    let resp = client
+        .post(format!("http://{addr}/ui"))
+        .header("Authorization", format!("Bearer {bearer}"))
+        .form(&[("__rpc__", rpc.as_str())])
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), reqwest::StatusCode::OK);
+    let js = resp.text().await.unwrap();
+    assert!(
+        js.contains("invalid ratio") || js.contains("≥ 1"),
+        "expected zero-ratio rejection, got: {js}"
+    );
+}
+
+#[tokio::test]
+async fn test_vote_compare_post_rejects_zero_right_ratio() {
+    let (addr, _tmp, _log, _handle) = create_test_server().await;
+    let client = reqwest::Client::new();
+    let bearer = test_bearer();
+
+    let rpc = ui_vote_compare_post_rpc("public", "test-vote", "~/a", "~/b", "5", "0", "prefer a");
+    let resp = client
+        .post(format!("http://{addr}/ui"))
+        .header("Authorization", format!("Bearer {bearer}"))
+        .form(&[("__rpc__", rpc.as_str())])
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), reqwest::StatusCode::OK);
+    let js = resp.text().await.unwrap();
+    assert!(
+        js.contains("invalid ratio") || js.contains("≥ 1"),
+        "expected zero-ratio rejection, got: {js}"
+    );
+}
+
+#[tokio::test]
+async fn test_vote_compare_post_rejects_over_max_ratio() {
+    let (addr, _tmp, _log, _handle) = create_test_server().await;
+    let client = reqwest::Client::new();
+    let bearer = test_bearer();
+
+    let rpc =
+        ui_vote_compare_post_rpc("public", "test-vote", "~/a", "~/b", "101", "1", "prefer a");
+    let resp = client
+        .post(format!("http://{addr}/ui"))
+        .header("Authorization", format!("Bearer {bearer}"))
+        .form(&[("__rpc__", rpc.as_str())])
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), reqwest::StatusCode::OK);
+    let js = resp.text().await.unwrap();
+    assert!(
+        js.contains("invalid ratio") || js.contains("≤ 100"),
+        "expected over-max ratio rejection, got: {js}"
+    );
+}
+

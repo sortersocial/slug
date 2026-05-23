@@ -38,8 +38,8 @@
 ;; Set the hidden ratio inputs so the alphabetically-earlier item wins.
 (defn- set-ratio! [pg left-text right-text]
   (let [[rl rr] (if (neg? (compare (leaf left-text) (leaf right-text)))
-                  [100 0]   ; left is earlier → prefer left
-                  [0 100])] ; right is earlier → prefer right
+                  [99 1]   ; left is earlier → prefer left
+                  [1 99])] ; right is earlier → prefer right
     (page/evaluate pg (str "document.getElementById('vote-ratio-left').value='" rl "'"))
     (page/evaluate pg (str "document.getElementById('vote-ratio-right').value='" rr "'"))))
 

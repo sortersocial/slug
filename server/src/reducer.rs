@@ -119,11 +119,11 @@ impl GroupState {
         let (i, j) = if a_idx < b_idx { (a_idx, b_idx) } else { (b_idx, a_idx) };
         self.voted_pairs.insert((i, j));
 
-        let mut w_a = vote.ratio_left.max(0) as f64;
-        let mut w_b = vote.ratio_right.max(0) as f64;
-        if w_a == 0.0 && w_b == 0.0 {
-            w_a = 1.0;
-            w_b = 1.0;
+        let w_a = vote.ratio_left as f64;
+        let w_b = vote.ratio_right as f64;
+        if w_a == 0.0 || w_b == 0.0 {
+            // Zero on either side produces no valid edge; drop the vote.
+            return;
         }
 
         self.add_edge_weight(b_idx, a_idx, w_a);
