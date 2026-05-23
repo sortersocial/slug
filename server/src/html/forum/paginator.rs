@@ -53,12 +53,12 @@ pub(super) fn render_thread_paginator(nav: &ThreadNav, tag: &str, offset: usize,
             span class="post-nav-pos muted" {
                 (offset + 1) "–" (total.min(offset + PAGE_SIZE)) " / " (total)
             }
-            (thread_copy_button_markup(nav, tag, top))
             @if let Some(o) = newer_offset {
                 a href=(nav.thread_page_url(tag, o)) class="post-nav-btn" { "newer →" }
             } @else {
                 a href="#" class="post-nav-btn disabled" { "newer →" }
             }
+            (thread_copy_button_markup(nav, tag, top))
             @if !on_latest {
                 a href=(nav.thread_page_url(tag, latest_offset)) class="post-nav-btn" { "latest" }
             }
