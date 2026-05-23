@@ -246,6 +246,7 @@ mod tests {
         );
     }
 
+    #[test]
     fn set_new_thread_compose_expanded_true() {
         let template = serde_json::json!({
             "action": "set_new_thread_compose_expanded",

@@ -167,7 +167,7 @@ fn rankings_for_simulated(
         .iter()
         .map(|parent| {
             let scoped_content = simulated
-                .content_for_scope(&scope)
+                .content_for_scope(scope)
                 .unwrap_or_else(|| simulated.public());
             let scoped = build_children_rankings(scoped_content, parent);
             let components: Vec<RankComponent> = scoped
@@ -254,7 +254,9 @@ fn ingest_parse_error(raw: &str) -> Option<String> {
     dsl::parse_full(raw).err().map(|e| e.to_string())
 }
 
-fn load_events_from_jsonl(path: &Path) -> Result<(usize, Vec<(usize, Event)>, Vec<BadJsonLine>), std::io::Error> {
+type JsonlEventsLoad = Result<(usize, Vec<(usize, Event)>, Vec<BadJsonLine>), std::io::Error>;
+
+fn load_events_from_jsonl(path: &Path) -> JsonlEventsLoad {
     let text = std::fs::read_to_string(path)?;
     let total_lines = text.lines().count();
     let mut events = Vec::new();

@@ -927,9 +927,7 @@ mod tests {
     #[test]
     fn parse_vote_rejects_zero_zero_ratio() {
         let err = parse_full("{tie placeholder}\n~/a 0:0 ~/b").unwrap_err();
-        let msg = match err {
-            DslError::Parse(m) => m,
-        };
+        let DslError::Parse(msg) = err;
         assert!(
             msg.contains("0:0"),
             "expected 0:0 rejection message, got: {msg}"

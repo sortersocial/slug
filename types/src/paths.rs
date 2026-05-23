@@ -411,7 +411,7 @@ mod tests {
     #[test]
     fn garden_item_url_deref_to_str() {
         let g = GardenItemUrl::from_storage_str("https://slug.social/~/x", "public");
-        let s: &str = &*g;
+        let s: &str = &g;
         assert_eq!(s, "https://slug.social/~/x");
     }
 

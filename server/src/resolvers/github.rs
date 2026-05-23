@@ -749,6 +749,6 @@ mod tests {
             GithubImportKind::Issue,
         );
         assert!(card.sublines.iter().any(|l| l.contains("@octo")));
-        assert_eq!(card.excerpt.as_deref(), Some("The issue body.").as_deref());
+        assert_eq!(card.excerpt.as_deref(), Some("The issue body."));
     }
 }

@@ -440,7 +440,6 @@ async fn test_rank_history() {
     let bearer = test_bearer();
     let ingest = |delegate: &str, text: &str| {
         let client = client.clone();
-        let addr = addr;
         let bearer = bearer.clone();
         let text = text.to_string();
         let delegate = delegate.to_string();

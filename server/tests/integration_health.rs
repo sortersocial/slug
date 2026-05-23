@@ -7,7 +7,7 @@ async fn test_healthz() {
     let (addr, _tmp, _log, _handle) = create_test_server().await;
     let client = reqwest::Client::new();
     let response = client
-        .get(&format!("http://{}/healthz", addr))
+        .get(format!("http://{}/healthz", addr))
         .send()
         .await
         .unwrap();

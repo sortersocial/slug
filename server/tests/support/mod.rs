@@ -1,3 +1,6 @@
+//! Shared helpers for integration tests; each test binary uses a different subset.
+#![allow(dead_code)]
+
 use sha2::{Digest, Sha256};
 use slugsocial_server::{
     event_log::EventLog,

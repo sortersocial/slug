@@ -337,7 +337,7 @@ async fn event_log_handles_corrupt_lines() {
         .unwrap();
 
     // Add empty line.
-    writeln!(f, "").unwrap();
+    writeln!(f).unwrap();
 
     let (loaded, bad) = log.load_all().await.unwrap();
     assert_eq!(loaded.len(), 2);
@@ -511,9 +511,7 @@ fn dsl_parse_rejects_zero_zero_vote_ratio() {
         "~/t/a {a}\n~/t/b {b}\n{zero}\n~/t/a 0:0 ~/t/b\n",
     )
     .expect_err("0:0 vote must be rejected by the parser");
-    let msg = match err {
-        slugsocial_server::dsl::DslError::Parse(m) => m,
-    };
+    let slugsocial_server::dsl::DslError::Parse(msg) = err;
     assert!(
         msg.contains("0:0"),
         "expected message about invalid 0:0 ratio, got: {msg}"
@@ -904,7 +902,7 @@ fn posts_by_actor_indexes_and_profile_visibility() {
 fn feed_query(state: &ReducerState, cutoff: i64, limit: usize) -> (usize, Vec<String>) {
     let matching: Vec<&str> = state.ingests_ordered.iter().rev()
         .map(|id| id.as_str())
-        .take_while(|id| state.ingests_by_id.get(*id).map_or(false, |ing| ing.ts > cutoff))
+        .take_while(|id| state.ingests_by_id.get(*id).is_some_and(|ing| ing.ts > cutoff))
         .filter(|id| {
             state.ingests_by_id.get(*id).is_some_and(|ing| {
                 let scope = slugsocial_server::reducer::scope_from_room_wire(&ing.room_id);

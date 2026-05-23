@@ -346,7 +346,7 @@ fn vote_compare_item_card_renders_github_import_markup() {
         "headline": "#1 Compare card",
         "sublines": ["State: open"],
     });
-    let body = format!("```slug-github-card\n{}\n```", json.to_string());
+    let body = format!("```slug-github-card\n{json}\n```");
     let html = vote_compare_item_card(
         &nav,
         &item,
