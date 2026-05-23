@@ -136,9 +136,9 @@ impl ItemId {
         }
         let parent_path = path.rsplit_once('/').map(|(p, _)| p).unwrap_or("");
         if parent_path.is_empty() {
-            Self::parse(&format!("{scheme}{}", host))
+            Self::parse(&format!("{scheme}{host}"))
         } else {
-            Self::parse(&format!("{scheme}{}/{}", host, parent_path))
+            Self::parse(&format!("{scheme}{host}/{parent_path}"))
         }
     }
 
@@ -148,7 +148,7 @@ impl ItemId {
             if tail.is_empty() {
                 return "~/".to_string();
             }
-            return format!("~/{}", tail);
+            return format!("~/{tail}");
         }
         let s = self.as_str();
         if let Some(tail) = s.strip_prefix("https://") {

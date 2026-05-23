@@ -360,7 +360,7 @@ enum GardenCmd {
 
 fn print_item_response(resp: &ItemResponse) {
     if let Some(body) = &resp.body {
-        println!("{}", body);
+        println!("{body}");
     } else {
         println!("(no body)");
     }
@@ -456,7 +456,7 @@ fn print_rank_history_response(resp: &slug_types::RankHistoryResponse) {
             label,
         );
         for v in &e.caused_by {
-            println!("    {} {} {} {}", v.a, v.ratio, v.b, v.actor.as_deref().map(|a| format!("  ({})", a)).unwrap_or_default());
+            println!("    {} {} {} {}", v.a, v.ratio, v.b, v.actor.as_deref().map(|a| format!("  ({a})")).unwrap_or_default());
             if !v.body.is_empty() {
                 println!("      {}", v.body.lines().next().unwrap_or(&v.body).trim());
             }
@@ -479,12 +479,8 @@ fn print_global_rank_response(resp: &GlobalRankResponse) {
     );
     for (i, r) in resp.items.iter().enumerate() {
         let rank = resp.offset + i + 1;
-        if r.score == 0.0 && r.percent.map_or(true, |p| p == 0.0) && rank > resp.ranked_total {
-            if show_percent {
-                println!("    - {:<40}   (unranked)", r.item);
-            } else {
-                println!("    - {:<40}   (unranked)", r.item);
-            }
+        if r.score == 0.0 && r.percent.is_none_or(|p| p == 0.0) && rank > resp.ranked_total {
+            println!("    - {:<40}   (unranked)", r.item);
         } else if show_percent {
             println!(
                 "{:>4}. {:<40} {:>6.1}%  ({:.6})",
@@ -598,8 +594,8 @@ fn print_thread(resp: &ThreadDetailResponse) {
             } => {
                 let timeago = slug_types::timeago::timeago_compact(now_ms, *ts);
                 let body = body.trim();
-                println!("<post index=\"{}\" timeago=\"{}\">", index, timeago);
-                println!("{}", body);
+                println!("<post index=\"{index}\" timeago=\"{timeago}\">");
+                println!("{body}");
                 println!("</post>");
             }
             ThreadItem::System { ts, text } => {
@@ -634,7 +630,7 @@ fn parse_ts(s: &str) -> Result<i64> {
 /// Days from Unix epoch (1970-01-01) to the given Gregorian date.
 /// Uses Howard Hinnant's civil calendar algorithm.
 fn days_from_epoch(y: i32, m: u32, d: u32) -> Result<i64> {
-    if m < 1 || m > 12 || d < 1 || d > 31 {
+    if !(1..=12).contains(&m) || !(1..=31).contains(&d) {
         return Err(anyhow!("date out of range"));
     }
     let (y, m) = if m <= 2 { (y - 1, m + 12) } else { (y, m) };
@@ -661,7 +657,7 @@ async fn send_rpc(
     let url = format!("{}/api/v0/rpc", base.trim_end_matches('/'));
     let mut req = client.post(url).json(&RpcBatch(commands));
     if let Some(b) = bearer {
-        req = req.header("Authorization", format!("Bearer {}", b));
+        req = req.header("Authorization", format!("Bearer {b}"));
     }
     let resp = req.send().await?;
     let status = resp.status();
@@ -745,9 +741,7 @@ fn normalize_ontology_path_input(path: &str) -> Result<String, String> {
 /// Query-string form for ontology items: `~/` + normalized path, `-/` + external tail, or full URL unchanged.
 fn ontology_path_for_api_query(normalized: &str) -> String {
     let p = normalized.trim();
-    if p.starts_with("http://") || p.starts_with("https://") {
-        p.to_string()
-    } else if p.starts_with("-/") {
+    if p.starts_with("http://") || p.starts_with("https://") || p.starts_with("-/") {
         p.to_string()
     } else {
         format!("~/{}", p.trim_start_matches('/'))
@@ -829,7 +823,7 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
                             println!("{}", serde_json::to_string_pretty(&resp)?);
                         } else {
                             for p in &resp.paths {
-                                println!("~/{}", p);
+                                println!("~/{p}");
                             }
                         }
                     }
@@ -855,7 +849,7 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
                         if json {
                             println!("{}", serde_json::to_string_pretty(&resp)?);
                         } else {
-                            print_item_response(&resp);
+                            print_item_response(resp);
                         }
                     }
                     _ => return Err(anyhow!("unexpected RPC result")),
@@ -890,7 +884,7 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
                         if json {
                             println!("{}", serde_json::to_string_pretty(&resp)?);
                         } else {
-                            print_rank_response(&resp);
+                            print_rank_response(resp);
                         }
                     }
                     _ => return Err(anyhow!("unexpected RPC result")),
@@ -914,7 +908,7 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
                         if json {
                             println!("{}", serde_json::to_string_pretty(&resp)?);
                         } else {
-                            print_pair_response(&resp);
+                            print_pair_response(resp);
                         }
                     }
                     _ => return Err(anyhow!("unexpected RPC result")),
@@ -939,7 +933,7 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
                         if json {
                             println!("{}", serde_json::to_string_pretty(&resp)?);
                         } else {
-                            print_matchup_response(&resp);
+                            print_matchup_response(resp);
                         }
                     }
                     _ => return Err(anyhow!("unexpected RPC result")),
@@ -963,7 +957,7 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
                         if json {
                             println!("{}", serde_json::to_string_pretty(&resp)?);
                         } else {
-                            print_rank_history_response(&resp);
+                            print_rank_history_response(resp);
                         }
                     }
                     _ => return Err(anyhow!("unexpected RPC result")),
@@ -987,7 +981,7 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
                         if json {
                             println!("{}", serde_json::to_string_pretty(&resp)?);
                         } else {
-                            print_global_rank_response(&resp);
+                            print_global_rank_response(resp);
                         }
                     }
                     _ => return Err(anyhow!("unexpected RPC result")),
@@ -1057,7 +1051,7 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
                         if json {
                             println!("{}", serde_json::to_string_pretty(&resp)?);
                         } else {
-                            print_thread(&resp);
+                            print_thread(resp);
                         }
                     }
                     _ => return Err(anyhow!("unexpected RPC result")),
@@ -1127,7 +1121,7 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
                             );
                         } else {
                             println!("✓ posted");
-                            println!("events: {}", events_appended);
+                            println!("events: {events_appended}");
                             if !threads.is_empty() {
                                 println!("threads:");
                                 for t in threads {
@@ -1137,7 +1131,7 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
                             if let Some(ref rc) = ranking_changes {
                                 print_ranking_changes(rc);
                             }
-                            print_next(&next);
+                            print_next(next);
                             println!();
                             println!("---");
                             println!("For your next comparison: remember to ask your human first. Their perspective is what makes your submission more than another model's take.");
@@ -1282,7 +1276,7 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
                             println!("(no ranking touched by this doc yet)");
                         } else {
                             println!();
-                            print_check_rankings(&rankings);
+                            print_check_rankings(rankings);
                         }
                         println!();
                         println!("---");
@@ -1364,13 +1358,11 @@ async fn main() -> Result<()> {
                     RpcResult::RoomList(resp) => {
                         if json {
                             println!("{}", serde_json::to_string_pretty(&resp)?);
+                        } else if resp.rooms.is_empty() {
+                            println!("no rooms");
                         } else {
-                            if resp.rooms.is_empty() {
-                                println!("no rooms");
-                            } else {
-                                for room in &resp.rooms {
-                                    println!("{room}");
-                                }
+                            for room in &resp.rooms {
+                                println!("{room}");
                             }
                         }
                     }
@@ -1414,7 +1406,7 @@ async fn main() -> Result<()> {
                         if let Some(body) = &item.body {
                             let first_line = body.lines().next().unwrap_or("").trim();
                             if !first_line.is_empty() {
-                                print!("  {}", first_line);
+                                print!("  {first_line}");
                             }
                         }
                         println!();
@@ -1558,7 +1550,7 @@ async fn main() -> Result<()> {
                     println!("  slugsocial identity poll {}", start.session);
                     println!();
                     println!("Agent delegate (keep in context for `forum post … --delegate`):");
-                    println!("  {}", delegate);
+                    println!("  {delegate}");
                 }
             }
 
@@ -1572,7 +1564,7 @@ async fn main() -> Result<()> {
                 let poll_url = format!("{base}/api/v0/pending-session/{}", session.trim());
 
                 if !json {
-                    eprintln!("Polling for login completion (every {}ms, max {}s)…", poll_interval_ms, max_wait_secs);
+                    eprintln!("Polling for login completion (every {poll_interval_ms}ms, max {max_wait_secs}s)…");
                 }
 
                 let deadline = std::time::Instant::now() + std::time::Duration::from_secs(max_wait_secs);
@@ -1596,8 +1588,7 @@ async fn main() -> Result<()> {
 
                 let token = token_out.ok_or_else(|| {
                     anyhow!(
-                        "login did not complete within {}s — ensure the human opened the URL from `identity start` and finished Google + username if needed",
-                        max_wait_secs
+                        "login did not complete within {max_wait_secs}s — ensure the human opened the URL from `identity start` and finished Google + username if needed"
                     )
                 })?;
 
@@ -1618,7 +1609,7 @@ async fn main() -> Result<()> {
                     );
                 } else {
                     if let Some(ref u) = user_out {
-                        println!("Logged in as {}", u);
+                        println!("Logged in as {u}");
                     } else {
                         println!("Login complete.");
                     }
@@ -1626,7 +1617,7 @@ async fn main() -> Result<()> {
                     if let Some(ref a) = agent_out {
                         println!();
                         println!("Agent delegate (for `forum post … --delegate`):");
-                        println!("  {}", a);
+                        println!("  {a}");
                     }
                 }
             }

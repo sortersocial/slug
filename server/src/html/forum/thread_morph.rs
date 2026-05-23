@@ -74,7 +74,7 @@ pub(crate) async fn thread_ui_expand_post_full(
     };
 
     JsBuilder::new()
-        .morph_selector(&format!("[data-ingest-id=\"{}\"]", ing_id), full_html)
+        .morph_selector(&format!("[data-ingest-id=\"{ing_id}\"]"), full_html)
         .into_response()
 }
 
@@ -134,7 +134,7 @@ pub(crate) async fn thread_ui_expand_redacted_post(
     };
 
     JsBuilder::new()
-        .morph_selector(&format!("[data-ingest-id=\"{}\"]", ing_id), full_html)
+        .morph_selector(&format!("[data-ingest-id=\"{ing_id}\"]"), full_html)
         .into_response()
 }
 
@@ -181,6 +181,6 @@ pub(crate) async fn thread_ui_collapse_redacted_post(
     drop(reduced);
 
     JsBuilder::new()
-        .morph_selector(&format!("[data-ingest-id=\"{}\"]", ing_id), collapsed)
+        .morph_selector(&format!("[data-ingest-id=\"{ing_id}\"]"), collapsed)
         .into_response()
 }

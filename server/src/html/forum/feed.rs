@@ -131,6 +131,7 @@ pub async fn thread_feed_html_for_room(state: &AppState, room_id: &str) -> Marku
     render_thread_feed(Some(&nav), "room-thread-feed", &rows, now)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_thread_feed_region_markup(
     nav: &ThreadNav,
     tag: &str,

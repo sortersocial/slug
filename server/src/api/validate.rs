@@ -46,7 +46,7 @@ pub fn validate_ingest_document(
             return Err((
                 StatusCode::BAD_REQUEST,
                 "parse error".to_string(),
-                Some(format!("{}", e)),
+                Some(format!("{e}")),
             ));
         }
     };

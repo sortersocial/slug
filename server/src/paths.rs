@@ -16,7 +16,7 @@
 /// | `selected(pred, ...)` | Only proceed if predicate is true |
 /// | `view(f, ...)` | Apply function to get a derived navigated value |
 /// | `multi_path!` | Fan out to multiple paths in one expression |
-
+///
 /// Navigate into a HashMap by key (inserting default if absent) and perform an operation.
 ///
 /// ```ignore

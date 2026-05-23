@@ -361,8 +361,7 @@ fn resolver_thread_tag(item: &ItemId) -> String {
     let tail = item
         .display_path()
         .trim_start_matches("-/")
-        .replace('/', ":")
-        .replace('?', ":");
+        .replace(['/', '?'], ":");
     format!("import:{tail}")
 }
 
