@@ -28,6 +28,10 @@ pub struct CompileResult {
     pub threads: Vec<String>,
     pub rankings: Vec<CheckScopeRanking>,
     pub stats: CompileStats,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ingest_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ingest_line: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -36,6 +40,8 @@ pub struct CompileError {
     pub error: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parse_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -50,7 +56,7 @@ pub struct MalformedIngest {
     pub id: String,
     pub room_id: String,
     pub thread_tag: String,
-    pub reason: String,
+    pub parse_error: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -59,9 +65,36 @@ pub struct ScanResult {
     pub path: String,
     pub total_lines: usize,
     pub parsed_events: usize,
+    pub ingest_events: usize,
     pub bad_json_lines: Vec<BadJsonLine>,
     pub malformed_ingests: Vec<MalformedIngest>,
-    pub skipped_ingests: usize,
+}
+
+#[derive(Debug)]
+pub enum CompileIngestError {
+    NotFound(String),
+    Io(std::io::Error),
+    Compile(CompileError),
+}
+
+impl CompileIngestError {
+    pub fn into_compile_error(self) -> CompileError {
+        match self {
+            Self::NotFound(id) => CompileError {
+                ok: false,
+                error: format!("ingest not found: {id}"),
+                hint: Some("pass the ingest event id from events.jsonl".into()),
+                parse_error: None,
+            },
+            Self::Io(e) => CompileError {
+                ok: false,
+                error: format!("io error: {e}"),
+                hint: None,
+                parse_error: None,
+            },
+            Self::Compile(e) => e,
+        }
+    }
 }
 
 fn document_stats(doc: &dsl::Document) -> CompileStats {
@@ -166,19 +199,22 @@ fn rankings_for_simulated(
         .collect()
 }
 
-/// Validate and simulate one `.sorter` document against optional base reducer state.
-pub fn compile_document(
+fn compile_document_inner(
     base: &ReducerState,
     room: &str,
     text: &str,
+    ingest_id: Option<String>,
+    ingest_line: Option<usize>,
 ) -> Result<CompileResult, CompileError> {
     let room_key = room.trim();
     let scope = scope_from_room_wire(room_key);
     let validated = validate_ingest_document(base, text, &scope).map_err(|(_, message, hint)| {
+        let parse_error = dsl::parse_full(text).err().map(|e| e.to_string());
         CompileError {
             ok: false,
             error: message,
             hint,
+            parse_error,
         }
     })?;
 
@@ -200,15 +236,27 @@ pub fn compile_document(
         threads: threads_in_document(text),
         rankings: rankings_for_simulated(&simulated, &scope, room_key, &validated.doc),
         stats: document_stats(&validated.doc),
+        ingest_id,
+        ingest_line,
     })
+}
+
+/// Validate and simulate one `.sorter` document against optional base reducer state.
+pub fn compile_document(
+    base: &ReducerState,
+    room: &str,
+    text: &str,
+) -> Result<CompileResult, CompileError> {
+    compile_document_inner(base, room, text, None, None)
 }
 
 fn ingest_parse_error(raw: &str) -> Option<String> {
     dsl::parse_full(raw).err().map(|e| e.to_string())
 }
 
-fn load_events_from_jsonl(path: &Path) -> Result<(Vec<(usize, Event)>, Vec<BadJsonLine>), std::io::Error> {
+fn load_events_from_jsonl(path: &Path) -> Result<(usize, Vec<(usize, Event)>, Vec<BadJsonLine>), std::io::Error> {
     let text = std::fs::read_to_string(path)?;
+    let total_lines = text.lines().count();
     let mut events = Vec::new();
     let mut bad_json_lines = Vec::new();
     for (idx, line) in text.lines().enumerate() {
@@ -225,61 +273,90 @@ fn load_events_from_jsonl(path: &Path) -> Result<(Vec<(usize, Event)>, Vec<BadJs
             }),
         }
     }
-    Ok((events, bad_json_lines))
+    Ok((total_lines, events, bad_json_lines))
+}
+
+fn replay_events(events: &[(usize, Event)]) -> ReducerState {
+    let mut state = ReducerState::default();
+    for (_line_no, ev) in events {
+        state.apply_event(ev.clone());
+    }
+    state
 }
 
 /// Replay a JSONL event log into reducer state (same rules as server boot).
 pub fn load_reducer_from_jsonl(path: &Path) -> Result<(ReducerState, Vec<BadJsonLine>), std::io::Error> {
-    let (events, bad_json_lines) = load_events_from_jsonl(path)?;
-    let mut state = ReducerState::default();
-    for (_line_no, ev) in events {
-        state.apply_event(ev);
-    }
-    Ok((state, bad_json_lines))
+    let (_total_lines, events, bad_json_lines) = load_events_from_jsonl(path)?;
+    Ok((replay_events(&events), bad_json_lines))
 }
 
-/// Scan an events.jsonl for corrupt JSON lines and ingests that fail DSL replay.
-pub fn scan_jsonl(path: &Path) -> Result<ScanResult, std::io::Error> {
-    let text = std::fs::read_to_string(path)?;
-    let total_lines = text.lines().count();
-    let (events, bad_json_lines) = load_events_from_jsonl(path)?;
+/// Find one ingest in a log and compile it against all prior events as base state.
+pub fn compile_ingest_from_log(path: &Path, ingest_id: &str) -> Result<CompileResult, CompileIngestError> {
+    let (_total_lines, events, bad_json_lines) = load_events_from_jsonl(path).map_err(CompileIngestError::Io)?;
+    if !bad_json_lines.is_empty() {
+        return Err(CompileIngestError::Compile(CompileError {
+            ok: false,
+            error: format!("jsonl has {} corrupt line(s)", bad_json_lines.len()),
+            hint: Some("fix the log or use `sorterc scan`".into()),
+            parse_error: None,
+        }));
+    }
 
-    let mut malformed_ingests = Vec::new();
-    let mut skipped_ingests = 0usize;
-    let mut state = ReducerState::default();
-    let parsed_events = events.len();
+    let needle = ingest_id.trim();
+    let mut found: Option<(usize, Ingest)> = None;
+    let mut prior: Vec<(usize, Event)> = Vec::new();
 
     for (line_no, ev) in events {
         if let Event::Ingest(ref ing) = ev {
-            if let Some(reason) = ingest_parse_error(&ing.raw) {
+            if ing.id == needle {
+                found = Some((line_no, ing.clone()));
+                break;
+            }
+        }
+        prior.push((line_no, ev));
+    }
+
+    let (line_no, ing) = found.ok_or_else(|| CompileIngestError::NotFound(needle.to_string()))?;
+    let base = replay_events(&prior);
+    compile_document_inner(&base, &ing.room_id, &ing.raw, Some(ing.id.clone()), Some(line_no))
+        .map_err(CompileIngestError::Compile)
+}
+
+/// Scan an events.jsonl for corrupt JSON lines and ingests whose DSL fails to parse.
+///
+/// This does not replay the log (which would run rank centrality on every ingest and
+/// can take minutes on real logs). It matches what the server skips on boot: parse failure.
+pub fn scan_jsonl(path: &Path) -> Result<ScanResult, std::io::Error> {
+    let (total_lines, events, bad_json_lines) = load_events_from_jsonl(path)?;
+
+    let mut malformed_ingests = Vec::new();
+    let mut ingest_events = 0usize;
+
+    for (line_no, ev) in &events {
+        if let Event::Ingest(ing) = ev {
+            ingest_events += 1;
+            if let Some(parse_error) = ingest_parse_error(&ing.raw) {
                 malformed_ingests.push(MalformedIngest {
-                    line: line_no,
+                    line: *line_no,
                     id: ing.id.clone(),
                     room_id: ing.room_id.clone(),
                     thread_tag: ing.thread_tag.clone(),
-                    reason,
+                    parse_error,
                 });
             }
-            let before = state.ingests_by_id.len();
-            state.apply_event(ev);
-            if state.ingests_by_id.len() == before {
-                skipped_ingests += 1;
-            }
-        } else {
-            state.apply_event(ev);
         }
     }
 
-    let ok = bad_json_lines.is_empty() && malformed_ingests.is_empty() && skipped_ingests == 0;
+    let ok = bad_json_lines.is_empty() && malformed_ingests.is_empty();
 
     Ok(ScanResult {
         ok,
         path: path.display().to_string(),
         total_lines,
-        parsed_events,
+        parsed_events: events.len(),
+        ingest_events,
         bad_json_lines,
         malformed_ingests,
-        skipped_ingests,
     })
 }
 
@@ -329,5 +406,26 @@ mod tests {
         let report = scan_jsonl(&path).unwrap();
         assert!(!report.ok);
         assert_eq!(report.bad_json_lines.len(), 1);
+    }
+
+    #[test]
+    fn scan_reports_dsl_parse_error_detail() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("events.jsonl");
+        let ingest = serde_json::json!({
+            "type": "ingest",
+            "ts": 1,
+            "id": "bad-ingest-id",
+            "raw": "{ no closing brace\n~/a { body }\n~/a 1:0 ~/b",
+            "principal": "test",
+            "room_id": "public",
+            "thread_tag": "t",
+        });
+        std::fs::write(&path, format!("{ingest}\n")).unwrap();
+        let report = scan_jsonl(&path).unwrap();
+        assert!(!report.ok);
+        assert_eq!(report.malformed_ingests.len(), 1);
+        assert_eq!(report.malformed_ingests[0].id, "bad-ingest-id");
+        assert!(report.malformed_ingests[0].parse_error.contains("parse error"));
     }
 }

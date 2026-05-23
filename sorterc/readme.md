@@ -60,20 +60,32 @@ Rankings use the same structure as the server's dry-run check: parent scope, con
 
 ### `scan` — lint an `events.jsonl`
 
-Reads a JSONL event log and reports problems without starting a server.
+Fast single-pass check. Does **not** replay the log (replay runs rank centrality on every ingest and gets slow fast).
 
 ```bash
 cargo run -p sorterc -- scan events.jsonl
-cargo run -p sorterc -- scan events.jsonl --pretty
+cargo run -p sorterc -- scan events.jsonl --json
+cargo run -p sorterc -- scan events.jsonl --json --pretty
 ```
+
+Default output is human-readable with a blank line between each problem. Use `--json` for machine output.
 
 Reports:
 
 - **bad JSON lines** — lines that are not valid JSON
-- **malformed ingests** — ingest events whose `raw` DSL fails to parse
-- **skipped ingests** — ingests dropped during replay (same behavior as server boot)
+- **malformed ingests** — ingest events whose `raw` DSL fails to parse, with full `parse_error` text
 
 Exits 0 when clean, 1 when any issue is found.
+
+### `compile --ingest` — compile one event from a log
+
+Replay all events **before** the target ingest as base state, then compile that ingest's DSL:
+
+```bash
+cargo run -p sorterc -- compile --ingest cabd8adc-57ae-402d-a940-8e24339ac451 --from events.jsonl --pretty
+```
+
+Output includes `ingest_id`, `ingest_line`, and rankings for that post only. This may take a while for ingests late in a large log (full replay up to that point).
 
 ## Typical uses
 
