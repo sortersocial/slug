@@ -335,28 +335,20 @@ div.thread-paginator {
   font-family: var(--font-ui);
   font-size: 0.8rem;
 }
-a.post-nav-btn {
+.post-nav-btn {
   border: 1px solid var(--line);
   color: var(--ink-dim);
   padding: 0.2rem 0.55rem;
   text-decoration: none;
 }
-a.post-nav-btn:hover {
+.post-nav-btn:hover {
   border-color: var(--accent);
   color: var(--accent);
 }
-button.post-nav-btn.thread-copy-btn {
+button.post-nav-btn {
   background: transparent;
-  border: 1px solid var(--line);
-  color: var(--ink-dim);
   cursor: pointer;
   font: inherit;
-  font-size: 0.72rem;
-  padding: 0.15rem 0.45rem;
-}
-button.post-nav-btn.thread-copy-btn:hover {
-  border-color: var(--accent);
-  color: var(--accent);
 }
 
 div.cli-panel {
