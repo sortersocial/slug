@@ -38,7 +38,7 @@ pub enum HtmlUiAction {
         #[serde(default)]
         form_id: Option<String>,
     },
-    /// Post a pairwise vote from `/vote/compare` (browser compose).
+    /// Post a pairwise vote from `/vote` (browser compose).
     VoteComparePost {
         room: String,
         thread_tag: String,

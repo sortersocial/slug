@@ -52,12 +52,12 @@ async fn test_view_counts_increment_and_display() {
         .normalized_storage()
         .to_storage_string();
     let vote_q_right_first = format!(
-        "/vote/compare?right={}&left={}",
+        "/vote?right={}&left={}",
         urlencoding::encode(&right),
         urlencoding::encode(&left)
     );
     let vote_q_left_first = format!(
-        "/vote/compare?left={}&right={}",
+        "/vote?left={}&right={}",
         urlencoding::encode(&left),
         urlencoding::encode(&right)
     );
@@ -148,7 +148,7 @@ https://github.com/ghvotehi/a/issues/10 {\n\
         .normalized_storage()
         .to_storage_string();
     let q = format!(
-        "/vote/compare?left={}&right={}",
+        "/vote?left={}&right={}",
         urlencoding::encode(&left),
         urlencoding::encode(&right)
     );

@@ -281,6 +281,7 @@ pub async fn rpc_post_with_bearer(
     bearer_token: &str,
     room: String,
     thread_tag: String,
+    delegate_opt: Option<String>,
     text: String,
 ) -> Result<RpcResult, RpcErr> {
     use axum::http::{header, HeaderMap, HeaderValue};
@@ -288,7 +289,7 @@ pub async fn rpc_post_with_bearer(
     let hv = HeaderValue::from_str(&format!("Bearer {bearer_token}"))
         .map_err(|_| ("invalid session token".into(), None))?;
     headers.insert(header::AUTHORIZATION, hv);
-    rpc_post(state, &headers, room, thread_tag, None, text, false).await
+    rpc_post(state, &headers, room, thread_tag, delegate_opt, text, false).await
 }
 
 async fn rpc_check(

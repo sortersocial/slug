@@ -85,7 +85,7 @@ impl ThreadNav {
         format!("{}/{}/{}", self.thread_path_prefix, tag, idx)
     }
 
-    /// Empty for public; `/r/:seg` for room — prefix for routes like `/vote/compare`.
+    /// Empty for public; `/r/:seg` for room — prefix for routes like `/vote`.
     pub(crate) fn room_path_prefix_for_vote_compare(&self) -> String {
         match &self.scope {
             ScopeId::Public => String::new(),

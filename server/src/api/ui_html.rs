@@ -118,6 +118,7 @@ async fn dispatch_ui_action(
                 &session.bearer,
                 room.clone(),
                 thread_tag.clone(),
+                None,
                 text,
             )
             .await
@@ -246,8 +247,7 @@ async fn dispatch_ui_action(
             }
 
             let text = format!(
-                "@{}\n{{\n{}\n}}\n{} {}:{} {}\n",
-                crate::api::auth::WEB_BROWSER_AGENT,
+                "{{\n{}\n}}\n{} {}:{} {}\n",
                 exp,
                 left_id.as_str(),
                 rl,
@@ -260,6 +260,7 @@ async fn dispatch_ui_action(
                 &session.bearer,
                 room.clone(),
                 thread_tag.clone(),
+                Some(crate::api::auth::WEB_BROWSER_AGENT.to_string()),
                 text,
             )
             .await

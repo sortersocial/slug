@@ -66,7 +66,7 @@
                       :headers {"Authorization" (str "Bearer " alice-token)})
            post-json (json/parse-string (:body post-resp) false)
            _ (is (true? (get-in post-json ["results" 0 "ok"])) "seed items + edge vote via rpc")
-           cmp-url (str base-url "/vote/compare?left=" (enc left-url) "&right=" (enc third-url))]
+           cmp-url (str base-url "/vote?left=" (enc left-url) "&right=" (enc third-url))]
        (core/with-playwright [pw]
          (core/with-browser [browser (core/launch-chromium pw {:headless true :channel "chrome"})]
            (core/with-context [ctx (core/new-context browser)]

@@ -110,7 +110,7 @@ async fn test_choose_username_carries_redirect_next() {
             .expect("pending session must exist");
         pending.provider = Some("google".to_string());
         pending.provider_id = Some("google-user-redirect".to_string());
-        pending.redirect_next = Some("/vote/compare?left=%7E%2Fa&right=%7E%2Fb".to_string());
+        pending.redirect_next = Some("/vote?left=%7E%2Fa&right=%7E%2Fb".to_string());
     }
 
     let choose = client
@@ -122,7 +122,7 @@ async fn test_choose_username_carries_redirect_next() {
 
     assert_eq!(choose.status(), reqwest::StatusCode::OK);
     let body = choose.text().await.unwrap();
-    assert!(body.contains("window.location = \"/vote/compare?left=%7E%2Fa&right=%7E%2Fb\""));
+    assert!(body.contains("window.location = \"/vote?left=%7E%2Fa&right=%7E%2Fb\""));
 }
 
 #[tokio::test]

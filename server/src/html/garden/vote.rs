@@ -208,7 +208,7 @@ pub(crate) async fn vote_compare_post_success_js(
     state: &AppState,
     nav: &ThreadNav,
     _room_wire: &str,
-    thread_tag: &str,
+    _thread_tag: &str,
     left: &ItemId,
     right: &ItemId,
     _post_id: &str,
@@ -218,8 +218,7 @@ pub(crate) async fn vote_compare_post_success_js(
     let content = content_for_garden_view(&reduced, &nav.scope());
     let edge_history = vote_edge_history_markup(content, left, right);
     let next_pair = suggest_next_vote_pair(content, left, right);
-    let nav_markup =
-        vote_compare_nav_markup(nav, next_pair.as_ref(), left, right, Some(thread_tag));
+    let nav_markup = vote_compare_nav_markup(nav, next_pair.as_ref());
     drop(reduced);
     JsBuilder::new()
         .morph_inner_selector("#vote-edge-history-region", edge_history)
@@ -236,7 +235,7 @@ pub(super) fn vote_compare_href(
     let left_q = urlencoding::encode(left.as_str());
     let right_q = urlencoding::encode(right.as_str());
     let base = format!(
-        "{}/vote/compare?left={}&right={}",
+        "{}/vote?left={}&right={}",
         nav.room_path_prefix_for_vote_compare(),
         left_q,
         right_q
@@ -251,12 +250,8 @@ pub(super) fn vote_compare_href(
 fn vote_compare_nav_markup(
     nav: &ThreadNav,
     next_pair: Option<&(ItemId, ItemId)>,
-    left: &ItemId,
-    right: &ItemId,
-    thread_override: Option<&str>,
 ) -> maud::Markup {
     let next_pair_href = next_pair.map(|(nl, nr)| vote_compare_href(nav, nl, nr, None));
-    let swap_pair_href = vote_compare_href(nav, right, left, thread_override);
     html! {
         div class="vote-compare-nav" {
             @if let Some(href) = &next_pair_href {
@@ -264,7 +259,6 @@ fn vote_compare_nav_markup(
             } @else {
                 span class="vote-compare-next is-disabled" { "no next pair" }
             }
-            a class="vote-compare-next" href=(swap_pair_href) { "swap sides" }
         }
     }
 }
@@ -274,7 +268,7 @@ pub(super) fn suggest_next_vote_pair(
     current_left: &ItemId,
     current_right: &ItemId,
 ) -> Option<(ItemId, ItemId)> {
-    let mut pool: Vec<ItemId> = if current_left.parent().as_ref().map(|p| p.as_str())
+    let pool: Vec<ItemId> = if current_left.parent().as_ref().map(|p| p.as_str())
         == current_right.parent().as_ref().map(|p| p.as_str())
     {
         current_left
@@ -291,7 +285,7 @@ pub(super) fn suggest_next_vote_pair(
         Vec::new()
     };
     if pool.len() < 2 {
-        pool = content.items.iter().cloned().collect();
+        return None;
     }
     suggest_next_pair_in_pool(
         &content.ranking_group,
@@ -334,7 +328,7 @@ pub struct VoteCompareQuery {
     pub thread: Option<String>,
 }
 
-/// Public pairwise vote UI — `/vote/compare?left=&right=&thread=`.
+/// Public pairwise vote UI — `/vote?left=&right=&thread=`.
 pub async fn vote_compare_page(
     State(state): State<AppState>,
     Query(q): Query<VoteCompareQuery>,
@@ -426,7 +420,7 @@ async fn vote_compare_inner(
     let next_path = uri
         .path_and_query()
         .map(|pq| pq.as_str().to_string())
-        .unwrap_or_else(|| "/vote/compare".into());
+        .unwrap_or_else(|| "/vote".into());
 
     let rpc_json = template_json_compact(&json!({
         "action": "vote_compare_post",
@@ -462,7 +456,7 @@ async fn vote_compare_inner(
                 Some(&item_bodies_for_cards),
             ))
         }
-        (vote_compare_nav_markup(&nav, next_pair.as_ref(), &left, &right, q.thread.as_deref()))
+        (vote_compare_nav_markup(&nav, next_pair.as_ref()))
         div id="vote-edge-history-region" {
             (edge_history)
         }
