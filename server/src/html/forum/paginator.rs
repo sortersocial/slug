@@ -58,10 +58,10 @@ pub(super) fn render_thread_paginator(nav: &ThreadNav, tag: &str, offset: usize,
             } @else {
                 a href="#" class="post-nav-btn disabled" { "newer →" }
             }
-            (thread_copy_button_markup(nav, tag, top))
             @if !on_latest {
                 a href=(nav.thread_page_url(tag, latest_offset)) class="post-nav-btn" { "latest" }
             }
+            (thread_copy_button_markup(nav, tag, top))
         }
     }
 }
