@@ -5,6 +5,7 @@ pub mod item_wire;
 pub mod item_id;
 pub mod paths;
 pub mod timeago;
+pub mod thread_xml;
 
 pub use item_id::ItemId;
 pub use item_wire::{
@@ -163,6 +164,9 @@ pub enum ThreadItem {
         index: usize,
         ts: i64,
         actor: String,
+        /// Agent delegate (`uuid:rig:provider/model`) when present; omitted in JSON when absent.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        delegate: Option<String>,
         body: String,
         truncated: bool,
         /// Author redacted this post; body is empty and garden contributions were removed.

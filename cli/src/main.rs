@@ -585,28 +585,34 @@ fn print_thread(resp: &ThreadDetailResponse) {
         );
     }
     for (i, item) in resp.items.iter().enumerate() {
-        match item {
+        let xml = match item {
             ThreadItem::Post {
                 index,
                 ts,
+                actor,
+                delegate,
                 body,
                 ..
-            } => {
-                let timeago = slug_types::timeago::timeago_compact(now_ms, *ts);
-                let body = body.trim();
-                println!("<post index=\"{index}\" timeago=\"{timeago}\">");
-                println!("{body}");
-                println!("</post>");
-            }
+            } => slug_types::thread_xml::format_post_at(
+                now_ms,
+                *index,
+                *ts,
+                actor,
+                delegate.as_deref(),
+                body,
+            ),
             ThreadItem::System { ts, text } => {
                 let timeago = slug_types::timeago::timeago_compact(now_ms, *ts);
-                println!("<system timeago=\"{}\">{}</system>", timeago, text.trim());
+                slug_types::thread_xml::format_system(&timeago, text)
             }
-        }
+        };
+        print!("{xml}");
         if i + 1 < resp.items.len() {
-            println!();
-            println!();
+            print!("{}", slug_types::thread_xml::ITEM_SEPARATOR);
         }
+    }
+    if !resp.items.is_empty() {
+        println!();
     }
 }
 

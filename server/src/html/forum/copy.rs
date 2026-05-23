@@ -3,7 +3,7 @@ use crate::form_template::template_json_compact;
 use crate::reducer::{scope_from_room_wire, ReducerState, ScopeId};
 use crate::state::AppState;
 use maud::{html, Markup};
-use slug_types::timeago::timeago_compact;
+use slug_types::thread_xml;
 
 use super::access::user_can_view_room;
 use super::ingest::thread_ui_fetch_onclick;
@@ -11,7 +11,7 @@ use super::nav::ThreadNav;
 use crate::html::ui_action::HtmlUiAction;
 use crate::html::{JsBuilder, now_ms};
 
-/// CLI `forum show` text (`print_thread` in `cli/src/main.rs`).
+/// CLI `forum show` and browser copy-thread text (`slug_types::thread_xml`).
 pub(crate) fn format_thread_cli_text(
     reduced: &ReducerState,
     scope: &ScopeId,
@@ -32,19 +32,22 @@ pub(crate) fn format_thread_cli_text(
             continue;
         };
         if i > 0 {
-            out.push_str("\n\n\n");
+            out.push_str(thread_xml::ITEM_SEPARATOR);
         }
-        let index = i;
-        let timeago = timeago_compact(now_ms, ing.ts);
         let redacted = reduced.redacted_posts.contains(&ing.id);
         let body = if redacted {
             String::new()
         } else {
             ing.raw.trim().to_string()
         };
-        out.push_str(&format!("<post index=\"{index}\" timeago=\"{timeago}\">\n"));
-        out.push_str(&body);
-        out.push_str("\n</post>");
+        out.push_str(&thread_xml::format_post_at(
+            now_ms,
+            i,
+            ing.ts,
+            &ing.principal,
+            ing.delegate.as_deref(),
+            &body,
+        ));
     }
     out
 }
