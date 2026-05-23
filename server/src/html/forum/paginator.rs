@@ -1,5 +1,6 @@
 use maud::{html, Markup};
 
+use super::copy::thread_copy_button_markup;
 use super::nav::ThreadNav;
 
 pub(super) const PAGE_SIZE: usize = 10;
@@ -52,6 +53,7 @@ pub(super) fn render_thread_paginator(nav: &ThreadNav, tag: &str, offset: usize,
             span class="post-nav-pos muted" {
                 (offset + 1) "–" (total.min(offset + PAGE_SIZE)) " / " (total)
             }
+            (thread_copy_button_markup(nav, tag, top))
             @if let Some(o) = newer_offset {
                 a href=(nav.thread_page_url(tag, o)) class="post-nav-btn" { "newer →" }
             } @else {

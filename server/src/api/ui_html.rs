@@ -24,6 +24,7 @@ use crate::{
         external_resolver_status_markup, fragment_new_thread_slot, login_to_post_hint_markup,
         parse_html_ui_from_form, room_members_section_markup, thread_feed_html,
         thread_feed_html_for_room, thread_feed_region_markup, thread_ui_collapse_redacted_post,
+        thread_ui_copy_thread,
         thread_ui_expand_post_full, thread_ui_expand_redacted_post, ui_js_warn, user_can_post_room,
         user_can_view_room, HtmlUiAction, JsBuilder, ThreadNav,
     },
@@ -546,6 +547,14 @@ async fn dispatch_ui_action(
         } => {
             let viewer = session.map(|s| s.username.as_str());
             thread_ui_collapse_redacted_post(state, &room, &thread_tag, post_index, viewer).await
+        }
+        HtmlUiAction::CopyThread {
+            room,
+            thread_tag,
+            copy_btn_id,
+        } => {
+            let viewer = session.map(|s| s.username.as_str());
+            thread_ui_copy_thread(state, &room, &thread_tag, &copy_btn_id, viewer).await
         }
     }
 }
