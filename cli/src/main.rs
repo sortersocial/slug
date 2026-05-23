@@ -360,7 +360,7 @@ enum GardenCmd {
 
 fn print_item_response(resp: &ItemResponse) {
     if let Some(body) = &resp.body {
-        println!("{body}");
+        println!("{}", compact_item_body_for_display(body));
     } else {
         println!("(no body)");
     }
@@ -389,15 +389,28 @@ fn print_item_response(resp: &ItemResponse) {
     }
 }
 
+fn pair_body_preview(body: &str) -> String {
+    let compact = compact_item_body_for_display(body);
+    compact
+        .lines()
+        .take(8)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn print_pair_response(resp: &PairResponse) {
-    println!("{}  vs  {}", resp.left, resp.right);
+    println!(
+        "{}  vs  {}",
+        garden_display_path(resp.left.as_str()),
+        garden_display_path(resp.right.as_str())
+    );
     if let Some(b) = &resp.left_body {
-        println!("  left:  {}", b.lines().next().unwrap_or(b).trim());
+        println!("  left:\n{}", pair_body_preview(b));
     } else {
         println!("  left:  (no description)");
     }
     if let Some(b) = &resp.right_body {
-        println!("  right: {}", b.lines().next().unwrap_or(b).trim());
+        println!("  right:\n{}", pair_body_preview(b));
     } else {
         println!("  right: (no description)");
     }
@@ -479,18 +492,19 @@ fn print_global_rank_response(resp: &GlobalRankResponse) {
     );
     for (i, r) in resp.items.iter().enumerate() {
         let rank = resp.offset + i + 1;
+        let label = garden_display_path(r.item.as_str());
         if r.score == 0.0 && r.percent.is_none_or(|p| p == 0.0) && rank > resp.ranked_total {
-            println!("    - {:<40}   (unranked)", r.item);
+            println!("    - {:<40}   (unranked)", label);
         } else if show_percent {
             println!(
                 "{:>4}. {:<40} {:>6.1}%  ({:.6})",
                 rank,
-                r.item,
+                label,
                 r.percent.unwrap_or(0.0),
                 r.score,
             );
         } else {
-            println!("{:>4}. {:<40} {:.6}", rank, r.item, r.score);
+            println!("{:>4}. {:<40} {:.6}", rank, label, r.score);
         }
     }
 }
@@ -499,11 +513,16 @@ fn print_global_rank_response(resp: &GlobalRankResponse) {
 fn print_rank_response(resp: &RankResponse) {
     for comp in &resp.components {
         for (i, r) in comp.ranking.iter().enumerate() {
-            println!("{:>3}. {:<24} {:.6}", i + 1, r.item, r.score);
+            println!(
+                "{:>3}. {:<24} {:.6}",
+                i + 1,
+                garden_display_path(r.item.as_str()),
+                r.score
+            );
         }
     }
     for item in &resp.unranked_items {
-        println!("  - {item}  (unranked)");
+        println!("  - {}  (unranked)", garden_display_path(item.as_str()));
     }
 }
 
@@ -742,10 +761,13 @@ fn normalize_ontology_path_input(path: &str) -> Result<String, String> {
 fn ontology_path_for_api_query(normalized: &str) -> String {
     let p = normalized.trim();
     if p.starts_with("http://") || p.starts_with("https://") || p.starts_with("-/") {
-        p.to_string()
-    } else {
-        format!("~/{}", p.trim_start_matches('/'))
+        return p.to_string();
     }
+    if is_external_path_input(p) {
+        let rest = p.strip_prefix("~/").unwrap_or(p).trim_start_matches('/');
+        return format!("-/{rest}");
+    }
+    format!("~/{}", p.trim_start_matches('/'))
 }
 
 /// Thread name for API; strip leading # so shell users can omit it (# is comment).
@@ -823,7 +845,7 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
                             println!("{}", serde_json::to_string_pretty(&resp)?);
                         } else {
                             for p in &resp.paths {
-                                println!("~/{p}");
+                                println!("{}", garden_display_path(p.as_str()));
                             }
                         }
                     }

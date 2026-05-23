@@ -116,12 +116,51 @@ pub fn canonicalize_item(input: &str) -> String {
         if tail.is_empty() {
             return SLUG_TILDE_ONTOLOGY_ROOT.to_string();
         }
+        // `~/github.com/…` is a common mistake for external `-/github.com/…`.
+        if tail
+            .split('/')
+            .next()
+            .is_some_and(|seg| seg.contains('.'))
+        {
+            return finalize_external_identity_url(format!("https://{tail}"));
+        }
         format!("https://slug.social/~/{tail}")
     } else if tail.is_empty() {
         "https://slug.social".to_string()
+    } else if tail
+        .split('/')
+        .next()
+        .is_some_and(|seg| seg.contains('.'))
+    {
+        finalize_external_identity_url(format!("https://{tail}"))
     } else {
         format!("https://slug.social/{tail}")
     }
+}
+
+/// True when user input refers to an off-site item (`-/…`, URL, or `host.tld/…`).
+pub fn is_external_path_input(input: &str) -> bool {
+    let s = input.trim();
+    if s.starts_with("-/")
+        || s.starts_with("http://")
+        || s.starts_with("https://")
+    {
+        return true;
+    }
+    let rest = s
+        .strip_prefix("~/")
+        .or_else(|| s.strip_prefix('/'))
+        .unwrap_or(s);
+    rest.split('/')
+        .next()
+        .is_some_and(|seg| !seg.is_empty() && seg.contains('.'))
+}
+
+/// CLI / browse display path (`~/…` native, `-/…` external) from a stored item id string.
+pub fn garden_display_path(stored: &str) -> String {
+    crate::ItemId::parse(stored)
+        .map(|id| id.display_path())
+        .unwrap_or_else(|| stored.to_string())
 }
 
 pub fn item_path_segments(input: &str) -> Vec<String> {

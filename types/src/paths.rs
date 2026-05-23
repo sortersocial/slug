@@ -476,6 +476,23 @@ mod tests {
     }
 
     #[test]
+    #[test]
+    fn bare_host_path_is_external_not_slug_ontology() {
+        assert_eq!(
+            canonicalize_item("github.com/org/repo/issues"),
+            "https://github.com/org/repo/issues"
+        );
+    }
+
+    #[test]
+    fn tilde_prefixed_host_path_is_external() {
+        assert_eq!(
+            canonicalize_item("~/github.com/org/repo"),
+            "https://github.com/org/repo"
+        );
+    }
+
+    #[test]
     fn canonicalize_item_dash_namespace_https() {
         assert_eq!(
             canonicalize_item("-/github.com/A/B"),

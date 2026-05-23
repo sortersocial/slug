@@ -28,7 +28,8 @@ use crate::{
 use super::auth::{parse_bearer, verify_bearer_principal};
 use super::helpers::{
     compute_connectivity_stats, is_pair_voted, now_ms, paginate_rankings, parse_parent_specs,
-    pick_random_distinct_item_pair, resolve_item, validate_garden_parent_scope_paths,
+    garden_item_not_found_hint, pick_random_distinct_item_pair, resolve_item,
+    validate_garden_parent_scope_paths,
     vote_touches_path,
 };
 use super::validate::validate_ingest_document;
@@ -862,10 +863,7 @@ pub async fn handle_rpc_batch(
                 let item_str = canonicalize_item(&item_path);
                 let item = ItemId::parse(&item_str).unwrap_or_else(|| ItemId::opaque(item_str.clone()));
                 if !content.items.contains(&item) {
-                    line_err(
-                        "item not found",
-                        Some(format!("{} does not exist", GardenItemUrl::from_storage_str(&item_str, &room))),
-                    )
+                    line_err("item not found", Some(garden_item_not_found_hint(&item_str)))
                 } else {
                     let want_full = full.unwrap_or(false);
                     let (body, truncated, body_len) = match content.item_bodies.get(&item) {
@@ -1261,10 +1259,7 @@ pub async fn handle_rpc_batch(
                 let item = ItemId::parse(&item_str).unwrap_or_else(|| ItemId::opaque(item_str.clone()));
                 let limit = limit.unwrap_or(50).clamp(1, 200);
                 if !content.items.contains(&item) {
-                    line_err(
-                        "item not found",
-                        Some(format!("{} does not exist", GardenItemUrl::from_storage_str(&item_str, &room))),
-                    )
+                    line_err("item not found", Some(garden_item_not_found_hint(&item_str)))
                 } else {
                     let votes: Vec<VoteRow> = content
                         .item_votes

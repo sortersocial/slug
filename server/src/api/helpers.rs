@@ -31,6 +31,14 @@ pub fn now_ms() -> i64 {
     t.as_millis() as i64
 }
 
+/// Hint when a garden item id is missing (uses `-/` display paths).
+pub fn garden_item_not_found_hint(item_str: &str) -> String {
+    let display = ItemId::parse(item_str)
+        .map(|id| id.display_path())
+        .unwrap_or_else(|| item_str.to_string());
+    format!("{display} does not exist. For off-site items use `-/host/…` or `https://…`.")
+}
+
 /// Resolve DSL/user input to a stored [`ItemId`].
 pub fn resolve_item(item: &str) -> Result<ItemId, String> {
     let wire = canonicalize_item(item);
@@ -67,9 +75,20 @@ pub fn validate_garden_parent_scope_paths(
         !content.items.contains(&canon) && !content.item_children.contains_key(&canon)
     });
     if none_exist {
+        let displayed: Vec<String> = specs
+            .iter()
+            .map(|spec| {
+                ItemId::parse(spec)
+                    .map(|id| id.display_path())
+                    .unwrap_or_else(|| spec.clone())
+            })
+            .collect();
         return Err((
             "path not found".into(),
-            Some(format!("{} does not exist", specs.join(", "))),
+            Some(format!(
+                "{} does not exist. For off-site items use `-/host/…` or `https://…` (not `~/host/…`).",
+                displayed.join(", ")
+            )),
         ));
     }
     Ok(())

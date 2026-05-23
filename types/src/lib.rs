@@ -5,12 +5,14 @@ pub mod item_wire;
 pub mod item_id;
 pub mod paths;
 pub mod timeago;
+pub mod github_body;
 
 pub use item_id::ItemId;
 pub use item_wire::{
-    canonicalize_item, item_parent_path, item_path_segments, normalize_slug_ontology_storage_url,
-    SLUG_TILDE_ONTOLOGY_ROOT,
+    canonicalize_item, garden_display_path, is_external_path_input, item_parent_path,
+    item_path_segments, normalize_slug_ontology_storage_url, SLUG_TILDE_ONTOLOGY_ROOT,
 };
+pub use github_body::{compact_github_item_body, compact_item_body_for_display};
 pub use paths::{
     canonicalize_tag, ForumThreadUrl, GardenItemUrl, RelativePath,
     room_id_from_route_segment, room_route_segment, ROOM_SHORT_ID_LEN,

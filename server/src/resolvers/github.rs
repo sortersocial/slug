@@ -9,6 +9,8 @@ use crate::{path_types::ItemId, state::AppState, write_cmd::WriteCmd};
 pub const SLUG_GITHUB_SCHEMA: &str = "slug_github_import";
 
 const GITHUB_SYSTEM_PRINCIPAL: &str = "system:github-resolver";
+/// All GitHub resolver ingests land in this single forum thread (per room).
+pub const GITHUB_RESOLVER_THREAD_TAG: &str = "github-imports";
 const GITHUB_RESOLVER_COOLDOWN_MS: i64 = 15_000;
 const GITHUB_MAX_PAGES: usize = 3;
 
@@ -357,14 +359,6 @@ fn github_repo_sections(owner: &str, repo: &str) -> Vec<ResolvedChild> {
     .collect()
 }
 
-fn resolver_thread_tag(item: &ItemId) -> String {
-    let tail = item
-        .display_path()
-        .trim_start_matches("-/")
-        .replace(['/', '?'], ":");
-    format!("import:{tail}")
-}
-
 fn children_to_dsl(children: &[ResolvedChild]) -> String {
     let mut out = String::new();
     for child in children {
@@ -545,7 +539,7 @@ pub async fn resolve_github_children(
         return Ok(0);
     }
     let text = children_to_dsl(&children);
-    let thread_tag = resolver_thread_tag(item);
+    let thread_tag = GITHUB_RESOLVER_THREAD_TAG.to_string();
     let (tx, rx) = oneshot::channel();
     state
         .write_tx
@@ -689,6 +683,11 @@ mod tests {
         let urls: Vec<String> = sections.into_iter().map(|c| c.url).collect();
         assert!(urls.contains(&"https://github.com/sortersocial/slug/issues".to_string()));
         assert!(urls.contains(&"https://github.com/sortersocial/slug/pulls".to_string()));
+    }
+
+    #[test]
+    fn resolver_uses_single_github_imports_thread() {
+        assert_eq!(GITHUB_RESOLVER_THREAD_TAG, "github-imports");
     }
 
     #[test]
