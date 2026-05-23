@@ -532,7 +532,6 @@ pub struct PendingSessionPollResponse {
 pub struct WhoamiResponse {
     /// Username (stored form, no `@`).
     pub user: String,
-    pub agents_bound: usize,
 }
 
 /// One item's position within a ranking component.

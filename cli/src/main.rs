@@ -1644,7 +1644,6 @@ async fn main() -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&resp)?);
             } else {
                 println!("{}", resp.user);
-                println!("agents bound: {}", resp.agents_bound);
             }
         }
     }

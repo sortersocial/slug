@@ -754,14 +754,5 @@ pub async fn get_whoami(State(state): State<AppState>, headers: HeaderMap) -> im
         Ok(u) => u,
         Err((st, msg)) => return api_error(st, msg, None).into_response(),
     };
-    let agents_bound = reduced
-        .agent_bindings
-        .values()
-        .filter(|u| *u == &username)
-        .count();
-    Json(WhoamiResponse {
-        user: username,
-        agents_bound,
-    })
-    .into_response()
+    Json(WhoamiResponse { user: username }).into_response()
 }
