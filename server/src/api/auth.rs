@@ -696,7 +696,7 @@ pub async fn post_pending_session(
         "{public_url}/auth/login?session={}",
         urlencoding::encode(&session)
     );
-    let poll_url = format!("/api/v0/pending-session/{}", session);
+    let poll_url = format!("/api/v0/pending-session/{session}");
     let s = PendingSession {
         agent: agent_naked,
         created_ts: now_ms(),

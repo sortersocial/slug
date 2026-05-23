@@ -66,7 +66,7 @@ impl ThreadNav {
             let disp = c.display_path();
             let rest = disp.strip_prefix("-/").unwrap_or(disp.as_str());
             let ext_prefix = format!("{}-", self.garden_path_prefix.trim_end_matches('~'));
-            format!("{}/{}", ext_prefix, rest)
+            format!("{ext_prefix}/{rest}")
         } else {
             format!("{}/{}", self.garden_path_prefix, canonicalize_item(c.as_str()))
         }

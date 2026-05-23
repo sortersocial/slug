@@ -244,7 +244,7 @@ pub async fn writer_actor(mut rx: mpsc::Receiver<WriteCmd>, state: AppState) {
                         Some(ref s) if s.trim().is_empty() => None,
                         Some(s) => Some(
                             parse_agent(&s)
-                                .map_err(|msg| (format!("invalid delegate format"), Some(msg)))?,
+                                .map_err(|msg| ("invalid delegate format".to_string(), Some(msg)))?,
                         ),
                     };
 
@@ -254,7 +254,7 @@ pub async fn writer_actor(mut rx: mpsc::Receiver<WriteCmd>, state: AppState) {
                     if is_private && !reduced.rooms.contains(&room_key) {
                         return Err((
                             "unknown room".into(),
-                            Some(format!("room `{}` does not exist", room_key)),
+                            Some(format!("room `{room_key}` does not exist")),
                         ));
                     }
 
@@ -305,7 +305,7 @@ pub async fn writer_actor(mut rx: mpsc::Receiver<WriteCmd>, state: AppState) {
 
                     let need_agent_bind = delegate
                         .as_ref()
-                        .map(|d| reduced.agent_bindings.get(d).is_none())
+                        .map(|d| !reduced.agent_bindings.contains_key(d))
                         .unwrap_or(false);
 
                     let voted_parent_scopes: Vec<ItemId> = {
@@ -463,7 +463,7 @@ pub async fn writer_actor(mut rx: mpsc::Receiver<WriteCmd>, state: AppState) {
                     if is_private && !reduced.rooms.contains(&room_key) {
                         return Err((
                             "unknown room".into(),
-                            Some(format!("room `{}` does not exist", room_key)),
+                            Some(format!("room `{room_key}` does not exist")),
                         ));
                     }
 

@@ -409,7 +409,7 @@ fn parse_item_name_at_with_mode(
     if !is_item_name(name) {
         return None;
     }
-    Some((format!("~/{}", name), j))
+    Some((format!("~/{name}"), j))
 }
 
 fn parse_item_name_at(s: &str, i: usize) -> Option<(String, usize)> {

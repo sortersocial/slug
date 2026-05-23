@@ -195,20 +195,13 @@ pub struct RoomTimelineEntry {
 }
 
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct ForumThreadState {
     pub last_activity_ts: i64,
     /// Username of the most recent person who bumped this thread.
     pub last_actor: String,
 }
 
-impl Default for ForumThreadState {
-    fn default() -> Self {
-        Self {
-            last_activity_ts: 0,
-            last_actor: String::new(),
-        }
-    }
-}
 
 #[derive(Debug, Clone, Default)]
 pub struct ContentState {
@@ -432,7 +425,7 @@ impl ReducerState {
         let (mut comps, _) = crate::ranking::connected_components_from_voted_pairs(
             n, group.voted_pairs.iter().copied(),
         );
-        comps.sort_by(|a, b| b.len().cmp(&a.len()));
+        comps.sort_by_key(|b| std::cmp::Reverse(b.len()));
         let mut pos = 1usize;
         for comp in &comps {
             let ranked = crate::ranking::ranked_items_subset(group, comp, 10000, 1e-8);
@@ -752,7 +745,7 @@ impl ReducerState {
                 let Some(ing) = self.ingests_by_id.get(&pr.post_id).cloned() else {
                     return;
                 };
-                let scope = scope_from_room_wire(&ing.room_id.trim());
+                let scope = scope_from_room_wire(ing.room_id.trim());
                 // Rebuilds garden projection only; `ingests_by_scope_thread` is left as-is — see `rebuild_scope_content`.
                 self.rebuild_scope_content(scope);
             }

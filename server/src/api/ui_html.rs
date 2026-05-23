@@ -377,12 +377,11 @@ async fn dispatch_ui_action(
                 return ui_js_warn("missing room").into_response();
             }
             let reduced = state.reduced.read().await;
-            if matches!(scope_from_room_wire(room), ScopeId::Room(_)) {
-                if !user_can_post_room(&reduced, room, &session.username) {
+            if matches!(scope_from_room_wire(room), ScopeId::Room(_))
+                && !user_can_post_room(&reduced, room, &session.username) {
                     drop(reduced);
                     return ui_js_warn("forbidden").into_response();
                 }
-            }
             drop(reduced);
 
             let Some(item) = crate::path_types::ItemId::parse(item_storage.trim()) else {
@@ -653,7 +652,7 @@ async fn rpc_check_with_bearer(
 
     let status = response.status();
     if !status.is_success() {
-        return Err((format!("rpc check http {}", status), None));
+        return Err((format!("rpc check http {status}"), None));
     }
 
     let body = body::to_bytes(response.into_body(), usize::MAX)
@@ -702,7 +701,7 @@ async fn post_success_response(
             ScopeId::Room(_) => Some(room.as_str()),
         },
         &thread_tag,
-        viewer.as_deref(),
+        viewer,
     )
     .await;
     let feed_selector = match &scope {

@@ -35,9 +35,9 @@ pub fn now_ms() -> i64 {
 pub fn resolve_item(item: &str) -> Result<ItemId, String> {
     let wire = canonicalize_item(item);
     if wire.is_empty() {
-        return Err(format!("empty item path: `{}`", item));
+        return Err(format!("empty item path: `{item}`"));
     }
-    ItemId::parse(&wire).ok_or_else(|| format!("invalid item path: `{}`", item))
+    ItemId::parse(&wire).ok_or_else(|| format!("invalid item path: `{item}`"))
 }
 
 pub fn parse_parent_specs(parent: Option<&String>) -> Vec<String> {
@@ -192,6 +192,6 @@ pub fn compute_connectivity_stats(group: &crate::reducer::GroupState, pool: &[It
 }
 
 pub fn vote_touches_path(a: &str, b: &str, parent_canon: &str) -> bool {
-    let under = |item: &str| item == parent_canon || item.starts_with(&format!("{}/", parent_canon));
+    let under = |item: &str| item == parent_canon || item.starts_with(&format!("{parent_canon}/"));
     under(a) || under(b)
 }
