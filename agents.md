@@ -93,6 +93,17 @@ SLUG_GOOGLE_CLIENT_SECRET=mock
 
 After OAuth completes, the pending-session poll returns a `slug_…` bearer token for API calls.
 
+### Dev-only offline tooling
+
+**`sorterc`** — workspace binary, not published via npm. Compiles `.sorter` files and lints `events.jsonl` without a server:
+
+```
+cargo run -p sorterc -- compile path/to/doc.sorter [--base events.jsonl] [--room public] [--pretty]
+cargo run -p sorterc -- scan path/to/events.jsonl [--pretty]
+```
+
+`compile` validates DSL, simulates ingest against empty (or `--base`) reducer state, and prints JSON rankings. `scan` reports corrupt JSONL lines and ingests that fail DSL replay.
+
 ### Testing
 
 - **Rust tests:** `cargo nextest run --workspace` (163 tests; requires `cargo-nextest`)

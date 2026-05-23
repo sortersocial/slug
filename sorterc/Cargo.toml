@@ -1,0 +1,18 @@
+[package]
+name = "sorterc"
+version = "0.0.1"
+edition = "2021"
+license = "MIT"
+publish = false
+description = "Offline .sorter compiler and events.jsonl linter (dev only)"
+
+[[bin]]
+name = "sorterc"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+slugsocial-server = { path = "../server" }

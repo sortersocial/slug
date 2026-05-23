@@ -10,6 +10,7 @@ pub mod form_template;
 pub mod html;
 pub mod identity;
 pub mod middleware;
+pub mod offline;
 pub mod path_types;
 pub mod ranking;
 pub mod reducer;
