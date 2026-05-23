@@ -1,4 +1,5 @@
 use crate::path_types::{tilde_http_path_to_item_id, ItemId};
+use slug_types::SLUG_TILDE_ONTOLOGY_ROOT;
 
 /// Semantic view of an ontology path for rendering and routing decisions.
 pub(super) struct OntologyPath {
@@ -54,11 +55,36 @@ impl OntologyPath {
     }
 }
 
-/// External `https://host/…` items addressed as `/-/host/…` in the URL bar.
+/// External `https://…` items use `/-/https://host/…` in the URL bar (full URL after the prefix).
 pub(super) struct ExternalOntologyPath {
     item: ItemId,
-    /// e.g. `["github.com", "org", "repo", "issues"]`
-    segments: Vec<String>,
+    /// Outermost external identity first (e.g. `https://host`), ending with `item`.
+    chain: Vec<ItemId>,
+}
+
+fn external_ancestor_chain(item: &ItemId) -> Vec<ItemId> {
+    let s = item.as_str();
+    // Sentinel used for the bare `/-/` index route.
+    if s == "https://." {
+        return vec![];
+    }
+    let mut rev = vec![item.clone()];
+    loop {
+        let cur = rev.last().expect("non-empty");
+        let Some(p) = cur.parent() else {
+            break;
+        };
+        let ps = p.as_str();
+        if ps == SLUG_TILDE_ONTOLOGY_ROOT || ps.starts_with("https://slug.social/~/") {
+            break;
+        }
+        if !(ps.starts_with("http://") || ps.starts_with("https://")) {
+            break;
+        }
+        rev.push(p);
+    }
+    rev.reverse();
+    rev
 }
 
 impl ExternalOntologyPath {
@@ -78,26 +104,17 @@ impl ExternalOntologyPath {
     }
 
     pub(super) fn from_item(item: ItemId) -> Self {
-        let s = item.as_str();
-        let rest = s
-            .strip_prefix("https://")
-            .or_else(|| s.strip_prefix("http://"))
-            .unwrap_or("");
-        let segments: Vec<String> = rest
-            .split('/')
-            .filter(|x| !x.is_empty())
-            .map(|x| x.to_string())
-            .collect();
-        let segments = if segments == ["."] { vec![] } else { segments };
-        Self { item, segments }
+        let chain = external_ancestor_chain(&item);
+        Self { item, chain }
     }
 
     pub(super) fn is_root(&self) -> bool {
-        self.segments.is_empty()
+        self.chain.is_empty()
     }
 
-    pub(super) fn segments(&self) -> &[String] {
-        &self.segments
+    /// Ancestor [`ItemId`]s from host root to current (inclusive), for external breadcrumbs.
+    pub(super) fn breadcrumb_chain(&self) -> &[ItemId] {
+        &self.chain
     }
 
     pub(super) fn as_str(&self) -> &str {
@@ -113,19 +130,32 @@ mod tests {
     fn external_root_and_host_paths_are_distinct() {
         let root = ExternalOntologyPath::from_input("");
         assert!(root.is_root());
-        assert!(root.segments().is_empty());
+        assert!(root.breadcrumb_chain().is_empty());
 
         let host = ExternalOntologyPath::from_input("example.com");
         assert!(!host.is_root());
-        assert_eq!(host.segments(), &["example.com".to_string()]);
+        assert_eq!(host.breadcrumb_chain().len(), 1);
+        assert_eq!(
+            host.breadcrumb_chain()[0].as_str(),
+            "https://example.com"
+        );
     }
 
     #[test]
     fn external_path_keeps_each_url_segment_for_breadcrumbs() {
         let path = ExternalOntologyPath::from_input("https://example.com/a/b");
+        assert_eq!(path.breadcrumb_chain().len(), 3);
         assert_eq!(
-            path.segments(),
-            &["example.com".to_string(), "a".to_string(), "b".to_string()]
+            path.breadcrumb_chain()[0].as_str(),
+            "https://example.com"
+        );
+        assert_eq!(
+            path.breadcrumb_chain()[1].as_str(),
+            "https://example.com/a"
+        );
+        assert_eq!(
+            path.breadcrumb_chain()[2].as_str(),
+            "https://example.com/a/b"
         );
     }
 }

@@ -138,7 +138,7 @@ pub async fn external_garden_index(
         html! {
             nav class="breadcrumb" { (bc_path_external(&ext_path)) }
             h2 { "external paths" }
-            p class="muted" { "Items outside slug.social use the " code { "-/" } " prefix (same role as " code { "~/" } ")." }
+            p class="muted" { "Items outside slug.social use the " code { "-/" } " prefix followed by the full " code { "https://…" } " URL (legacy " code { "-/host/path" } " still works)." }
             @if child_rankings.component_rankings.is_empty() && child_rankings.unranked_items.is_empty() {
                 p class="muted" { "no external items indexed yet" }
             } @else {

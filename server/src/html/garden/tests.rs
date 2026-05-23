@@ -118,9 +118,10 @@ fn suggest_next_vote_pair_prefers_unvoted_sibling_pair() {
 
 #[test]
 fn external_resolver_status_markup_reports_success_and_refresh() {
-    let html = external_resolver_status_markup(Ok(2), "/-/github.com/o/r").into_string();
+    let html =
+        external_resolver_status_markup(Ok(2), "/-/https://github.com/o/r").into_string();
     assert!(html.contains("Imported 2 GitHub items."));
-    assert!(html.contains("href=\"/-/github.com/o/r\""));
+    assert!(html.contains("href=\"/-/https://github.com/o/r\""));
 }
 
 #[test]

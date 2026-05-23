@@ -460,15 +460,17 @@ pub(super) fn bc_segment(label: &str, href: &str, is_current: bool) -> Markup {
     }
 }
 
-/// Breadcrumb for external ontology `/-/host/...`
+/// Breadcrumb for external ontology `/-/https://…`
 fn bc_path_external(path: &ExternalOntologyPath) -> Markup {
     html! {
         a href="/" { "slug.social" }
         (bc_segment("-", "/-", path.is_root()))
-        @for (i, seg) in path.segments().iter().enumerate() {
-            @let href = format!("/-/{}", path.segments()[..=i].join("/"));
-            @let is_last = i == path.segments().len() - 1;
-            (bc_segment(seg, &href, is_last))
+        @for (i, id) in path.breadcrumb_chain().iter().enumerate() {
+            @let disp = id.display_path();
+            @let tail = disp.strip_prefix("-/").unwrap_or(disp.as_str());
+            @let href = format!("/-/{}", tail);
+            @let is_last = i + 1 == path.breadcrumb_chain().len();
+            (bc_segment(id.last_segment(), &href, is_last))
         }
     }
 }
@@ -892,8 +894,9 @@ mod linkify_title_tests {
     #[test]
     fn raw_url_links_to_public_external_garden_page() {
         let html = linkify_slugs_with_prefix("see https://example.com/z.", "/~", None);
-        assert!(html
-            .contains(r#"<a href="/-/example.com/z" class="pre-link">https://example.com/z</a>."#));
+        assert!(html.contains(
+            r#"<a href="/-/https://example.com/z" class="pre-link">https://example.com/z</a>."#
+        ));
     }
 
     #[test]
@@ -903,7 +906,7 @@ mod linkify_title_tests {
         bodies.insert(key, "External body\npreview".to_string());
         let html =
             linkify_slugs_with_prefix("see -/example.com/z", "/r/9ab12cdroom/~", Some(&bodies));
-        assert!(html.contains(r#"href="/r/9ab12cdroom/-/example.com/z""#));
+        assert!(html.contains(r#"href="/r/9ab12cdroom/-/https://example.com/z""#));
         assert!(html.contains(r#"title="External body preview""#));
     }
 
@@ -914,8 +917,8 @@ mod linkify_title_tests {
             "/~",
             None,
         );
-        assert!(!html.contains(r#"href="/-/example.com/z""#));
-        assert!(html.contains(r#"href="/-/example.com/a""#));
+        assert!(!html.contains(r#"href="/-/https://example.com/z""#));
+        assert!(html.contains(r#"href="/-/https://example.com/a""#));
     }
 
     #[test]

@@ -113,31 +113,31 @@
                (page/navigate pg (str base-url "/login"))
                (is (wait-for-text pg "body" "@alice" 15000) "alice session after login")
 
-               (page/navigate pg (str base-url "/-/github.com/octo"))
+               (page/navigate pg (str base-url "/-/https://github.com/octo"))
                (is (wait-for-text pg "#external-resolver-panel" "GitHub resolver" 15000)
                    "user page shows resolver panel")
                (locator/click (page/locator pg "[data-testid=\"github-resolve-children\"]"))
-               (is (wait-for-text pg "body" "-/github.com/octo/other" 15000)
+               (is (wait-for-text pg "body" "-/https://github.com/octo/other" 15000)
                    "user resolver imports repos")
 
-               (page/navigate pg (str base-url "/-/github.com/octo/hello"))
+               (page/navigate pg (str base-url "/-/https://github.com/octo/hello"))
                (locator/click (page/locator pg "[data-testid=\"github-resolve-children\"]"))
-               (is (wait-for-text pg "body" "-/github.com/octo/hello/pulls" 15000)
+               (is (wait-for-text pg "body" "-/https://github.com/octo/hello/pulls" 15000)
                    "repo resolver imports structural children")
-               (is (wait-for-text pg "body" "-/github.com/octo/hello/commits" 15000)
+               (is (wait-for-text pg "body" "-/https://github.com/octo/hello/commits" 15000)
                    "repo resolver imports commits section")
-               (is (wait-for-text pg "body" "-/github.com/octo/hello/releases" 15000)
+               (is (wait-for-text pg "body" "-/https://github.com/octo/hello/releases" 15000)
                    "repo resolver imports releases section")
 
-               (page/navigate pg (str base-url "/-/github.com/octo/hello/issues/42"))
+               (page/navigate pg (str base-url "/-/https://github.com/octo/hello/issues/42"))
                (locator/click (page/locator pg "[data-testid=\"github-resolve-siblings\"]"))
-               (is (wait-for-http-text (str base-url "/-/github.com/octo/hello/issues")
-                                       "-/github.com/octo/hello/issues/43"
+               (is (wait-for-http-text (str base-url "/-/https://github.com/octo/hello/issues")
+                                       "-/https://github.com/octo/hello/issues/43"
                                        15000)
                    "issue sibling resolver persisted issue siblings")
                (core/with-page [pg2 (core/new-page-from-context ctx)]
-                 (page/navigate pg2 (str base-url "/-/github.com/octo/hello/issues"))
-                 (is (wait-for-text pg2 "body" "-/github.com/octo/hello/issues/43" 15000)
+                 (page/navigate pg2 (str base-url "/-/https://github.com/octo/hello/issues"))
+                 (is (wait-for-text pg2 "body" "-/https://github.com/octo/hello/issues/43" 15000)
                      "issue sibling resolver imports issue siblings"))))))
 
        (is (some #{"/users/octo/repos"} @(:paths @!github))

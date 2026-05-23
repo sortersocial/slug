@@ -66,7 +66,7 @@
              (core/with-page [pg (core/new-page-from-context ctx)]
                (page/navigate pg (str base-url "/login"))
                (is (wait-for-text pg "body" "@alice" 15000) "alice session after login")
-               (page/navigate pg (str base-url "/-/github.com/test/repo"))
+               (page/navigate pg (str base-url "/-/https://github.com/test/repo"))
                (is (wait-for-text pg "nav.breadcrumb" "slug.social" 15000) "external garden breadcrumb has site root")
                (is (wait-for-text pg "nav.breadcrumb" "github.com" 5000) "breadcrumb includes host segment")
                (is (wait-for-text pg "nav.breadcrumb" "test" 5000) "breadcrumb includes path segment test")
