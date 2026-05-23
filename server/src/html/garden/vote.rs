@@ -211,14 +211,15 @@ pub(crate) async fn vote_compare_post_success_js(
     _thread_tag: &str,
     left: &ItemId,
     right: &ItemId,
+    pool: Option<&ItemId>,
     _post_id: &str,
     _post_idx: Option<usize>,
 ) -> String {
     let reduced = state.reduced.read().await;
     let content = content_for_garden_view(&reduced, &nav.scope());
     let edge_history = vote_edge_history_markup(content, left, right);
-    let next_pair = suggest_next_vote_pair(content, left, right);
-    let nav_markup = vote_compare_nav_markup(nav, next_pair.as_ref());
+    let next_pair = suggest_next_vote_pair(content, left, right, pool);
+    let nav_markup = vote_compare_nav_markup(nav, next_pair.as_ref(), pool);
     drop(reduced);
     JsBuilder::new()
         .morph_inner_selector("#vote-edge-history-region", edge_history)
@@ -231,27 +232,39 @@ pub(super) fn vote_compare_href(
     left: &ItemId,
     right: &ItemId,
     thread_override: Option<&str>,
+    pool: Option<&ItemId>,
 ) -> String {
     let left_q = urlencoding::encode(left.as_str());
     let right_q = urlencoding::encode(right.as_str());
-    let base = format!(
+    let mut base = format!(
         "{}/vote?left={}&right={}",
         nav.room_path_prefix_for_vote_compare(),
         left_q,
         right_q
     );
     if let Some(t) = thread_override.filter(|s| !s.is_empty()) {
-        format!("{}&thread={}", base, urlencoding::encode(t))
-    } else {
-        base
+        base = format!("{}&thread={}", base, urlencoding::encode(t));
     }
+    if let Some(p) = pool {
+        base = format!("{}&pool={}", base, urlencoding::encode(p.as_str()));
+    }
+    base
+}
+
+pub(super) fn vote_pool_href(nav: &ThreadNav, pool_item_str: &str) -> String {
+    format!(
+        "{}/vote?pool={}",
+        nav.room_path_prefix_for_vote_compare(),
+        urlencoding::encode(pool_item_str)
+    )
 }
 
 fn vote_compare_nav_markup(
     nav: &ThreadNav,
     next_pair: Option<&(ItemId, ItemId)>,
+    pool: Option<&ItemId>,
 ) -> maud::Markup {
-    let next_pair_href = next_pair.map(|(nl, nr)| vote_compare_href(nav, nl, nr, None));
+    let next_pair_href = next_pair.map(|(nl, nr)| vote_compare_href(nav, nl, nr, None, pool));
     html! {
         div class="vote-compare-nav" {
             @if let Some(href) = &next_pair_href {
@@ -267,8 +280,15 @@ pub(super) fn suggest_next_vote_pair(
     content: &ContentState,
     current_left: &ItemId,
     current_right: &ItemId,
+    pool_parent: Option<&ItemId>,
 ) -> Option<(ItemId, ItemId)> {
-    let pool: Vec<ItemId> = if current_left.parent().as_ref().map(|p| p.as_str())
+    let pool: Vec<ItemId> = if let Some(parent) = pool_parent {
+        content
+            .item_children
+            .get(parent)
+            .map(|s| s.iter().cloned().collect())
+            .unwrap_or_default()
+    } else if current_left.parent().as_ref().map(|p| p.as_str())
         == current_right.parent().as_ref().map(|p| p.as_str())
     {
         current_left
@@ -322,10 +342,14 @@ pub(super) fn vote_compare_item_card(
 }
 #[derive(Debug, Deserialize)]
 pub struct VoteCompareQuery {
-    pub left: String,
-    pub right: String,
+    #[serde(default)]
+    pub left: Option<String>,
+    #[serde(default)]
+    pub right: Option<String>,
     #[serde(default)]
     pub thread: Option<String>,
+    #[serde(default)]
+    pub pool: Option<String>,
 }
 
 /// Public pairwise vote UI — `/vote?left=&right=&thread=`.
@@ -376,17 +400,53 @@ async fn vote_compare_inner(
     jar: CookieJar,
     uri: Uri,
 ) -> axum::response::Response {
-    let left = match ItemId::parse(q.left.trim()) {
-        Some(i) => i.normalized_storage(),
-        None => return (StatusCode::NOT_FOUND, "bad left item").into_response(),
+    let pool_id: Option<ItemId> = match q.pool.as_deref() {
+        Some(p) => match ItemId::parse(p.trim()) {
+            Some(i) => Some(i.normalized_storage()),
+            None => return (StatusCode::BAD_REQUEST, "bad pool item").into_response(),
+        },
+        None => None,
     };
-    let right = match ItemId::parse(q.right.trim()) {
-        Some(i) => i.normalized_storage(),
-        None => return (StatusCode::NOT_FOUND, "bad right item").into_response(),
+
+    let (left, right) = match (q.left.as_deref(), q.right.as_deref()) {
+        (Some(l), Some(r)) => {
+            let left = match ItemId::parse(l.trim()) {
+                Some(i) => i.normalized_storage(),
+                None => return (StatusCode::NOT_FOUND, "bad left item").into_response(),
+            };
+            let right = match ItemId::parse(r.trim()) {
+                Some(i) => i.normalized_storage(),
+                None => return (StatusCode::NOT_FOUND, "bad right item").into_response(),
+            };
+            if left == right {
+                return (StatusCode::BAD_REQUEST, "items must differ").into_response();
+            }
+            (left, right)
+        }
+        (None, None) => {
+            let Some(pool) = pool_id.as_ref() else {
+                return (StatusCode::BAD_REQUEST, "provide left+right or pool").into_response();
+            };
+            let reduced = state.reduced.read().await;
+            let content = content_for_garden_view(&reduced, &nav.scope());
+            let children: Vec<ItemId> = content
+                .item_children
+                .get(pool)
+                .map(|s| s.iter().cloned().collect())
+                .unwrap_or_default();
+            if children.len() < 2 {
+                drop(reduced);
+                return (StatusCode::BAD_REQUEST, "pool has fewer than 2 children to compare").into_response();
+            }
+            let pair = suggest_next_pair_in_pool(&content.ranking_group, &children, None);
+            drop(reduced);
+            match pair {
+                Some(p) => p,
+                None => return (StatusCode::BAD_REQUEST, "no pairs available in pool").into_response(),
+            }
+        }
+        _ => return (StatusCode::BAD_REQUEST, "provide both left and right, or just pool").into_response(),
     };
-    if left == right {
-        return (StatusCode::BAD_REQUEST, "items must differ").into_response();
-    }
 
     let reduced = state.reduced.read().await;
     let content = content_for_garden_view(&reduced, &nav.scope());
@@ -409,7 +469,7 @@ async fn vote_compare_inner(
     let left_body = content.item_bodies.get(&left).cloned();
     let right_body = content.item_bodies.get(&right).cloned();
     let item_bodies_for_cards = content.item_bodies.clone();
-    let next_pair = suggest_next_vote_pair(content, &left, &right);
+    let next_pair = suggest_next_vote_pair(content, &left, &right, pool_id.as_ref());
     drop(reduced);
 
     let title = format!(
@@ -432,6 +492,7 @@ async fn vote_compare_inner(
         "ratio_right": {"$form": "ratio_right"},
         "explanation": {"$form": "explanation"},
         "next": next_path,
+        "pool": pool_id.as_ref().map(|p| p.as_str()),
         "form_action": "/ui",
     }))
     .expect("vote compare rpc json");
@@ -456,7 +517,7 @@ async fn vote_compare_inner(
                 Some(&item_bodies_for_cards),
             ))
         }
-        (vote_compare_nav_markup(&nav, next_pair.as_ref()))
+        (vote_compare_nav_markup(&nav, next_pair.as_ref(), pool_id.as_ref()))
         div id="vote-edge-history-region" {
             (edge_history)
         }

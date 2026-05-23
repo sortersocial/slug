@@ -29,6 +29,7 @@ use super::{
     item::{child_depth_from_uri, item_code_label, item_display_path, item_href},
     item_page::{build_item_page_view_model, sibling_nav_markup},
     pin::{child_row_pin_or_vote, ont_pin_vote_controls, pinned_item_from_jar},
+    vote::vote_pool_href,
 };
 
 pub(super) async fn render_scope_view(
@@ -186,11 +187,20 @@ pub(super) async fn render_scope_view(
             }
 
             section class="ont-tab-panel ont-tab-panel-children" {
+                @let total_children = model.child_rankings.component_rankings
+                    .iter().map(|c| c.ranked.len()).sum::<usize>()
+                    + model.child_rankings.unranked_items.len();
                 h3 {
                     "ranked child groups"
                     @if model.child_depth > 1 {
                         " "
                         span class="muted" { (format!("(depth {})", model.child_depth)) }
+                    }
+                    @if total_children >= 2 {
+                        " "
+                        a class="ont-vote-children-btn" href=(vote_pool_href(&nav, &model.item)) {
+                            "vote on children"
+                        }
                     }
                 }
                 @if model.child_rankings.component_rankings.is_empty() {

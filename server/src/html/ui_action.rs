@@ -50,6 +50,9 @@ pub enum HtmlUiAction {
         explanation: String,
         /// Same-origin path after successful post (JS redirect).
         next: String,
+        /// Pool parent item path, if the vote was initiated from a pool URL.
+        #[serde(default)]
+        pool: Option<String>,
         #[serde(default = "default_ui_form_action")]
         form_action: String,
     },

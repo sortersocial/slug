@@ -193,6 +193,7 @@ async fn dispatch_ui_action(
             ratio_right,
             explanation,
             next,
+            pool,
             form_action,
         } => {
             if form_action != "/ui" {
@@ -239,6 +240,9 @@ async fn dispatch_ui_action(
                         .into_response();
                 }
             };
+            let pool_id = pool.as_deref().and_then(|p| {
+                crate::path_types::ItemId::parse(p.trim()).map(|i| i.normalized_storage())
+            });
             let mut rl = ratio_left.trim().parse::<i32>().unwrap_or(0).max(0);
             let mut rr = ratio_right.trim().parse::<i32>().unwrap_or(0).max(0);
             if rl == 0 && rr == 0 {
@@ -294,6 +298,7 @@ async fn dispatch_ui_action(
                         &thread_tag,
                         &left_id,
                         &right_id,
+                        pool_id.as_ref(),
                         pid.as_str(),
                         post_index,
                     )

@@ -79,7 +79,7 @@ pub(super) fn ont_pin_vote_controls(
                         }
                     }
                 } @else {
-                    a class="ont-vote-compare-btn" href=(vote_compare_href(nav, pi, &current, None)) title="Compare and vote" {
+                    a class="ont-vote-compare-btn" href=(vote_compare_href(nav, pi, &current, None, None)) title="Compare and vote" {
                         span class="ont-vote-glyph" aria-hidden="true" { "⚖" }
                         span { "vote" }
                     }
@@ -121,7 +121,7 @@ pub(super) fn child_row_pin_or_vote(
                         if nv == 1 { "" } else { "s" },
                     );
                     @let aria = format!("Vote; {} pairwise {}", nv, if nv == 1 { "vote" } else { "votes" });
-                    a class="ont-garden-vote-ico" href=(vote_compare_href(nav, pi, row_item, None)) title=(tip) aria-label=(aria) {
+                    a class="ont-garden-vote-ico" href=(vote_compare_href(nav, pi, row_item, None, None)) title=(tip) aria-label=(aria) {
                         span class="ont-garden-vote-glyph" aria-hidden="true" { "⚖" }
                         span class="ont-garden-vote-count" { (format!("{}", nv)) }
                     }

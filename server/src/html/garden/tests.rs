@@ -105,7 +105,7 @@ fn suggest_next_vote_pair_prefers_unvoted_sibling_pair() {
     let content = content_for_garden_view(&reduced, &ScopeId::Public);
     let a = ItemId::parse("~/topic/a").unwrap().normalized_storage();
     let b = ItemId::parse("~/topic/b").unwrap().normalized_storage();
-    let next = suggest_next_vote_pair(content, &a, &b).expect("next sibling pair");
+    let next = suggest_next_vote_pair(content, &a, &b, None).expect("next sibling pair");
     assert_ne!(
         canonical_edge_items(&next.0, &next.1),
         canonical_edge_items(&a, &b)
