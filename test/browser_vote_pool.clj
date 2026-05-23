@@ -1,6 +1,8 @@
 (ns test.browser-vote-pool
-  "Pool-scoped voting: seed ~/pool/a-j, enter via /vote?pool=~/pool, follow
-   the vote → next-pair → vote sequence until no next pair or 15 iterations."
+  "Pool-scoped voting: seed ~/pool/a-j (10 letters), follow the
+   vote → next-pair sequence for all C(10,2)=45 pairs voting the
+   alphabetically-earlier item each time, then assert the garden
+   ranking is a…j in order."
   (:require [babashka.fs :as fs]
             [cheshire.core :as json]
             [clojure.string :as str]
@@ -11,26 +13,38 @@
             [test.common :as common]
             [test.oauth :as oauth]))
 
+(def letters ["a" "b" "c" "d" "e" "f" "g" "h" "i" "j"])
+(def total-pairs (/ (* (count letters) (dec (count letters))) 2)) ; C(10,2) = 45
+
 (defn- wait-for-text [pg selector expected timeout-ms]
   (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
     (loop []
-      (let [text (locator/text-content (page/locator pg selector))]
+      (let [text (try (locator/text-content (page/locator pg selector)) (catch Exception _ nil))]
         (if (and (string? text) (str/includes? text expected))
           true
           (if (< (System/currentTimeMillis) deadline)
-            (do (Thread/sleep 200) (recur))
+            (do (Thread/sleep 150) (recur))
             false))))))
 
 (defn- element-text [pg selector]
-  (try (locator/text-content (page/locator pg selector)) (catch Exception _ nil)))
+  (try (locator/text-content (page/locator pg selector)) (catch Exception _ "")))
 
 (defn- enc [^String s]
   (java.net.URLEncoder/encode s "UTF-8"))
 
-(def letters ["a" "b" "c" "d" "e" "f" "g" "h" "i" "j"])
+;; Extract the terminal path segment, e.g. "~/pool/c" → "c".
+(defn- leaf [path] (last (str/split path #"/")))
+
+;; Set the hidden ratio inputs so the alphabetically-earlier item wins.
+(defn- set-ratio! [pg left-text right-text]
+  (let [[rl rr] (if (neg? (compare (leaf left-text) (leaf right-text)))
+                  [100 0]   ; left is earlier → prefer left
+                  [0 100])] ; right is earlier → prefer right
+    (page/evaluate pg (str "document.getElementById('vote-ratio-left').value='" rl "'"))
+    (page/evaluate pg (str "document.getElementById('vote-ratio-right').value='" rr "'"))))
 
 (defn vote-pool-flow! []
-  (println "\n━━━ browser vote pool (/vote?pool= seeds + follow next-pair sequence) ━━━\n")
+  (println (str "\n━━━ browser vote pool (all " total-pairs " pairs → sorted ranking) ━━━\n"))
 
   (common/letlocals
    (bind build (common/run-cargo-build-release! ["slugsocial-server"]))
@@ -54,7 +68,6 @@
 
      (let [alice-token (oauth/fetch-bearer-token! base-url :username "alice")
            thread-tag  "browser-vote-pool"
-           ;; seed ~/pool/a through ~/pool/j as items with bodies
            item-lines  (str/join "\n"
                                  (map (fn [l] (str "~/pool/" l " {" l "}")) letters))
            raw         (str "# " thread-tag "\n\n~/pool {root}\n" item-lines "\n")
@@ -77,51 +90,57 @@
                (page/navigate pg (str base-url "/login"))
                (is (wait-for-text pg "body" "@alice" 15000) "alice session after login")
 
-               ;; Enter via pool URL — page picks first pair automatically.
                (page/navigate pg pool-url)
                (is (wait-for-text pg "body.view-vote-compare" "compare" 15000)
                    "pool entry: vote compare page loads")
 
-               ;; Verify the initial pair is within the pool.
-               (let [pair-text (element-text pg ".vote-compare-pair")]
-                 (is (and (string? pair-text) (str/includes? pair-text "~/pool/"))
-                     (str "initial pair is within ~/pool: " pair-text)))
+               ;; Vote all 45 pairs, always preferring the alphabetically-earlier item.
+               (loop [votes-cast 0]
+                 (when (< votes-cast total-pairs)
+                   (let [left-text  (element-text pg ".vote-compare-left code")
+                         right-text (element-text pg ".vote-compare-right code")]
+                     (is (str/includes? left-text "~/pool/")
+                         (str "vote " votes-cast ": left is in pool: " left-text))
+                     (is (str/includes? right-text "~/pool/")
+                         (str "vote " votes-cast ": right is in pool: " right-text))
+                     (set-ratio! pg left-text right-text)
+                     (let [winner (if (neg? (compare (leaf left-text) (leaf right-text)))
+                                    (leaf left-text) (leaf right-text))]
+                       (locator/fill (page/locator pg "#vote-explain")
+                                     (str "prefer " winner)))
+                     (locator/click (page/locator pg "#vote-compare-form button[type=submit]"))
+                     (is (wait-for-text pg "ul.vote-edge-history" "prefer " 20000)
+                         (str "vote " votes-cast " appears in edge history"))
+                     (when (< (inc votes-cast) total-pairs)
+                       (is (wait-for-text pg "[data-testid=\"vote-next-pair\"]" "next pair" 8000)
+                           (str "next pair available after vote " votes-cast))
+                       (locator/click (page/locator pg "[data-testid=\"vote-next-pair\"]"))
+                       (is (wait-for-text pg "body.view-vote-compare" "compare" 10000)
+                           (str "vote page loaded for pair " (inc votes-cast))))
+                     (recur (inc votes-cast)))))
 
-               ;; Follow vote → next-pair sequence up to 15 iterations.
-               (let [votes-cast
-                     (loop [i 0]
-                       (if (>= i 15)
-                         i
-                         (let [explanation (str "pool vote " i " reason")]
-                           (locator/fill (page/locator pg "#vote-explain") explanation)
-                           (locator/click (page/locator pg "#vote-compare-form button[type=submit]"))
-                           ;; Wait for edge history morph confirming the vote landed.
-                           (if-not (wait-for-text pg "ul.vote-edge-history" explanation 20000)
-                             (do (println "  vote" i "history morph timed out — stopping")
-                                 i)
-                             (let [has-next (wait-for-text pg "[data-testid=\"vote-next-pair\"]"
-                                                           "next pair" 8000)]
-                               (if-not has-next
-                                 ;; "no next pair" — pool exhausted.
-                                 (do (println "  no next pair after vote" i " — pool exhausted")
-                                     (inc i))
-                                 (do
-                                   ;; Verify the pair on this page is within the pool before advancing.
-                                   (let [pt (element-text pg ".vote-compare-pair")]
-                                     (is (and (string? pt) (str/includes? pt "~/pool/"))
-                                         (str "pair at vote " i " is within ~/pool: " pt)))
-                                   (locator/click (page/locator pg "[data-testid=\"vote-next-pair\"]"))
-                                   ;; Wait for next pair to load.
-                                   (wait-for-text pg "body.view-vote-compare" "compare" 10000)
-                                   (recur (inc i)))))))))]
+               (println (str "  cast all " total-pairs " votes"))
 
-                 (is (>= votes-cast 1) (str "cast at least 1 vote, got: " votes-cast))
-                 (println (str "  pool voting sequence complete: " votes-cast " vote(s) cast")))
-
-               ;; After the sequence, the current page is still a pool-scoped vote page.
-               (let [url (page/url pg)]
-                 (is (str/includes? (or url "") "/vote")
-                     (str "still on /vote after sequence: " url))))))))
+               ;; Query the ranking via RPC and assert alphabetical order.
+               (let [rank-resp  (oauth/http-post-json
+                                 (str base-url "/api/v0/rpc")
+                                 [{"GetGardenRank" {"room"        "public"
+                                                    "parent_path" "~/pool"}}]
+                                 :headers {"Authorization" (str "Bearer " alice-token)})
+                     rank-json  (json/parse-string (:body rank-resp) true)
+                     result     (get-in rank-json [:results 0 :result :GardenRank])
+                     components (:components result)
+                     unranked   (:unranked_items result)
+                     ranked     (mapv :item (mapcat :ranking components))
+                     ranked-leaves (mapv #(last (str/split % #"[/~]+")) ranked)]
+                 (is (= 1 (count components))
+                     (str "all 10 items form one connected component (got " (count components) ")"))
+                 (is (empty? unranked)
+                     (str "no unranked items (got " (count unranked) ")"))
+                 (is (= 10 (count ranked))
+                     (str "10 items ranked (got " (count ranked) ")"))
+                 (is (= letters ranked-leaves)
+                     (str "ranking is alphabetical a→j (got " ranked-leaves ")"))))))))
 
      (finally
        (when-some [s @!server] (common/kill-server s))

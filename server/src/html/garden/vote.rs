@@ -234,8 +234,10 @@ pub(super) fn vote_compare_href(
     thread_override: Option<&str>,
     pool: Option<&ItemId>,
 ) -> String {
-    let left_q = urlencoding::encode(left.as_str());
-    let right_q = urlencoding::encode(right.as_str());
+    let left_dp = left.display_path();
+    let right_dp = right.display_path();
+    let left_q = urlencoding::encode(&left_dp);
+    let right_q = urlencoding::encode(&right_dp);
     let mut base = format!(
         "{}/vote?left={}&right={}",
         nav.room_path_prefix_for_vote_compare(),
@@ -246,16 +248,20 @@ pub(super) fn vote_compare_href(
         base = format!("{}&thread={}", base, urlencoding::encode(t));
     }
     if let Some(p) = pool {
-        base = format!("{}&pool={}", base, urlencoding::encode(p.as_str()));
+        let pool_dp = p.display_path();
+        base = format!("{}&pool={}", base, urlencoding::encode(&pool_dp));
     }
     base
 }
 
 pub(super) fn vote_pool_href(nav: &ThreadNav, pool_item_str: &str) -> String {
+    let display = ItemId::parse(pool_item_str)
+        .map(|i| i.display_path())
+        .unwrap_or_else(|| pool_item_str.to_string());
     format!(
         "{}/vote?pool={}",
         nav.room_path_prefix_for_vote_compare(),
-        urlencoding::encode(pool_item_str)
+        urlencoding::encode(&display)
     )
 }
 
