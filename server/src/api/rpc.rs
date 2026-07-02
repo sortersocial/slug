@@ -247,6 +247,28 @@ pub async fn rpc_room_delete(
         .map_err(|_| ("writer dropped".into(), None))?
 }
 
+pub async fn rpc_thread_graduate(
+    state: &AppState,
+    headers: &HeaderMap,
+    room: String,
+    thread_tag: String,
+) -> Result<RpcResult, RpcErr> {
+    let bearer = parse_bearer(headers).map_err(|(_, m)| (m, None))?;
+    let (tx, rx) = oneshot::channel();
+    state
+        .write_tx
+        .send(WriteCmd::ThreadGraduate {
+            room: room.trim().to_string(),
+            thread_tag: thread_tag.trim().to_string(),
+            bearer,
+            reply: tx,
+        })
+        .await
+        .map_err(|_| ("writer unavailable".into(), None))?;
+    rx.await
+        .map_err(|_| ("writer dropped".into(), None))?
+}
+
 async fn rpc_post(
     state: &AppState,
     headers: &HeaderMap,
@@ -1136,6 +1158,12 @@ pub async fn handle_rpc_batch(
                 Ok(r) => line_ok(r),
                 Err((e, h)) => line_err(e, h),
             },
+            RpcCommand::ThreadGraduate { room, thread_tag } => {
+                match rpc_thread_graduate(&state, &headers, room, thread_tag).await {
+                    Ok(r) => line_ok(r),
+                    Err((e, h)) => line_err(e, h),
+                }
+            }
             RpcCommand::RoomRevoke {
                 room,
                 username,

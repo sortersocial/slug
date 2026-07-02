@@ -685,3 +685,150 @@ async fn test_empty_private_room_garden_returns_404() {
     );
 }
 
+#[tokio::test]
+async fn test_thread_graduate_private_to_public() {
+    let (addr, _tmp, _log, _handle) = create_test_server().await;
+    let client = reqwest::Client::new();
+    let bearer = test_bearer();
+
+    let create = rpc_batch(
+        &client,
+        addr,
+        Some(&bearer),
+        serde_json::json!([{
+            "RoomCreate": { "slug": "graduate-me" }
+        }]),
+    )
+    .await;
+    let room_id = create["results"][0]["result"]["RoomCreated"]["room_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let thread_tag = "beta-thread";
+    let post_text = format!(
+        "# {thread_tag}\n\n~/graduate-demo/item-a {{first item}}\n~/graduate-demo/item-b {{second item}}\n{{because test}}\n~/graduate-demo/item-a 2:1 ~/graduate-demo/item-b\n"
+    );
+
+    let post = rpc_batch(
+        &client,
+        addr,
+        Some(&bearer),
+        serde_json::json!([{
+            "Post": {
+                "room": room_id,
+                "thread_tag": thread_tag,
+                "delegate": "00000000-0000-0000-0000-000000000000:test:local/test",
+                "text": post_text,
+                "return_rank_diff": false
+            }
+        }]),
+    )
+    .await;
+    assert_eq!(post["results"][0]["ok"], true, "{:?}", post["results"][0]);
+
+    let grad = rpc_batch(
+        &client,
+        addr,
+        Some(&bearer),
+        serde_json::json!([{
+            "ThreadGraduate": {
+                "room": room_id,
+                "thread_tag": thread_tag
+            }
+        }]),
+    )
+    .await;
+    assert_eq!(grad["results"][0]["ok"], true, "{:?}", grad["results"][0]);
+    let result = &grad["results"][0]["result"]["ThreadGraduatedOk"];
+    assert_eq!(result["thread_tag"], thread_tag);
+    assert_eq!(result["posts_copied"], 1);
+    assert!(
+        result["web"]
+            .as_str()
+            .unwrap_or("")
+            .ends_with(&format!("/t/{thread_tag}")),
+        "expected public thread URL, got {:?}",
+        result["web"]
+    );
+
+    let public_thread = rpc_batch(
+        &client,
+        addr,
+        None,
+        serde_json::json!([{
+            "GetForumThread": {
+                "room": "public",
+                "thread_tag": thread_tag,
+                "offset": null,
+                "limit": null,
+                "since": null,
+                "before": null,
+                "actor": null,
+                "post_id": null
+            }
+        }]),
+    )
+    .await;
+    assert_eq!(public_thread["results"][0]["ok"], true);
+    let items = public_thread["results"][0]["result"]["ForumThread"]["items"]
+        .as_array()
+        .unwrap();
+    assert_eq!(items.len(), 1);
+
+    let public_item = rpc_batch(
+        &client,
+        addr,
+        None,
+        serde_json::json!([{
+            "GetGardenItem": {
+                "room": "public",
+                "item_path": "~/graduate-demo/item-a",
+                "full": true
+            }
+        }]),
+    )
+    .await;
+    assert_eq!(public_item["results"][0]["ok"], true, "{:?}", public_item["results"][0]);
+    let body = public_item["results"][0]["result"]["GardenItem"]["body"]
+        .as_str()
+        .unwrap_or("");
+    assert!(body.contains("first item"), "expected graduated item body, got {body:?}");
+
+    let post_again = rpc_batch(
+        &client,
+        addr,
+        Some(&bearer),
+        serde_json::json!([{
+            "Post": {
+                "room": room_id,
+                "thread_tag": thread_tag,
+                "delegate": "00000000-0000-0000-0000-000000000000:test:local/test",
+                "text": "should be blocked\n",
+                "return_rank_diff": false
+            }
+        }]),
+    )
+    .await;
+    assert_eq!(post_again["results"][0]["ok"], false);
+    assert_eq!(
+        post_again["results"][0]["error"],
+        "thread graduated to public"
+    );
+
+    let grad_again = rpc_batch(
+        &client,
+        addr,
+        Some(&bearer),
+        serde_json::json!([{
+            "ThreadGraduate": {
+                "room": room_id,
+                "thread_tag": thread_tag
+            }
+        }]),
+    )
+    .await;
+    assert_eq!(grad_again["results"][0]["ok"], false);
+    assert_eq!(grad_again["results"][0]["error"], "thread already graduated");
+}
+

@@ -17,7 +17,9 @@ use crate::state::AppState;
 
 use super::access::user_can_post_room;
 use super::access::user_can_view_room;
+use super::access::user_can_manage_room;
 use super::feed::{collect_thread_rows_for_scope, render_thread_feed};
+use super::graduate::{thread_graduate_button_markup, thread_graduated_banner_markup};
 use super::ingest::ingest_entry_markup;
 use super::nav::ThreadNav;
 use super::new_thread::fragment_new_thread_slot;
@@ -103,13 +105,27 @@ async fn thread_view_inner(
     let reduced = state.reduced.read().await;
     let user = optional_principal(&headers, &jar, &reduced);
     let sc = nav.scope();
-    let show_compose = match &sc {
-        ScopeId::Public => user.is_some(),
-        ScopeId::Room(rid) => user
-            .as_ref()
-            .map(|u| user_can_post_room(&reduced, rid, u))
-            .unwrap_or(false),
+    let is_private = matches!(sc, ScopeId::Room(_));
+    let room_id = if let ScopeId::Room(ref rid) = sc {
+        Some(rid.clone())
+    } else {
+        None
     };
+    let graduated = room_id
+        .as_ref()
+        .is_some_and(|rid| reduced.is_thread_graduated(rid, &tag));
+    let can_manage = room_id
+        .as_ref()
+        .and_then(|rid| user.as_ref().map(|u| user_can_manage_room(&reduced, rid, u)))
+        .unwrap_or(false);
+    let show_compose = !graduated
+        && match &sc {
+            ScopeId::Public => user.is_some(),
+            ScopeId::Room(rid) => user
+                .as_ref()
+                .map(|u| user_can_post_room(&reduced, rid, u))
+                .unwrap_or(false),
+        };
     let strip = auth_strip(&headers, &jar, &reduced);
     let now = now_ms();
     let entry_rows: Vec<Markup> = display_ingests
@@ -148,6 +164,14 @@ async fn thread_view_inner(
     let body = html! {
         (strip)
         nav class="breadcrumb" { (bc) }
+        @if graduated {
+            (thread_graduated_banner_markup(&tag, &ThreadNav::public().thread_url(&tag)))
+        }
+        @if is_private && can_manage && !graduated {
+            div class="thread-graduate-actions" {
+                (thread_graduate_button_markup(&nav, &tag))
+            }
+        }
         p class="muted" { "top=oldest · bottom=newest" }
         div id="thread-feed-region" {
             @if display_ingests.is_empty() {

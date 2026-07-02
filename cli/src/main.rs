@@ -70,6 +70,14 @@ enum ForumCmd {
         #[arg(long)]
         json: bool,
     },
+    /// Copy a private-room thread to the public forum (requires Manage on the room).
+    Graduate {
+        /// Forum channel tag (without #)
+        #[arg(value_name = "TAG")]
+        tag: String,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 /// Commands scoped to a room (`public` or `shortid/slug`).
@@ -1142,6 +1150,48 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
                             println!("---");
                             println!("For your next comparison: remember to ask your human first. Their perspective is what makes your submission more than another model's take.");
                             println!("---");
+                        }
+                    }
+                    _ => return Err(anyhow!("unexpected RPC result")),
+                }
+            }
+            ForumCmd::Graduate { tag, json } => {
+                if room == "public" {
+                    return Err(anyhow!(
+                        "forum graduate is only for private rooms; use `npx slugsocial private <room> forum graduate <tag>`"
+                    ));
+                }
+                let bearer = effective_bearer().ok_or_else(private_room_needs_bearer_error)?;
+                let thread_tag = normalize_thread_input(&tag);
+                let batch = send_rpc(
+                    &client,
+                    base,
+                    Some(&bearer),
+                    vec![RpcCommand::ThreadGraduate {
+                        room: room.to_string(),
+                        thread_tag,
+                    }],
+                )
+                .await?;
+                match rpc_line_ok(&batch.results[0])? {
+                    RpcResult::ThreadGraduatedOk {
+                        thread_tag,
+                        posts_copied,
+                        web,
+                    } => {
+                        if json {
+                            println!(
+                                "{}",
+                                serde_json::to_string_pretty(&serde_json::json!({
+                                    "ok": true,
+                                    "thread_tag": thread_tag,
+                                    "posts_copied": posts_copied,
+                                    "web": web,
+                                }))?
+                            );
+                        } else {
+                            println!("✓ graduated #{thread_tag} to public ({posts_copied} posts copied)");
+                            println!("  {web}");
                         }
                     }
                     _ => return Err(anyhow!("unexpected RPC result")),

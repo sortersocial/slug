@@ -7,7 +7,7 @@ use tokio::sync::mpsc;
 
 use crate::{
     dsl,
-    events::{AgentBound, Event, GrantAdded, Ingest, PostRedacted, RoomDeleted, UserRegistered},
+    events::{AgentBound, Event, GrantAdded, Ingest, PostRedacted, RoomDeleted, ThreadGraduated, UserRegistered},
     html::JsBuilder,
     identity::parse_agent,
     path_types::ItemId,
@@ -255,6 +255,16 @@ pub async fn writer_actor(mut rx: mpsc::Receiver<WriteCmd>, state: AppState) {
                         return Err((
                             "unknown room".into(),
                             Some(format!("room `{room_key}` does not exist")),
+                        ));
+                    }
+
+                    if is_private && reduced.is_thread_graduated(&room_key, &thread_id) {
+                        return Err((
+                            "thread graduated to public".into(),
+                            Some(format!(
+                                "this private thread was published to public #{}; post there instead",
+                                crate::canonical_path::canonicalize_tag(&thread_id)
+                            )),
                         ));
                     }
 
@@ -675,6 +685,110 @@ pub async fn writer_actor(mut rx: mpsc::Receiver<WriteCmd>, state: AppState) {
                     }
 
                     Ok(RpcResult::RoomDeletedOk {})
+                }
+                .await;
+                let _ = reply.send(out);
+            }
+
+            WriteCmd::ThreadGraduate {
+                room,
+                thread_tag,
+                bearer,
+                reply,
+            } => {
+                let out = async {
+                    use crate::canonical_path::canonicalize_tag;
+                    use crate::events::ThreadCapability;
+
+                    let mut reduced = state.reduced.write().await;
+                    let principal = verify_token(&reduced, &bearer).map_err(|(_, m)| (m, None))?;
+                    let room = room.trim().to_string();
+                    let thread_tag = canonicalize_tag(&thread_tag);
+                    if !reduced.rooms.contains(&room) {
+                        return Err(("unknown room".into(), None));
+                    }
+                    if !reduced.user_has_cap(&room, &principal, ThreadCapability::Manage) {
+                        return Err(("requires Manage capability".into(), None));
+                    }
+                    if reduced.is_thread_graduated(&room, &thread_tag) {
+                        return Err(("thread already graduated".into(), None));
+                    }
+
+                    let scope = ScopeId::Room(room.clone());
+                    let source_ids: Vec<String> = reduced
+                        .ingests_by_scope_thread
+                        .get(&(scope.clone(), thread_tag.clone()))
+                        .map(|q| q.iter().rev().cloned().collect::<Vec<_>>())
+                        .unwrap_or_default()
+                        .into_iter()
+                        .filter(|id| !reduced.redacted_posts.contains(id))
+                        .collect();
+
+                    if source_ids.is_empty() {
+                        return Err((
+                            "thread has no posts to graduate".into(),
+                            Some("post at least once in this private thread first".into()),
+                        ));
+                    }
+
+                    let mut posts_copied: u32 = 0;
+                    for source_id in &source_ids {
+                        let Some(source) = reduced.ingests_by_id.get(source_id).cloned() else {
+                            continue;
+                        };
+                        let v = validate_ingest_document(
+                            &reduced,
+                            &source.raw,
+                            &ScopeId::Public,
+                        )
+                        .map_err(|(_, m, h)| (m, h))?;
+
+                        let new_post_id = uuid::Uuid::new_v4().to_string();
+                        let ingest_event = Event::Ingest(Ingest {
+                            ts: v.ts,
+                            id: new_post_id,
+                            raw: v.raw_text,
+                            principal: source.principal,
+                            delegate: source.delegate,
+                            room_id: "public".to_string(),
+                            thread_tag: thread_tag.clone(),
+                        });
+                        state
+                            .event_log
+                            .append(&ingest_event)
+                            .await
+                            .map_err(|e| (format!("{e}"), None))?;
+                        reduced.apply_event(ingest_event);
+                        posts_copied += 1;
+                    }
+
+                    if posts_copied == 0 {
+                        return Err(("thread has no posts to graduate".into(), None));
+                    }
+
+                    let grad_ev = Event::ThreadGraduated(ThreadGraduated {
+                        ts: now_ms(),
+                        source_room_id: room.clone(),
+                        thread_tag: thread_tag.clone(),
+                        graduated_by: principal,
+                        posts_copied,
+                    });
+                    state
+                        .event_log
+                        .append(&grad_ev)
+                        .await
+                        .map_err(|e| (format!("{e}"), None))?;
+                    reduced.apply_event(grad_ev);
+                    drop(reduced);
+
+                    broadcast_web_refresh(&state, "public", &thread_tag).await;
+                    broadcast_web_refresh(&state, &room, &thread_tag).await;
+
+                    Ok(RpcResult::ThreadGraduatedOk {
+                        thread_tag: thread_tag.clone(),
+                        posts_copied,
+                        web: ForumThreadUrl::from_room_tag("public", &thread_tag).into_inner(),
+                    })
                 }
                 .await;
                 let _ = reply.send(out);

@@ -171,6 +171,11 @@ pub enum RoomTimelineKind {
     RoomDeleted {
         deleted_by: String,
     },
+    ThreadGraduated {
+        thread_tag: String,
+        graduated_by: String,
+        posts_copied: u32,
+    },
     GrantAdded {
         username: String,
         granted_by: String,
@@ -249,6 +254,8 @@ pub struct ReducerState {
     pub room_timeline: HashMap<String, Vec<RoomTimelineEntry>>,
     /// Invite token → active invite (absent when fully consumed or never minted).
     pub invites: HashMap<String, ActiveInviteState>,
+    /// Private `(room_id, thread_tag)` pairs that were graduated to public.
+    pub graduated_threads: HashSet<(String, String)>,
 }
 
 impl ReducerState {
@@ -314,6 +321,12 @@ impl ReducerState {
             .and_then(|t| t.get(username))
             .map(|caps| caps.contains(&cap))
             .unwrap_or(false)
+    }
+
+    pub fn is_thread_graduated(&self, room_id: &str, thread_tag: &str) -> bool {
+        let tag = canonicalize_tag(thread_tag);
+        self.graduated_threads
+            .contains(&(room_id.trim().to_string(), tag))
     }
 
     /// Invite link is present, not expired, and has uses left.
@@ -814,6 +827,22 @@ impl ReducerState {
                     }
                 }
             }
+            Event::ThreadGraduated(tg) => {
+                let room_id = tg.source_room_id.trim().to_string();
+                let tag = canonicalize_tag(&tg.thread_tag);
+                self.graduated_threads.insert((room_id.clone(), tag.clone()));
+                self.room_timeline
+                    .entry(room_id)
+                    .or_default()
+                    .push(RoomTimelineEntry {
+                        ts: tg.ts,
+                        kind: RoomTimelineKind::ThreadGraduated {
+                            thread_tag: tag,
+                            graduated_by: tg.graduated_by.clone(),
+                            posts_copied: tg.posts_copied,
+                        },
+                    });
+            }
         }
     }
 }
@@ -839,6 +868,7 @@ impl Default for ReducerState {
             grants: HashMap::new(),
             room_timeline: HashMap::new(),
             invites: HashMap::new(),
+            graduated_threads: HashSet::new(),
         }
     }
 }
