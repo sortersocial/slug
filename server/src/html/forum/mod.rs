@@ -3,6 +3,7 @@
 mod access;
 mod copy;
 mod feed;
+mod graduate;
 mod ingest;
 mod nav;
 mod new_thread;

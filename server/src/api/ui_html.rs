@@ -15,7 +15,7 @@ use crate::{
     api::{
         auth::{resolve_web_session, WebSession},
         handle_rpc_batch,
-        rpc::{rpc_post_redact, rpc_post_with_bearer, rpc_room_delete},
+        rpc::{rpc_post_redact, rpc_post_with_bearer, rpc_room_delete, rpc_thread_graduate},
     },
     canonical_path::canonicalize_tag,
     resolvers::resolve_github_children,
@@ -573,6 +573,25 @@ async fn dispatch_ui_action(
         } => {
             let viewer = session.map(|s| s.username.as_str());
             thread_ui_copy_thread(state, &room, &thread_tag, &copy_btn_id, viewer).await
+        }
+        HtmlUiAction::GraduateThread { room, thread_tag } => {
+            let Some(session) = session else {
+                return js_redirect("/login").into_response();
+            };
+            let room = room.trim().to_string();
+            let thread_tag = canonicalize_tag(&thread_tag);
+            if room.is_empty() || room == "public" {
+                return ui_js_warn("graduation requires a private room").into_response();
+            }
+            let h = headers_from_bearer(&session.bearer);
+            match rpc_thread_graduate(state, &h, room, thread_tag.clone()).await {
+                Ok(RpcResult::ThreadGraduatedOk { web, .. }) => js_redirect(&web).into_response(),
+                Ok(_) => (StatusCode::BAD_REQUEST, "unexpected response").into_response(),
+                Err((msg, hint)) => {
+                    let detail = hint.as_deref().unwrap_or("");
+                    js_error("#errors", &msg, detail).into_response()
+                }
+            }
         }
     }
 }

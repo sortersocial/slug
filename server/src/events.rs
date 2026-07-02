@@ -26,6 +26,8 @@ pub enum Event {
     Ingest(Ingest),
     /// Author removed their post from the forum and garden (votes/items from that ingest are undone).
     PostRedacted(PostRedacted),
+    /// Private-room thread copied to the public forum (Manage only; ingests appended separately).
+    ThreadGraduated(ThreadGraduated),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -134,6 +136,17 @@ pub struct Ingest {
     pub room_id: String,
     /// Forum channel within the room (e.g. `languages`).
     pub thread_tag: String,
+}
+
+/// A private-room forum thread was published to the public site under the same tag.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ThreadGraduated {
+    pub ts: i64,
+    /// Private room wire id (`shortid/slug`).
+    pub source_room_id: String,
+    pub thread_tag: String,
+    pub graduated_by: String,
+    pub posts_copied: u32,
 }
 
 fn generate_id() -> String {

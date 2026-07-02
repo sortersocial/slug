@@ -118,6 +118,11 @@ pub enum HtmlUiAction {
         thread_tag: String,
         copy_btn_id: String,
     },
+    /// Publish a private-room thread to the public forum (Manage only).
+    GraduateThread {
+        room: String,
+        thread_tag: String,
+    },
 }
 
 #[derive(Debug, Error)]

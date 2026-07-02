@@ -388,6 +388,11 @@ pub enum RpcCommand {
     RoomDelete {
         room: String,
     },
+    /// Copy a private-room forum thread (and its garden signal) to the public site (requires Manage).
+    ThreadGraduate {
+        room: String,
+        thread_tag: String,
+    },
     GetGlobalRank {
         room: String,
         #[serde(default)]
@@ -478,6 +483,11 @@ pub enum RpcResult {
     RoomAudit(RoomAuditResponse),
     RoomList(RoomListResponse),
     RoomDeletedOk {},
+    ThreadGraduatedOk {
+        thread_tag: String,
+        posts_copied: u32,
+        web: String,
+    },
     GrantOk {},
     GlobalRank(GlobalRankResponse),
     Pair(PairResponse),

@@ -36,6 +36,12 @@ pub enum WriteCmd {
         bearer: String,
         reply: oneshot::Sender<WriteCmdResult>,
     },
+    ThreadGraduate {
+        room: String,
+        thread_tag: String,
+        bearer: String,
+        reply: oneshot::Sender<WriteCmdResult>,
+    },
     Grant {
         room: String,
         username: String,
