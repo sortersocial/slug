@@ -106,7 +106,7 @@ cargo run -p sorterc -- scan path/to/events.jsonl [--pretty]
 
 ### Testing
 
-- **Rust tests:** `cargo nextest run --workspace` (163 tests; requires `cargo-nextest`)
+- **Rust tests:** `cargo nextest run --workspace` (226 tests; requires `cargo-nextest`)
 - **Clojure integration + browser tests:** `clojure -M:kaocha` (runs both `:http-integration` and `:browser` suites; the test harness builds release binaries, starts its own server instances with mock OAuth, and runs Playwright browser tests)
 - **Lint:** `cargo clippy --workspace` (warnings are expected; zero errors required)
 
@@ -116,3 +116,4 @@ cargo run -p sorterc -- scan path/to/events.jsonl [--pretty]
 - `bb dev` (Babashka) is a convenience wrapper around `cargo run` for local dev. It requires `bb` (Babashka) to be installed.
 - Bearer tokens use format `slug_<id>_<secret>` and are verified against the reducer state's `tokens_by_id` map. Raw API-key strings like "dev" won't work; you must complete the OAuth registration flow to get a valid token.
 - Node.js 24 + Playwright chromium are required for browser tests (`npx playwright install chromium`).
+- The browser suite drives Playwright through the **JVM** driver bundled by `spel` (`com.microsoft.playwright`), not Node's `@playwright/test`. On first run it auto-downloads Chromium into `~/.cache/ms-playwright`, so `clojure -M:kaocha` passes even without a separate `npx playwright install` step (the CI-only Node 24 setup above is not a hard local requirement).
