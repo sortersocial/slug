@@ -18,7 +18,10 @@ use crate::{
 
 use super::auth::{issue_token_for_user, verify_token};
 use super::helpers::{now_ms, resolve_item};
-use super::validate::{normalize_room_and_thread, validate_ingest_document};
+use super::validate::{
+    normalize_room_and_thread, seed_ingest_texts_for_graduation,
+    validate_ingest_document, validate_ingest_document_for_graduation,
+};
 use slug_types::{room_route_segment, RpcResult, ROOM_SHORT_ID_LEN};
 
 fn gen_short_id() -> String {
@@ -731,15 +734,43 @@ pub async fn writer_actor(mut rx: mpsc::Receiver<WriteCmd>, state: AppState) {
                         ));
                     }
 
+                    let seed_texts =
+                        seed_ingest_texts_for_graduation(&reduced, &room, &source_ids);
                     let mut posts_copied: u32 = 0;
+                    for seed_text in &seed_texts {
+                        let v = validate_ingest_document_for_graduation(
+                            &reduced,
+                            seed_text,
+                            &room,
+                        )
+                        .map_err(|(_, m, h)| (m, h))?;
+                        let new_post_id = uuid::Uuid::new_v4().to_string();
+                        let ingest_event = Event::Ingest(Ingest {
+                            ts: v.ts,
+                            id: new_post_id,
+                            raw: v.raw_text,
+                            principal: principal.clone(),
+                            delegate: None,
+                            room_id: "public".to_string(),
+                            thread_tag: thread_tag.clone(),
+                        });
+                        state
+                            .event_log
+                            .append(&ingest_event)
+                            .await
+                            .map_err(|e| (format!("{e}"), None))?;
+                        reduced.apply_event(ingest_event);
+                        posts_copied += 1;
+                    }
+
                     for source_id in &source_ids {
                         let Some(source) = reduced.ingests_by_id.get(source_id).cloned() else {
                             continue;
                         };
-                        let v = validate_ingest_document(
+                        let v = validate_ingest_document_for_graduation(
                             &reduced,
                             &source.raw,
-                            &ScopeId::Public,
+                            &room,
                         )
                         .map_err(|(_, m, h)| (m, h))?;
 

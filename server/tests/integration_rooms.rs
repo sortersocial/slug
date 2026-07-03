@@ -832,3 +832,94 @@ async fn test_thread_graduate_private_to_public() {
     assert_eq!(grad_again["results"][0]["error"], "thread already graduated");
 }
 
+#[tokio::test]
+async fn test_thread_graduate_cross_thread_items() {
+    let (addr, _tmp, _log, _handle) = create_test_server().await;
+    let client = reqwest::Client::new();
+    let bearer = test_bearer();
+
+    let create = rpc_batch(
+        &client,
+        addr,
+        Some(&bearer),
+        serde_json::json!([{
+            "RoomCreate": { "slug": "graduate-cross-thread" }
+        }]),
+    )
+    .await;
+    let room_id = create["results"][0]["result"]["RoomCreated"]["room_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let define_text = "~/cross-room/alpha {alpha body}\n~/cross-room/beta {beta body}\n";
+    let define_post = rpc_batch(
+        &client,
+        addr,
+        Some(&bearer),
+        serde_json::json!([{
+            "Post": {
+                "room": room_id,
+                "thread_tag": "definitions",
+                "delegate": "00000000-0000-0000-0000-000000000000:test:local/test",
+                "text": define_text,
+                "return_rank_diff": false
+            }
+        }]),
+    )
+    .await;
+    assert_eq!(define_post["results"][0]["ok"], true, "{:?}", define_post["results"][0]);
+
+    let vote_text = "# theology\n\n{because cross-thread vote}\n~/cross-room/alpha 2:1 ~/cross-room/beta\n";
+    let vote_post = rpc_batch(
+        &client,
+        addr,
+        Some(&bearer),
+        serde_json::json!([{
+            "Post": {
+                "room": room_id,
+                "thread_tag": "theology",
+                "delegate": "00000000-0000-0000-0000-000000000000:test:local/test",
+                "text": vote_text,
+                "return_rank_diff": false
+            }
+        }]),
+    )
+    .await;
+    assert_eq!(vote_post["results"][0]["ok"], true, "{:?}", vote_post["results"][0]);
+
+    let grad = rpc_batch(
+        &client,
+        addr,
+        Some(&bearer),
+        serde_json::json!([{
+            "ThreadGraduate": {
+                "room": room_id,
+                "thread_tag": "theology"
+            }
+        }]),
+    )
+    .await;
+    assert_eq!(
+        grad["results"][0]["ok"],
+        true,
+        "graduate theology with cross-thread items: {:?}",
+        grad["results"][0]
+    );
+
+    let public_item = rpc_batch(
+        &client,
+        addr,
+        None,
+        serde_json::json!([{
+            "GetGardenItem": {
+                "room": "public",
+                "item_path": "~/cross-room/alpha",
+                "full": true
+            }
+        }]),
+    )
+    .await;
+    assert_eq!(public_item["results"][0]["ok"], true, "{:?}", public_item["results"][0]);
+}
+
