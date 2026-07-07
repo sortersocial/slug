@@ -2,11 +2,167 @@
  * Slug web UI: only plumbing — fetch/eval/SSE. No product UI logic here.
  */
 (function () {
+  var DRAFT_PREFIX = 'slug-draft:';
+  var draftSaveTimers = new WeakMap();
+  var draftBound = new WeakSet();
+
   function evalJs(js) {
     if (js && String(js).trim()) {
       eval(js);
     }
+    initDrafts();
   }
+
+  function draftStorageId(key) {
+    return DRAFT_PREFIX + key;
+  }
+
+  function draftIsEmpty(data) {
+    return Object.keys(data).every(function (k) {
+      return !String(data[k] || '').trim();
+    });
+  }
+
+  function collectDraft(container) {
+    var data = {};
+    if (container.tagName === 'FORM') {
+      container.querySelectorAll('input[name], textarea[name], select[name]').forEach(function (el) {
+        if (el.type === 'radio' && !el.checked) return;
+        if (el.type === 'checkbox' && !el.checked) return;
+        data[el.name] = el.value;
+      });
+      var slider = container.querySelector('#vote-preference-slider');
+      if (slider) data.__slider = slider.value;
+      return data;
+    }
+    if (container.tagName === 'TEXTAREA' || container.tagName === 'INPUT') {
+      data.__self = container.value;
+    }
+    return data;
+  }
+
+  function clearDraftByKey(key) {
+    if (!key) return;
+    try {
+      localStorage.removeItem(draftStorageId(key));
+    } catch (e) {}
+  }
+
+  function saveDraft(container) {
+    var key = container.getAttribute('data-draft-key');
+    if (!key) return;
+    var data = collectDraft(container);
+    try {
+      if (draftIsEmpty(data)) {
+        clearDraftByKey(key);
+      } else {
+        localStorage.setItem(draftStorageId(key), JSON.stringify(data));
+      }
+    } catch (e) {}
+  }
+
+  function scheduleDraftSave(container) {
+    var prev = draftSaveTimers.get(container);
+    if (prev) clearTimeout(prev);
+    var handle = setTimeout(function () {
+      saveDraft(container);
+    }, 500);
+    draftSaveTimers.set(container, handle);
+  }
+
+  function syncVoteSliderFromDraft(form, data) {
+    var slider = form.querySelector('#vote-preference-slider');
+    if (!slider) return;
+    if (data.__slider != null && String(data.__slider).trim() !== '') {
+      slider.value = data.__slider;
+      slider.dispatchEvent(new Event('input', { bubbles: true }));
+      return;
+    }
+    var left = parseInt(data.ratio_left, 10);
+    var right = parseInt(data.ratio_right, 10);
+    if (!isNaN(left) && !isNaN(right) && left + right > 0) {
+      slider.value = String(Math.round((right * 100) / (left + right)));
+      slider.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  }
+
+  function restoreDraft(container) {
+    var key = container.getAttribute('data-draft-key');
+    if (!key) return;
+    var raw;
+    try {
+      raw = localStorage.getItem(draftStorageId(key));
+    } catch (e) {
+      return;
+    }
+    if (!raw) return;
+    var data;
+    try {
+      data = JSON.parse(raw);
+    } catch (e) {
+      return;
+    }
+    if (!data || typeof data !== 'object') return;
+
+    if (container.tagName === 'FORM') {
+      container.querySelectorAll('input[name], textarea[name], select[name]').forEach(function (el) {
+        if (!(el.name in data)) return;
+        if (el.type === 'radio') {
+          el.checked = el.value === data[el.name];
+          return;
+        }
+        if (el.type === 'checkbox') {
+          el.checked = !!data[el.name];
+          return;
+        }
+        el.value = data[el.name];
+      });
+      syncVoteSliderFromDraft(container, data);
+      return;
+    }
+
+    if (data.__self != null && (container.tagName === 'TEXTAREA' || container.tagName === 'INPUT')) {
+      container.value = data.__self;
+    }
+  }
+
+  function bindDraftAutosave(container) {
+    if (!container || !container.getAttribute('data-draft-key') || draftBound.has(container)) {
+      return;
+    }
+    draftBound.add(container);
+    restoreDraft(container);
+
+    if (container.tagName === 'FORM') {
+      container.addEventListener('input', function (e) {
+        var target = e.target;
+        if (!target || !(target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT')) {
+          return;
+        }
+        scheduleDraftSave(container);
+      });
+      container.addEventListener('change', function (e) {
+        var target = e.target;
+        if (!target || target.tagName !== 'SELECT') return;
+        scheduleDraftSave(container);
+      });
+      return;
+    }
+
+    container.addEventListener('input', function () {
+      scheduleDraftSave(container);
+    });
+  }
+
+  function initDrafts() {
+    document.querySelectorAll('form[data-draft-key], [data-draft-key]#editor-input').forEach(bindDraftAutosave);
+  }
+
+  var nativeFormReset = HTMLFormElement.prototype.reset;
+  HTMLFormElement.prototype.reset = function () {
+    nativeFormReset.call(this);
+    clearDraftByKey(this.getAttribute('data-draft-key'));
+  };
 
   // Theme cookie sync (runs before paint; full reload if localStorage disagrees with cookie)
   try {
@@ -246,6 +402,7 @@
       };
     }
     connectSSE();
+    initDrafts();
   }
 
   if (document.readyState === 'loading') {

@@ -36,9 +36,9 @@ pub async fn editor_page(State(state): State<AppState>, jar: CookieJar, uri: Uri
         html! {
             nav class="breadcrumb" { (bc_try()) }
             h2 { "try" }
-            p class="muted" { "write DSL, see what happens. nothing is saved." }
+            p class="muted" { "write DSL, see what happens. drafts autosave in your browser." }
             div class="editor-container" {
-                textarea id="editor-input" rows="12" cols="80"
+                textarea id="editor-input" rows="12" cols="80" data-draft-key="try"
                     placeholder="your-uuid:rig:provider/model\n#your-thread\n\n{ description }\n~/path/item-a\n{ description }\n~/path/item-b\n\n{ reasoning }\n~/path/item-a 3:1 ~/path/item-b"
                     autocomplete="off" autofocus {}
                 div id="editor-status" class="muted" { "type to check…" }

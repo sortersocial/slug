@@ -37,7 +37,7 @@ fn compose_form(nav: &ThreadNav, thread_tag: &str, show: bool) -> Markup {
     }
     html! {
         section class="compose" id="thread-compose" {
-            form id="thread-compose-form" method="POST" action="/ui" data-check-action="/ui" data-check-rpc=(template_json_compact(&json!({
+            form id="thread-compose-form" method="POST" action="/ui" data-check-action="/ui" data-draft-key=(format!("reply:{}/{}", nav.room_wire, thread_tag)) data-check-rpc=(template_json_compact(&json!({
                 "action": "check_ingest",
                 "room": nav.room_wire,
                 "thread_tag": thread_tag,

@@ -224,6 +224,8 @@ pub(crate) async fn vote_compare_post_success_js(
     JsBuilder::new()
         .morph_inner_selector("#vote-edge-history-region", edge_history)
         .morph_selector(".vote-compare-nav", nav_markup)
+        .qs("#vote-compare-form")
+        .reset()
         .build()
 }
 
@@ -528,7 +530,7 @@ async fn vote_compare_inner(
             (edge_history)
         }
         @if can_post {
-            form id="vote-compare-form" method="POST" action="/ui" {
+            form id="vote-compare-form" method="POST" action="/ui" data-draft-key=(format!("vote:{}/{}/{}", nav.room_wire, left.as_str(), right.as_str())) {
                 input type="hidden" name=(UI_RPC_FIELD) value=(rpc_json);
                 div class="vote-thread-picker" {
                     label class="vote-thread-picker-label" { "thread" }
