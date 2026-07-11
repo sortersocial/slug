@@ -15,7 +15,7 @@ const TAG_INPUT_ID: &str = "new-thread-tag";
 fn new_thread_compose_section(room_wire: &str) -> Markup {
     html! {
         section class="compose" id=(COMPOSE_SECTION_ID) {
-            form id=(FORM_ID) method="POST" action="/ui" data-check-action="/ui" data-check-rpc=(template_json_compact(&json!({
+            form id=(FORM_ID) method="POST" action="/ui" data-check-action="/ui" data-draft-key=(format!("new-thread:{}", room_wire)) data-check-rpc=(template_json_compact(&json!({
                 "action": "check_ingest",
                 "room": room_wire,
                 "thread_tag": {"$form": "thread_tag"},
