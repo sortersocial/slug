@@ -230,6 +230,22 @@
       (is (str/ends-with? (last ranked) "languages/go")
                (str "go is #3 (got " (last ranked) ")"))
 
+      (println "\nchecking agent-facing missing path error…")
+      (bind missing-path-result
+            (common/run-cli cli-bin base-url
+                            ["public" "garden" "children" "--" "does-not-exist"]
+                            :extra-env {"RUST_BACKTRACE" "1"}))
+      (is (not (zero? (:exit missing-path-result)))
+          "missing garden path exits nonzero")
+      (bind missing-path-output
+            (str (:out missing-path-result) (:err missing-path-result)))
+      (is (str/includes? missing-path-output "path not found")
+          "missing garden path reports the concise error")
+      (is (str/includes? missing-path-output "~/does-not-exist does not exist")
+          "missing garden path preserves the actionable hint")
+      (is (not (str/includes? missing-path-output "Stack backtrace:"))
+          "missing garden path does not expose an anyhow backtrace")
+
         ;; 5. verify JSONL written (user_registered + token_issued + room_created + grant_added
         ;;    + private ingest + agent_bound + public ingest)
       (is (fs/exists? event-log) "events.jsonl exists")
@@ -251,6 +267,18 @@
       (is (= 2 (count ext-ranked)) (str "2 external issues ranked (got " (count ext-ranked) ")"))
       (is (str/ends-with? (first ext-ranked) "github.com/iss/1")
                (str "iss/1 is #1 (got " (first ext-ranked) ")"))
+
+      (println "\nquerying complete garden tree via CLI…")
+      (bind tree-result (common/run-cli cli-bin base-url ["public" "garden" "tree"]))
+      (is (zero? (:exit tree-result))
+          (str "cli garden tree exits 0 (err: " (:err tree-result) ")"))
+      (bind tree-paths (->> (:out tree-result) str/split-lines (remove str/blank?) set))
+      (is (contains? tree-paths "~/languages/rust")
+          "tree renders slug.social leaves as clean ~/ paths")
+      (is (contains? tree-paths "-/https://github.com/iss/1")
+          "tree renders external leaves with the -/ URL form")
+      (is (not-any? #(str/starts-with? % "~/http") tree-paths)
+          "tree never adds ~/ in front of absolute URLs")
 
       (bind event-lines-after-ext (->> (slurp event-log) str/split-lines (remove str/blank?)))
       (is (= 8 (count event-lines-after-ext))
