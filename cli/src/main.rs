@@ -837,7 +837,10 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
                             println!("{}", serde_json::to_string_pretty(&resp)?);
                         } else {
                             for p in &resp.paths {
-                                println!("~/{p}");
+                                let display = ItemId::parse(p.as_str())
+                                    .map(|item| item.display_path())
+                                    .unwrap_or_else(|| p.to_string());
+                                println!("{display}");
                             }
                         }
                     }
@@ -1355,7 +1358,17 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> std::process::ExitCode {
+    match run().await {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("Error: {error}");
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+async fn run() -> Result<()> {
     let Cli { cmd, server } = Cli::parse();
 
     // If no command provided, print the guide
