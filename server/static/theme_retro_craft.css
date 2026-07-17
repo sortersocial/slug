@@ -1049,7 +1049,8 @@ body.view-ontology #vote-compare-form textarea:focus {
   box-shadow: 0 0 0 2px color-mix(in srgb, #a68e6b 28%, transparent);
 }
 
-body.view-ontology #vote-compare-form button[type="submit"] {
+body.view-ontology #vote-compare-form button[type="submit"],
+body.view-ontology a.vote-compare-login-cta {
   background: #1a1814;
   border: 1px solid #1a1814;
   color: #f7f3eb;
@@ -1059,7 +1060,12 @@ body.view-ontology #vote-compare-form button[type="submit"] {
   padding: 0.4rem 1rem;
   margin-top: 0.35rem;
 }
-body.view-ontology #vote-compare-form button[type="submit"]:hover {
+body.view-ontology a.vote-compare-login-cta {
+  display: inline-block;
+  text-decoration: none;
+}
+body.view-ontology #vote-compare-form button[type="submit"]:hover,
+body.view-ontology a.vote-compare-login-cta:hover {
   background: #2a2620;
   border-color: #2a2620;
   color: #fff;

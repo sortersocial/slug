@@ -1157,8 +1157,22 @@ body.view-vote-compare #vote-explain:focus {
   border-color: var(--link);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--link) 22%, transparent);
 }
-body.view-vote-compare #vote-compare-form button[type="submit"] {
+body.view-vote-compare #vote-compare-form button[type="submit"],
+body.view-vote-compare a.vote-compare-login-cta {
   margin-top: 6px;
+}
+body.view-vote-compare a.vote-compare-login-cta {
+  display: inline-block;
+  padding: 4px 12px;
+  background: var(--g3);
+  border: var(--bv) solid;
+  border-color: var(--hi) var(--lo) var(--lo) var(--hi);
+  color: var(--ui);
+  text-decoration: none;
+  font-size: 12px;
+}
+body.view-vote-compare a.vote-compare-login-cta:hover {
+  color: var(--link);
 }
 
 body.view-vote-compare-fullscreen {
