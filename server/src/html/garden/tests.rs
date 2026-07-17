@@ -58,10 +58,11 @@ fn vote_edge_compare_sorts_rows_by_strength_for_page_left() {
     let raw = edge_vote_entries_for_pair(content, &page_left, &page_right);
     assert_eq!(raw.len(), 2);
     let sorted = sort_votes_for_compare_display(raw, &page_left, &page_right);
-    let (r0, _) = ratios_for_compare_page(&sorted[0], &page_left, &page_right);
-    assert_eq!(r0, 8, "stronger left weight should sort first");
-    let (r1, _) = ratios_for_compare_page(&sorted[1], &page_left, &page_right);
-    assert_eq!(r1, 1);
+    // 8:2 is stored reduced as 4:1; still a stronger left share than 1:9.
+    let (r0_l, r0_r) = ratios_for_compare_page(&sorted[0], &page_left, &page_right);
+    assert_eq!((r0_l, r0_r), (4, 1), "stronger left weight should sort first");
+    let (r1_l, r1_r) = ratios_for_compare_page(&sorted[1], &page_left, &page_right);
+    assert_eq!((r1_l, r1_r), (1, 9));
 }
 
 #[test]
