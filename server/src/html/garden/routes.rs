@@ -28,6 +28,7 @@ use crate::{
 use super::{
     access::{content_for_garden_view, room_not_found_page, room_scope_has_garden_content, user_can_view_room},
     browse::{GardenBrowsePath, scoped_bc_path_external},
+    copy::garden_rank_copy_button_markup,
     item::{item_display_path, item_href},
     render::render_scope_view,
 };
@@ -52,7 +53,13 @@ pub async fn garden_index(
         html! {
             @let root_path = OntologyPath::root();
             nav class="breadcrumb" { (bc_path(&root_path)) }
-            h2 { "paths" }
+            h2 {
+                "paths"
+                @if !(child_rankings.component_rankings.is_empty() && child_rankings.unranked_items.is_empty()) {
+                    " "
+                    (garden_rank_copy_button_markup(&nav, "~/", 1, false))
+                }
+            }
             @if child_rankings.component_rankings.is_empty() && child_rankings.unranked_items.is_empty() {
                 p class="muted" { "no items yet" }
             } @else {
@@ -137,7 +144,13 @@ pub async fn external_garden_index(
         "view-ontology view-ontology-light",
         html! {
             nav class="breadcrumb" { (bc_path_external(&ext_path)) }
-            h2 { "external paths" }
+            h2 {
+                "external paths"
+                @if !(child_rankings.component_rankings.is_empty() && child_rankings.unranked_items.is_empty()) {
+                    " "
+                    (garden_rank_copy_button_markup(&nav, "", 1, true))
+                }
+            }
             p class="muted" { "Items outside slug.social use the " code { "-/" } " prefix followed by the full " code { "https://…" } " URL (legacy " code { "-/host/path" } " still works)." }
             @if child_rankings.component_rankings.is_empty() && child_rankings.unranked_items.is_empty() {
                 p class="muted" { "no external items indexed yet" }
@@ -272,7 +285,13 @@ pub async fn room_external_garden_index(
         "view-ontology view-ontology-light",
         html! {
             nav class="breadcrumb" { (scoped_bc_path_external(&ext_path, &nav)) }
-            h2 { "external paths" }
+            h2 {
+                "external paths"
+                @if !(child_rankings.component_rankings.is_empty() && child_rankings.unranked_items.is_empty()) {
+                    " "
+                    (garden_rank_copy_button_markup(&nav, "", 1, true))
+                }
+            }
             @if child_rankings.component_rankings.is_empty() && child_rankings.unranked_items.is_empty() {
                 p class="muted" { "no external items indexed yet" }
             } @else {

@@ -37,8 +37,8 @@ pub(crate) use forum::{
     user_can_post_room, user_can_view_room,
 };
 pub(crate) use garden::{
-    encode_pin_cookie_value, external_resolver_status_markup, vote_compare_post_success_js,
-    GARDEN_PIN_COOKIE,
+    encode_pin_cookie_value, external_resolver_status_markup, garden_ui_copy_rank,
+    vote_compare_post_success_js, GARDEN_PIN_COOKIE,
 };
 pub use garden::{
     external_garden_index, external_ontology_path, garden_index, ontology_path,

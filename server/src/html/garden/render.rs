@@ -25,6 +25,7 @@ use crate::{
 use super::{
     access::content_for_garden_view,
     browse::{garden_layout_meta, scoped_bc_path_for, GardenBrowsePath},
+    copy::garden_rank_copy_button_markup,
     external::{external_frame_allowed, external_source_href, github_resolver_controls},
     item::{child_depth_from_uri, item_code_label, item_display_path, item_href},
     item_page::{build_item_page_view_model, sibling_nav_markup},
@@ -195,6 +196,15 @@ pub(super) async fn render_scope_view(
                     @if model.child_depth > 1 {
                         " "
                         span class="muted" { (format!("(depth {})", model.child_depth)) }
+                    }
+                    @if total_children > 0 {
+                        " "
+                        (garden_rank_copy_button_markup(
+                            &nav,
+                            &item_display_path(&model.item),
+                            model.child_depth,
+                            false,
+                        ))
                     }
                     @if total_children >= 2 {
                         " "

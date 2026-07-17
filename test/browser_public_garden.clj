@@ -73,6 +73,7 @@
        (core/with-playwright [pw]
          (core/with-browser [browser (core/launch-chromium pw {:headless true :channel "chrome"})]
            (core/with-context [ctx (core/new-context browser)]
+             (core/context-grant-permissions! ctx ["clipboard-read" "clipboard-write"])
              (core/with-page [pg (core/new-page-from-context ctx)]
                (page/navigate pg (str base-url "/login"))
                (is (wait-for-text pg "body" "@alice" 15000) "alice session after login")
@@ -84,7 +85,12 @@
                (is (wait-for-text pg "body" "~/br-pub-b" 10000) "ranked list shows ~/br-pub-b")
                (is (wait-for-text pg "body" "unranked" 10000) "unranked section present")
                (is (wait-for-text pg "body" "~/br-pub-c" 10000)
-                   "unranked list shows ~/br-pub-c"))))))
+                   "unranked list shows ~/br-pub-c")
+               (is (wait-for-text pg "#garden-rank-copy" "copy" 5000)
+                   "garden ranking copy button visible")
+               (locator/click (page/locator pg "#garden-rank-copy"))
+               (is (wait-for-text pg "#garden-rank-copy" "copied" 10000)
+                   "copy button flips to copied after POST /ui eval"))))))
 
      (finally
        (when-some [s @!server] (common/kill-server s))
