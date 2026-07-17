@@ -35,6 +35,12 @@ const INVITE_BROWSER_AGENT: &str = "00000000-0000-0000-0000-000000000000:invite:
 /// Agent id for `/login` browser OAuth (no CLI); must pass [`parse_agent`].
 pub const WEB_BROWSER_AGENT: &str = "00000000-0000-0000-0000-000000000001:social:web/browser";
 
+/// True for well-known browser / human-form sentinel delegates (not real AI agents).
+/// HTML attribution should show the human username for these, not `@@uuid:rig:…`.
+pub fn is_browser_sentinel_delegate(agent: &str) -> bool {
+    agent == WEB_BROWSER_AGENT || agent == INVITE_BROWSER_AGENT
+}
+
 /// HttpOnly cookie storing the same `slug_*` bearer string the CLI uses.
 pub const SLUG_SESSION_COOKIE: &str = "slug_session";
 

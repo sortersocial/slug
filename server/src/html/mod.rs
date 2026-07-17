@@ -536,12 +536,33 @@ pub(super) fn actor_label(agent_naked: &str) -> String {
     a.to_string()
 }
 
-/// HTML attribution only: human `@name`, or agent `@@uuid8:rig:model` when a delegate is present.
-pub(super) fn authorship_address(principal: &str, delegate: &Option<String>) -> String {
+/// Primary HTML attribution plus optional hover (human username when showing a real AI delegate).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AuthorshipAttr {
+    /// Visible label: `@principal` or `@@uuid8:rig:model`.
+    pub label: String,
+    /// Hover on the author link when `label` is the AI delegate (`Some("@principal")`).
+    pub author_title: Option<String>,
+}
+
+/// Prefer the AI delegate in attribution; fall back to the human username when there is no
+/// delegate or the delegate is a browser/human-form sentinel.
+pub(crate) fn authorship_attr(principal: &str, delegate: &Option<String>) -> AuthorshipAttr {
     match delegate {
-        Some(d) => format!("@@{}", actor_label(d)),
-        None => format!("@{principal}"),
+        Some(d) if !crate::api::is_browser_sentinel_delegate(d) => AuthorshipAttr {
+            label: format!("@@{}", actor_label(d)),
+            author_title: Some(format!("@{principal}")),
+        },
+        _ => AuthorshipAttr {
+            label: format!("@{principal}"),
+            author_title: None,
+        },
     }
+}
+
+/// HTML attribution only: human `@name`, or agent `@@uuid8:rig:model` when a real AI delegate is present.
+pub(super) fn authorship_address(principal: &str, delegate: &Option<String>) -> String {
+    authorship_attr(principal, delegate).label
 }
 
 /// Escape HTML special chars for safe injection.
@@ -878,6 +899,43 @@ pub(super) fn recency_class(now_ms: i64, ts_ms: i64) -> &'static str {
         "age-week" // < 1 week
     } else {
         "age-old" // >= 1 week
+    }
+}
+
+#[cfg(test)]
+mod authorship_tests {
+    use super::*;
+    use crate::api::WEB_BROWSER_AGENT;
+
+    #[test]
+    fn human_or_missing_delegate_shows_username() {
+        let a = authorship_attr("alice", &None);
+        assert_eq!(a.label, "@alice");
+        assert_eq!(a.author_title, None);
+    }
+
+    #[test]
+    fn browser_sentinel_delegate_shows_username() {
+        let d = Some(WEB_BROWSER_AGENT.to_string());
+        let a = authorship_attr("alice", &d);
+        assert_eq!(a.label, "@alice");
+        assert_eq!(a.author_title, None);
+        assert_eq!(authorship_address("alice", &d), "@alice");
+    }
+
+    #[test]
+    fn real_ai_delegate_shows_short_agent_with_username_hover() {
+        let d = Some(
+            "7a3b9c2d-1234-5678-90ab-cdef12345678:claudecode:anthropic/claude-sonnet-4.5"
+                .to_string(),
+        );
+        let a = authorship_attr("alice", &d);
+        assert_eq!(a.label, "@@7a3b9c2d:claudecode:anthropic/claude-sonnet-4.5");
+        assert_eq!(a.author_title.as_deref(), Some("@alice"));
+        assert_eq!(
+            authorship_address("alice", &d),
+            "@@7a3b9c2d:claudecode:anthropic/claude-sonnet-4.5"
+        );
     }
 }
 
