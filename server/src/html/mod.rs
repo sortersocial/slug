@@ -448,6 +448,12 @@ pub(super) fn ratio_pct(left: i32, right: i32) -> f64 {
     (l / denom) * 100.0
 }
 
+/// Display form of a vote ratio, reduced by GCD (e.g. `50:50` → `1:1`).
+pub(super) fn format_ratio(left: i32, right: i32) -> String {
+    let (l, r) = crate::dsl::reduce_ratio(left, right);
+    format!("{l}:{r}")
+}
+
 /// Render a single breadcrumb segment with `/` separator.
 pub(super) fn bc_segment(label: &str, href: &str, is_current: bool) -> Markup {
     html! {

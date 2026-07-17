@@ -1307,7 +1307,10 @@ pub async fn handle_rpc_batch(
                                     ts: v.ts,
                                     a: GardenItemUrl::from_stored(&v.a, &room),
                                     b: GardenItemUrl::from_stored(&v.b, &room),
-                                    ratio: format!("{}:{}", v.ratio_left, v.ratio_right),
+                                    ratio: {
+                                        let (l, r) = crate::dsl::reduce_ratio(v.ratio_left, v.ratio_right);
+                                        format!("{l}:{r}")
+                                    },
                                     actor: Some(v.principal.clone()),
                                     body: v.body.clone(),
                                     thread: Some(v.thread_tag.clone()),
@@ -1345,8 +1348,11 @@ pub async fn handle_rpc_batch(
                                             ts: e.ts,
                                             a: GardenItemUrl::from_storage_str(&a, &room),
                                             b: GardenItemUrl::from_storage_str(&b, &room),
-                                            ratio: format!("{ratio_left}:{ratio_right}"),
-                                            actor: reduced.ingests_by_id.get(&e.post_id).map(|ing| ing.principal.clone()),
+                                    ratio: {
+                                        let (l, r) = crate::dsl::reduce_ratio(ratio_left, ratio_right);
+                                        format!("{l}:{r}")
+                                    },
+                                    actor: reduced.ingests_by_id.get(&e.post_id).map(|ing| ing.principal.clone()),
                                             body: explanation,
                                             thread: Some(format!("#{}", e.thread)),
                                         })
@@ -1453,7 +1459,10 @@ pub async fn handle_rpc_batch(
                         ts: v.ts,
                         a: GardenItemUrl::from_stored(&v.a, &room),
                         b: GardenItemUrl::from_stored(&v.b, &room),
-                        ratio: format!("{}:{}", v.ratio_left, v.ratio_right),
+                        ratio: {
+                            let (l, r) = crate::dsl::reduce_ratio(v.ratio_left, v.ratio_right);
+                            format!("{l}:{r}")
+                        },
                         actor: Some(v.principal.clone()),
                         body: v.body.clone(),
                         thread: Some(v.thread_tag.clone()),
