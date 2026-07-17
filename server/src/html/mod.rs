@@ -543,7 +543,7 @@ pub(crate) struct AuthorshipAttr {
 /// delegate or the delegate is a browser/human-form sentinel.
 pub(crate) fn authorship_attr(principal: &str, delegate: &Option<String>) -> AuthorshipAttr {
     match delegate {
-        Some(d) if !crate::api::auth::is_browser_sentinel_delegate(d) => AuthorshipAttr {
+        Some(d) if !crate::api::is_browser_sentinel_delegate(d) => AuthorshipAttr {
             label: format!("@@{}", actor_label(d)),
             author_title: Some(format!("@{principal}")),
         },
@@ -899,7 +899,7 @@ pub(super) fn recency_class(now_ms: i64, ts_ms: i64) -> &'static str {
 #[cfg(test)]
 mod authorship_tests {
     use super::*;
-    use crate::api::auth::WEB_BROWSER_AGENT;
+    use crate::api::WEB_BROWSER_AGENT;
 
     #[test]
     fn human_or_missing_delegate_shows_username() {
