@@ -490,3 +490,71 @@ async fn test_vote_compare_post_rejects_over_max_ratio() {
     );
 }
 
+#[tokio::test]
+async fn test_copy_garden_rank_returns_clipboard_js_with_markdown() {
+    let (addr, _tmp, _log, _handle) = create_test_server().await;
+    let client = reqwest::Client::new();
+    let bearer = test_bearer();
+
+    let seed = rpc_batch(
+        &client,
+        addr,
+        Some(&bearer),
+        serde_json::json!([{
+            "Post": {
+                "room": "public",
+                "thread_tag": "copy-rank-ui",
+                "text": "# copy-rank-ui\n\n~/copy-a {a}\n~/copy-b {b}\n~/copy-c {c}\n{vote}\n~/copy-a 2:1 ~/copy-b\n",
+                "return_rank_diff": false
+            }
+        }]),
+    )
+    .await;
+    assert_eq!(seed["results"][0]["ok"], true, "seed: {:?}", seed);
+
+    let page = client
+        .get(format!("http://{addr}/~"))
+        .send()
+        .await
+        .unwrap();
+    assert!(page.status().is_success());
+    let html = page.text().await.unwrap();
+    assert!(
+        html.contains("id=\"garden-rank-copy\"") && html.contains("copy_garden_rank"),
+        "garden index should include copy button + action payload"
+    );
+
+    let rpc = serde_json::json!({
+        "action": "copy_garden_rank",
+        "room": "public",
+        "parent_path": "~/",
+        "depth": 1,
+        "copy_btn_id": "garden-rank-copy",
+    })
+    .to_string();
+    let resp = client
+        .post(format!("http://{addr}/ui"))
+        .header("Authorization", format!("Bearer {bearer}"))
+        .form(&[("__rpc__", rpc.as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        resp.headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok()),
+        Some("text/javascript; charset=utf-8")
+    );
+    let js = resp.text().await.unwrap();
+    assert!(
+        js.contains("navigator.clipboard.writeText") && js.contains("garden-rank-copy"),
+        "expected clipboard JsBuilder snippet, got: {js}"
+    );
+    assert!(
+        js.contains("1. ~/copy-a") && js.contains("2. ~/copy-b") && js.contains("- ~/copy-c"),
+        "expected concise markdown ranking in clipboard payload, got: {js}"
+    );
+    assert!(js.contains("\"copied\""), "expected button label flip to copied");
+}
+

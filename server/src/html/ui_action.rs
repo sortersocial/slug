@@ -118,11 +118,27 @@ pub enum HtmlUiAction {
         thread_tag: String,
         copy_btn_id: String,
     },
+    /// Copy garden child ranking as a concise markdown list to the clipboard.
+    CopyGardenRank {
+        room: String,
+        /// Parent item path (storage or display). Ignored when `external_hosts` is true.
+        parent_path: String,
+        #[serde(default = "default_garden_rank_depth")]
+        depth: usize,
+        copy_btn_id: String,
+        /// When true, copy rankings for external host roots (`/-/` index), not parent children.
+        #[serde(default)]
+        external_hosts: bool,
+    },
     /// Publish a private-room thread to the public forum (Manage only).
     GraduateThread {
         room: String,
         thread_tag: String,
     },
+}
+
+fn default_garden_rank_depth() -> usize {
+    1
 }
 
 #[derive(Debug, Error)]
@@ -269,6 +285,59 @@ mod tests {
             HtmlUiAction::SetNewThreadComposeExpanded {
                 room_wire: "ab/cd".into(),
                 expanded: true,
+            }
+        );
+    }
+
+    #[test]
+    fn copy_garden_rank_round_trip() {
+        let template = serde_json::json!({
+            "action": "copy_garden_rank",
+            "room": "public",
+            "parent_path": "~/topic",
+            "depth": 2,
+            "copy_btn_id": "garden-rank-copy",
+        });
+        let mut form = HashMap::new();
+        form.insert(
+            UI_RPC_FIELD.to_string(),
+            serde_json::to_string(&template).unwrap(),
+        );
+        let a = parse_html_ui_from_form(&form).unwrap();
+        assert_eq!(
+            a,
+            HtmlUiAction::CopyGardenRank {
+                room: "public".into(),
+                parent_path: "~/topic".into(),
+                depth: 2,
+                copy_btn_id: "garden-rank-copy".into(),
+                external_hosts: false,
+            }
+        );
+    }
+
+    #[test]
+    fn copy_garden_rank_defaults_depth_and_external_hosts() {
+        let template = serde_json::json!({
+            "action": "copy_garden_rank",
+            "room": "public",
+            "parent_path": "~/",
+            "copy_btn_id": "garden-rank-copy",
+        });
+        let mut form = HashMap::new();
+        form.insert(
+            UI_RPC_FIELD.to_string(),
+            serde_json::to_string(&template).unwrap(),
+        );
+        let a = parse_html_ui_from_form(&form).unwrap();
+        assert_eq!(
+            a,
+            HtmlUiAction::CopyGardenRank {
+                room: "public".into(),
+                parent_path: "~/".into(),
+                depth: 1,
+                copy_btn_id: "garden-rank-copy".into(),
+                external_hosts: false,
             }
         );
     }
