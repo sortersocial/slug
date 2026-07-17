@@ -48,15 +48,16 @@ fn post_header_meta(
     let ts_hover = timeago::rfc3339_utc(ts);
     let ago = timeago::timeago(now, ts);
     let attr = authorship_attr(principal, delegate);
+    let author_style = format!("color:{}", attr.color);
     html! {
         div class="ingest-meta muted" {
             span class="ingest-meta-primary" {
                 a href=(post_href) class="post-num" { "#" (post_idx) }
                 " "
                 @if let Some(ref title) = attr.author_title {
-                    a href=(profile) class="post-author" title=(title) { (attr.label) }
+                    a href=(profile) class="post-author" style=(author_style.as_str()) title=(title) { (attr.label.as_str()) }
                 } @else {
-                    a href=(profile) class="post-author" { (attr.label) }
+                    a href=(profile) class="post-author" style=(author_style.as_str()) { (attr.label.as_str()) }
                 }
                 " · "
                 span title=(ts_hover) { (ago) }
