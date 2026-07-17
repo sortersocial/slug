@@ -459,13 +459,17 @@ async fn vote_compare_inner(
     let reduced = state.reduced.read().await;
     let content = content_for_garden_view(&reduced, &nav.scope());
     let viewer = optional_principal(&headers, &jar, &reduced);
+    let logged_in = viewer.is_some();
     let can_post = match &nav.scope() {
-        ScopeId::Public => viewer.is_some(),
+        ScopeId::Public => logged_in,
         ScopeId::Room(rid) => viewer
             .as_ref()
             .map(|u| user_can_post_room(&reduced, rid, u))
             .unwrap_or(false),
     };
+    // Guests see the same compose UI; submitting VoteComparePost redirects to
+    // `/login?next=<this pair URL>` so OAuth returns them to the shared matchup.
+    let show_vote_form = can_post || !logged_in;
     let auto_thread = q
         .thread
         .as_ref()
@@ -529,7 +533,7 @@ async fn vote_compare_inner(
         div id="vote-edge-history-region" {
             (edge_history)
         }
-        @if can_post {
+        @if show_vote_form {
             form id="vote-compare-form" method="POST" action="/ui" data-draft-key=(format!("vote:{}/{}/{}", nav.room_wire, left.as_str(), right.as_str())) {
                 input type="hidden" name=(UI_RPC_FIELD) value=(rpc_json);
                 div class="vote-thread-picker" {
@@ -559,9 +563,16 @@ async fn vote_compare_inner(
                 textarea name="explanation" id="vote-explain" rows="5" placeholder="why this split?" required {}
                 div id="vote-compare-errors" {}
                 p { button type="submit" { "post vote" } }
+                @if !logged_in {
+                    p class="muted" {
+                        "posting will send you to log in, then back to this pair. "
+                        a href=(login_href_with_next(&next_path)) { "log in now" }
+                        "."
+                    }
+                }
             }
         } @else {
-            p class="muted" { a href=(login_href_with_next(&next_path)) { "log in" } " to post this vote." }
+            p class="muted" { "you need post access in this room to vote on this pair." }
         }
     }
     };

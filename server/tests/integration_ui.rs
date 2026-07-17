@@ -265,6 +265,28 @@ fn ui_vote_compare_post_rpc(
     ratio_right: &str,
     explanation: &str,
 ) -> String {
+    ui_vote_compare_post_rpc_with_next(
+        room,
+        thread_tag,
+        left,
+        right,
+        ratio_left,
+        ratio_right,
+        explanation,
+        "/vote",
+    )
+}
+
+fn ui_vote_compare_post_rpc_with_next(
+    room: &str,
+    thread_tag: &str,
+    left: &str,
+    right: &str,
+    ratio_left: &str,
+    ratio_right: &str,
+    explanation: &str,
+    next: &str,
+) -> String {
     serde_json::json!({
         "action": "vote_compare_post",
         "room": room,
@@ -274,9 +296,129 @@ fn ui_vote_compare_post_rpc(
         "ratio_left": ratio_left,
         "ratio_right": ratio_right,
         "explanation": explanation,
-        "next": "/vote",
+        "next": next,
+        "form_action": "/ui",
     })
     .to_string()
+}
+
+#[tokio::test]
+async fn test_vote_compare_guest_page_shows_form_with_login_next() {
+    let (addr, _tmp, _log, _handle) = create_test_server().await;
+    let client = reqwest::Client::new();
+
+    let left = urlencoding::encode("~/guest-vote-a");
+    let right = urlencoding::encode("~/guest-vote-b");
+    let pair_path = format!("/vote?left={left}&right={right}");
+    let resp = client
+        .get(format!("http://{addr}{pair_path}"))
+        .send()
+        .await
+        .unwrap();
+    assert!(resp.status().is_success(), "{}", resp.status());
+    let body = resp.text().await.unwrap();
+    assert!(
+        body.contains("id=\"vote-compare-form\""),
+        "guests must see the vote form so post vote can redirect to login"
+    );
+    assert!(
+        body.contains("post vote"),
+        "guests must see the post vote button"
+    );
+    let login_href = format!("/login?next={}", urlencoding::encode(&pair_path));
+    let encoded_next = urlencoding::encode(&pair_path).into_owned();
+    assert!(
+        body.contains(&login_href) || body.contains(&encoded_next),
+        "guest page should carry login?next=pair URL; snippet={}",
+        body.chars().take(2000).collect::<String>()
+    );
+}
+
+#[tokio::test]
+async fn test_vote_compare_guest_post_redirects_to_login_with_pair_next() {
+    let (addr, _tmp, _log, _handle) = create_test_server().await;
+    let client = reqwest::Client::new();
+
+    let next = "/vote?left=%7E%2Fguest-a&right=%7E%2Fguest-b";
+    let rpc = ui_vote_compare_post_rpc_with_next(
+        "public",
+        "guest-vote",
+        "~/guest-a",
+        "~/guest-b",
+        "50",
+        "50",
+        "prefer left",
+        next,
+    );
+    let resp = client
+        .post(format!("http://{addr}/ui"))
+        .form(&[("__rpc__", rpc.as_str())])
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        resp.headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok()),
+        Some("text/javascript; charset=utf-8")
+    );
+    let js = resp.text().await.unwrap();
+    let expected_login = format!(
+        "window.location = \"/login?next={}\";",
+        urlencoding::encode(next)
+    );
+    assert_eq!(
+        js, expected_login,
+        "unauthenticated vote post must JS-redirect to login with pair next"
+    );
+}
+
+#[tokio::test]
+async fn test_web_login_carries_vote_pair_next_into_pending_session() {
+    let (addr, _tmp, _log, state, _handle) = create_test_server_with_state().await;
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    let next = "/vote?left=%7E%2Fa&right=%7E%2Fb";
+    let resp = client
+        .get(format!(
+            "http://{addr}/login?next={}",
+            urlencoding::encode(next)
+        ))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), reqwest::StatusCode::TEMPORARY_REDIRECT);
+    let loc = resp
+        .headers()
+        .get(reqwest::header::LOCATION)
+        .and_then(|v| v.to_str().ok())
+        .expect("Location header");
+    assert!(
+        loc.contains("/auth/login?session="),
+        "web login should start OAuth pending session, loc={loc}"
+    );
+    assert!(
+        loc.contains(&format!("next={}", urlencoding::encode(next)))
+            || loc.contains("next=%2Fvote"),
+        "auth/login redirect must carry vote pair next, loc={loc}"
+    );
+
+    // Pending session in RAM must remember the pair for post-OAuth redirect.
+    let session = loc
+        .split("session=")
+        .nth(1)
+        .and_then(|s| s.split('&').next())
+        .map(|s| urlencoding::decode(s).unwrap_or_default().into_owned())
+        .expect("session id in Location");
+    let sessions = state.pending_sessions.read().await;
+    let pending = sessions.get(&session).expect("pending session");
+    assert_eq!(pending.redirect_next.as_deref(), Some(next));
 }
 
 #[tokio::test]
