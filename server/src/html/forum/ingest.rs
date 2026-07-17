@@ -6,7 +6,7 @@ use slug_types::MAX_FORUM_POST_PREVIEW_CHARS;
 
 use crate::html::js_string_literal;
 use crate::html::ui_action::{HtmlUiAction, UI_RPC_FIELD};
-use crate::html::{profile_href, render_linkified_with_embeds_in_scope};
+use crate::html::{authorship_attr, profile_href, render_linkified_with_embeds_in_scope};
 use crate::timeago;
 
 use super::nav::ThreadNav;
@@ -38,22 +38,28 @@ fn post_header_meta(
     tag: &str,
     post_idx: usize,
     principal: &str,
+    delegate: &Option<String>,
     ts: i64,
     now: i64,
     delete_post_id: Option<&str>,
 ) -> Markup {
     let post_href = nav.post_url(tag, post_idx);
     let profile = profile_href(principal);
-    let hover = timeago::rfc3339_utc(ts);
+    let ts_hover = timeago::rfc3339_utc(ts);
     let ago = timeago::timeago(now, ts);
+    let attr = authorship_attr(principal, delegate);
     html! {
-        div class="ingest-meta muted" title=(hover) {
+        div class="ingest-meta muted" {
             span class="ingest-meta-primary" {
                 a href=(post_href) class="post-num" { "#" (post_idx) }
                 " "
-                a href=(profile) class="post-author" { "@" (principal) }
+                @if let Some(ref title) = attr.author_title {
+                    a href=(profile) class="post-author" title=(title) { (attr.label) }
+                } @else {
+                    a href=(profile) class="post-author" { (attr.label) }
+                }
                 " · "
-                (ago)
+                span title=(ts_hover) { (ago) }
             }
             @if let Some(pid) = delete_post_id {
                 form class="post-delete-form" method="POST" action="/ui" {
@@ -79,7 +85,16 @@ pub(super) fn post_header_row(
     } else {
         None
     };
-    post_header_meta(nav, tag, post_idx, &ing.principal, ing.ts, now, delete_post_id)
+    post_header_meta(
+        nav,
+        tag,
+        post_idx,
+        &ing.principal,
+        &ing.delegate,
+        ing.ts,
+        now,
+        delete_post_id,
+    )
 }
 
 pub(super) fn redacted_header_row(
@@ -90,7 +105,7 @@ pub(super) fn redacted_header_row(
     now: i64,
     expanded: bool,
 ) -> Markup {
-    let meta = post_header_meta(nav, tag, post_idx, &ing.principal, ing.ts, now, None);
+    let meta = post_header_meta(nav, tag, post_idx, &ing.principal, &ing.delegate, ing.ts, now, None);
     let rpc_expand = template_json_compact(&json!({
         "action": "expand_redacted_post",
         "room": nav.room_wire,
