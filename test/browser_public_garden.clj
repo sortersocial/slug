@@ -90,7 +90,7 @@
                    "garden ranking copy button visible")
                (locator/click (page/locator pg "#garden-rank-copy"))
                (is (wait-for-text pg "#garden-rank-copy" "copied" 10000)
-                   "copy button flips to copied after POST /ui eval")))))
+                   "copy button flips to copied after POST /ui eval"))))))
 
      (finally
        (when-some [s @!server] (common/kill-server s))
