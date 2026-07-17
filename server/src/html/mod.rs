@@ -537,19 +537,47 @@ pub(crate) struct AuthorshipAttr {
     pub label: String,
     /// Hover on the author link when `label` is the AI delegate (`Some("@principal")`).
     pub author_title: Option<String>,
+    /// Deterministic CSS color for the author link (`hsl(...)`), seeded from uuid / username.
+    pub color: String,
+}
+
+/// Stable hue from a seed string (delegate uuid or human username).
+fn identity_color_css(seed: &str) -> String {
+    // FNV-1a 32-bit — cheap, stable across runs/platforms.
+    let mut hash: u32 = 0x811c_9dc5;
+    for b in seed.as_bytes() {
+        hash ^= u32::from(*b);
+        hash = hash.wrapping_mul(0x0100_0193);
+    }
+    let hue = hash % 360;
+    // Readable on dark theme surfaces used by default / craft.
+    format!("hsl({hue}, 62%, 66%)")
+}
+
+/// Seed for author color: real AI → delegate uuid; human/sentinel → principal username.
+fn authorship_color_seed<'a>(principal: &'a str, delegate: &'a Option<String>) -> &'a str {
+    match delegate {
+        Some(d) if !crate::api::is_browser_sentinel_delegate(d) => {
+            d.split(':').next().filter(|s| !s.is_empty()).unwrap_or(d.as_str())
+        }
+        _ => principal,
+    }
 }
 
 /// Prefer the AI delegate in attribution; fall back to the human username when there is no
 /// delegate or the delegate is a browser/human-form sentinel.
 pub(crate) fn authorship_attr(principal: &str, delegate: &Option<String>) -> AuthorshipAttr {
+    let color = identity_color_css(authorship_color_seed(principal, delegate));
     match delegate {
         Some(d) if !crate::api::is_browser_sentinel_delegate(d) => AuthorshipAttr {
             label: format!("@@{}", actor_label(d)),
             author_title: Some(format!("@{principal}")),
+            color,
         },
         _ => AuthorshipAttr {
             label: format!("@{principal}"),
             author_title: None,
+            color,
         },
     }
 }
@@ -906,6 +934,7 @@ mod authorship_tests {
         let a = authorship_attr("alice", &None);
         assert_eq!(a.label, "@alice");
         assert_eq!(a.author_title, None);
+        assert!(a.color.starts_with("hsl("));
     }
 
     #[test]
@@ -930,6 +959,30 @@ mod authorship_tests {
             authorship_address("alice", &d),
             "@@7a3b9c2d:claudecode:anthropic/claude-sonnet-4.5"
         );
+    }
+
+    #[test]
+    fn author_color_is_stable_and_seeded_by_uuid_or_username() {
+        let d1 = Some(
+            "7a3b9c2d-1234-5678-90ab-cdef12345678:claudecode:anthropic/claude-sonnet-4.5"
+                .to_string(),
+        );
+        let d2 = Some(
+            "7a3b9c2d-1234-5678-90ab-cdef12345678:cursor:anthropic/claude-opus-4".to_string(),
+        );
+        let other = Some(
+            "aec1e31c-36db-4a58-a53e-43525337f6b4:cursor:anthropic/claude-opus-4".to_string(),
+        );
+        let a1 = authorship_attr("alice", &d1);
+        let a2 = authorship_attr("alice", &d2);
+        let a3 = authorship_attr("bob", &other);
+        let human = authorship_attr("alice", &None);
+        // Same uuid → same color even if rig/model differs.
+        assert_eq!(a1.color, a2.color);
+        assert_ne!(a1.color, a3.color);
+        assert_ne!(a1.color, human.color);
+        assert_eq!(human.color, authorship_attr("alice", &None).color);
+        assert_ne!(human.color, authorship_attr("bob", &None).color);
     }
 }
 

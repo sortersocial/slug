@@ -579,7 +579,8 @@ span.ingest-meta-primary {
 a.post-num { color: var(--meta); font-size: 12px; }
 a.post-num:hover { color: var(--signal); }
 a.post-author { color: var(--meta); font-size: 12px; text-decoration: none; }
-a.post-author:hover { color: var(--signal); text-decoration: underline; }
+/* Inline per-identity color wins over --meta; keep it on hover, just underline. */
+a.post-author:hover { text-decoration: underline; filter: brightness(1.12); }
 
 div.ingest-header-row {
   align-items: center;
