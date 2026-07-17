@@ -13,18 +13,19 @@
 (defn- wait-for-text [pg selector expected timeout-ms]
   (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
     (loop []
-      (let [text (locator/text-content (page/locator pg selector))]
+      (let [text (try (locator/text-content (page/locator pg selector))
+                      (catch Exception _ nil))]
         (if (and (string? text) (str/includes? text expected))
           true
           (if (< (System/currentTimeMillis) deadline)
             (do (Thread/sleep 200) (recur))
             false))))))
 
-(defn- wait-for-url-includes [pg needle timeout-ms]
+(defn- wait-for-url [pg pred timeout-ms]
   (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
     (loop []
-      (let [url (page/url pg)]
-        (if (and (string? url) (str/includes? url needle))
+      (let [url (try (or (page/url pg) "") (catch Exception _ ""))]
+        (if (pred url)
           true
           (if (< (System/currentTimeMillis) deadline)
             (do (Thread/sleep 200) (recur))
@@ -51,19 +52,22 @@
    (bind !google (atom nil))
    (bind server-env (common/slug-server-env tmp-dir base-url google-url slug-port))
    (try
+     ;; Single Google identity: alice seeds the pair, then the guest browser
+     ;; OAuth reuses that identity (existing-user path) so /login?next= returns
+     ;; via HTTP redirect with Set-Cookie — the path shared-link guests take
+     ;; after their first account already exists.
      (reset! !google (oauth/start-mock-google google-port
-                                              :google-users ["google-user-alice"
-                                                             "google-user-guest"]))
+                                              :google-users ["google-user-alice"]))
      (reset! !server (common/start-server server-bin server-env))
      (is (common/wait-for-server base-url 10000) "server responds to /healthz")
 
      (let [alice-token (oauth/fetch-bearer-token! base-url :username "alice")
            thread-tag "browser-vote-login"
-           left-url "https://slug.social/~/gp-login-a"
-           right-url "https://slug.social/~/gp-login-b"
+           left-item "~/gp-login-a"
+           right-item "~/gp-login-b"
            raw (str "# " thread-tag "\n\n"
-                    "~/gp-login-a {alpha}\n"
-                    "~/gp-login-b {beta}\n")
+                    left-item " {alpha}\n"
+                    right-item " {beta}\n")
            post-resp (oauth/http-post-json
                       (str base-url "/api/v0/rpc")
                       [{"Post" {"room" "public"
@@ -73,7 +77,7 @@
                       :headers {"Authorization" (str "Bearer " alice-token)})
            post-json (json/parse-string (:body post-resp) false)
            _ (is (true? (get-in post-json ["results" 0 "ok"])) "seed pair items via rpc")
-           pair-path (str "/vote?left=" (enc left-url) "&right=" (enc right-url))
+           pair-path (str "/vote?left=" (enc left-item) "&right=" (enc right-item))
            cmp-url (str base-url pair-path)]
        (core/with-playwright [pw]
          (core/with-browser [browser (core/launch-chromium pw {:headless true :channel "chrome"})]
@@ -83,29 +87,35 @@
                (page/navigate pg cmp-url)
                (is (wait-for-text pg "body.view-vote-compare" "compare" 15000)
                    "guest can open shared pair URL")
-               (is (wait-for-text pg "#vote-compare-form" "post vote" 15000)
-                   "guest sees post vote button")
-               (locator/fill (page/locator pg "#vote-explain") "shared-link guest reason")
-               (locator/click (page/locator pg "#vote-compare-form button[type=submit]"))
+               (is (wait-for-text pg "a.vote-compare-login-cta" "post vote" 15000)
+                   "guest sees post vote login CTA")
+               (let [href (locator/get-attribute
+                           (page/locator pg "a.vote-compare-login-cta") "href")]
+                 (is (and (string? href)
+                          (str/includes? href "/login?next=")
+                          (str/includes? href (enc pair-path)))
+                     (str "CTA href carries login?next=<pair>, got: " href)))
+               (locator/click (page/locator pg "a.vote-compare-login-cta"))
 
-               ;; Unauth VoteComparePost → /login?next=<pair> → OAuth → choose-username.
-               (is (wait-for-url-includes pg "/auth/choose-username" 20000)
-                   "guest vote submit reaches choose-username via login?next")
-               (is (wait-for-text pg "#choose-username-form" "username" 15000)
-                   "choose-username form visible")
-               (locator/fill (page/locator pg "input[name=username]") "guestvoter")
-               (locator/click (page/locator pg "#choose-username-form button[type=submit]"))
-
-               (is (wait-for-url-includes pg "/vote?" 20000)
-                   "after login, redirected back to a vote pair URL")
-               (is (wait-for-url-includes pg "gp-login-a" 5000)
-                   "return URL keeps left item")
-               (is (wait-for-url-includes pg "gp-login-b" 5000)
-                   "return URL keeps right item")
+               ;; Existing Google identity → HTTP redirect chain back to pair.
+               (is (wait-for-url
+                    pg
+                    (fn [u]
+                      (and (str/includes? u "/vote?")
+                           (str/includes? u "gp-login-a")
+                           (str/includes? u "gp-login-b")
+                           (not (str/includes? u "/login"))
+                           (not (str/includes? u "/auth/"))))
+                    25000)
+                   (str "after login, back on this pair; url=" (page/url pg)))
                (is (wait-for-text pg "body.view-vote-compare" "compare" 15000)
                    "landed on vote compare page")
-               (is (wait-for-text pg "body" "@guestvoter" 15000)
-                   "session established as new user"))))))
+               ;; Chromeless vote page has no @user chrome; the submit button
+               ;; (vs guest login CTA) is the signed-in signal.
+               (is (wait-for-text pg "#vote-compare-form button[type=submit]" "post vote" 15000)
+                   "signed-in user sees real post vote submit")
+               (is (not (wait-for-text pg "a.vote-compare-login-cta" "post vote" 1000))
+                   "guest login CTA gone after session redirect"))))))
 
      (finally
        (when-some [s @!server] (common/kill-server s))

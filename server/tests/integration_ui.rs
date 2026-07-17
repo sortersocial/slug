@@ -319,18 +319,17 @@ async fn test_vote_compare_guest_page_shows_form_with_login_next() {
     let body = resp.text().await.unwrap();
     assert!(
         body.contains("id=\"vote-compare-form\""),
-        "guests must see the vote form so post vote can redirect to login"
+        "guests must see the vote compose UI on a shared pair link"
     );
     assert!(
-        body.contains("post vote"),
-        "guests must see the post vote button"
+        body.contains("vote-compare-login-cta"),
+        "guests must see the post vote login CTA"
     );
     let login_href = format!("/login?next={}", urlencoding::encode(&pair_path));
-    let encoded_next = urlencoding::encode(&pair_path).into_owned();
     assert!(
-        body.contains(&login_href) || body.contains(&encoded_next),
-        "guest page should carry login?next=pair URL; snippet={}",
-        body.chars().take(2000).collect::<String>()
+        body.contains(&login_href),
+        "guest post vote CTA must be /login?next=<pair>; snippet={}",
+        body.chars().take(2500).collect::<String>()
     );
 }
 

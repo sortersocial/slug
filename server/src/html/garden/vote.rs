@@ -533,7 +533,7 @@ async fn vote_compare_inner(
         div id="vote-edge-history-region" {
             (edge_history)
         }
-        @if show_vote_form {
+        @if show_vote_form && logged_in {
             form id="vote-compare-form" method="POST" action="/ui" data-draft-key=(format!("vote:{}/{}/{}", nav.room_wire, left.as_str(), right.as_str())) {
                 input type="hidden" name=(UI_RPC_FIELD) value=(rpc_json);
                 div class="vote-thread-picker" {
@@ -563,13 +563,14 @@ async fn vote_compare_inner(
                 textarea name="explanation" id="vote-explain" rows="5" placeholder="why this split?" required {}
                 div id="vote-compare-errors" {}
                 p { button type="submit" { "post vote" } }
-                @if !logged_in {
-                    p class="muted" {
-                        "posting will send you to log in, then back to this pair. "
-                        a href=(login_href_with_next(&next_path)) { "log in now" }
-                        "."
-                    }
+            }
+        } @else if show_vote_form {
+            // Guest CTA is outside any form so click is a normal navigation to login.
+            div id="vote-compare-form" class="vote-compare-guest" {
+                p {
+                    a class="vote-compare-login-cta" href=(login_href_with_next(&next_path)) { "post vote" }
                 }
+                p class="muted" { "you’ll log in, then return to this pair to cast your vote." }
             }
         } @else {
             p class="muted" { "you need post access in this room to vote on this pair." }
