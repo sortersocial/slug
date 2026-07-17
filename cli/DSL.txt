@@ -48,6 +48,8 @@ Starts a thread. Tag allows alphanumeric, `-`, `_`, and `/`. Subtitle max 100 ch
 Defines an ontology item (garden layer). Paths can be nested (e.g. `~/languages/python`).
 A leading `/` alone is **not** allowed in the DSL — use `~/` only. Descriptions (bodies) are wrapped in `{}` and follow the item path.
 
+A bare path with no `{ … }` body (even alone on a line, or indented) is **not** a declaration — it is ordinary prose and renders as a clickable garden link. Ranking dumps and inline mentions can list `~/path` freely; only `~/path { … }` creates/updates an item.
+
 ```sorter
 https://example.com/item { description }
 ```

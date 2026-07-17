@@ -19,8 +19,8 @@ We are in a tag, now let's declare an item.
 
 ~/alphabet/b {the letter b}
 
-The prefix `~/` denotes, when the first characters on a line, the beginning
-of the title of an ontology item (the garden layer).
+The prefix `~/` followed by `{ … }` denotes an ontology item declaration
+(the garden layer). A bare `~/path` with no body is just a clickable reference.
 Now we have two discrete, addressable items. Imagine two dots floating on a
 2d plane.
 Now let's draw a line segment between the two dots.

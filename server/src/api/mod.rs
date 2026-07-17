@@ -104,11 +104,22 @@ mod tests {
     }
 
     #[test]
-    fn validate_ingest_document_rejects_item_without_body() {
+    fn validate_ingest_document_accepts_bare_item_path_as_prose_ref() {
         let reduced = ReducerState::default();
         let text = "~/t/a\n";
+        let ok = validate_ingest_document(&reduced, text, &crate::reducer::ScopeId::Public).unwrap();
+        assert!(matches!(
+            ok.doc.statements.as_slice(),
+            [crate::dsl::Stmt::Prose { .. }]
+        ));
+    }
+
+    #[test]
+    fn validate_ingest_document_rejects_empty_item_body() {
+        let reduced = ReducerState::default();
+        let text = "~/t/a {   }\n";
         let err = validate_ingest_document(&reduced, text, &crate::reducer::ScopeId::Public).unwrap_err();
         assert_eq!(err.0, StatusCode::BAD_REQUEST);
-        assert!(err.1.contains("missing body"));
+        assert!(err.1.contains("body is empty"));
     }
 }

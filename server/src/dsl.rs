@@ -601,16 +601,26 @@ fn parse_block_prefixed_statement(
     })
 }
 
+/// True when the line is only an item path (`~/…`, `-/…`, or `http(s)://…`) with
+/// no body and no vote comparison. Such lines are clickable prose references,
+/// not incomplete item declarations.
+fn is_bare_item_path_reference(stripped: &str) -> bool {
+    let Some((_name, j)) = parse_item_name_at(stripped, 0) else {
+        return false;
+    };
+    skip_ws(stripped, j) >= stripped.len()
+}
+
 fn parse_item_definition_statement(stripped: &str, masker: &BlockMasker) -> Result<Stmt, DslError> {
     let (item1, j) = parse_item_name_at(stripped, 0)
         .ok_or_else(|| DslError::Parse("invalid item name".to_string()))?;
     let i = skip_ws(stripped, j);
 
     if i >= stripped.len() {
-        return Ok(Stmt::Item {
-            title: item1,
-            body: None,
-        });
+        // Caller should route bare paths to prose; keep a defensive parse error.
+        return Err(DslError::Parse(
+            "item references without bodies are prose; declare items as `~/path { ... }`".to_string(),
+        ));
     }
 
     if let Some((tok, end)) = parse_block_token_at(stripped, i) {
@@ -683,7 +693,9 @@ pub fn parse_full(text: &str) -> Result<Document, DslError> {
     let (masker, masked) = mask_all(BlockMasker::new(), text);
     let mut statements: Vec<Stmt> = Vec::new();
     let mut prose_buffer: Vec<&str> = Vec::new();
-    let mut pending_block: Option<String> = None;
+    // Leading `{ … }` / `{{ … }}` held until we see whether a vote follows.
+    // Stores the masked line so an orphan block can fall back to prose.
+    let mut pending_block: Option<(String, &str)> = None;
 
     let flush_prose = |buf: &mut Vec<&str>, out: &mut Vec<Stmt>, masker: &BlockMasker| {
         if buf.is_empty() {
@@ -695,24 +707,40 @@ pub fn parse_full(text: &str) -> Result<Document, DslError> {
         buf.clear();
     };
 
+    let is_vote_item_line = |stripped: &str| {
+        stripped.starts_with("-/")
+            || stripped.starts_with("~/")
+            || stripped.starts_with("https://")
+            || stripped.starts_with("http://")
+    };
+
     for line in masked.split('\n') {
         let stripped = line.trim_start();
-        if let Some(tok) = pending_block.as_ref() {
+        if pending_block.is_some() {
             if stripped.is_empty() {
+                // Keep holding the block across blank lines (vote may follow).
                 continue;
             }
-            if stripped.starts_with("-/")
-                || stripped.starts_with("~/")
-                || stripped.starts_with("https://")
-                || stripped.starts_with("http://")
-            {
-                statements.push(parse_block_prefixed_statement(tok, stripped, &masker)?);
-                pending_block = None;
-                continue;
+            let (tok, pending_line) = pending_block.take().unwrap();
+            if is_vote_item_line(stripped) {
+                match parse_block_prefixed_statement(&tok, stripped, &masker) {
+                    Ok(stmt) => {
+                        flush_prose(&mut prose_buffer, &mut statements, &masker);
+                        statements.push(stmt);
+                        continue;
+                    }
+                    // Bare `~/path` after a block is a prose ref, not a malformed vote.
+                    Err(_) if is_bare_item_path_reference(stripped) => {
+                        prose_buffer.push(pending_line);
+                        // Fall through so the bare path is handled as prose.
+                    }
+                    Err(e) => return Err(e),
+                }
+            } else {
+                // Orphan explanation / escaped block: keep as prose (clickable refs inside).
+                prose_buffer.push(pending_line);
+                // Fall through so the current line is handled normally.
             }
-            return Err(DslError::Parse(
-                "expected vote statement after leading explanation block".to_string(),
-            ));
         }
 
         if !stripped.is_empty()
@@ -724,6 +752,13 @@ pub fn parse_full(text: &str) -> Result<Document, DslError> {
                 || stripped.starts_with("https://")
                 || stripped.starts_with("http://"))
         {
+            // Bare `~/path` (optionally indented) is a clickable reference, not a
+            // declaration. Declarations require a body: `~/path { … }`.
+            if is_bare_item_path_reference(stripped) {
+                prose_buffer.push(line);
+                continue;
+            }
+
             // Flush prose buffer first
             flush_prose(&mut prose_buffer, &mut statements, &masker);
 
@@ -733,7 +768,7 @@ pub fn parse_full(text: &str) -> Result<Document, DslError> {
                         prose_buffer.push(line);
                         continue;
                     }
-                    pending_block = Some(tok);
+                    pending_block = Some((tok, line));
                     continue;
                 }
             }
@@ -745,10 +780,8 @@ pub fn parse_full(text: &str) -> Result<Document, DslError> {
         }
     }
 
-    if pending_block.is_some() {
-        return Err(DslError::Parse(
-            "missing vote statement after leading explanation block".to_string(),
-        ));
+    if let Some((_tok, pending_line)) = pending_block.take() {
+        prose_buffer.push(pending_line);
     }
 
     // Final flush
@@ -1158,14 +1191,88 @@ mod tests {
     }
 
     #[test]
-    fn parse_full_rejects_block_first_item_body() {
-        let result = parse_full("{body}\n~/a");
-        assert!(result.is_err(), "block-first item body syntax should fail");
-        let err_msg = result.unwrap_err().to_string();
-        assert!(
-            err_msg.contains("item bodies belong after item paths"),
-            "error: {}",
-            err_msg
+    fn parse_full_treats_block_first_then_bare_path_as_prose() {
+        // Legacy block-before-path item syntax is not a declaration; both pieces
+        // stay prose (the path remains a clickable reference).
+        let doc = parse_full("{body}\n~/a").unwrap();
+        assert_eq!(
+            doc.statements,
+            vec![Stmt::Prose {
+                text: "{body}\n~/a".to_string()
+            }]
+        );
+    }
+
+    #[test]
+    fn parse_full_treats_bare_item_paths_as_prose_refs() {
+        let doc = parse_full(
+            "ordering 1 items=2 pairs=1\n ~/star-wars/jedi/ahsoka-tano\n0.187\n~/star-wars/jedi/yoda\n0.130\n",
+        )
+        .unwrap();
+        assert_eq!(
+            doc.statements,
+            vec![Stmt::Prose {
+                text: "ordering 1 items=2 pairs=1\n ~/star-wars/jedi/ahsoka-tano\n0.187\n~/star-wars/jedi/yoda\n0.130\n"
+                    .to_string()
+            }]
+        );
+        let Stmt::Prose { text } = &doc.statements[0] else {
+            panic!("expected prose, got {:?}", doc.statements[0]);
+        };
+        let refs: Vec<_> = tokenize_prose_item_refs(text)
+            .into_iter()
+            .filter_map(|t| match t {
+                ProseToken::ItemRef(r) => Some(r),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            refs,
+            vec![
+                "~/star-wars/jedi/ahsoka-tano".to_string(),
+                "~/star-wars/jedi/yoda".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_full_treats_orphan_double_brace_ranking_as_prose() {
+        let input = "{{ordering 1 items=2 pairs=1\n ~/star-wars/jedi/ahsoka-tano\n0.187\n ~/star-wars/jedi/yoda\n0.130\n}}";
+        let doc = parse_full(input).unwrap();
+        assert_eq!(
+            doc.statements,
+            vec![Stmt::Prose {
+                text: input.to_string()
+            }]
+        );
+        let refs: Vec<_> = tokenize_prose_item_refs(input)
+            .into_iter()
+            .filter_map(|t| match t {
+                ProseToken::ItemRef(r) => Some(r),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            refs,
+            vec![
+                "~/star-wars/jedi/ahsoka-tano".to_string(),
+                "~/star-wars/jedi/yoda".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_full_keeps_double_brace_vote_explanations() {
+        let doc = parse_full("{{because test}}\n~/a 2:1 ~/b").unwrap();
+        assert_eq!(
+            doc.statements,
+            vec![Stmt::Vote {
+                item1: "~/a".to_string(),
+                item2: "~/b".to_string(),
+                ratio_left: 2,
+                ratio_right: 1,
+                explanation: "because test".to_string()
+            }]
         );
     }
 
