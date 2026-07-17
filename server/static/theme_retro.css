@@ -136,6 +136,24 @@ body.view-ontology nav.breadcrumb a.bc-current { color: #111; font-weight: 600; 
 body.view-ontology nav.breadcrumb .bc-sep { color: #888; padding: 0 2px; }
 
 body.view-ontology .resolver-actions,
+body.view-ontology .vote-ratio-readout-wrap {
+  margin: 0.85rem 0 0.25rem;
+  text-align: center;
+  font-size: 0.85rem;
+}
+body.view-ontology .vote-ratio-readout-label {
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #666;
+}
+body.view-ontology .vote-ratio-readout {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  font-size: 1.15rem;
+  letter-spacing: 0.04em;
+  color: #111;
+}
 body.view-ontology .vote-compare-nav {
   display: flex;
   flex-wrap: wrap;

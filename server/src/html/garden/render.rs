@@ -11,7 +11,7 @@ use crate::{
         forum::ThreadNav,
         layout,
         now_ms,
-        ratio_pct,
+        format_ratio, ratio_pct,
         render_item_body_in_scope,
         theme_from_jar,
         theme_next_from_uri,
@@ -158,7 +158,7 @@ pub(super) async fn render_scope_view(
                                     div class="rank-history-vote" {
                                         div class="ont-vote-header" {
                                             a class="item-link" href=(item_href(v.a.as_str(), &nav)) { code { (item_code_label(v.a.as_str())) } }
-                                            span class="vote-ratio" { (format!("{}:{}", v.ratio_left, v.ratio_right)) }
+                                            span class="vote-ratio" { (format_ratio(v.ratio_left, v.ratio_right)) }
                                             a class="item-link" href=(item_href(v.b.as_str(), &nav)) { code { (item_code_label(v.b.as_str())) } }
                                         }
                                         div class="ratio-bar" {

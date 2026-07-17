@@ -1068,6 +1068,23 @@ body.view-vote-compare .vote-compare-shell > h2 {
   cursor: default;
   opacity: 0.65;
 }
+.vote-ratio-readout-wrap {
+  margin: 14px 0 4px;
+  text-align: center;
+  font-size: 13px;
+}
+.vote-ratio-readout-label {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.vote-ratio-readout {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  font-size: 18px;
+  letter-spacing: 0.04em;
+  color: var(--ui);
+}
 .vote-compare-slider-label {
   display: flex;
   flex-wrap: wrap;

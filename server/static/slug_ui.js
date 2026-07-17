@@ -368,22 +368,41 @@
     }
     refreshPinHud();
 
-    // Vote compare: map slider 0–100 to integer ratio weights
+    // Vote compare: map slider 0–100 to reduced integer ratio weights
     var voteSlider = document.getElementById('vote-preference-slider');
     if (voteSlider) {
       var rl = document.getElementById('vote-ratio-left');
       var rr = document.getElementById('vote-ratio-right');
+      var readout = document.getElementById('vote-ratio-readout');
+      function gcd(a, b) {
+        a = Math.abs(a | 0);
+        b = Math.abs(b | 0);
+        while (b) {
+          var t = b;
+          b = a % b;
+          a = t;
+        }
+        return a || 1;
+      }
+      function reduceRatio(left, right) {
+        var L = Math.max(1, left | 0);
+        var R = Math.max(1, right | 0);
+        var g = gcd(L, R);
+        return [L / g, R / g];
+      }
       function syncVoteRatio() {
         var p = parseInt(voteSlider.value, 10);
         if (isNaN(p)) p = 50;
-        var L = 100 - p;
-        var R = p;
-        if (L === 0 && R === 0) {
-          L = 1;
-          R = 1;
-        }
+        var rawL = 100 - p;
+        var rawR = p;
+        var reduced = reduceRatio(rawL, rawR);
+        var L = reduced[0];
+        var R = reduced[1];
+        var label = L + ':' + R;
         if (rl) rl.value = String(L);
         if (rr) rr.value = String(R);
+        if (readout) readout.textContent = label;
+        voteSlider.setAttribute('aria-valuetext', label);
       }
       voteSlider.addEventListener('input', syncVoteRatio);
       syncVoteRatio();

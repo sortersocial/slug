@@ -32,6 +32,30 @@ pub enum DslError {
     Parse(String),
 }
 
+/// Greatest common divisor (non-negative). `gcd(0, n) == n`, `gcd(0, 0) == 0`.
+pub fn gcd_i32(mut a: i32, mut b: i32) -> i32 {
+    a = a.abs();
+    b = b.abs();
+    while b != 0 {
+        let t = b;
+        b = a % b;
+        a = t;
+    }
+    a
+}
+
+/// Reduce a vote ratio by dividing both sides by their GCD.
+/// Non-positive inputs are clamped to 0; `(0, 0)` becomes `(1, 1)`.
+pub fn reduce_ratio(left: i32, right: i32) -> (i32, i32) {
+    let l = left.max(0);
+    let r = right.max(0);
+    if l == 0 && r == 0 {
+        return (1, 1);
+    }
+    let g = gcd_i32(l, r).max(1);
+    (l / g, r / g)
+}
+
 /// Helper to mask balanced blocks to protect them during filtering/parsing.
 ///
 /// Matches the legacy Python parser behavior:
@@ -555,6 +579,7 @@ fn parse_block_prefixed_statement(
             "vote ratio sides must be ≤ 100".to_string(),
         ));
     }
+    let (ratio_left, ratio_right) = reduce_ratio(ratio_left, ratio_right);
     i = skip_ws(s, k);
     let (item2, m) = parse_item_name_at(s, i)
         .ok_or_else(|| DslError::Parse("invalid rhs item name".to_string()))?;
@@ -975,6 +1000,38 @@ mod tests {
         assert!(matches!(
             doc.statements.last(),
             Some(Stmt::Vote { ratio_left: 100, ratio_right: 1, .. })
+        ));
+    }
+
+    #[test]
+    fn reduce_ratio_divides_by_gcd() {
+        assert_eq!(reduce_ratio(50, 50), (1, 1));
+        assert_eq!(reduce_ratio(25, 75), (1, 3));
+        assert_eq!(reduce_ratio(75, 25), (3, 1));
+        assert_eq!(reduce_ratio(2, 1), (2, 1));
+        assert_eq!(reduce_ratio(100, 1), (100, 1));
+        assert_eq!(reduce_ratio(0, 0), (1, 1));
+    }
+
+    #[test]
+    fn parse_vote_reduces_ratio_by_gcd() {
+        let doc = parse_full("{tie}\n~/a 50:50 ~/b").unwrap();
+        assert!(matches!(
+            doc.statements.last(),
+            Some(Stmt::Vote {
+                ratio_left: 1,
+                ratio_right: 1,
+                ..
+            })
+        ));
+        let doc = parse_full("{prefer b}\n~/a 25:75 ~/b").unwrap();
+        assert!(matches!(
+            doc.statements.last(),
+            Some(Stmt::Vote {
+                ratio_left: 1,
+                ratio_right: 3,
+                ..
+            })
         ));
     }
 

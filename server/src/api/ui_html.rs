@@ -261,6 +261,7 @@ async fn dispatch_ui_action(
                 )
                 .into_response();
             }
+            let (rl, rr) = crate::dsl::reduce_ratio(rl, rr);
 
             let text = format!(
                 "{{\n{}\n}}\n{} {}:{} {}\n",

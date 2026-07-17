@@ -16,7 +16,7 @@ use crate::{
     html::{
         forum::ThreadNav,
         layout_full_bleed_chromeless,
-        ratio_pct, render_item_body_in_scope,
+        format_ratio, ratio_pct, render_item_body_in_scope,
         theme_from_jar, theme_next_from_uri,
         user_can_post_room,
         ui_action::UI_RPC_FIELD,
@@ -173,11 +173,11 @@ fn vote_edge_history_markup(content: &ContentState, left: &ItemId, right: &ItemI
             ul class="vote-edge-history" {
                 @for v in &votes {
                     @let (r_left, r_right) = ratios_for_compare_page(v, left, right);
+                    @let ratio_label = format_ratio(r_left, r_right);
                     @let pct = ratio_pct(r_left, r_right);
                     @let row_tip = format!(
-                        "{}:{} counts toward {} (left of bar) vs {} (right of bar); #{} · @{}",
-                        r_left,
-                        r_right,
+                        "{} counts toward {} (left of bar) vs {} (right of bar); #{} · @{}",
+                        ratio_label,
                         legend_left,
                         legend_right,
                         v.thread_tag,
@@ -185,7 +185,7 @@ fn vote_edge_history_markup(content: &ContentState, left: &ItemId, right: &ItemI
                     );
                     li class="vote-edge-history-row" title=(row_tip) {
                         div class="vote-edge-meta" {
-                            span class="vote-edge-ratio" { (format!("{}:{}", r_left, r_right)) }
+                            span class="vote-edge-ratio" { (ratio_label) }
                             span class="muted" { " · #" (v.thread_tag) " · @" (v.principal) }
                         }
                         div class="ratio-bar vote-edge-bar" aria-hidden="true" {
@@ -547,12 +547,17 @@ async fn vote_compare_inner(
                         }
                     }
                 }
-                input type="hidden" name="ratio_left" id="vote-ratio-left" value="50";
-                input type="hidden" name="ratio_right" id="vote-ratio-right" value="50";
+                input type="hidden" name="ratio_left" id="vote-ratio-left" value="1";
+                input type="hidden" name="ratio_right" id="vote-ratio-right" value="1";
+                p class="vote-ratio-readout-wrap" {
+                    span class="vote-ratio-readout-label muted" { "ratio" }
+                    " "
+                    span id="vote-ratio-readout" class="vote-ratio-readout" aria-live="polite" { "1:1" }
+                }
                 label class="vote-compare-slider-label" {
                     span id="vote-slider-left-label" { (item_display_path(left.as_str())) }
                     input type="range" id="vote-preference-slider" min="0" max="100" value="50"
-                        aria-valuemin="0" aria-valuemax="100";
+                        aria-valuemin="0" aria-valuemax="100" aria-valuetext="1:1";
                     span id="vote-slider-right-label" { (item_display_path(right.as_str())) }
                 }
                 label class="vote-explain-label" { "reason (required)" }
