@@ -21,7 +21,8 @@ pub struct InviteState {
 
 #[derive(Debug, Clone)]
 pub struct PendingSession {
-    pub agent: String,
+    /// CLI `identity start` delegate (`uuid:rig:model`). `None` for browser `/login` and `/join`.
+    pub agent: Option<String>,
     pub created_ts: i64,
     pub provider: Option<String>,
     pub provider_id: Option<String>,

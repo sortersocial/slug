@@ -72,17 +72,14 @@ pub async fn rpc_batch(
     response.json().await.unwrap()
 }
 
-pub async fn seed_test_token(state: &AppState) {
-    seed_test_identity(state, "testuser", "testtok", "secret").await;
-}
-
-/// Add a distinct principal and bearer to a running integration-test server.
+/// Seed a user + bearer into reducer state (not appended to the event log).
+/// Returns the `slug_<token_id>_<secret>` bearer string.
 pub async fn seed_test_identity(
     state: &AppState,
     username: &str,
     token_id: &str,
     secret: &str,
-) {
+) -> String {
     let registered = Event::UserRegistered(UserRegistered {
         ts: 0,
         username: username.to_string(),
@@ -102,6 +99,11 @@ pub async fn seed_test_identity(
     let mut r = state.reduced.write().await;
     r.apply_event(registered);
     r.apply_event(ev);
+    format!("slug_{token_id}_{secret}")
+}
+
+pub async fn seed_test_token(state: &AppState) {
+    let _ = seed_test_identity(state, "testuser", "testtok", "secret").await;
 }
 
 pub async fn create_test_server_with_state() -> (

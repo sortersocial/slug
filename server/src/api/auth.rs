@@ -29,18 +29,6 @@ use crate::{
     write_cmd::WriteCmd,
 };
 
-/// Delegate id for browser users who land via `/join/inv_…` (no CLI agent).
-const INVITE_BROWSER_AGENT: &str = "00000000-0000-0000-0000-000000000000:invite:web/join";
-
-/// Agent id for `/login` browser OAuth (no CLI); must pass [`parse_agent`].
-pub const WEB_BROWSER_AGENT: &str = "00000000-0000-0000-0000-000000000001:social:web/browser";
-
-/// True for well-known browser / human-form sentinel delegates (not real AI agents).
-/// HTML attribution should show the human username for these, not `@@uuid:rig:…`.
-pub fn is_browser_sentinel_delegate(agent: &str) -> bool {
-    agent == WEB_BROWSER_AGENT || agent == INVITE_BROWSER_AGENT
-}
-
 /// HttpOnly cookie storing the same `slug_*` bearer string the CLI uses.
 pub const SLUG_SESSION_COOKIE: &str = "slug_session";
 
@@ -288,7 +276,7 @@ pub async fn get_join_invite(
     let session = format!("p_{}", uuid::Uuid::new_v4().simple());
     let redirect_next = safe_local_redirect(q.next.as_deref().or(q.redirect.as_deref()));
     let s = PendingSession {
-        agent: INVITE_BROWSER_AGENT.to_string(),
+        agent: None,
         created_ts: now_ms(),
         provider: None,
         provider_id: None,
@@ -555,7 +543,7 @@ pub async fn post_choose_username(
     };
 
     let sessions = pending_sessions(&state);
-    let (provider, provider_id, agent) = {
+    let (provider, provider_id) = {
         let sessions_read = sessions.read().await;
         let Some(s) = sessions_read.get(&form.session) else {
             return api_error(StatusCode::NOT_FOUND, "unknown session", None).into_response();
@@ -566,13 +554,8 @@ pub async fn post_choose_username(
         let Some(provider_id) = s.provider_id.clone() else {
             return js_form_error_fragment(&form.session, "oauth not completed").into_response();
         };
-        (provider, provider_id, s.agent.clone())
+        (provider, provider_id)
     };
-
-    if let Err(msg) = parse_agent(&agent) {
-        return js_form_error_fragment(&form.session, &format!("invalid agent format — {msg}"))
-            .into_response();
-    }
 
     let redeem_invite = {
         let sessions_read = sessions.read().await;
@@ -643,7 +626,8 @@ pub async fn get_web_login(
     let redirect_next = safe_local_redirect(q.next.as_deref().or(q.redirect.as_deref()))
         .or_else(|| Some("/".to_string()));
     let s = PendingSession {
-        agent: WEB_BROWSER_AGENT.to_string(),
+        // Humans sign in via the website with no AI delegate.
+        agent: None,
         created_ts: now_ms(),
         provider: None,
         provider_id: None,
@@ -704,7 +688,7 @@ pub async fn post_pending_session(
     );
     let poll_url = format!("/api/v0/pending-session/{session}");
     let s = PendingSession {
-        agent: agent_naked,
+        agent: Some(agent_naked),
         created_ts: now_ms(),
         provider: None,
         provider_id: None,

@@ -18,13 +18,11 @@ pub use auth::{
     get_choose_username,
     get_web_login,
     get_logout,
-    is_browser_sentinel_delegate,
     optional_principal,
     resolve_web_session,
     session_cookie_header_value,
     WebSession,
     SLUG_SESSION_COOKIE,
-    WEB_BROWSER_AGENT,
 };
 
 pub use helpers::{

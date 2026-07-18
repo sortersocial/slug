@@ -186,8 +186,9 @@
               (:token poll-json))))))))
 
 (defn fetch-bearer-token!
-  "Simulate browser OAuth + username choice; returns `slug_…` bearer token.
-   Ingest `--delegate` must match this agent string for `AgentBound` on first write."
+  "Simulate CLI identity OAuth + username choice; returns `slug_…` bearer token.
+   Pass `:agent` (default local/dev) when the test will CLI-ingest with `--delegate`
+   so first write can `AgentBound`. Browser UI posts use no delegate."
   [base-url & {:keys [username agent] :or {username "intuser" agent default-agent}}]
   (let [token (complete-registration! base-url :username username :agent agent)]
     (when-not (str/starts-with? token "slug_")

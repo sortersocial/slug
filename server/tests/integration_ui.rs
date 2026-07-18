@@ -418,6 +418,99 @@ async fn test_web_login_carries_vote_pair_next_into_pending_session() {
     let sessions = state.pending_sessions.read().await;
     let pending = sessions.get(&session).expect("pending session");
     assert_eq!(pending.redirect_next.as_deref(), Some(next));
+    assert_eq!(
+        pending.agent, None,
+        "browser /login must not invent a sentinel delegate"
+    );
+}
+
+#[tokio::test]
+async fn test_vote_compare_two_users_both_succeed_without_delegate() {
+    let (addr, _tmp, _log, state, _handle) = create_test_server_with_state().await;
+    let client = reqwest::Client::new();
+    let alice = test_bearer();
+    let bob = seed_test_identity(&state, "bob", "bobtok", "bobsecret").await;
+
+    // Define items first (votes require existing item bodies).
+    let seed = ui_post_ingest_rpc(
+        "public",
+        "multi-vote",
+        "~/multi-a {alpha}\n~/multi-b {beta}\n",
+    );
+    let seed_resp = client
+        .post(format!("http://{addr}/ui"))
+        .header("Authorization", format!("Bearer {alice}"))
+        .form(&[("__rpc__", seed.as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(seed_resp.status(), reqwest::StatusCode::OK);
+    let seed_js = seed_resp.text().await.unwrap();
+    assert!(
+        !seed_js.contains("auth-error"),
+        "item seed must succeed, got: {seed_js}"
+    );
+
+    for (bearer, left, right, explanation) in [
+        (&alice, "3", "1", "alice prefers a"),
+        (&bob, "1", "3", "bob prefers b"),
+    ] {
+        let rpc = ui_vote_compare_post_rpc(
+            "public",
+            "multi-vote",
+            "~/multi-a",
+            "~/multi-b",
+            left,
+            right,
+            explanation,
+        );
+        let resp = client
+            .post(format!("http://{addr}/ui"))
+            .header("Authorization", format!("Bearer {bearer}"))
+            .form(&[("__rpc__", rpc.as_str())])
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), reqwest::StatusCode::OK);
+        let js = resp.text().await.unwrap();
+        assert!(
+            !js.contains("delegate already bound"),
+            "human vote must not hit shared-sentinel AgentBound ({explanation}), got: {js}"
+        );
+        assert!(
+            !js.contains("auth-error"),
+            "human vote must succeed ({explanation}), got: {js}"
+        );
+        assert!(
+            js.contains("vote-edge-history-region"),
+            "vote should morph edge history ({explanation}), got: {js}"
+        );
+    }
+
+    let reduced = state.reduced.read().await;
+    let human_votes: Vec<_> = reduced
+        .ingests_ordered
+        .iter()
+        .filter_map(|id| reduced.ingests_by_id.get(id))
+        .filter(|ing| ing.raw.contains("prefers"))
+        .collect();
+    assert_eq!(human_votes.len(), 2, "expected two vote ingests");
+    let mut principals: Vec<&str> = human_votes.iter().map(|i| i.principal.as_str()).collect();
+    principals.sort();
+    assert_eq!(principals, ["bob", "testuser"]);
+    for ing in &human_votes {
+        assert!(
+            ing.delegate.is_none(),
+            "browser votes must have no delegate, principal={} delegate={:?}",
+            ing.principal,
+            ing.delegate
+        );
+    }
+    assert!(
+        reduced.agent_bindings.is_empty(),
+        "human votes must not create AgentBound entries: {:?}",
+        reduced.agent_bindings
+    );
 }
 
 #[tokio::test]

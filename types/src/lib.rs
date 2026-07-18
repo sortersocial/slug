@@ -538,7 +538,9 @@ pub struct PendingSessionStartResponse {
 pub struct PendingSessionPollResponse {
     pub ok: bool,
     pub complete: bool,
-    pub agent: String,
+    /// Present for CLI identity sessions; omitted for browser `/login` / `/join` (no delegate).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

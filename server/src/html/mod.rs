@@ -560,27 +560,28 @@ fn identity_color_css(seed: &str) -> String {
     format!("hsl({hue}, 62%, 66%)")
 }
 
-/// Seed for author color: real AI → delegate uuid; human/sentinel → principal username.
+/// Seed for author color: AI → delegate uuid; human (no delegate) → principal username.
 fn authorship_color_seed<'a>(principal: &'a str, delegate: &'a Option<String>) -> &'a str {
     match delegate {
-        Some(d) if !crate::api::is_browser_sentinel_delegate(d) => {
-            d.split(':').next().filter(|s| !s.is_empty()).unwrap_or(d.as_str())
-        }
-        _ => principal,
+        Some(d) => d
+            .split(':')
+            .next()
+            .filter(|s| !s.is_empty())
+            .unwrap_or(d.as_str()),
+        None => principal,
     }
 }
 
-/// Prefer the AI delegate in attribution; fall back to the human username when there is no
-/// delegate or the delegate is a browser/human-form sentinel.
+/// Prefer the AI delegate in attribution; humans post with no delegate and show `@username`.
 pub(crate) fn authorship_attr(principal: &str, delegate: &Option<String>) -> AuthorshipAttr {
     let color = identity_color_css(authorship_color_seed(principal, delegate));
     match delegate {
-        Some(d) if !crate::api::is_browser_sentinel_delegate(d) => AuthorshipAttr {
+        Some(d) => AuthorshipAttr {
             label: format!("@@{}", actor_label(d)),
             author_title: Some(format!("@{principal}")),
             color,
         },
-        _ => AuthorshipAttr {
+        None => AuthorshipAttr {
             label: format!("@{principal}"),
             author_title: None,
             color,
@@ -933,7 +934,6 @@ pub(super) fn recency_class(now_ms: i64, ts_ms: i64) -> &'static str {
 #[cfg(test)]
 mod authorship_tests {
     use super::*;
-    use crate::api::WEB_BROWSER_AGENT;
 
     #[test]
     fn human_or_missing_delegate_shows_username() {
@@ -941,15 +941,6 @@ mod authorship_tests {
         assert_eq!(a.label, "@alice");
         assert_eq!(a.author_title, None);
         assert!(a.color.starts_with("hsl("));
-    }
-
-    #[test]
-    fn browser_sentinel_delegate_shows_username() {
-        let d = Some(WEB_BROWSER_AGENT.to_string());
-        let a = authorship_attr("alice", &d);
-        assert_eq!(a.label, "@alice");
-        assert_eq!(a.author_title, None);
-        assert_eq!(authorship_address("alice", &d), "@alice");
     }
 
     #[test]

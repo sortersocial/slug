@@ -277,7 +277,7 @@ async fn dispatch_ui_action(
                 &session.bearer,
                 room.clone(),
                 thread_tag.clone(),
-                Some(crate::api::auth::WEB_BROWSER_AGENT.to_string()),
+                None,
                 text,
             )
             .await

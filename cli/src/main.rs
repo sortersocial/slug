@@ -1741,8 +1741,8 @@ async fn run() -> Result<()> {
                     tokio::time::sleep(std::time::Duration::from_millis(poll_interval_ms)).await;
                     let poll: PendingSessionPollResponse =
                         expect_json(client.get(&poll_url).send().await?).await?;
-                    if !poll.agent.trim().is_empty() {
-                        agent_out = Some(poll.agent.clone());
+                    if let Some(a) = poll.agent.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+                        agent_out = Some(a.to_string());
                     }
                     if poll.complete {
                         token_out = poll.token;
