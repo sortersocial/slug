@@ -397,6 +397,29 @@ fn print_item_response(resp: &ItemResponse) {
     }
 }
 
+fn format_connectivity_stats(stats: &ConnectivityStats) -> String {
+    let density = if stats.pairs_possible == 0 {
+        0.0
+    } else {
+        stats.pairs_voted as f64 / stats.pairs_possible as f64 * 100.0
+    };
+    let component_label = if stats.components == 1 { "component" } else { "components" };
+    let connection_status = if stats.comparisons_until_connected == 0 {
+        "connected".to_string()
+    } else {
+        let comparison_label = if stats.comparisons_until_connected == 1 {
+            "comparison"
+        } else {
+            "comparisons"
+        };
+        format!("{} {comparison_label} to connect", stats.comparisons_until_connected)
+    };
+    format!(
+        "graph: {} items, {}/{} pairs ({density:.1}% density), {} {component_label}, {connection_status}",
+        stats.items, stats.pairs_voted, stats.pairs_possible, stats.components,
+    )
+}
+
 fn print_pair_response(resp: &PairResponse) {
     println!("{}  vs  {}", resp.left, resp.right);
     if let Some(b) = &resp.left_body {
@@ -412,6 +435,10 @@ fn print_pair_response(resp: &PairResponse) {
     if !resp.threads.is_empty() {
         println!();
         println!("threads: {}", resp.threads.iter().map(|t| format!("#{t}")).collect::<Vec<_>>().join(" "));
+    }
+    if let Some(stats) = &resp.connectivity {
+        println!();
+        println!("{}", format_connectivity_stats(stats));
     }
     println!();
     println!("---");
@@ -814,6 +841,43 @@ fn write_secret_file(name: &str, contents: &str) -> Result<()> {
             .with_context(|| format!("failed to chmod {}", path.display()))?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn connectivity_stats_show_sparse_disconnected_graph() {
+        let stats = ConnectivityStats {
+            items: 9,
+            components: 3,
+            comparisons_until_connected: 2,
+            pairs_voted: 8,
+            pairs_possible: 36,
+        };
+
+        assert_eq!(
+            format_connectivity_stats(&stats),
+            "graph: 9 items, 8/36 pairs (22.2% density), 3 components, 2 comparisons to connect"
+        );
+    }
+
+    #[test]
+    fn connectivity_stats_show_connected_graph() {
+        let stats = ConnectivityStats {
+            items: 4,
+            components: 1,
+            comparisons_until_connected: 0,
+            pairs_voted: 3,
+            pairs_possible: 6,
+        };
+
+        assert_eq!(
+            format_connectivity_stats(&stats),
+            "graph: 4 items, 3/6 pairs (50.0% density), 1 component, connected"
+        );
+    }
 }
 
 async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
