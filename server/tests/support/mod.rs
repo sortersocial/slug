@@ -70,20 +70,25 @@ pub async fn rpc_batch(
     response.json().await.unwrap()
 }
 
-pub async fn seed_test_token(state: &AppState) {
+/// Seed a user + bearer into reducer state (not appended to the event log).
+/// Returns the `slug_<token_id>_<secret>` bearer string.
+pub async fn seed_user_token(
+    state: &AppState,
+    username: &str,
+    token_id: &str,
+    secret: &str,
+) -> String {
     let registered = Event::UserRegistered(UserRegistered {
         ts: 0,
-        username: "testuser".to_string(),
+        username: username.to_string(),
         provider: "test".to_string(),
-        provider_id: "testuser".to_string(),
+        provider_id: username.to_string(),
     });
-    let token_id = "testtok";
-    let secret = "secret";
     let salt = "salt";
     let token_hash = sha256_hex(&format!("{salt}:{secret}"));
     let ev = Event::TokenIssued(TokenIssued {
         ts: 0,
-        username: "testuser".to_string(),
+        username: username.to_string(),
         token_id: token_id.to_string(),
         token_hash,
         salt: salt.to_string(),
@@ -92,6 +97,11 @@ pub async fn seed_test_token(state: &AppState) {
     let mut r = state.reduced.write().await;
     r.apply_event(registered);
     r.apply_event(ev);
+    format!("slug_{token_id}_{secret}")
+}
+
+pub async fn seed_test_token(state: &AppState) {
+    let _ = seed_user_token(state, "testuser", "testtok", "secret").await;
 }
 
 pub async fn create_test_server_with_state() -> (
