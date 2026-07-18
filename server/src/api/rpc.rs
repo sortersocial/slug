@@ -72,6 +72,80 @@ fn can_view_scope(reduced: &ReducerState, scope: &ScopeId, principal: Option<&st
     }
 }
 
+/// Build a feed in durable ingest order.
+///
+/// An implicit feed boundary is an ingest position, not only its millisecond timestamp. Two users
+/// can post in the same millisecond, and wall-clock timestamps can move backwards during replay.
+/// Explicit `since` remains a timestamp query for API compatibility, but scans the whole ordered
+/// ledger rather than assuming timestamps are monotonic.
+fn rpc_feed(
+    reduced: &ReducerState,
+    viewer: &str,
+    delegate: Option<String>,
+    requested_since: Option<i64>,
+    implicit_anchor: Option<(usize, i64)>,
+    limit: usize,
+) -> FeedResponse {
+    let since = requested_since.or_else(|| implicit_anchor.map(|(_, ts)| ts));
+    let implicit_anchor_index = requested_since
+        .is_none()
+        .then(|| implicit_anchor.map(|(index, _)| index))
+        .flatten();
+
+    let matching: Vec<&str> = reduced
+        .ingests_ordered
+        .iter()
+        .enumerate()
+        .rev()
+        .filter(|(index, id)| {
+            reduced.ingests_by_id.get(id.as_str()).is_some_and(|ing| {
+                match requested_since {
+                    Some(cutoff) => ing.ts > cutoff,
+                    None => implicit_anchor_index.is_none_or(|anchor| *index > anchor),
+                }
+            })
+        })
+        .map(|(_, id)| id.as_str())
+        .filter(|id| {
+            reduced.ingests_by_id.get(*id).is_some_and(|ing| {
+                let scope = scope_from_room_wire(&ing.room_id);
+                can_view_scope(reduced, &scope, Some(viewer))
+            })
+        })
+        .filter(|id| !reduced.redacted_posts.contains(*id))
+        .collect();
+
+    let total = matching.len();
+    let posts = matching
+        .into_iter()
+        .take(limit)
+        .filter_map(|id| reduced.ingests_by_id.get(id))
+        .map(|ing| {
+            let scope = scope_from_room_wire(&ing.room_id);
+            let thread_post_index = reduced.try_thread_post_index_chronological(
+                &scope,
+                &ing.thread_tag,
+                &ing.id,
+            );
+            FeedPost {
+                ts: ing.ts,
+                id: ing.id.clone(),
+                room: ing.room_id.clone(),
+                thread: Some(ing.thread_tag.clone()),
+                thread_post_index,
+                body: ing.raw.clone(),
+            }
+        })
+        .collect();
+
+    FeedResponse {
+        delegate,
+        since,
+        posts,
+        total,
+    }
+}
+
 fn principal_from_optional_bearer(headers: &HeaderMap, reduced: &ReducerState) -> Result<Option<String>, RpcErr> {
     if headers.contains_key(axum::http::header::AUTHORIZATION) {
         verify_bearer_principal(headers, reduced)
@@ -1506,60 +1580,27 @@ pub async fn handle_rpc_batch(
                                         Some("this delegate is not bound to your signed-in account".into()),
                                     )
                                 } else {
-                                    let since_default = reduced
+                                    let implicit_anchor = reduced
                                         .ingests_ordered
                                         .iter()
+                                        .enumerate()
                                         .rev()
-                                        .filter_map(|id| reduced.ingests_by_id.get(id))
-                                        .find(|ing| {
-                                            if ing.delegate.as_deref() != Some(delegate_stored.as_str()) {
-                                                return false;
-                                            }
-                                            let scope = scope_from_room_wire(&ing.room_id);
-                                            can_view_scope(&reduced, &scope, Some(viewer.as_str()))
-                                        })
-                                        .map(|ing| ing.ts);
-                                    let since = since.or(since_default);
-                                    let cutoff = since.unwrap_or(0);
-                                    let limit = limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT);
-                                    let matching: Vec<&str> = reduced.ingests_ordered.iter().rev()
-                                        .map(|id| id.as_str())
-                                        .take_while(|id| reduced.ingests_by_id.get(*id).is_some_and(|ing| ing.ts > cutoff))
-                                        .filter(|id| {
-                                            reduced.ingests_by_id.get(*id).is_some_and(|ing| {
-                                                let scope = scope_from_room_wire(&ing.room_id);
-                                                can_view_scope(&reduced, &scope, Some(viewer.as_str()))
+                                        .find_map(|(index, id)| {
+                                            reduced.ingests_by_id.get(id).and_then(|ing| {
+                                                (ing.delegate.as_deref()
+                                                    == Some(delegate_stored.as_str()))
+                                                .then_some((index, ing.ts))
                                             })
-                                        })
-                                        .filter(|id| !reduced.redacted_posts.contains(*id))
-                                        .collect();
-                                    let total = matching.len();
-                                    let posts: Vec<FeedPost> = matching.into_iter()
-                                        .take(limit)
-                                        .filter_map(|id| reduced.ingests_by_id.get(id))
-                                        .map(|ing| {
-                                            let scope = scope_from_room_wire(&ing.room_id);
-                                            let thread_post_index = reduced
-                                                .try_thread_post_index_chronological(
-                                                    &scope,
-                                                    &ing.thread_tag,
-                                                    &ing.id,
-                                                );
-                                            FeedPost {
-                                                ts: ing.ts,
-                                                id: ing.id.clone(),
-                                                thread: Some(ing.thread_tag.clone()),
-                                                thread_post_index,
-                                                body: ing.raw.clone(),
-                                            }
-                                        })
-                                        .collect();
-                                    line_ok(RpcResult::Feed(FeedResponse {
-                                        delegate: Some(delegate_stored),
+                                        });
+                                    let limit = limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT);
+                                    line_ok(RpcResult::Feed(rpc_feed(
+                                        &reduced,
+                                        &viewer,
+                                        Some(delegate_stored),
                                         since,
-                                        posts,
-                                        total,
-                                    }))
+                                        implicit_anchor,
+                                        limit,
+                                    )))
                                 };
                                 drop(reduced);
                                 line
@@ -1567,60 +1608,25 @@ pub async fn handle_rpc_batch(
                             None => {
                                 // Session catch-up: last time *you* posted anything (delegate or not), so revisiting
                                 // an old chat with only a token still gets a sane cutoff.
-                                let since_default = reduced
+                                let implicit_anchor = reduced
                                     .ingests_ordered
                                     .iter()
+                                    .enumerate()
                                     .rev()
-                                    .filter_map(|id| reduced.ingests_by_id.get(id))
-                                    .find(|ing| {
-                                        if ing.principal != viewer {
-                                            return false;
-                                        }
-                                        let scope = scope_from_room_wire(&ing.room_id);
-                                        can_view_scope(&reduced, &scope, Some(viewer.as_str()))
-                                    })
-                                    .map(|ing| ing.ts);
-                                let since = since.or(since_default);
-                                let cutoff = since.unwrap_or(0);
-                                let limit = limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT);
-                                let matching: Vec<&str> = reduced.ingests_ordered.iter().rev()
-                                    .map(|id| id.as_str())
-                                    .take_while(|id| reduced.ingests_by_id.get(*id).is_some_and(|ing| ing.ts > cutoff))
-                                    .filter(|id| {
-                                        reduced.ingests_by_id.get(*id).is_some_and(|ing| {
-                                            let scope = scope_from_room_wire(&ing.room_id);
-                                            can_view_scope(&reduced, &scope, Some(viewer.as_str()))
+                                    .find_map(|(index, id)| {
+                                        reduced.ingests_by_id.get(id).and_then(|ing| {
+                                            (ing.principal == viewer).then_some((index, ing.ts))
                                         })
-                                    })
-                                    .filter(|id| !reduced.redacted_posts.contains(*id))
-                                    .collect();
-                                let total = matching.len();
-                                let posts: Vec<FeedPost> = matching.into_iter()
-                                    .take(limit)
-                                    .filter_map(|id| reduced.ingests_by_id.get(id))
-                                    .map(|ing| {
-                                        let scope = scope_from_room_wire(&ing.room_id);
-                                        let thread_post_index = reduced
-                                            .try_thread_post_index_chronological(
-                                                &scope,
-                                                &ing.thread_tag,
-                                                &ing.id,
-                                            );
-                                        FeedPost {
-                                            ts: ing.ts,
-                                            id: ing.id.clone(),
-                                            thread: Some(ing.thread_tag.clone()),
-                                            thread_post_index,
-                                            body: ing.raw.clone(),
-                                        }
-                                    })
-                                    .collect();
-                                let line = line_ok(RpcResult::Feed(FeedResponse {
-                                    delegate: None,
+                                    });
+                                let limit = limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT);
+                                let line = line_ok(RpcResult::Feed(rpc_feed(
+                                    &reduced,
+                                    &viewer,
+                                    None,
                                     since,
-                                    posts,
-                                    total,
-                                }));
+                                    implicit_anchor,
+                                    limit,
+                                )));
                                 drop(reduced);
                                 line
                             }

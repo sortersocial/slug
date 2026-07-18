@@ -878,6 +878,30 @@ mod tests {
             "graph: 4 items, 3/6 pairs (50.0% density), 1 component, connected"
         );
     }
+
+    #[test]
+    fn feed_without_since_uses_logged_in_delegate_from_env() {
+        let key = "SLUG_DELEGATE";
+        let previous = std::env::var_os(key);
+        let expected = "00000000-0000-0000-0000-0000000000ee:test:local/model";
+        std::env::set_var(key, expected);
+
+        let cli = Cli::try_parse_from(["slugsocial", "feed"]).expect("parse feed");
+
+        match previous {
+            Some(value) => std::env::set_var(key, value),
+            None => std::env::remove_var(key),
+        }
+        match cli.cmd {
+            Some(Command::Feed {
+                delegate, since, ..
+            }) => {
+                assert_eq!(delegate.as_deref(), Some(expected));
+                assert!(since.is_none());
+            }
+            _ => panic!("expected feed command"),
+        }
+    }
 }
 
 async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
@@ -1626,7 +1650,15 @@ async fn run() -> Result<()> {
                 } else {
                     for p in &resp.posts {
                         let ago = slug_types::timeago::timeago(now_ms, p.ts);
-                        println!("<post id=\"{}\" ts=\"{}\">", p.id, ago);
+                        let thread_attr = p
+                            .thread
+                            .as_deref()
+                            .map(|thread| format!(" thread=\"{thread}\""))
+                            .unwrap_or_default();
+                        println!(
+                            "<post id=\"{}\" ts=\"{}\" room=\"{}\"{}>",
+                            p.id, ago, p.room, thread_attr
+                        );
                         print!("{}", p.body);
                         if !p.body.ends_with('\n') { println!(); }
                         println!("</post>");

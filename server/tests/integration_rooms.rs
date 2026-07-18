@@ -1,6 +1,9 @@
 mod support;
 
 use slug_types::room_route_segment;
+use slugsocial_server::events::{
+    AgentBound, Event, GrantAdded, GrantRevoked, Ingest, RoomCreated, ThreadCapability,
+};
 use support::*;
 
 #[tokio::test]
@@ -470,6 +473,247 @@ async fn test_feed_without_delegate_uses_principal_last_post_including_delegate(
         posts.is_empty(),
         "nothing is strictly newer than the latest own post; got {} posts",
         posts.len()
+    );
+}
+
+#[tokio::test]
+async fn test_feed_uses_delegate_ingest_position_when_multi_user_timestamps_collide() {
+    let (addr, _tmp, _log, state, _handle) = create_test_server_with_state().await;
+    seed_test_identity(&state, "bob", "bobtok", "bobsecret").await;
+    let client = reqwest::Client::new();
+    let alice_delegate =
+        "00000000-0000-0000-0000-0000000000c1:feedtest:local/alice-model";
+    let bob_delegate =
+        "00000000-0000-0000-0000-0000000000c2:feedtest:local/bob-model";
+
+    {
+        let mut reduced = state.reduced.write().await;
+        for (agent, username) in [
+            (alice_delegate, "testuser"),
+            (bob_delegate, "bob"),
+        ] {
+            reduced.apply_event(Event::AgentBound(AgentBound {
+                ts: 1,
+                agent: agent.to_string(),
+                username: username.to_string(),
+            }));
+        }
+        reduced.apply_event(Event::Ingest(Ingest {
+            ts: 100,
+            id: "alice-anchor".into(),
+            raw: "alice anchor".into(),
+            principal: "testuser".into(),
+            delegate: Some(alice_delegate.into()),
+            room_id: "public".into(),
+            thread_tag: "feed-order".into(),
+        }));
+        reduced.apply_event(Event::Ingest(Ingest {
+            ts: 100,
+            id: "bob-same-millisecond".into(),
+            raw: "bob same-millisecond change".into(),
+            principal: "bob".into(),
+            delegate: Some(bob_delegate.into()),
+            room_id: "public".into(),
+            thread_tag: "feed-order".into(),
+        }));
+        // Event-log order remains authoritative even if the wall clock moves backwards.
+        reduced.apply_event(Event::Ingest(Ingest {
+            ts: 99,
+            id: "bob-clock-rollback".into(),
+            raw: "bob change after clock rollback".into(),
+            principal: "bob".into(),
+            delegate: Some(bob_delegate.into()),
+            room_id: "public".into(),
+            thread_tag: "feed-order".into(),
+        }));
+    }
+
+    let feed = rpc_batch(
+        &client,
+        addr,
+        Some(&test_bearer()),
+        serde_json::json!([{
+            "GetFeed": { "delegate": alice_delegate, "limit": 20 }
+        }]),
+    )
+    .await;
+    let posts = feed["results"][0]["result"]["Feed"]["posts"]
+        .as_array()
+        .unwrap();
+    let ids: Vec<&str> = posts.iter().filter_map(|p| p["id"].as_str()).collect();
+    assert_eq!(
+        ids,
+        ["bob-clock-rollback", "bob-same-millisecond"],
+        "implicit feed cutoff must use append position, not timestamp"
+    );
+}
+
+#[tokio::test]
+async fn test_feed_multi_user_private_room_visibility_and_revoked_anchor_access() {
+    let (addr, _tmp, _log, state, _handle) = create_test_server_with_state().await;
+    seed_test_identity(&state, "bob", "bobtok", "bobsecret").await;
+    seed_test_identity(&state, "carol", "caroltok", "carolsecret").await;
+    let client = reqwest::Client::new();
+    let alice_delegate =
+        "00000000-0000-0000-0000-0000000000d1:feedtest:local/alice-model";
+    let bob_delegate =
+        "00000000-0000-0000-0000-0000000000d2:feedtest:local/bob-model";
+    let room_alice = "alice01/alice-room";
+    let room_bob = "bob0001/bob-room";
+
+    {
+        let mut reduced = state.reduced.write().await;
+        for (agent, username) in [
+            (alice_delegate, "testuser"),
+            (bob_delegate, "bob"),
+        ] {
+            reduced.apply_event(Event::AgentBound(AgentBound {
+                ts: 1,
+                agent: agent.to_string(),
+                username: username.to_string(),
+            }));
+        }
+        for (room_id, slug, owner) in [
+            (room_alice, "alice-room", "testuser"),
+            (room_bob, "bob-room", "bob"),
+        ] {
+            reduced.apply_event(Event::RoomCreated(RoomCreated {
+                ts: 2,
+                room_id: room_id.to_string(),
+                slug: slug.to_string(),
+                owner: owner.to_string(),
+            }));
+            reduced.apply_event(Event::GrantAdded(GrantAdded {
+                ts: 2,
+                room_id: room_id.to_string(),
+                username: owner.to_string(),
+                capabilities: vec![ThreadCapability::View],
+                granted_by: owner.to_string(),
+            }));
+        }
+
+        let mut add_ingest =
+            |ts, id: &str, raw: &str, principal: &str, delegate: Option<&str>, room: &str| {
+                reduced.apply_event(Event::Ingest(Ingest {
+                    ts,
+                    id: id.into(),
+                    raw: raw.into(),
+                    principal: principal.into(),
+                    delegate: delegate.map(str::to_string),
+                    room_id: room.into(),
+                    thread_tag: "feed-permissions".into(),
+                }));
+            };
+        add_ingest(10, "prehistory", "must remain before alice anchor", "carol", None, "public");
+        add_ingest(
+            11,
+            "alice-private-anchor",
+            "alice last posted here",
+            "testuser",
+            Some(alice_delegate),
+            room_alice,
+        );
+        add_ingest(
+            12,
+            "bob-public-anchor",
+            "bob last posted here",
+            "bob",
+            Some(bob_delegate),
+            "public",
+        );
+        add_ingest(13, "alice-room-change", "visible only to alice", "carol", None, room_alice);
+        add_ingest(14, "bob-room-change", "visible only to bob", "carol", None, room_bob);
+        add_ingest(15, "public-change", "visible to everyone", "carol", None, "public");
+
+        reduced.apply_event(Event::GrantRevoked(GrantRevoked {
+            ts: 16,
+            room_id: room_alice.into(),
+            username: "testuser".into(),
+            capabilities: vec![ThreadCapability::View],
+            revoked_by: "testuser".into(),
+        }));
+    }
+
+    let alice_feed = rpc_batch(
+        &client,
+        addr,
+        Some(&test_bearer()),
+        serde_json::json!([{
+            "GetFeed": { "delegate": alice_delegate, "limit": 20 }
+        }]),
+    )
+    .await;
+    let alice_posts = alice_feed["results"][0]["result"]["Feed"]["posts"]
+        .as_array()
+        .unwrap();
+    let alice_ids: Vec<&str> = alice_posts
+        .iter()
+        .filter_map(|p| p["id"].as_str())
+        .collect();
+    assert_eq!(
+        alice_ids,
+        ["public-change", "bob-public-anchor"],
+        "revoked private content must be hidden without moving the delegate anchor backwards"
+    );
+    assert!(!alice_ids.contains(&"prehistory"));
+    assert!(
+        alice_posts
+            .iter()
+            .all(|post| post["room"].as_str() == Some("public")),
+        "private posts must not leak and every feed post must identify its room"
+    );
+
+    let bob_bearer = test_bearer_for("bobtok", "bobsecret");
+    let bob_feed = rpc_batch(
+        &client,
+        addr,
+        Some(&bob_bearer),
+        serde_json::json!([{
+            "GetFeed": { "delegate": bob_delegate, "limit": 20 }
+        }]),
+    )
+    .await;
+    let bob_ids: Vec<&str> = bob_feed["results"][0]["result"]["Feed"]["posts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|p| p["id"].as_str())
+        .collect();
+    assert_eq!(bob_ids, ["public-change", "bob-room-change"]);
+    assert_eq!(
+        bob_feed["results"][0]["result"]["Feed"]["posts"][1]["room"],
+        room_bob
+    );
+
+    // Restoring View exposes only changes after the same stable delegate anchor.
+    {
+        let mut reduced = state.reduced.write().await;
+        reduced.apply_event(Event::GrantAdded(GrantAdded {
+            ts: 17,
+            room_id: room_alice.into(),
+            username: "testuser".into(),
+            capabilities: vec![ThreadCapability::View],
+            granted_by: "testuser".into(),
+        }));
+    }
+    let restored = rpc_batch(
+        &client,
+        addr,
+        Some(&test_bearer()),
+        serde_json::json!([{
+            "GetFeed": { "delegate": alice_delegate, "limit": 20 }
+        }]),
+    )
+    .await;
+    let restored_ids: Vec<&str> = restored["results"][0]["result"]["Feed"]["posts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|p| p["id"].as_str())
+        .collect();
+    assert_eq!(
+        restored_ids,
+        ["public-change", "alice-room-change", "bob-public-anchor"]
     );
 }
 

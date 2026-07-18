@@ -20,8 +20,10 @@ pub fn sha256_hex(s: &str) -> String {
 
 /// Fixed bearer for integration tests (`TokenIssued` seeded into reducer in `create_test_server`).
 pub fn test_bearer() -> String {
-    let token_id = "testtok";
-    let secret = "secret";
+    test_bearer_for("testtok", "secret")
+}
+
+pub fn test_bearer_for(token_id: &str, secret: &str) -> String {
     format!("slug_{token_id}_{secret}")
 }
 
@@ -71,19 +73,27 @@ pub async fn rpc_batch(
 }
 
 pub async fn seed_test_token(state: &AppState) {
+    seed_test_identity(state, "testuser", "testtok", "secret").await;
+}
+
+/// Add a distinct principal and bearer to a running integration-test server.
+pub async fn seed_test_identity(
+    state: &AppState,
+    username: &str,
+    token_id: &str,
+    secret: &str,
+) {
     let registered = Event::UserRegistered(UserRegistered {
         ts: 0,
-        username: "testuser".to_string(),
+        username: username.to_string(),
         provider: "test".to_string(),
-        provider_id: "testuser".to_string(),
+        provider_id: username.to_string(),
     });
-    let token_id = "testtok";
-    let secret = "secret";
     let salt = "salt";
     let token_hash = sha256_hex(&format!("{salt}:{secret}"));
     let ev = Event::TokenIssued(TokenIssued {
         ts: 0,
-        username: "testuser".to_string(),
+        username: username.to_string(),
         token_id: token_id.to_string(),
         token_hash,
         salt: salt.to_string(),

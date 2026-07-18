@@ -264,6 +264,9 @@ pub struct FeedResponse {
 pub struct FeedPost {
     pub ts: i64,
     pub id: String,
+    /// Permission scope containing the post: `"public"` or a private room id.
+    #[serde(default)]
+    pub room: String,
     /// Primary thread tag (without #), if the ingest declared one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub thread: Option<String>,
