@@ -31,10 +31,11 @@ pub use forum::{
 };
 
 pub use forum::user_profile_page;
+pub use forum::user_can_view_room;
 pub(crate) use forum::{
     fragment_new_thread_slot, login_to_post_hint_markup, room_members_section_markup,
     thread_ui_collapse_redacted_post, thread_ui_copy_thread, thread_ui_expand_post_full, thread_ui_expand_redacted_post,
-    user_can_post_room, user_can_view_room,
+    user_can_post_room,
 };
 pub(crate) use garden::{
     encode_pin_cookie_value, external_resolver_status_markup, garden_ui_copy_rank,

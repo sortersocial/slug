@@ -1,7 +1,7 @@
 use crate::events::ThreadCapability;
 use crate::reducer::ReducerState;
 
-pub(crate) fn user_can_view_room(reduced: &ReducerState, room_id: &str, username: Option<&str>) -> bool {
+pub fn user_can_view_room(reduced: &ReducerState, room_id: &str, username: Option<&str>) -> bool {
     if !reduced.rooms.contains(room_id) {
         return false;
     }
