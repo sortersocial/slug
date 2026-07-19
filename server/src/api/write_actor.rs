@@ -76,23 +76,40 @@ async fn broadcast_web_refresh(state: &AppState, room_key: &str, thread_id: &str
     let thread_feed_markup =
         crate::html::thread_feed_region_markup(state, Some(room_key), thread_id, None).await;
 
-    let builder = JsBuilder::new().morph_selector(&format!("#{feed_id}"), feed_markup);
-    let builder = builder.qs("#new-thread-compose form").reset();
-    let builder = builder.if_current_path_matches(&thread_url, |builder| {
+    // Two SSE payloads: the bump-list morph must not ship private HTML to subscribers who only
+    // matched `/` (public) or lack room access — see [`crate::api::stream::get_html_stream`].
+    let feed_builder = JsBuilder::new().morph_selector(&format!("#{feed_id}"), feed_markup);
+    let feed_builder = feed_builder.qs("#new-thread-compose form").reset();
+    let feed_js = feed_builder.build();
+
+    let thread_builder = JsBuilder::new().if_current_path_matches(&thread_url, |builder| {
         builder.morph_selector("#thread-feed-region", thread_feed_markup)
     });
-    let js = builder.build();
-    let mut path_prefixes = vec![if room_key == "public" {
-        "/".to_string()
-    } else if let Some(seg) = room_route_segment(room_key) {
-        format!("/r/{seg}")
+    let thread_js = thread_builder.build();
+
+    let audience = if room_key == "public" {
+        crate::state::JsSnippetAudience::Public
     } else {
-        "/".to_string()
-    }];
-    path_prefixes.push(thread_url.clone());
+        crate::state::JsSnippetAudience::RoomViewers(room_key.to_string())
+    };
+
+    let feed_prefixes = if room_key == "public" {
+        vec!["/".to_string(), thread_url.clone()]
+    } else if let Some(seg) = room_route_segment(room_key) {
+        vec![format!("/r/{seg}"), thread_url.clone()]
+    } else {
+        vec!["/".to_string(), thread_url.clone()]
+    };
+
     let _ = state.js_tx.send(crate::state::JsSnippet {
-        code: js,
-        path_prefixes,
+        code: feed_js,
+        path_prefixes: feed_prefixes,
+        audience: audience.clone(),
+    });
+    let _ = state.js_tx.send(crate::state::JsSnippet {
+        code: thread_js,
+        path_prefixes: vec![thread_url.clone()],
+        audience,
     });
 }
 

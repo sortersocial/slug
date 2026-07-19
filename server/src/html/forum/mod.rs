@@ -21,7 +21,8 @@ pub use post_single::{room_thread_post_view, thread_post_view};
 pub use profile::user_profile_page;
 pub use views::{room_page, room_thread_view, thread_view};
 
-pub(crate) use access::{user_can_post_room, user_can_view_room};
+pub(crate) use access::user_can_post_room;
+pub use access::user_can_view_room;
 pub(crate) use copy::thread_ui_copy_thread;
 pub(crate) use new_thread::{fragment_new_thread_slot, login_to_post_hint_markup};
 pub(crate) use room_members::room_members_section_markup;

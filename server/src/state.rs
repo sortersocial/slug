@@ -42,6 +42,15 @@ pub struct StreamEvent {
     pub snippet: String,
 }
 
+/// Who may receive a [`JsSnippet`] over `/sse` (matches private-room HTML visibility).
+#[derive(Debug, Clone)]
+pub enum JsSnippetAudience {
+    /// Public forum + pages not tied to a specific room (home, `/t/…`, etc.).
+    Public,
+    /// Members with [`crate::events::ThreadCapability::View`] on this room (`short/slug` wire id).
+    RoomViewers(String),
+}
+
 /// JavaScript snippet broadcast to web SSE subscribers and `eval`'d client-side.
 #[derive(Debug, Clone)]
 pub struct JsSnippet {
@@ -49,6 +58,7 @@ pub struct JsSnippet {
     /// Only deliver to SSE streams whose subscribed path matches one of these prefixes.
     /// Empty means broadcast to all connected pages.
     pub path_prefixes: Vec<String>,
+    pub audience: JsSnippetAudience,
 }
 
 #[derive(Debug, Clone)]

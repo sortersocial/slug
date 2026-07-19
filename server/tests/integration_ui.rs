@@ -152,6 +152,7 @@ async fn test_sse_stream_emits_evalable_js_after_post() {
             "http://{addr}/sse?path={}",
             urlencoding::encode(&room_path)
         ))
+        .header("Authorization", format!("Bearer {bearer}"))
         .send()
         .await
         .unwrap();
@@ -184,6 +185,175 @@ async fn test_sse_stream_emits_evalable_js_after_post() {
     }
     assert!(body.contains("room-thread-feed"));
     assert!(body.contains("live-thread"));
+}
+
+#[tokio::test]
+async fn test_sse_private_room_requires_valid_room_path_or_auth() {
+    let (addr, _tmp, _log, _handle) = create_test_server().await;
+    let client = reqwest::Client::new();
+
+    // Segment too short to decode as `short/slug` → reject subscription (no JS execution).
+    let bad_seg = client
+        .get(format!(
+            "http://{addr}/sse?path={}",
+            urlencoding::encode("/r/abcdefg")
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(bad_seg.status(), reqwest::StatusCode::FORBIDDEN);
+
+    let room_ok = rpc_batch(
+        &client,
+        addr,
+        Some(&test_bearer()),
+        serde_json::json!([{ "RoomCreate": { "slug": "sse-auth-room" } }]),
+    )
+    .await;
+    let room_id = room_ok["results"][0]["result"]["RoomCreated"]["room_id"]
+        .as_str()
+        .unwrap();
+    let seg = room_route_segment(room_id).unwrap();
+    let room_path = format!("/r/{seg}");
+
+    let no_cookie = client
+        .get(format!(
+            "http://{addr}/sse?path={}",
+            urlencoding::encode(&room_path)
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(no_cookie.status(), reqwest::StatusCode::FORBIDDEN);
+
+    let with_auth = client
+        .get(format!(
+            "http://{addr}/sse?path={}",
+            urlencoding::encode(&room_path)
+        ))
+        .header("Authorization", format!("Bearer {}", test_bearer()))
+        .send()
+        .await
+        .unwrap();
+    assert!(with_auth.status().is_success());
+}
+
+#[tokio::test]
+async fn test_sse_private_feed_not_sent_to_home_without_membership() {
+    let (addr, _tmp, _log, _state, _handle) = create_test_server_with_state().await;
+
+    let client = reqwest::Client::new();
+    let owner = test_bearer();
+
+    let create = rpc_batch(
+        &client,
+        addr,
+        Some(&owner),
+        serde_json::json!([{ "RoomCreate": { "slug": "sse-acl-home" } }]),
+    )
+    .await;
+    let room_id = create["results"][0]["result"]["RoomCreated"]["room_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let sse_resp = client
+        .get(format!(
+            "http://{addr}/sse?path={}",
+            urlencoding::encode("/")
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert!(sse_resp.status().is_success());
+
+    let secret_phrase = "PRIVATE_SSE_HOME_LEAK_TEST_UNIQUE";
+    let rpc = ui_post_ingest_rpc(&room_id, "acl-thread", secret_phrase);
+    let _post = client
+        .post(format!("http://{addr}/ui"))
+        .header("Authorization", format!("Bearer {owner}"))
+        .form(&[("__rpc__", rpc.as_str())])
+        .send()
+        .await
+        .unwrap();
+
+    let mut body = String::new();
+    let mut sse_resp = sse_resp;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    while std::time::Instant::now() < deadline {
+        match tokio::time::timeout(std::time::Duration::from_millis(400), sse_resp.chunk()).await {
+            Ok(Ok(Some(chunk))) => {
+                body.push_str(&String::from_utf8_lossy(&chunk));
+            }
+            Ok(Ok(None)) => break,
+            Ok(Err(err)) => panic!("sse read failed: {err}"),
+            Err(_) => {}
+        }
+    }
+    assert!(
+        !body.contains(secret_phrase),
+        "anonymous home SSE must not receive private room morph payload"
+    );
+}
+
+#[tokio::test]
+async fn test_sse_private_feed_masked_for_non_member_even_with_bearer() {
+    let (addr, _tmp, _log, state, _handle) = create_test_server_with_state().await;
+    let other = seed_test_identity(&state, "otheruser", "othertok", "othersecret").await;
+
+    let client = reqwest::Client::new();
+    let owner = test_bearer();
+
+    let create = rpc_batch(
+        &client,
+        addr,
+        Some(&owner),
+        serde_json::json!([{ "RoomCreate": { "slug": "sse-acl-other" } }]),
+    )
+    .await;
+    let room_id = create["results"][0]["result"]["RoomCreated"]["room_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let sse_resp = client
+        .get(format!(
+            "http://{addr}/sse?path={}",
+            urlencoding::encode("/")
+        ))
+        .header("Authorization", format!("Bearer {other}"))
+        .send()
+        .await
+        .unwrap();
+    assert!(sse_resp.status().is_success());
+
+    let secret_phrase = "PRIVATE_SSE_OTHER_USER_LEAK";
+    let rpc = ui_post_ingest_rpc(&room_id, "leak-thread", secret_phrase);
+    let _post = client
+        .post(format!("http://{addr}/ui"))
+        .header("Authorization", format!("Bearer {owner}"))
+        .form(&[("__rpc__", rpc.as_str())])
+        .send()
+        .await
+        .unwrap();
+
+    let mut body = String::new();
+    let mut sse_resp = sse_resp;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    while std::time::Instant::now() < deadline {
+        match tokio::time::timeout(std::time::Duration::from_millis(400), sse_resp.chunk()).await {
+            Ok(Ok(Some(chunk))) => {
+                body.push_str(&String::from_utf8_lossy(&chunk));
+            }
+            Ok(Ok(None)) => break,
+            Ok(Err(err)) => panic!("sse read failed: {err}"),
+            Err(_) => {}
+        }
+    }
+    assert!(
+        !body.contains(secret_phrase),
+        "non-member must not receive private room SSE payloads even when subscribed from `/` with a bearer"
+    );
 }
 
 #[tokio::test]
