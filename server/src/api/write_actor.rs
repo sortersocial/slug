@@ -881,6 +881,19 @@ pub async fn writer_actor(mut rx: mpsc::Receiver<WriteCmd>, state: AppState) {
                         return Err((format!("user @{target} not found"), None));
                     }
                     let cap = parse_capability(capability.trim()).map_err(|msg| (msg, None))?;
+                    // Keep at least one Manage holder so the room cannot be orphaned.
+                    if cap == ThreadCapability::Manage
+                        && reduced.user_has_cap(&room, &target, ThreadCapability::Manage)
+                    {
+                        let other_manager = reduced.grants.get(&room).is_some_and(|members| {
+                            members.iter().any(|(u, caps)| {
+                                u != &target && caps.contains(&ThreadCapability::Manage)
+                            })
+                        });
+                        if !other_manager {
+                            return Err(("cannot revoke the last Manage capability".into(), None));
+                        }
+                    }
                     let gr_ev = Event::GrantRevoked(GrantRevoked {
                         ts: now_ms(),
                         room_id: room,

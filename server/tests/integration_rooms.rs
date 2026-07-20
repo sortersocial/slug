@@ -300,6 +300,110 @@ async fn test_private_room_read_requires_explicit_view_capability() {
 }
 
 #[tokio::test]
+async fn test_cannot_revoke_last_manage_capability() {
+    let (addr, _tmp, _log, state, _handle) = create_test_server_with_state().await;
+    let client = reqwest::Client::new();
+    let owner = test_bearer();
+    let other = seed_test_identity(&state, "otheruser", "othertok", "othersecret").await;
+
+    let create = rpc_batch(
+        &client,
+        addr,
+        Some(&owner),
+        serde_json::json!([{ "RoomCreate": { "slug": "last-manage-guard" } }]),
+    )
+    .await;
+    let room_id = create["results"][0]["result"]["RoomCreated"]["room_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // Sole manager cannot strip their own Manage.
+    let revoke_self = rpc_batch(
+        &client,
+        addr,
+        Some(&owner),
+        serde_json::json!([{
+            "RoomRevoke": {
+                "room": room_id,
+                "username": "testuser",
+                "capability": "manage"
+            }
+        }]),
+    )
+    .await;
+    assert_eq!(revoke_self["results"][0]["ok"], false);
+    assert_eq!(
+        revoke_self["results"][0]["error"],
+        "cannot revoke the last Manage capability"
+    );
+
+    // After granting Manage to someone else, self-demotion is allowed.
+    let grant = rpc_batch(
+        &client,
+        addr,
+        Some(&owner),
+        serde_json::json!([{
+            "RoomGrant": {
+                "room": room_id,
+                "username": "otheruser",
+                "capabilities": ["view", "manage"]
+            }
+        }]),
+    )
+    .await;
+    assert_eq!(grant["results"][0]["ok"], true, "{:?}", grant["results"][0]);
+
+    let revoke_after = rpc_batch(
+        &client,
+        addr,
+        Some(&owner),
+        serde_json::json!([{
+            "RoomRevoke": {
+                "room": room_id,
+                "username": "testuser",
+                "capability": "manage"
+            }
+        }]),
+    )
+    .await;
+    assert_eq!(
+        revoke_after["results"][0]["ok"],
+        true,
+        "{:?}",
+        revoke_after["results"][0]
+    );
+
+    // Former sole manager can no longer delete; the other manager still can.
+    let del_owner = rpc_batch(
+        &client,
+        addr,
+        Some(&owner),
+        serde_json::json!([{ "RoomDelete": { "room": room_id } }]),
+    )
+    .await;
+    assert_eq!(del_owner["results"][0]["ok"], false);
+    assert_eq!(
+        del_owner["results"][0]["error"],
+        "requires Manage capability"
+    );
+
+    let del_other = rpc_batch(
+        &client,
+        addr,
+        Some(&other),
+        serde_json::json!([{ "RoomDelete": { "room": room_id } }]),
+    )
+    .await;
+    assert_eq!(
+        del_other["results"][0]["ok"],
+        true,
+        "{:?}",
+        del_other["results"][0]
+    );
+}
+
+#[tokio::test]
 async fn test_feed_since_last_post_is_scoped_to_delegate() {
     let (addr, _tmp, _log, _handle) = create_test_server().await;
     let client = reqwest::Client::new();
