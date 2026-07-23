@@ -689,6 +689,18 @@ fn http_client() -> Result<reqwest::Client> {
         .build()?)
 }
 
+async fn fetch_post_stats(base: &str) -> Result<PostStats> {
+    let client = http_client()?;
+    let url = format!("{}/api/v0/stats", base.trim_end_matches('/'));
+    let resp = client.get(url).send().await?;
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(anyhow!("stats HTTP {}: {}", status, text.trim()));
+    }
+    serde_json::from_str(&text).map_err(|e| anyhow!("stats response: {e}"))
+}
+
 async fn send_rpc(
     client: &reqwest::Client,
     base: &str,
@@ -1459,13 +1471,16 @@ async fn main() -> std::process::ExitCode {
 async fn run() -> Result<()> {
     let Cli { cmd, server } = Cli::parse();
 
-    // If no command provided, print the guide
+    let base = server.trim_end_matches('/');
+
+    // If no command provided, print live post stats (when reachable) then the guide
     let Some(cmd) = cmd else {
+        if let Ok(stats) = fetch_post_stats(base).await {
+            println!("{}\n", stats.format_line());
+        }
         print!("{}", include_str!("../GUIDE.sorter"));
         return Ok(());
     };
-
-    let base = server.trim_end_matches('/');
 
     match cmd {
         Command::Public { sub } => run_scoped(base, "public", sub).await?,

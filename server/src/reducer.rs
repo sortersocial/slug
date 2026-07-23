@@ -6,6 +6,7 @@ use crate::canonical_path::canonicalize_tag;
 use crate::dsl;
 use crate::events::{Event, Ingest, ThreadCapability};
 use crate::path_types::ItemId;
+use slug_types::PostStats;
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ScopeId {
@@ -313,6 +314,32 @@ impl ReducerState {
                     })
             })
             .collect()
+    }
+
+    /// Public, non-redacted forum posts split into human (no delegate) vs AI (`delegate` set).
+    /// System principals (`system:…`) are omitted from both counts.
+    pub fn public_post_stats(&self) -> PostStats {
+        let mut stats = PostStats::default();
+        for id in &self.ingests_ordered {
+            if self.redacted_posts.contains(id) {
+                continue;
+            }
+            let Some(ing) = self.ingests_by_id.get(id) else {
+                continue;
+            };
+            if scope_from_room_wire(&ing.room_id) != ScopeId::Public {
+                continue;
+            }
+            if ing.principal.starts_with("system:") {
+                continue;
+            }
+            if ing.delegate.is_some() {
+                stats.ai_posts += 1;
+            } else {
+                stats.human_posts += 1;
+            }
+        }
+        stats
     }
 
     pub fn user_has_cap(&self, room_id: &str, username: &str, cap: ThreadCapability) -> bool {

@@ -19,7 +19,8 @@ use super::new_thread::{fragment_new_thread_slot, login_to_post_hint_markup};
 use super::page::auth_strip;
 use super::paginator::{render_thread_paginator, PAGE_SIZE};
 use crate::html::{
-    bc_threads, cli_panel, layout, now_ms, recency_class, theme_from_jar, theme_next_from_uri,
+    bc_threads, cli_panel, layout_with_post_stats, now_ms, recency_class, theme_from_jar,
+    theme_next_from_uri,
 };
 
 #[derive(Clone)]
@@ -219,6 +220,7 @@ pub async fn home(
         .map(|u| rooms_for_user(&reduced, u))
         .unwrap_or_default();
     let mut public_rows = collect_thread_rows_for_scope(&reduced, &ScopeId::Public, now);
+    let post_stats = reduced.public_post_stats();
     drop(reduced);
     public_rows.sort_by(|a, b| b.last_ts.cmp(&a.last_ts));
 
@@ -230,7 +232,7 @@ pub async fn home(
     let url_key = canonical_view_url(&uri);
     let view_count = state.views.get_views(&url_key);
 
-    let page = layout(
+    let page = layout_with_post_stats(
         "slug.social",
         "view-thread",
         html! {
@@ -264,6 +266,7 @@ pub async fn home(
             (cli_panel(&["npx slugsocial public forum list"]))
         },
         Some(view_count),
+        post_stats,
         theme_from_jar(&jar),
         &theme_next_from_uri(&uri),
         None,

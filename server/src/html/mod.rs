@@ -344,6 +344,34 @@ pub(super) fn layout(
         view,
         body,
         views,
+        None,
+        theme,
+        theme_next,
+        garden_room_wire,
+        garden_path_prefix,
+        true,
+    )
+}
+
+/// Like [`layout`], but also shows public human/AI post counts in the header meta.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn layout_with_post_stats(
+    title: &str,
+    view: &str,
+    body: Markup,
+    views: Option<u64>,
+    post_stats: slug_types::PostStats,
+    theme: &str,
+    theme_next: &str,
+    garden_room_wire: Option<&str>,
+    garden_path_prefix: Option<&str>,
+) -> Markup {
+    layout_embed_controls(
+        title,
+        view,
+        body,
+        views,
+        Some(post_stats),
         theme,
         theme_next,
         garden_room_wire,
@@ -363,7 +391,7 @@ pub(super) fn layout_full_bleed_chromeless(
     theme_next: &str,
 ) -> Markup {
     layout_embed_controls(
-        title, view, body, views, theme, theme_next, None, None, false,
+        title, view, body, views, None, theme, theme_next, None, None, false,
     )
 }
 
@@ -373,6 +401,7 @@ fn layout_embed_controls(
     view: &str,
     body: Markup,
     views: Option<u64>,
+    post_stats: Option<slug_types::PostStats>,
     theme: &str,
     theme_next: &str,
     garden_room_wire: Option<&str>,
@@ -381,6 +410,7 @@ fn layout_embed_controls(
 ) -> Markup {
     let theme = normalize_theme(theme);
     let css_href = format!("/static/theme_{theme}.css");
+    let post_stats_line = post_stats.map(|s| s.format_line());
     html! {
         (DOCTYPE)
         html {
@@ -394,8 +424,18 @@ fn layout_embed_controls(
             body class=(view)
                 data-garden-room=(garden_room_wire.unwrap_or(""))
                 data-garden-prefix=(garden_path_prefix.unwrap_or("")) {
-                @if let Some(n) = views {
-                    span class="view-meta muted" { (n) " views" }
+                @if post_stats_line.is_some() || views.is_some() {
+                    span class="view-meta muted" {
+                        @if let Some(ref line) = post_stats_line {
+                            (line)
+                        }
+                        @if post_stats_line.is_some() && views.is_some() {
+                            " · "
+                        }
+                        @if let Some(n) = views {
+                            (n) " views"
+                        }
+                    }
                 }
                 div id="errors" {}
                 (body)

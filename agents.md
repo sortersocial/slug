@@ -33,6 +33,7 @@ Strict **CSP** that blocks `eval` would break the current app. Other projects ma
 ## Command surfaces: `HtmlUiAction` vs `RpcCommand`
 
 - **`RpcCommand` / `POST /api/v0/rpc`** (`types/src/lib.rs`, `server/src/api/rpc.rs`): **Bearer-authenticated** JSON API for CLI, automation, and programmatic clients. Durable effects go through here (append to event log, then `apply_event`).
+- **`GET /api/v0/stats`**: public JSON `{ human_posts, ai_posts }` for non-redacted public forum posts (`delegate` absent → human; present → AI; `system:…` principals omitted). Shown on the home page header and printed above the `npx slugsocial` (no-args) splash guide.
 
 - **`HtmlUiAction` / `POST /ui`** (`server/src/html/ui_action.rs`, `server/src/api/ui_html.rs`): **Browser session** (cookie) UI commands. Payload is `__rpc__` + form fields. Most responses are **JS morphs**; some actions return **HTTP redirects** (see below).
 

@@ -30,7 +30,7 @@ pub use helpers::{
     parse_parent_specs, pick_random_distinct_item_pair, resolve_item, sha256_hex, vote_touches_path,
 };
 
-pub use rpc::handle_rpc_batch;
+pub use rpc::{get_post_stats, handle_rpc_batch};
 
 pub use stream::{get_html_stream, get_stream};
 
