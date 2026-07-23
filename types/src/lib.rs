@@ -490,6 +490,8 @@ pub enum RpcCommand {
     Search {
         query: String,
     },
+    /// Public human vs AI forum post counts (no auth).
+    GetPostStats,
     GetFeed {
         /// When omitted or empty, feed uses the bearer principal's last ingest as the cutoff (any delegate or none).
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -555,6 +557,7 @@ pub enum RpcResult {
     Paths(PathsResponse),
     RecentVotes(RecentVotesResponse),
     Search(SearchResponse),
+    PostStats(PostStats),
     Feed(FeedResponse),
     RedactPostOk {},
 }

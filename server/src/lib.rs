@@ -121,7 +121,6 @@ pub fn create_app(state: AppState) -> Router {
         .route("/api/v0/pending-session", post(api::post_pending_session))
         .route("/api/v0/pending-session/:id", get(api::get_pending_session))
         .route("/api/v0/whoami", get(api::get_whoami))
-        .route("/api/v0/stats", get(api::get_post_stats))
         .route("/api/v0/rpc", post(api::handle_rpc_batch))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),

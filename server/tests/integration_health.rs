@@ -18,7 +18,7 @@ async fn test_healthz() {
 }
 
 #[tokio::test]
-async fn test_post_stats_endpoint_and_home_header() {
+async fn test_post_stats_rpc_and_home_header() {
     let (addr, _tmp, _log, state, _handle) = create_test_server_with_state().await;
     let client = reqwest::Client::new();
 
@@ -48,14 +48,16 @@ async fn test_post_stats_endpoint_and_home_header() {
         }
     }
 
-    let stats: PostStats = client
-        .get(format!("http://{addr}/api/v0/stats"))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let batch = rpc_batch(
+        &client,
+        addr,
+        None,
+        serde_json::json!(["GetPostStats"]),
+    )
+    .await;
+    let line = &batch["results"][0];
+    assert_eq!(line["ok"], true, "{line}");
+    let stats: PostStats = serde_json::from_value(line["result"]["PostStats"].clone()).unwrap();
     assert_eq!(stats.human_posts, 3);
     assert_eq!(stats.ai_posts, 1);
     assert_eq!(stats.format_line(), "3 human posts, 1 ai post");

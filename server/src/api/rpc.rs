@@ -33,12 +33,6 @@ use super::helpers::{
 };
 use super::validate::validate_ingest_document;
 
-/// `GET /api/v0/stats` — public human/AI post counts (no auth).
-pub async fn get_post_stats(State(state): State<AppState>) -> impl IntoResponse {
-    let reduced = state.reduced.read().await;
-    Json(reduced.public_post_stats())
-}
-
 fn empty_content() -> &'static crate::reducer::ContentState {
     static E: OnceLock<crate::reducer::ContentState> = OnceLock::new();
     E.get_or_init(Default::default)
@@ -1557,6 +1551,10 @@ pub async fn handle_rpc_batch(
                     Ok(principal) => line_ok(RpcResult::Search(rpc_search(&reduced, &query, limit, principal.as_deref()))),
                     Err((e, h)) => line_err(e, h),
                 }
+            },
+            RpcCommand::GetPostStats => {
+                let reduced = state.reduced.read().await;
+                line_ok(RpcResult::PostStats(reduced.public_post_stats()))
             },
             RpcCommand::GetFeed {
                 delegate,

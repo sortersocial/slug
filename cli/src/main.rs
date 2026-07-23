@@ -691,14 +691,11 @@ fn http_client() -> Result<reqwest::Client> {
 
 async fn fetch_post_stats(base: &str) -> Result<PostStats> {
     let client = http_client()?;
-    let url = format!("{}/api/v0/stats", base.trim_end_matches('/'));
-    let resp = client.get(url).send().await?;
-    let status = resp.status();
-    let text = resp.text().await.unwrap_or_default();
-    if !status.is_success() {
-        return Err(anyhow!("stats HTTP {}: {}", status, text.trim()));
+    let batch = send_rpc(&client, base, None, vec![RpcCommand::GetPostStats]).await?;
+    match rpc_line_ok(&batch.results[0])? {
+        RpcResult::PostStats(stats) => Ok(*stats),
+        _ => Err(anyhow!("unexpected RPC result")),
     }
-    serde_json::from_str(&text).map_err(|e| anyhow!("stats response: {e}"))
 }
 
 async fn send_rpc(
