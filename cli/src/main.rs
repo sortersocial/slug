@@ -689,15 +689,6 @@ fn http_client() -> Result<reqwest::Client> {
         .build()?)
 }
 
-async fn fetch_post_stats(base: &str) -> Result<PostStats> {
-    let client = http_client()?;
-    let batch = send_rpc(&client, base, None, vec![RpcCommand::GetPostStats]).await?;
-    match rpc_line_ok(&batch.results[0])? {
-        RpcResult::PostStats(stats) => Ok(*stats),
-        _ => Err(anyhow!("unexpected RPC result")),
-    }
-}
-
 async fn send_rpc(
     client: &reqwest::Client,
     base: &str,
@@ -1468,16 +1459,13 @@ async fn main() -> std::process::ExitCode {
 async fn run() -> Result<()> {
     let Cli { cmd, server } = Cli::parse();
 
-    let base = server.trim_end_matches('/');
-
-    // If no command provided, print live post stats (when reachable) then the guide
+    // If no command provided, print the guide
     let Some(cmd) = cmd else {
-        if let Ok(stats) = fetch_post_stats(base).await {
-            println!("{}\n", stats.format_line());
-        }
         print!("{}", include_str!("../GUIDE.sorter"));
         return Ok(());
     };
+
+    let base = server.trim_end_matches('/');
 
     match cmd {
         Command::Public { sub } => run_scoped(base, "public", sub).await?,

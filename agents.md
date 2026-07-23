@@ -18,6 +18,7 @@ The web app is **not** a SPA with a JSON API for every interaction. Many mutatio
 
 - **End-to-end tests** that only assert HTTP status bodies miss DOM updates. Morph paths are covered by **Playwright / Spel** tests under `test/browser_*.clj` and `clojure -M -m test.runner …` (see `scripts/clj-test.sh`).
 - Shareable URLs are normal GET routes (e.g. `/t/:tag`, thread post views). **Expand/collapse** and similar controls are **actions**, not bookmarkable GET endpoints; they use the same `POST /ui` + `__rpc__` pattern where applicable.
+- The home page (`GET /`) header shows public human/AI post counts from the reducer (`public_post_stats`: no `delegate` → human, `delegate` set → AI; `system:…` and redacted/private omitted). The `npx slugsocial` splash remains the static embedded `GUIDE.sorter` (no network).
 - Forum and garden item bodies use **`~/…` linkification** (`linkify_slugs_with_prefix` in `server/src/html/mod.rs`). When **`item_bodies`** is in scope, matching ontology links get a native **`title`** tooltip with a **truncated body preview** (hover in the browser).
 
 ---
@@ -33,7 +34,6 @@ Strict **CSP** that blocks `eval` would break the current app. Other projects ma
 ## Command surfaces: `HtmlUiAction` vs `RpcCommand`
 
 - **`RpcCommand` / `POST /api/v0/rpc`** (`types/src/lib.rs`, `server/src/api/rpc.rs`): **Bearer-authenticated** JSON API for CLI, automation, and programmatic clients. Durable effects go through here (append to event log, then `apply_event`).
-- **`GetPostStats`** (`POST /api/v0/rpc`, no auth): `{ human_posts, ai_posts }` for non-redacted public forum posts (`delegate` absent → human; present → AI; `system:…` principals omitted). Home page header reads the same counts from the reducer; `npx slugsocial` (no args) calls this RPC and prints the line above the splash guide.
 
 - **`HtmlUiAction` / `POST /ui`** (`server/src/html/ui_action.rs`, `server/src/api/ui_html.rs`): **Browser session** (cookie) UI commands. Payload is `__rpc__` + form fields. Most responses are **JS morphs**; some actions return **HTTP redirects** (see below).
 

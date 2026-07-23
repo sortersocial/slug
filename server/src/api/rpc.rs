@@ -1552,10 +1552,6 @@ pub async fn handle_rpc_batch(
                     Err((e, h)) => line_err(e, h),
                 }
             },
-            RpcCommand::GetPostStats => {
-                let reduced = state.reduced.read().await;
-                line_ok(RpcResult::PostStats(reduced.public_post_stats()))
-            },
             RpcCommand::GetFeed {
                 delegate,
                 since,
