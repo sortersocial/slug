@@ -280,6 +280,15 @@ body.view-ontology .vote-compare-pair {
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   margin: 0 0 0.75rem;
 }
+@media (max-width: 600px) {
+  body.view-ontology .vote-compare-pair {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 0.65rem 0.5rem;
+  }
+  body.view-ontology .vote-compare-vs {
+    display: none;
+  }
+}
 body.view-ontology .vote-compare-item {
   display: inline-block;
 }

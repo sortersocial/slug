@@ -2,10 +2,11 @@ use super::{
     access::content_for_garden_view,
     external::{external_frame_allowed, external_resolver_status_markup, external_source_href},
     item_page::build_item_page_view_model,
+    pin::ont_pin_vote_controls,
     vote::{
         canonical_edge_items, edge_vote_count_for_pair, edge_vote_entries_for_pair,
         ratios_for_compare_page, sort_votes_for_compare_display, suggest_next_vote_pair,
-        vote_compare_item_card,
+        vote_compare_item_card, vote_pool_href,
     },
 };
 use crate::{
@@ -364,6 +365,50 @@ fn vote_compare_item_card_renders_github_import_markup() {
     assert!(html.contains("item-body-rich"));
     assert!(html.contains("vote-compare-left"));
     assert!(html.contains("#1 Compare card"));
+}
+
+#[test]
+fn item_page_sibling_nav_implies_vote_on_item_pool_href() {
+    let mut reduced = ReducerState::default();
+    apply_ingest(
+        &mut reduced,
+        1,
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n\
+         ~/topic {root}\n\
+         ~/topic/a {alpha}\n\
+         ~/topic/b {beta}\n",
+    );
+    let model = build_item_page_view_model(&reduced, &ScopeId::Public, "~/topic/a", 1);
+    assert!(model.sibling_nav.is_some(), "expected sibling nav for ~/topic/a");
+    let parent = ItemId::parse(&model.item)
+        .and_then(|i| i.parent())
+        .expect("item with siblings has a parent");
+    let nav = ThreadNav::public();
+    let href = vote_pool_href(&nav, parent.as_str());
+    assert!(
+        href.contains("/vote?pool="),
+        "expected sibling pool vote href, got {href}"
+    );
+    assert!(
+        href.contains(&urlencoding::encode(&parent.display_path()).into_owned())
+            || href.contains("topic")
+            || href.contains("%7E"),
+        "pool should target parent path, got {href}"
+    );
+    let markup = ont_pin_vote_controls(&nav, &model.item, None, "/~/topic/a", Some(&href)).into_string();
+    assert!(
+        markup.contains("data-testid=\"vote-on-this-item\""),
+        "expected vote-on-this-item CTA, got {markup}"
+    );
+    assert!(
+        markup.contains("vote on this item"),
+        "expected button label, got {markup}"
+    );
+    let solo = ont_pin_vote_controls(&nav, &model.item, None, "/~/topic/a", None).into_string();
+    assert!(
+        !solo.contains("vote-on-this-item"),
+        "CTA must be omitted when no sibling pool href is passed"
+    );
 }
 
 #[test]
