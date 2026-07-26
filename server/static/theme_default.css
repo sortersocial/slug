@@ -858,7 +858,8 @@ body.view-ontology-light .ont-item-pin-zone {
   gap: 6px;
 }
 button.ont-pin-btn,
-a.ont-vote-compare-btn {
+a.ont-vote-compare-btn,
+a.ont-vote-item-btn {
   background: var(--g4);
   border: var(--bv) solid;
   border-color: var(--hi) var(--lo) var(--lo) var(--hi);
@@ -874,9 +875,11 @@ a.ont-vote-compare-btn {
   border-radius: 2px;
 }
 button.ont-pin-btn:hover,
-a.ont-vote-compare-btn:hover { color: var(--signal); }
+a.ont-vote-compare-btn:hover,
+a.ont-vote-item-btn:hover { color: var(--signal); }
 button.ont-pin-btn:focus-visible,
-a.ont-vote-compare-btn:focus-visible {
+a.ont-vote-compare-btn:focus-visible,
+a.ont-vote-item-btn:focus-visible {
   outline: 2px solid var(--link);
   outline-offset: 2px;
 }
@@ -1024,6 +1027,16 @@ body.view-vote-compare .vote-compare-shell > h2 {
   font-size: 11px;
   letter-spacing: 0.1em;
   text-transform: uppercase;
+}
+/* Mobile: drop the "vs" column — path labels need every pixel. */
+@media (max-width: 600px) {
+  .vote-compare-pair {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 10px 8px;
+  }
+  .vote-compare-vs {
+    display: none;
+  }
 }
 .vote-compare-item-body {
   margin-top: 8px;

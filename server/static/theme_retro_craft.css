@@ -658,7 +658,8 @@ body.view-ontology .ont-item-pin-zone {
 }
 
 body.view-ontology button.ont-pin-btn,
-body.view-ontology a.ont-vote-compare-btn {
+body.view-ontology a.ont-vote-compare-btn,
+body.view-ontology a.ont-vote-item-btn {
   background: #ebe6dc;
   border: 1px solid #c8c4bc;
   border-radius: 2px;
@@ -674,7 +675,8 @@ body.view-ontology a.ont-vote-compare-btn {
   gap: 0.3rem;
 }
 body.view-ontology button.ont-pin-btn:hover,
-body.view-ontology a.ont-vote-compare-btn:hover {
+body.view-ontology a.ont-vote-compare-btn:hover,
+body.view-ontology a.ont-vote-item-btn:hover {
   border-color: #a68e6b;
   color: #1a1814;
 }
@@ -684,7 +686,8 @@ body.view-ontology button.ont-pin-btn-active {
   color: #0d2d5c;
 }
 body.view-ontology button.ont-pin-btn:focus-visible,
-body.view-ontology a.ont-vote-compare-btn:focus-visible {
+body.view-ontology a.ont-vote-compare-btn:focus-visible,
+body.view-ontology a.ont-vote-item-btn:focus-visible {
   outline: 2px solid #1a4a8c;
   outline-offset: 2px;
 }
@@ -889,6 +892,15 @@ body.view-ontology .vote-compare-vs {
   letter-spacing: 0.1em;
   text-transform: uppercase;
   padding-top: 0.18rem;
+}
+@media (max-width: 600px) {
+  body.view-ontology .vote-compare-pair {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 0.65rem 0.5rem;
+  }
+  body.view-ontology .vote-compare-vs {
+    display: none;
+  }
 }
 body.view-ontology .vote-compare-item {
   display: inline-block;

@@ -17,6 +17,7 @@ use crate::{
         theme_next_from_uri,
     },
     middleware::canonical_view_url,
+    path_types::ItemId,
     reducer::ScopeId,
     state::AppState,
     timeago,
@@ -75,7 +76,18 @@ pub(super) async fn render_scope_view(
                     @if model.sibling_nav.is_none() && model.item_has_parent {
                         span class="muted ont-item-unranked-note" { "unranked among siblings" }
                     }
-                    (ont_pin_vote_controls(&nav, &model.item, pin_ref.as_ref(), &next_for_pin))
+                    @let vote_item_href = model.sibling_nav.as_ref().and_then(|_| {
+                        ItemId::parse(&model.item)
+                            .and_then(|i| i.parent())
+                            .map(|p| vote_pool_href(&nav, p.as_str()))
+                    });
+                    (ont_pin_vote_controls(
+                        &nav,
+                        &model.item,
+                        pin_ref.as_ref(),
+                        &next_for_pin,
+                        vote_item_href.as_deref(),
+                    ))
                 }
                 @if let Some(body) = &model.body {
                     div class="ont-item-content" {
