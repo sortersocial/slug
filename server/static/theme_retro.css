@@ -10,6 +10,10 @@
   --font-prose: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
   --font-ui:    system-ui, -apple-system, sans-serif;
   --font-code:  ui-monospace, "Cascadia Code", "SF Mono", Menlo, monospace;
+
+  /* Timestamp recency (color-mix endpoints) */
+  --age-fresh: #0a0;
+  --age-old:   #666;
 }
 
 *, *::before, *::after { box-sizing: border-box; }

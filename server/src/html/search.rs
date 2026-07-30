@@ -16,7 +16,10 @@ use crate::{
     timeago,
 };
 
-use super::{authorship_address, bc_segment, cli_panel, layout, now_ms, theme_from_jar, theme_next_from_uri};
+use super::{
+    authorship_address, bc_segment, cli_panel, layout, now_ms, recency_color_style, theme_from_jar,
+    theme_next_from_uri,
+};
 
 /// Escape HTML special chars for safe injection.
 fn escape_html(s: &str) -> String {
@@ -332,6 +335,7 @@ fn render_search_results(results: &SearchResults, query: &str) -> Markup {
                     h3 { "threads " span class="muted" { "(" (results.threads.len()) ")" } }
                     ul class="search-threads" {
                         @for r in &results.threads {
+                            @let ts_style = recency_color_style(now, r.last_activity);
                             li {
                                 a href=(format!("/t/{}", r.tag)) {
                                     "#" (PreEscaped(highlight_snippet(&r.tag, &words, r.tag.len() + 10)))
@@ -340,8 +344,9 @@ fn render_search_results(results: &SearchResults, query: &str) -> Markup {
                                     ": " (subtitle)
                                 }
                                 " "
-                                span class="muted" {
-                                    (r.post_count) "n · " (timeago::timeago(now, r.last_activity))
+                                span class="muted" { (r.post_count) "n · " }
+                                span class="ts-recency" style=(ts_style.as_str()) {
+                                    (timeago::timeago(now, r.last_activity))
                                 }
                             }
                         }
@@ -362,11 +367,15 @@ fn render_search_results(results: &SearchResults, query: &str) -> Markup {
                             } else {
                                 ("/".to_string(), r.thread.clone())
                             };
+                            @let ts_style = recency_color_style(now, r.ts);
                             li {
                                 div class="search-post-meta muted" {
                                     a href=(post_href) { (post_label) }
                                     " · " (r.actor_display)
-                                    " · " (timeago::timeago(now, r.ts))
+                                    " · "
+                                    span class="ts-recency" style=(ts_style.as_str()) {
+                                        (timeago::timeago(now, r.ts))
+                                    }
                                 }
                                 div class="search-snippet" {
                                     (PreEscaped(highlight_snippet(&r.text, &words, 160)))

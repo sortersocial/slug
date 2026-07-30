@@ -11,6 +11,10 @@
   --line: #2c2824;
   --code-bg: #1c1814;
 
+  /* Timestamp recency (color-mix endpoints) */
+  --age-fresh: #7d9;
+  --age-old:   var(--ink-dim);
+
   /* Semantic font stacks */
   --font-prose: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
   --font-ui:    system-ui, -apple-system, sans-serif;
