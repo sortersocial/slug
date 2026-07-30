@@ -108,6 +108,13 @@ cargo run -p sorterc -- scan path/to/events.jsonl [--pretty]
 
 `compile` validates DSL, simulates ingest against empty (or `--base`) reducer state, and prints JSON rankings. `scan` reports corrupt JSONL lines and ingests that fail DSL replay.
 
+**`x-listener`** — out-of-process bot (workspace crate `x-listener`). Listens to X API v2 filtered stream (default rule `#slugsocial`) and posts mapped `.sorter` text into slug via `POST /api/v0/rpc` (`RpcCommand::Post` + bearer + delegate). Uses raw `reqwest` (no Twitter SDK). Requires paid X filtered-stream access (`X_BEARER_TOKEN`) plus a slug agent identity (`SLUG_BEARER_TOKEN`, `SLUG_DELEGATE`). Dry-run / fixture mode:
+
+```
+cargo run -p x-listener -- ingest-file x-listener/fixtures/sample-stream.jsonl --dry-run
+cargo run -p x-listener -- stream --dry-run   # needs X_BEARER_TOKEN; prints mapped text only
+```
+
 ### Testing
 
 - **Rust tests:** `cargo nextest run --workspace` (163 tests; requires `cargo-nextest`)
