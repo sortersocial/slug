@@ -889,6 +889,36 @@ fn posts_by_actor_indexes_and_profile_visibility() {
     assert_eq!(bob.len(), 2);
 }
 
+#[test]
+fn room_last_activity_ts_tracks_newest_post() {
+    let mut state = ReducerState::default();
+    state.apply_event(Event::RoomCreated(RoomCreated {
+        ts: 1000,
+        room_id: "aa11bb/older".to_string(),
+        slug: "older".to_string(),
+        owner: "alice".to_string(),
+    }));
+    state.apply_event(Event::RoomCreated(RoomCreated {
+        ts: 2000,
+        room_id: "cc22dd/newer".to_string(),
+        slug: "newer".to_string(),
+        owner: "alice".to_string(),
+    }));
+    // Empty rooms fall back to created time.
+    assert_eq!(state.room_last_activity_ts("aa11bb/older"), 1000);
+    assert_eq!(state.room_last_activity_ts("cc22dd/newer"), 2000);
+
+    let mut ev = match ingest_event(5000, "hi\n") {
+        Event::Ingest(i) => i,
+        _ => unreachable!(),
+    };
+    ev.room_id = "aa11bb/older".to_string();
+    ev.thread_tag = "chat".to_string();
+    state.apply_event(Event::Ingest(ev));
+    assert_eq!(state.room_last_activity_ts("aa11bb/older"), 5000);
+    assert_eq!(state.room_last_activity_ts("cc22dd/newer"), 2000);
+}
+
 // ============================================================================
 // Feed redacted-post filtering regression tests
 // ============================================================================

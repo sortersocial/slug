@@ -16,7 +16,8 @@ use super::ingest::{thread_nav_for_ingest, thread_post_index_in_scope};
 use super::page::auth_strip;
 use crate::timeago;
 use crate::html::{
-    bc_segment, cli_panel, layout, now_ms, profile_href, theme_from_jar, theme_next_from_uri,
+    bc_segment, cli_panel, layout, now_ms, profile_href, recency_color_style, theme_from_jar,
+    theme_next_from_uri,
 };
 
 struct ProfilePostRow {
@@ -96,13 +97,15 @@ pub async fn user_profile_page(
                     @for r in &rows {
                         @let hover = timeago::rfc3339_utc(r.ts);
                         @let ago = timeago::timeago(now, r.ts);
+                        @let ts_style = recency_color_style(now, r.ts);
                         li {
                             a href=(r.post_href.as_str()) {
                                 "#" (r.thread_tag)
                                 " / #"
                                 (r.post_idx)
                             }
-                            span class="muted" title=(hover) { " · " (ago) }
+                            span class="muted" { " · " }
+                            span class="ts-recency" style=(ts_style.as_str()) title=(hover) { (ago) }
                             @if !r.snippet.is_empty() {
                                 p class="profile-post-snippet muted" { (r.snippet) }
                             }

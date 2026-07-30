@@ -12,6 +12,7 @@ use crate::{
         layout,
         now_ms,
         format_ratio, ratio_pct,
+        recency_color_style,
         render_item_body_in_scope,
         theme_from_jar,
         theme_next_from_uri,
@@ -147,13 +148,15 @@ pub(super) async fn render_scope_view(
                         };
                         @let hover = timeago::rfc3339_utc(e.ts);
                         @let ago = timeago::timeago(now, e.ts);
+                        @let ts_style = recency_color_style(now, e.ts);
                         div class="rank-history-entry" {
                             div class="rank-history-meta" title=(hover) {
                                 span class="rank-history-pos" {
                                     (format!("#{} of {}{}", e.scope_rank, e.scope_total, delta_str))
                                 }
                                 " · "
-                                span class="muted" { (ago) (label) }
+                                span class="ts-recency" style=(ts_style.as_str()) { (ago) }
+                                span class="muted" { (label) }
                                 " · "
                                 a href=(thread_href(&e.thread)) { "#" (e.thread) }
                                 " "
