@@ -16,3 +16,4 @@ test/playwright/__pycache__/
 scripts/*.js
 scripts/*.mjs
 scripts/*.cjs
+tmp/
