@@ -92,7 +92,7 @@ pub(super) fn github_resolver_controls(item: &str, nav: &ThreadNav, next: &str) 
 }
 
 pub(crate) fn external_resolver_status_markup(
-    imported: Result<usize, &str>,
+    imported: Result<crate::resolvers::GithubResolveStats, &str>,
     next: &str,
 ) -> maud::Markup {
     let next = if next.trim().starts_with('/') && !next.trim().starts_with("//") {
@@ -102,13 +102,10 @@ pub(crate) fn external_resolver_status_markup(
     };
     html! {
         @match imported {
-            Ok(n) => {
+            Ok(stats) => {
                 p class="resolver-status-ok" {
-                    @if n == 0 {
-                        "No GitHub children found. "
-                    } @else {
-                        (format!("Imported {n} GitHub item{}.", if n == 1 { "" } else { "s" })) " "
-                    }
+                    (github_resolve_status_text(stats))
+                    " "
                     a href=(next) { "Refresh page" }
                     " to render the updated ontology."
                 }
@@ -117,6 +114,43 @@ pub(crate) fn external_resolver_status_markup(
                 p class="resolver-status-error" { (msg) }
             }
         }
+    }
+}
+
+fn github_resolve_status_text(stats: crate::resolvers::GithubResolveStats) -> String {
+    if stats.total_touched() == 0 {
+        return "No GitHub children found.".to_string();
+    }
+    let mut parts = Vec::new();
+    if stats.imported > 0 {
+        parts.push(format!(
+            "Imported {} GitHub item{}.",
+            stats.imported,
+            if stats.imported == 1 { "" } else { "s" }
+        ));
+    }
+    if stats.deleted > 0 {
+        parts.push(format!(
+            "Removed {} closed/stale item{}.",
+            stats.deleted,
+            if stats.deleted == 1 { "" } else { "s" }
+        ));
+    }
+    if stats.kept > 0 {
+        if stats.imported == 0 && stats.deleted == 0 {
+            parts.push(format!(
+                "Already up to date ({} open issue{}).",
+                stats.kept,
+                if stats.kept == 1 { "" } else { "s" }
+            ));
+        } else {
+            parts.push(format!("Kept {} still-open.", stats.kept));
+        }
+    }
+    if parts.is_empty() {
+        "Updated GitHub items.".to_string()
+    } else {
+        parts.join(" ")
     }
 }
 

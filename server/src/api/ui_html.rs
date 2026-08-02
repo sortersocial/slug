@@ -416,10 +416,10 @@ async fn dispatch_ui_action(
                 item.normalized_storage()
             };
             match resolve_github_children(state, room, &target).await {
-                Ok(n) => JsBuilder::new()
+                Ok(stats) => JsBuilder::new()
                     .morph_inner_selector(
                         "#external-resolver-status",
-                        external_resolver_status_markup(Ok(n), &sanitize_garden_pin_next(&next)),
+                        external_resolver_status_markup(Ok(stats), &sanitize_garden_pin_next(&next)),
                     )
                     .redirect(&sanitize_garden_pin_next(&next))
                     .into_response(),
