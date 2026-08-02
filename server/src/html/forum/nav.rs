@@ -136,11 +136,11 @@ mod tests {
 
     #[test]
     fn room_thread_url_for_post_keeps_room_prefix() {
-        let nav = ThreadNav::from_room_id("abcd1234/demo").unwrap();
+        let nav = ThreadNav::from_room_id("abcd123/demo").unwrap();
         assert_eq!(
             nav.thread_url_for_post("topic", 12),
-            "/r/abcd1234demo/t/topic?offset=10#post-12"
+            "/r/abcd123demo/t/topic?offset=10#post-12"
         );
-        assert_eq!(nav.post_url("topic", 12), "/r/abcd1234demo/t/topic/12");
+        assert_eq!(nav.post_url("topic", 12), "/r/abcd123demo/t/topic/12");
     }
 }
