@@ -357,6 +357,37 @@ fn item_page_model_depth_includes_descendants() {
 }
 
 #[test]
+fn item_page_model_depth_all_includes_deep_descendants() {
+    let mut reduced = ReducerState::default();
+    apply_ingest(
+        &mut reduced,
+        1,
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n\
+         ~/topic {root}\n\
+         ~/topic/a {alpha}\n\
+         ~/topic/a/mid {mid}\n\
+         ~/topic/a/mid/leaf {leaf}\n\
+         ~/topic/b {beta}\n",
+    );
+
+    let model = build_item_page_view_model(
+        &reduced,
+        &ScopeId::Public,
+        "~/topic",
+        super::item::GARDEN_DEPTH_ALL,
+    );
+    assert_eq!(model.child_depth, super::item::GARDEN_DEPTH_ALL);
+    let items: std::collections::HashSet<&str> = model
+        .child_rankings
+        .unranked_items
+        .iter()
+        .map(|u| u.as_str())
+        .collect();
+    assert!(items.contains("https://slug.social/~/topic/a/mid/leaf"));
+    assert!(items.contains("https://slug.social/~/topic/b"));
+}
+
+#[test]
 fn vote_compare_item_card_renders_github_import_markup() {
     let nav = ThreadNav::public();
     let item = ItemId::parse("https://github.com/o/r/issues/1").unwrap();

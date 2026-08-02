@@ -21,6 +21,7 @@ use crate::{
     path_types::ItemId,
     scope_rank::{
         build_children_rankings, build_rankings_for_item_set, external_root_host_items,
+        resolve_scope_recursive,
     },
     state::AppState,
 };
@@ -29,7 +30,7 @@ use super::{
     access::{content_for_garden_view, room_not_found_page, room_scope_has_garden_content, user_can_view_room},
     browse::{GardenBrowsePath, scoped_bc_path_external},
     copy::garden_rank_copy_button_markup,
-    item::{item_display_path, item_href},
+    item::{child_depth_from_uri, garden_depth_select_markup, item_display_path, item_href},
     render::render_scope_view,
 };
 
@@ -39,9 +40,18 @@ pub async fn garden_index(
     uri: Uri,
 ) -> impl IntoResponse {
     let nav = ThreadNav::public();
+    let child_depth = child_depth_from_uri(&uri);
     let child_rankings = {
         let reduced = state.reduced.read().await;
-        build_children_rankings(reduced.public(), &ItemId::ontology_root())
+        let content = reduced.public();
+        let root = ItemId::ontology_root();
+        if child_depth > 1 {
+            let items =
+                resolve_scope_recursive(content, &[root.as_str().to_string()], child_depth);
+            build_rankings_for_item_set(content, &items)
+        } else {
+            build_children_rankings(content, &root)
+        }
     };
 
     let url_key = canonical_view_url(&uri);
@@ -55,9 +65,11 @@ pub async fn garden_index(
             nav class="breadcrumb" { (bc_path(&root_path)) }
             h2 {
                 "paths"
+                " "
+                (garden_depth_select_markup(child_depth))
                 @if !(child_rankings.component_rankings.is_empty() && child_rankings.unranked_items.is_empty()) {
                     " "
-                    (garden_rank_copy_button_markup(&nav, "~/", 1, false))
+                    (garden_rank_copy_button_markup(&nav, "~/", child_depth, false))
                 }
             }
             @if child_rankings.component_rankings.is_empty() && child_rankings.unranked_items.is_empty() {

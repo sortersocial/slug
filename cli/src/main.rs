@@ -301,8 +301,9 @@ enum GardenCmd {
     /// Multiple paths = merge those scopes (e.g. garden children models ai-models).
     Children {
         /// How many levels deep to resolve (default 1 = direct children only).
-        #[arg(long, value_name = "N")]
-        depth: Option<usize>,
+        /// Pass `all` (or `∞` / `inf`) for every descendant.
+        #[arg(long, value_name = "N|all")]
+        depth: Option<String>,
         /// Output as JSON for agent parsing
         #[arg(long)]
         json: bool,
@@ -789,6 +790,18 @@ fn ontology_path_for_api_query(normalized: &str) -> String {
     }
 }
 
+/// Parse `--depth` for garden children (`all` / `∞` / `inf` → unbounded).
+fn parse_garden_depth_arg(raw: &str) -> usize {
+    let s = raw.trim();
+    if matches!(
+        s,
+        "all" | "∞" | "inf" | "infinity" | "*" | "unlimited"
+    ) {
+        return usize::MAX;
+    }
+    s.parse::<usize>().unwrap_or(1).max(1)
+}
+
 /// Thread name for API; strip leading # so shell users can omit it (# is comment).
 fn normalize_thread_input(name: &str) -> String {
     name.trim().trim_start_matches('#').to_string()
@@ -970,6 +983,7 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
                     .map(|p| ontology_path_for_api_query(p))
                     .collect::<Vec<_>>()
                     .join(",");
+                let depth = depth.as_deref().map(parse_garden_depth_arg);
                 let batch = send_rpc(
                     &client,
                     base,

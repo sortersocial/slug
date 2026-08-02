@@ -71,7 +71,7 @@ fn rankings_for_copy(
     let parent = ItemId::parse(parent_path.trim())
         .unwrap_or_else(|| ItemId::ontology_root())
         .normalized_storage();
-    let depth = depth.clamp(1, 5);
+    let depth = depth.max(1);
     if depth > 1 {
         let items = resolve_scope_recursive(state_content, &[parent.as_str().to_string()], depth);
         build_rankings_for_item_set(state_content, &items)

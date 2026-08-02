@@ -790,6 +790,28 @@ details > summary::-webkit-details-marker { display: none; }
   border-color: var(--lo) var(--hi) var(--hi) var(--lo);
   transform: translate(1px, 1px);
 }
+.garden-depth-control {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  font-weight: normal;
+  vertical-align: baseline;
+}
+#garden-depth-select {
+  background: var(--g4);
+  border: var(--bv) solid;
+  border-color: var(--hi) var(--lo) var(--lo) var(--hi);
+  color: var(--ui);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 1px 6px;
+  user-select: none;
+  vertical-align: baseline;
+}
+#garden-depth-select:hover { color: var(--signal); }
+#garden-depth-select:active {
+  border-color: var(--lo) var(--hi) var(--hi) var(--lo);
+}
 #search-btn {
   background: var(--g4);
   border: var(--bv) solid;

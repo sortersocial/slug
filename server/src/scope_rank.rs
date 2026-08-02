@@ -49,6 +49,7 @@ pub fn resolve_scope(content: &ContentState, specs: &[String]) -> Vec<ItemId> {
 /// Resolve scope specs recursively up to `depth` levels deep.
 /// depth=1 is equivalent to resolve_scope (direct children only).
 /// depth=2 includes grandchildren, etc.
+/// Large depths (including `usize::MAX` for "all") stop early when the frontier empties.
 pub fn resolve_scope_recursive(
     content: &ContentState,
     specs: &[String],

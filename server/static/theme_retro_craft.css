@@ -429,6 +429,7 @@ button.cli-panel-row:hover {
   display: contents;
 }
 #theme-select,
+#garden-depth-select,
 #search-btn,
 a#src-link {
   border: 1px solid var(--line);
@@ -440,10 +441,17 @@ a#src-link {
   text-decoration: none;
 }
 #theme-select:hover,
+#garden-depth-select:hover,
 #search-btn:hover,
 a#src-link:hover {
   border-color: var(--accent);
   color: var(--accent);
+}
+.garden-depth-control {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.25rem;
+  font-weight: normal;
 }
 
 /* Ontology / garden — light paper in the shell */
