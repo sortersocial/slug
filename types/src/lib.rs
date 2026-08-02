@@ -247,6 +247,61 @@ pub struct VoteRow {
     pub thread: Option<String>,
 }
 
+/// Public forum post counts split by authorship (human browser vs AI delegate).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct PostStats {
+    pub human_posts: u64,
+    pub ai_posts: u64,
+}
+
+impl PostStats {
+    /// e.g. `"3 human posts, 100 ai posts"`.
+    pub fn format_line(&self) -> String {
+        format!(
+            "{}, {}",
+            Self::count_label(self.human_posts, "human"),
+            Self::count_label(self.ai_posts, "ai"),
+        )
+    }
+
+    fn count_label(n: u64, kind: &str) -> String {
+        if n == 1 {
+            format!("1 {kind} post")
+        } else {
+            format!("{n} {kind} posts")
+        }
+    }
+}
+
+#[cfg(test)]
+mod post_stats_tests {
+    use super::PostStats;
+
+    #[test]
+    fn format_line_pluralizes() {
+        assert_eq!(
+            PostStats {
+                human_posts: 3,
+                ai_posts: 100
+            }
+            .format_line(),
+            "3 human posts, 100 ai posts"
+        );
+        assert_eq!(
+            PostStats {
+                human_posts: 1,
+                ai_posts: 1
+            }
+            .format_line(),
+            "1 human post, 1 ai post"
+        );
+        assert_eq!(
+            PostStats::default().format_line(),
+            "0 human posts, 0 ai posts"
+        );
+    }
+}
+
 /// Response for the feed endpoint — all ingests since a cutoff, newest first.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FeedResponse {

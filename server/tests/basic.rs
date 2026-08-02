@@ -531,6 +531,48 @@ fn dsl_parse_rejects_zero_zero_vote_ratio() {
 }
 
 #[test]
+fn reducer_public_post_stats_splits_human_and_ai() {
+    let mut state = ReducerState::default();
+    // AI public post
+    state.apply_event(ingest_event(1, "hello from ai"));
+    // Human public post (no delegate)
+    state.apply_event(Event::Ingest(Ingest {
+        ts: 2,
+        id: "human-1".to_string(),
+        raw: "hello from human".to_string(),
+        principal: "alice".to_string(),
+        delegate: None,
+        room_id: "public".to_string(),
+        thread_tag: "t".to_string(),
+    }));
+    // Private AI post — must not count
+    state.apply_event(Event::Ingest(Ingest {
+        ts: 3,
+        id: "private-1".to_string(),
+        raw: "private".to_string(),
+        principal: "alice".to_string(),
+        delegate: Some("00000000-0000-0000-0000-000000000000:test:local/test".to_string()),
+        room_id: "abcd1234/secret".to_string(),
+        thread_tag: "t".to_string(),
+    }));
+    // System principal — must not count
+    state.apply_event(Event::Ingest(Ingest {
+        ts: 4,
+        id: "system-1".to_string(),
+        raw: "system".to_string(),
+        principal: "system:github-resolver".to_string(),
+        delegate: None,
+        room_id: "public".to_string(),
+        thread_tag: "t".to_string(),
+    }));
+
+    let stats = state.public_post_stats();
+    assert_eq!(stats.human_posts, 1);
+    assert_eq!(stats.ai_posts, 1);
+    assert_eq!(stats.format_line(), "1 human post, 1 ai post");
+}
+
+#[test]
 fn reducer_negative_ratio_clamped_to_zero() {
     let _state = ReducerState::default();
     // apply_vote clamps negatives to 0; add_edge_weight skips zero-weight edges.
