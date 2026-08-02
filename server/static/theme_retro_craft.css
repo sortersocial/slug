@@ -532,6 +532,19 @@ nav.breadcrumb.ont-sibling-nav span.ont-sibling-nav-group-sep {
   padding: 0 6px;
   user-select: none;
 }
+.ont-sibling-nav-wrap {
+  width: 100%;
+  max-width: 100%;
+}
+.ont-sibling-nav-score {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.55em;
+  margin-top: 0.15rem;
+  font-size: 0.9em;
+  line-height: 1.3;
+}
 
 body.view-ontology {
   background: #ebe6dc;
