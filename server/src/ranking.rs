@@ -247,6 +247,80 @@ pub fn ranked_items_subset(group: &GroupState, idxs: &[usize], max_iters: usize,
     items
 }
 
+/// Rank several disjoint node groups with a **single** pass over the edge map.
+///
+/// `groups[k]` holds indices into `group.idx_to_item`. Edges are bucketed by
+/// group in one O(E) scan, so the total cost is
+/// `O(N + E + Σ_k T_k·(n_k + e_k))` instead of the `O(K·E)` you get from calling
+/// [`ranked_items_subset`] once per group — the filter inside that function walks
+/// the whole edge map regardless of how few nodes it was asked about.
+///
+/// Groups are expected to be disjoint; if a node appears in several, the last
+/// group claiming it wins. Edges crossing groups are dropped, which matches the
+/// induced-subgraph semantics of [`ranked_items_subset`], so ranking each
+/// connected component through either path gives identical results.
+pub fn rank_partition(
+    group: &GroupState,
+    groups: &[Vec<usize>],
+    max_iters: usize,
+    tol: f64,
+) -> Vec<Vec<RankedItem>> {
+    const UNASSIGNED: u32 = u32::MAX;
+
+    let n = group.idx_to_item.len();
+    let mut slot_group: Vec<u32> = vec![UNASSIGNED; n];
+    let mut slot_local: Vec<u32> = vec![UNASSIGNED; n];
+    for (gi, nodes) in groups.iter().enumerate() {
+        for (li, &node) in nodes.iter().enumerate() {
+            if node < n {
+                slot_group[node] = gi as u32;
+                slot_local[node] = li as u32;
+            }
+        }
+    }
+
+    let mut buckets: Vec<Vec<((usize, usize), f64)>> = vec![Vec::new(); groups.len()];
+    for (&(src, dst), &w) in &group.edges {
+        if src >= n || dst >= n {
+            continue;
+        }
+        let gi = slot_group[src];
+        if gi == UNASSIGNED || gi != slot_group[dst] {
+            continue;
+        }
+        buckets[gi as usize].push((
+            (slot_local[src] as usize, slot_local[dst] as usize),
+            w,
+        ));
+    }
+
+    groups
+        .iter()
+        .zip(buckets)
+        .map(|(nodes, edges)| {
+            let scores =
+                compute_scores_from_edges(nodes.len(), edges.into_iter(), max_iters, tol);
+            let mut items: Vec<RankedItem> = nodes
+                .iter()
+                .enumerate()
+                .filter_map(|(local, &global)| {
+                    let item = group.idx_to_item.get(global)?.clone();
+                    Some(RankedItem {
+                        item,
+                        score: *scores.get(local).unwrap_or(&0.0),
+                    })
+                })
+                .collect();
+            items.sort_by(|a, b| {
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            items
+        })
+        .collect()
+}
+
 pub fn group_summary_scores(
     group: &mut GroupState,
     max_iters: usize,
@@ -361,6 +435,63 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(comp0, vec!["https://slug.social/a", "https://slug.social/b"]);
         assert_eq!(comp1, vec!["https://slug.social/c", "https://slug.social/d"]);
+    }
+
+    /// `rank_partition` exists purely to avoid the O(components x edges) cost of
+    /// calling `ranked_items_subset` in a loop, so the two must stay identical.
+    #[test]
+    fn rank_partition_matches_per_component_subset_ranking() {
+        let mut g = mk_group();
+        // Three components of different shapes: a chain, a star, and a lone pair.
+        g.apply_vote(vote(1, "a", "b", 3, 1));
+        g.apply_vote(vote(2, "b", "c", 2, 1));
+        g.apply_vote(vote(3, "c", "d", 5, 2));
+        g.apply_vote(vote(4, "hub", "s1", 2, 1));
+        g.apply_vote(vote(5, "hub", "s2", 4, 1));
+        g.apply_vote(vote(6, "hub", "s3", 1, 3));
+        g.apply_vote(vote(7, "x", "y", 7, 2));
+
+        let (comps, _) = connected_components_from_voted_pairs(
+            g.idx_to_item.len(),
+            g.voted_pairs.iter().copied(),
+        );
+        assert_eq!(comps.len(), 3);
+
+        let batched = rank_partition(&g, &comps, 10000, 1e-8);
+        assert_eq!(batched.len(), comps.len());
+        for (comp, got) in comps.iter().zip(&batched) {
+            let want = ranked_items_subset(&g, comp, 10000, 1e-8);
+            assert_eq!(got.len(), want.len());
+            for (a, b) in got.iter().zip(&want) {
+                assert_eq!(a.item, b.item, "ordering diverged for component {comp:?}");
+                assert!(
+                    (a.score - b.score).abs() < 1e-12,
+                    "score diverged for {}: {} vs {}",
+                    a.item.as_str(),
+                    a.score,
+                    b.score
+                );
+            }
+        }
+    }
+
+    /// Edges leaving a group are dropped, so a partition that splits a connected
+    /// component ranks each piece on its induced subgraph only.
+    #[test]
+    fn rank_partition_drops_cross_group_edges() {
+        let mut g = mk_group();
+        g.apply_vote(vote(1, "a", "b", 3, 1));
+        g.apply_vote(vote(2, "b", "c", 3, 1));
+
+        let idx = |s: &str| g.item_to_idx[&ItemId::parse(s).unwrap()];
+        let groups = vec![vec![idx("a"), idx("b")], vec![idx("c")]];
+        let out = rank_partition(&g, &groups, 10000, 1e-8);
+
+        assert_eq!(out[0].len(), 2);
+        assert_eq!(out[0][0].item.as_str(), "https://slug.social/a");
+        // A lone node carries the whole mass of its own subgraph.
+        assert_eq!(out[1].len(), 1);
+        assert!((out[1][0].score - 1.0).abs() < 1e-12);
     }
 
     #[test]
