@@ -796,6 +796,7 @@ details > summary::-webkit-details-marker { display: none; }
   gap: 4px;
   font-weight: normal;
   vertical-align: baseline;
+  margin: 0;
 }
 #garden-depth-select {
   background: var(--g4);
