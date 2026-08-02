@@ -30,7 +30,10 @@ primary_region = "iad"
   [[services.http_checks]]
     interval = "10s"
     timeout = "2s"
-    grace_period = "5s"
+    # The server replays the whole event log before it binds the port, so the
+    # socket is closed for the entire boot. Grace must exceed worst-case replay
+    # (~35s on a 2.6k-ingest log, and replay grows faster than the log does).
+    grace_period = "120s"
     method = "GET"
     path = "/healthz"
     protocol = "http"
