@@ -531,6 +531,7 @@ div.ingest-entry {
   border: var(--bv) solid;
   border-color: var(--hi) var(--lo) var(--lo) var(--hi);
   margin: 0 0 5px;
+  scroll-margin-top: 48px;
   width: 100%;
   min-width: 100%;
   max-width: 100%;

@@ -11,7 +11,7 @@ use crate::html::{
 };
 use crate::timeago;
 
-use super::nav::ThreadNav;
+use super::nav::{post_fragment_id, ThreadNav};
 
 /// `POST /ui` + `__rpc__` from an inline link (`onclick`); same-origin credentials as other morph actions.
 pub(super) fn thread_ui_fetch_onclick(rpc_compact_json: &str) -> String {
@@ -158,9 +158,10 @@ pub(crate) fn ingest_entry_markup(
 ) -> Markup {
     let redacted = reduced.redacted_posts.contains(&ing.id);
     let show_delete = viewer == Some(ing.principal.as_str()) && !redacted;
+    let frag = post_fragment_id(post_idx);
     if redacted {
         html! {
-            div class="ingest-entry ingest-redacted" data-ingest-id=(ing.id) {
+            div class="ingest-entry ingest-redacted" id=(frag.as_str()) data-ingest-id=(ing.id) {
                 (redacted_header_row(nav, tag, post_idx, ing, now, false))
             }
         }
@@ -185,7 +186,7 @@ pub(crate) fn ingest_entry_markup(
         };
         let item_bodies = reduced.content_for_scope(&nav.scope()).map(|c| &c.item_bodies);
         html! {
-            div class=(entry_class) data-ingest-id=(ing.id) {
+            div class=(entry_class) id=(frag.as_str()) data-ingest-id=(ing.id) {
                 (post_header_row(nav, tag, post_idx, ing, viewer, now, show_delete))
                 (render_linkified_with_embeds_in_scope(display_body, nav.garden_root_url(), item_bodies))
                 @if truncated {

@@ -1,9 +1,9 @@
 use maud::{html, Markup};
 
 use super::copy::thread_copy_button_markup;
-use super::nav::ThreadNav;
+use super::nav::{ThreadNav, THREAD_PAGE_SIZE};
 
-pub(super) const PAGE_SIZE: usize = 10;
+pub(super) const PAGE_SIZE: usize = THREAD_PAGE_SIZE;
 
 /// Prev/next links between chronological posts on a single-post (`/t/tag/N`) page.
 pub(super) fn render_post_permalink_nav(nav: &ThreadNav, tag: &str, index: usize, total: usize) -> Markup {

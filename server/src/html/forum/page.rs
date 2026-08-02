@@ -44,7 +44,11 @@ pub(super) fn bc_room(
                 false,
             ))
             @if let Some(idx) = focused_post {
-                (bc_segment(&format!("#{t}"), &nav.thread_url(t), false))
+                (bc_segment(
+                    &format!("#{t}"),
+                    &nav.thread_url_for_post(t, idx),
+                    false,
+                ))
                 (bc_segment(&format!("post #{idx}"), &nav.post_url(t, idx), true))
             } @else {
                 (bc_segment(&format!("#{t}"), &nav.thread_url(t), true))
