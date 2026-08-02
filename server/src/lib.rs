@@ -16,6 +16,7 @@ pub mod ranking;
 pub mod reducer;
 pub mod scope_rank;
 pub mod state;
+pub mod stationary;
 pub mod timeago;
 pub mod views;
 pub mod write_cmd;

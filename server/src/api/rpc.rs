@@ -18,7 +18,7 @@ use crate::{
     events::{Event, Ingest, ThreadCapability},
     identity::{parse_agent, parse_username},
     path_types::ItemId,
-    ranking::{connected_components_from_voted_pairs, ranked_items_subset},
+    ranking::{connected_components_from_voted_pairs, rank_partition, ranked_items_subset},
     reducer::{scope_from_room_wire, ReducerState, ScopeId},
     scope_rank::suggest_next_pair_in_pool,
     state::{AppState, InviteState},
@@ -1292,8 +1292,8 @@ pub async fn handle_rpc_batch(
                 let offset = offset.unwrap_or(0);
                 let want_percent = percent.unwrap_or(false);
                 let reduced = state.reduced.read().await;
-                let mut content = content_for_room(&reduced, &room).clone();
-                let group = &mut content.ranking_group;
+                let content = content_for_room(&reduced, &room);
+                let group = &content.ranking_group;
                 let n = group.idx_to_item.len();
                 let (mut comps, _) = connected_components_from_voted_pairs(
                     n, group.voted_pairs.iter().copied(),
@@ -1301,8 +1301,7 @@ pub async fn handle_rpc_batch(
                 comps.sort_by_key(|b| std::cmp::Reverse(b.len()));
 
                 let mut ranked: Vec<RankRow> = Vec::new();
-                for comp in &comps {
-                    let items = ranked_items_subset(group, comp, 10000, 1e-8);
+                for items in rank_partition(group, &comps, 10000, 1e-8) {
                     let top = items.first().map(|r| r.score).unwrap_or(1.0);
                     let bot = items.last().map(|r| r.score).unwrap_or(0.0);
                     let range = (top - bot).max(1e-12);

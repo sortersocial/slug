@@ -399,7 +399,9 @@ fn vote_compare_item_card_renders_github_import_markup() {
         "headline": "#1 Compare card",
         "sublines": ["State: open"],
     });
-    let body = format!("```slug-github-card\n{json}\n```");
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    let payload = STANDARD.encode(json.to_string().as_bytes());
+    let body = format!("```slug-github-card\n{payload}\n```");
     let html = vote_compare_item_card(
         &nav,
         &item,

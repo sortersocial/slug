@@ -384,17 +384,46 @@ fn github_repo_sections(owner: &str, repo: &str) -> Vec<ResolvedChild> {
     .collect()
 }
 
+/// Stable import thread for a GitHub URL: one thread per repo (`owner/repo`),
+/// or per owner when resolving a user/org page. Section suffixes (`/issues`, etc.)
+/// must not create additional threads.
 fn resolver_thread_tag(item: &ItemId) -> String {
-    let tail = item
-        .display_path()
-        .trim_start_matches("-/")
-        .replace(['/', '?'], ":");
+    let path = match github_segments(item).as_deref() {
+        Some([owner, repo, ..]) => format!("https://github.com/{owner}/{repo}"),
+        Some([owner]) => format!("https://github.com/{owner}"),
+        _ => item
+            .display_path()
+            .trim_start_matches("-/")
+            .to_string(),
+    };
+    let tail = path.replace(['/', '?'], ":");
     format!("import:{tail}")
 }
 
+/// Encode a card for a ```slug-github-card``` fence.
+///
+/// DSL code fences are **toggle** markers (see `BlockMasker`): a ``` inside the
+/// fence payload closes it. The UUID/token substitution protects fence *contents*
+/// from brace matching and allows *sibling* fences inside `{ … }`, but it cannot
+/// nest fences. Issue bodies often contain markdown fences, so the JSON card is
+/// stored as base64 — opaque to the masker, decoded back to real markdown for
+/// rendering (and a future markdown renderer on `excerpt`).
+fn card_payload_for_dsl_fence(card: &GithubImportCard) -> String {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    let json = serde_json::to_string(card).unwrap_or_else(|_| "{}".to_string());
+    STANDARD.encode(json.as_bytes())
+}
+
+fn decode_github_card_payload(payload: &str) -> Option<GithubImportCard> {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    let bytes = STANDARD.decode(payload.trim()).ok()?;
+    let s = std::str::from_utf8(&bytes).ok()?;
+    serde_json::from_str(s).ok()
+}
+
 fn child_to_dsl(child: &ResolvedChild) -> String {
-    let json = serde_json::to_string(&child.card).unwrap_or_else(|_| "{}".to_string());
-    let inner = format!("```slug-github-card\n{json}\n```");
+    let payload = card_payload_for_dsl_fence(&child.card);
+    let inner = format!("```slug-github-card\n{payload}\n```");
     format!("{} {{\n{}\n}}\n", child.url, inner)
 }
 
@@ -490,7 +519,7 @@ async fn system_redact(state: &AppState, post_id: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// One post per open issue; redact posts for closed/missing issues (and legacy bulk posts).
+/// One post per open issue; redact posts for closed/missing issues (and bulk posts).
 async fn resolve_github_issues(
     state: &AppState,
     room: &str,
@@ -770,29 +799,9 @@ fn extract_fence<'a>(body: &'a str, lang: &str) -> Option<&'a str> {
 }
 
 fn parse_github_import_from_body(body: &str) -> Option<GithubImportCard> {
-    let trimmed = body.trim();
-    if let Some(json) = extract_fence(trimmed, "slug-github-card") {
-        let c: GithubImportCard = serde_json::from_str(json).ok()?;
-        return (c.v == 1 && (c.schema.is_empty() || c.schema == SLUG_GITHUB_SCHEMA)).then_some(c);
-    }
-    if let Some(json) = extract_fence(trimmed, "json") {
-        if let Ok(c) = serde_json::from_str::<GithubImportCard>(json) {
-            if c.v == 1
-                && (c.schema == SLUG_GITHUB_SCHEMA
-                    || (c.schema.is_empty() && c.url.contains("github.com")))
-            {
-                return Some(c);
-            }
-        }
-    }
-    if trimmed.starts_with('{') {
-        let c: GithubImportCard = serde_json::from_str(trimmed).ok()?;
-        return (c.v == 1
-            && (c.schema == SLUG_GITHUB_SCHEMA
-                || (c.schema.is_empty() && c.url.contains("github.com"))))
-        .then_some(c);
-    }
-    None
+    let payload = extract_fence(body.trim(), "slug-github-card")?;
+    let c = decode_github_card_payload(payload)?;
+    (c.v == 1 && (c.schema.is_empty() || c.schema == SLUG_GITHUB_SCHEMA)).then_some(c)
 }
 
 fn kind_badge(kind: &GithubImportKind) -> &'static str {
@@ -877,6 +886,19 @@ mod tests {
     }
 
     #[test]
+    fn resolver_thread_tag_is_one_per_repo() {
+        let repo = ItemId::parse("https://github.com/berriai/litellm").unwrap();
+        let issues = ItemId::parse("https://github.com/berriai/litellm/issues").unwrap();
+        let issue = ItemId::parse("https://github.com/berriai/litellm/issues/1").unwrap();
+        let pulls = ItemId::parse("https://github.com/berriai/litellm/pulls").unwrap();
+        let expected = "import:https:::github.com:berriai:litellm";
+        assert_eq!(resolver_thread_tag(&repo), expected);
+        assert_eq!(resolver_thread_tag(&issues), expected);
+        assert_eq!(resolver_thread_tag(&issue), expected);
+        assert_eq!(resolver_thread_tag(&pulls), expected);
+    }
+
+    #[test]
     fn repo_sections_are_direct_children() {
         let sections = github_repo_sections("sortersocial", "slug");
         let urls: Vec<String> = sections.into_iter().map(|c| c.url).collect();
@@ -897,7 +919,15 @@ mod tests {
         }]);
         assert!(dsl.contains("https://github.com/o/r/issues/1"));
         assert!(dsl.contains("```slug-github-card"));
-        assert!(dsl.contains("\"schema\":\"slug_github_import\""));
+        // Payload is base64 so nested ``` in excerpts cannot break DSL fences.
+        assert!(!dsl.contains("\"schema\":\"slug_github_import\""));
+        let body = dsl
+            .split_once('{')
+            .and_then(|(_, rest)| rest.rsplit_once('}'))
+            .map(|(inner, _)| inner.trim())
+            .expect("braced body");
+        let parsed = parse_github_import_from_body(body).expect("decodes base64 card");
+        assert_eq!(parsed.schema, SLUG_GITHUB_SCHEMA);
     }
 
     #[test]
@@ -919,14 +949,17 @@ mod tests {
     #[test]
     fn issue_urls_declared_reads_single_and_bulk_posts() {
         let parent = ItemId::parse("https://github.com/o/r/issues").unwrap();
-        let single = concat!(
-            "https://github.com/o/r/issues/1 {\n",
-            "```slug-github-card\n",
-            "{\"v\":1,\"schema\":\"slug_github_import\",\"kind\":\"issue\",\"url\":\"https://github.com/o/r/issues/1\",\"headline\":\"#1\"}",
-            "\n```\n}\n"
-        );
+        let single = child_to_dsl(&ResolvedChild {
+            url: "https://github.com/o/r/issues/1".into(),
+            title: "#1".into(),
+            card: GithubImportCard::new(
+                GithubImportKind::Issue,
+                "https://github.com/o/r/issues/1".into(),
+                "#1".into(),
+            ),
+        });
         assert_eq!(
-            issue_urls_declared_in_ingest(single, &parent),
+            issue_urls_declared_in_ingest(&single, &parent),
             vec!["https://github.com/o/r/issues/1".to_string()]
         );
 
@@ -947,22 +980,29 @@ mod tests {
             "https://github.com/o/r".into(),
             "o/r".into(),
         );
-        let body = format!("```slug-github-card\n{}\n```\n", serde_json::to_string(&card).unwrap());
+        let body = format!(
+            "```slug-github-card\n{}\n```\n",
+            card_payload_for_dsl_fence(&card)
+        );
         let parsed = parse_github_import_from_body(&body).expect("parses");
         assert_eq!(parsed, card);
     }
 
     #[test]
-    fn parse_accepts_schema_json_fence() {
+    fn parse_rejects_raw_json_slug_github_fence() {
         let card = GithubImportCard::new(
             GithubImportKind::Issue,
             "https://github.com/o/r/issues/2".into(),
             "#2 hi".into(),
         );
-        let json = serde_json::to_string(&card).unwrap();
-        let body = format!("```json\n{json}\n```");
-        let parsed = parse_github_import_from_body(&body).expect("parses json fence");
-        assert_eq!(parsed.headline, "#2 hi");
+        let body = format!(
+            "```slug-github-card\n{}\n```",
+            serde_json::to_string(&card).unwrap()
+        );
+        assert!(
+            parse_github_import_from_body(&body).is_none(),
+            "raw JSON inside slug-github-card is not accepted"
+        );
     }
 
     #[test]
@@ -1008,6 +1048,136 @@ mod tests {
         crate::api::validate_ingest_document(&reduced, &text, &crate::reducer::ScopeId::Public)
             .expect("single issue card should validate");
     }
+
+    fn assert_child_dsl_ingests_cleanly(issue_body: &str) {
+        let child = ResolvedChild {
+            url: "https://github.com/berriai/litellm/issues/1".into(),
+            title: "#1 repro".into(),
+            card: card_for_issue(
+                &serde_json::json!({
+                    "number": 1,
+                    "title": "repro",
+                    "state": "open",
+                    "user": {"login": "octo"},
+                    "labels": [],
+                    "body": issue_body
+                }),
+                "https://github.com/berriai/litellm/issues/1",
+                GithubImportKind::Issue,
+            ),
+        };
+        let text = child_to_dsl(&child);
+        let reduced = crate::reducer::ReducerState::default();
+        let validated = crate::api::validate_ingest_document(
+            &reduced,
+            &text,
+            &crate::reducer::ScopeId::Public,
+        )
+        .unwrap_or_else(|(code, msg, hint)| {
+            panic!(
+                "github import DSL should validate; got {code} {msg} hint={hint:?}\nDSL:\n{text}"
+            )
+        });
+        let item_body = validated
+            .doc
+            .statements
+            .iter()
+            .find_map(|s| match s {
+                crate::dsl::Stmt::Item { body: Some(b), .. } => Some(b.as_str()),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("expected item body\nDSL:\n{text}"));
+        let parsed = parse_github_import_from_body(item_body).unwrap_or_else(|| {
+            panic!("body should round-trip as github card; body was:\n{item_body}\nDSL:\n{text}")
+        });
+        assert!(
+            child.card.excerpt.as_ref().is_some_and(|e| e.contains("```")),
+            "precondition: card excerpt contains markdown fences"
+        );
+        assert_eq!(
+            parsed.excerpt.as_deref(),
+            child.card.excerpt.as_deref(),
+            "excerpt should survive DSL fence masking/unmasking"
+        );
+    }
+
+    #[test]
+    fn child_to_dsl_validates_when_issue_body_contains_balanced_markdown_fences() {
+        // Existing happy-path tests only used plain excerpts, so fence-bearing
+        // GitHub markdown was never exercised end-to-end through ingest validation.
+        assert_child_dsl_ingests_cleanly(concat!(
+            "Prefer A > B when ranking.\n\n",
+            "```python\n",
+            "print('hi')\n",
+            "```\n\n",
+            "Closing thoughts."
+        ));
+    }
+
+    #[test]
+    fn child_to_dsl_validates_when_issue_body_has_truncated_markdown_fence() {
+        // Common in the wild: issue opens a ```json/py fence and either never
+        // closes it, or our 1200-char excerpt cuts off before the closer.
+        // Nested ``` inside a toggle fence would break masking if the card JSON
+        // were stored raw; base64 payload keeps the outer fence intact.
+        assert_child_dsl_ingests_cleanly(concat!(
+            "## Describe the bug\n\n",
+            "Using a skill with:\n\n",
+            "```json\n",
+            "\"container\": {\n",
+            "  \"skills\": [{\"type\": \"custom\", \"skill_id\": \"x\"}]\n",
+        ));
+    }
+
+    #[test]
+    fn children_to_dsl_validates_when_earlier_issue_body_has_markdown_fence() {
+        // Bulk ingest path (also a good stress test for fence leakage across
+        // concatenated items). A ``` inside issue 1's card must not make issue 2
+        // parse as a bare comparison / vote.
+        let kids = [
+            ResolvedChild {
+                url: "https://github.com/berriai/litellm/issues/1".into(),
+                title: "#1".into(),
+                card: card_for_issue(
+                    &serde_json::json!({
+                        "number": 1,
+                        "title": "one",
+                        "state": "open",
+                        "user": {"login": "octo"},
+                        "labels": [],
+                        "body": "## bug\n\n```json\n{\"a\":1}\n"
+                    }),
+                    "https://github.com/berriai/litellm/issues/1",
+                    GithubImportKind::Issue,
+                ),
+            },
+            ResolvedChild {
+                url: "https://github.com/berriai/litellm/issues/2".into(),
+                title: "#2".into(),
+                card: card_for_issue(
+                    &serde_json::json!({
+                        "number": 2,
+                        "title": "two",
+                        "state": "open",
+                        "user": {"login": "octo"},
+                        "labels": [],
+                        "body": "plain body"
+                    }),
+                    "https://github.com/berriai/litellm/issues/2",
+                    GithubImportKind::Issue,
+                ),
+            },
+        ];
+        let text = children_to_dsl(&kids);
+        let reduced = crate::reducer::ReducerState::default();
+        crate::api::validate_ingest_document(&reduced, &text, &crate::reducer::ScopeId::Public)
+            .unwrap_or_else(|(code, msg, hint)| {
+                panic!(
+                    "bulk github import DSL should validate; got {code} {msg} hint={hint:?}\nDSL:\n{text}"
+                )
+            });
+    }
+
 
     #[tokio::test]
     async fn list_issues_pages_until_exhausted() {

@@ -111,25 +111,52 @@ async fn test_vote_compare_renders_github_import_cards() {
     let (addr, _tmp, _log, state, _handle) = create_test_server_with_state().await;
     let client = reqwest::Client::new();
 
-    let raw = "@00000000-0000-0000-0000-000000000000:test:local/test\n\
-https://github.com/ghvotehi/a/issues/9 {\n\
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    let left_card = STANDARD.encode(
+        serde_json::json!({
+            "v": 1,
+            "schema": "slug_github_import",
+            "kind": "issue",
+            "url": "https://github.com/ghvotehi/a/issues/9",
+            "headline": "#9 Left corner",
+            "sublines": ["State: open"],
+        })
+        .to_string()
+        .as_bytes(),
+    );
+    let right_card = STANDARD.encode(
+        serde_json::json!({
+            "v": 1,
+            "schema": "slug_github_import",
+            "kind": "issue",
+            "url": "https://github.com/ghvotehi/a/issues/10",
+            "headline": "#10 Right corner",
+            "sublines": ["State: open"],
+        })
+        .to_string()
+        .as_bytes(),
+    );
+    let raw = format!(
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n\
+https://github.com/ghvotehi/a/issues/9 {{\n\
 ```slug-github-card\n\
-{\"v\":1,\"schema\":\"slug_github_import\",\"kind\":\"issue\",\"url\":\"https://github.com/ghvotehi/a/issues/9\",\"headline\":\"#9 Left corner\",\"sublines\":[\"State: open\"]}\n\
+{left_card}\n\
 ```\n\
-}\n\
+}}\n\
 \n\
-https://github.com/ghvotehi/a/issues/10 {\n\
+https://github.com/ghvotehi/a/issues/10 {{\n\
 ```slug-github-card\n\
-{\"v\":1,\"schema\":\"slug_github_import\",\"kind\":\"issue\",\"url\":\"https://github.com/ghvotehi/a/issues/10\",\"headline\":\"#10 Right corner\",\"sublines\":[\"State: open\"]}\n\
+{right_card}\n\
 ```\n\
-}\n";
+}}\n"
+    );
 
     {
         let mut w = state.reduced.write().await;
         w.apply_event(Event::Ingest(Ingest {
             ts: 10,
             id: "ing-vote-github-cards".to_string(),
-            raw: raw.to_string(),
+            raw,
             principal: "testuser".to_string(),
             delegate: Some(
                 "00000000-0000-0000-0000-000000000000:test:local/test".to_string(),

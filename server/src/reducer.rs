@@ -52,6 +52,9 @@ pub struct GroupState {
     pub dirty: bool,
     pub cached_scores: Vec<f64>,
     pub recent_votes: VecDeque<VoteData>,
+    /// Monotonic in-memory version of the vote graph. Derived caches use this
+    /// to detect whether their rankings still describe the current edges.
+    pub generation: u64,
 }
 
 impl Default for GroupState {
@@ -70,6 +73,7 @@ impl GroupState {
             dirty: true,
             cached_scores: Vec::new(),
             recent_votes: VecDeque::with_capacity(200),
+            generation: 0,
         }
     }
 
@@ -129,6 +133,10 @@ impl GroupState {
         while self.recent_votes.len() > 200 {
             self.recent_votes.pop_back();
         }
+        self.generation = self
+            .generation
+            .checked_add(1)
+            .expect("vote graph generation overflow");
     }
 }
 
@@ -204,6 +212,16 @@ pub struct ForumThreadState {
 }
 
 
+#[derive(Debug, Clone)]
+pub(crate) struct RankPositionCache {
+    generation: u64,
+    /// 1-indexed global rank and component-local Rank Centrality score.
+    global: HashMap<ItemId, (usize, f64)>,
+    by_parent: HashMap<ItemId, HashMap<ItemId, usize>>,
+    #[cfg(test)]
+    recomputations: usize,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct ContentState {
     pub ranking_group: GroupState,
@@ -219,6 +237,15 @@ pub struct ContentState {
     pub item_threads: HashMap<ItemId, HashSet<String>>,
     /// Per-item rank history, oldest first.
     pub rank_history: HashMap<ItemId, Vec<RankHistoryEntry>>,
+    /// RAM-only memo of rank positions at `ranking_group.generation`.
+    ///
+    /// The next vote ingest's "before" positions are exactly the previous vote
+    /// ingest's "after" positions. Keeping the complete global ordering and
+    /// lazily populated parent-scope orderings avoids recomputing both before
+    /// every ingest. A vote bumps the generation and forces one fresh "after"
+    /// computation; item-only ingests do not invalidate it because isolates do
+    /// not affect any ranked component.
+    pub(crate) rank_position_cache: Option<RankPositionCache>,
 }
 
 #[derive(Debug, Clone)]
@@ -419,77 +446,153 @@ impl ReducerState {
         ItemId::parse(item)
     }
 
-    /// 1-indexed rank of `item` within its connected component in the parent scope.
-    /// 0 if the item has no votes connecting it to siblings (unranked).
-    fn scope_rank_of(
+    /// 1-indexed rank within its own connected component, for every child of
+    /// `scope`. Items with no votes connecting them to a sibling are absent.
+    fn scope_positions(
         group: &GroupState,
-        item: &ItemId,
+        scope: &ItemId,
         item_children: &HashMap<ItemId, HashSet<ItemId>>,
-    ) -> usize {
-        let scope = match item.parent() {
-            Some(p) => p,
-            None => return 0,
+    ) -> HashMap<ItemId, usize> {
+        let Some(children) = item_children.get(scope) else {
+            return HashMap::new();
         };
-        let children = match item_children.get(&scope) {
-            None => return 0,
-            Some(c) => c,
-        };
-        let &item_global_idx = match group.item_to_idx.get(item) {
-            None => return 0,
-            Some(i) => i,
-        };
-        // Map scope children to compact local indices.
-        let sibling_idxs: Vec<usize> = children.iter()
+        let sibling_idxs: Vec<usize> = children
+            .iter()
             .filter_map(|c| group.item_to_idx.get(c).copied())
             .collect();
-        let global_to_local: HashMap<usize, usize> = sibling_idxs.iter()
-            .enumerate().map(|(l, &g)| (g, l)).collect();
-        let item_local = match global_to_local.get(&item_global_idx) {
-            None => return 0,
-            Some(&l) => l,
-        };
-        // Connected components within scope.
+        let global_to_local: HashMap<usize, usize> = sibling_idxs
+            .iter()
+            .enumerate()
+            .map(|(l, &g)| (g, l))
+            .collect();
         let (comps, _) = crate::ranking::connected_components_from_voted_pairs(
             sibling_idxs.len(),
             group.voted_pairs.iter().filter_map(|(a, b)| {
-                Some((global_to_local.get(a).copied()?, global_to_local.get(b).copied()?))
+                Some((
+                    global_to_local.get(a).copied()?,
+                    global_to_local.get(b).copied()?,
+                ))
             }),
         );
-        // Find the component containing this item.
-        let comp_local = match comps.iter().find(|c| c.contains(&item_local)) {
-            None => return 0,
-            Some(c) => c,
-        };
-        let comp_global: Vec<usize> = comp_local.iter()
-            .filter_map(|&l| sibling_idxs.get(l).copied())
+        let comps_global: Vec<Vec<usize>> = comps
+            .iter()
+            .map(|c| c.iter().filter_map(|&l| sibling_idxs.get(l).copied()).collect())
             .collect();
-        let ranked = crate::ranking::ranked_items_subset(group, &comp_global, 10000, 1e-8);
-        ranked.iter().position(|r| &r.item == item).map(|i| i + 1).unwrap_or(0)
+
+        let mut out = HashMap::new();
+        for ranked in crate::ranking::rank_partition(group, &comps_global, 10000, 1e-8) {
+            for (i, r) in ranked.into_iter().enumerate() {
+                out.insert(r.item, i + 1);
+            }
+        }
+        out
     }
 
-    /// 1-indexed position of `item` in the component-aware global flat list.
-    /// Components sorted largest-first; items ranked within each component.
-    /// 0 if the item is not in the ranking group.
-    fn global_rank_of(group: &GroupState, item: &ItemId) -> usize {
-        if !group.item_to_idx.contains_key(item) {
-            return 0;
-        }
-        let n = group.idx_to_item.len();
+    /// 1-indexed position and component-local score in the component-aware
+    /// global flat list. Components largest-first; items ranked within each
+    /// component. Isolates / unvoted items are absent.
+    ///
+    /// The score is Rank Centrality mass within the item's own connected
+    /// component — never a whole-graph solve that would mix disconnected
+    /// clusters.
+    fn global_positions(group: &GroupState) -> HashMap<ItemId, (usize, f64)> {
         let (mut comps, _) = crate::ranking::connected_components_from_voted_pairs(
-            n, group.voted_pairs.iter().copied(),
+            group.idx_to_item.len(),
+            group.voted_pairs.iter().copied(),
         );
         comps.sort_by_key(|b| std::cmp::Reverse(b.len()));
+
+        let mut out = HashMap::new();
         let mut pos = 1usize;
-        for comp in &comps {
-            let ranked = crate::ranking::ranked_items_subset(group, comp, 10000, 1e-8);
-            for r in &ranked {
-                if &r.item == item {
-                    return pos;
-                }
+        for ranked in crate::ranking::rank_partition(group, &comps, 10000, 1e-8) {
+            for r in ranked {
+                out.insert(r.item, (pos, r.score));
                 pos += 1;
             }
         }
-        0
+        out
+    }
+
+    /// `(scope_rank, global_rank, score)` for each of `items`.
+    /// Ranks are 0 where unranked; score is 0.0 where unranked.
+    ///
+    /// Rank history needs these for every item an ingest votes on. The whole
+    /// global ordering (with component-local scores) is computed once, and each
+    /// distinct parent scope once, no matter how many items the post touches.
+    fn rank_positions_for(
+        content: &mut ContentState,
+        items: &[ItemId],
+    ) -> HashMap<ItemId, (usize, usize, f64)> {
+        if items.is_empty() {
+            return HashMap::new();
+        }
+
+        let generation = content.ranking_group.generation;
+        let stale = content
+            .rank_position_cache
+            .as_ref()
+            .map_or(true, |cache| cache.generation != generation);
+        if stale {
+            let global = Self::global_positions(&content.ranking_group);
+            #[cfg(test)]
+            let recomputations = content
+                .rank_position_cache
+                .as_ref()
+                .map_or(1, |cache| cache.recomputations + 1);
+            content.rank_position_cache = Some(RankPositionCache {
+                generation,
+                global,
+                by_parent: HashMap::new(),
+                #[cfg(test)]
+                recomputations,
+            });
+        }
+
+        let parents: HashSet<ItemId> = items.iter().filter_map(ItemId::parent).collect();
+        let missing_parents: Vec<ItemId> = parents
+            .into_iter()
+            .filter(|parent| {
+                !content
+                    .rank_position_cache
+                    .as_ref()
+                    .expect("cache initialized")
+                    .by_parent
+                    .contains_key(parent)
+            })
+            .collect();
+        for parent in missing_parents {
+            let positions = Self::scope_positions(
+                &content.ranking_group,
+                &parent,
+                &content.item_children,
+            );
+            content
+                .rank_position_cache
+                .as_mut()
+                .expect("cache initialized")
+                .by_parent
+                .insert(parent, positions);
+        }
+
+        let cache = content
+            .rank_position_cache
+            .as_ref()
+            .expect("cache initialized");
+        let mut content_positions = HashMap::with_capacity(items.len());
+        for item in items {
+            let scope = item
+                .parent()
+                .and_then(|parent| {
+                    cache
+                        .by_parent
+                        .get(&parent)
+                        .and_then(|positions| positions.get(item).copied())
+                })
+                .unwrap_or(0);
+            let (global, score) = cache.global.get(item).copied().unwrap_or((0, 0.0));
+            content_positions.insert(item.clone(), (scope, global, score));
+        }
+        content_positions
     }
 
     /// Apply one ingest's DSL effects to `content` (votes, items, snippets, rank history).
@@ -516,20 +619,8 @@ impl ReducerState {
         let principal = ing.principal.clone();
         let delegate = ing.delegate.clone();
 
-        let before: HashMap<ItemId, (usize, usize)> = if !voted_items.is_empty() {
-            crate::ranking::compute_group_ranking(&mut content.ranking_group, 10000, 1e-8);
-            voted_items
-                .iter()
-                .map(|it| {
-                    (
-                        it.clone(),
-                        (
-                            Self::scope_rank_of(&content.ranking_group, it, &content.item_children),
-                            Self::global_rank_of(&content.ranking_group, it),
-                        ),
-                    )
-                })
-                .collect()
+        let before: HashMap<ItemId, (usize, usize, f64)> = if !voted_items.is_empty() {
+            Self::rank_positions_for(content, &voted_items)
         } else {
             HashMap::new()
         };
@@ -609,19 +700,13 @@ impl ReducerState {
         }
 
         if !voted_items.is_empty() {
-            crate::ranking::compute_group_ranking(&mut content.ranking_group, 10000, 1e-8);
             let thread = canonical_thread.clone();
+            let after = Self::rank_positions_for(content, &voted_items);
             for item in &voted_items {
-                let after_scope = Self::scope_rank_of(&content.ranking_group, item, &content.item_children);
-                let after_global = Self::global_rank_of(&content.ranking_group, item);
-                let score = content
-                    .ranking_group
-                    .item_to_idx
-                    .get(item)
-                    .and_then(|&i| content.ranking_group.cached_scores.get(i))
-                    .copied()
-                    .unwrap_or(0.0);
-                let (before_scope, before_global) = before.get(item).copied().unwrap_or((0, 0));
+                let (after_scope, after_global, score) =
+                    after.get(item).copied().unwrap_or((0, 0, 0.0));
+                let (before_scope, before_global, _) =
+                    before.get(item).copied().unwrap_or((0, 0, 0.0));
                 let prev = content.rank_history.get(item).and_then(|v| v.last());
                 let scope_delta = if prev.is_none() {
                     0
@@ -915,5 +1000,68 @@ impl Default for ReducerState {
             invites: HashMap::new(),
             graduated_threads: HashSet::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod rank_position_cache_tests {
+    use super::*;
+
+    fn ingest(id: &str, raw: &str) -> Ingest {
+        Ingest {
+            ts: 1,
+            id: id.to_string(),
+            raw: raw.to_string(),
+            principal: "tester".to_string(),
+            delegate: None,
+            room_id: "public".to_string(),
+            thread_tag: "bench".to_string(),
+        }
+    }
+
+    #[test]
+    fn reuses_previous_after_positions_as_next_before_positions() {
+        let mut content = ContentState::default();
+        ReducerState::apply_ingest_to_content(
+            &mut content,
+            &ingest(
+                "first",
+                "~/memo/a { a }\n~/memo/b { b }\n{ a wins }\n~/memo/a 2:1 ~/memo/b",
+            ),
+        )
+        .unwrap();
+
+        let cache = content.rank_position_cache.as_ref().unwrap();
+        assert_eq!(cache.generation, content.ranking_group.generation);
+        // Initial empty "before", then the first vote's "after".
+        assert_eq!(cache.recomputations, 2);
+
+        ReducerState::apply_ingest_to_content(
+            &mut content,
+            &ingest("items-only", "~/memo/c { c }"),
+        )
+        .unwrap();
+        assert_eq!(
+            content
+                .rank_position_cache
+                .as_ref()
+                .unwrap()
+                .recomputations,
+            2,
+            "adding an isolate must not invalidate ranked positions"
+        );
+
+        ReducerState::apply_ingest_to_content(
+            &mut content,
+            &ingest("second", "{ b beats c }\n~/memo/b 2:1 ~/memo/c"),
+        )
+        .unwrap();
+        let cache = content.rank_position_cache.as_ref().unwrap();
+        assert_eq!(cache.generation, content.ranking_group.generation);
+        assert_eq!(
+            cache.recomputations, 3,
+            "the second ingest must reuse its before positions and recompute only after voting"
+        );
+        assert_eq!(content.rank_history[&ItemId::parse("~/memo/b").unwrap()].len(), 2);
     }
 }

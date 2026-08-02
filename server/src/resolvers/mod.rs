@@ -1,6 +1,7 @@
 //! Domain resolvers (GitHub, …) and matching HTML renderers for imported item bodies.
 //!
-//! Resolver output is ingested as DSL; bodies may embed a `slug-github-card` fenced JSON
+//! Resolver output is ingested as DSL; bodies may embed a `slug-github-card` fence
+//! (base64-encoded card JSON)
 //! envelope that [`crate::html::render_item_body_in_scope`] renders instead of a raw `<pre>`.
 
 pub mod github;
