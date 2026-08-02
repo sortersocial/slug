@@ -549,6 +549,50 @@ pub async fn writer_actor(mut rx: mpsc::Receiver<WriteCmd>, state: AppState) {
                 let _ = reply.send(out);
             }
 
+            WriteCmd::SystemRedact {
+                post_id,
+                principal,
+                reply,
+            } => {
+                let out = async {
+                    let mut reduced = state.reduced.write().await;
+                    let post_id = post_id.trim().to_string();
+                    let principal = principal.trim().to_string();
+                    if principal.is_empty() {
+                        return Err(("missing principal".into(), None));
+                    }
+                    let Some(ing) = reduced.ingests_by_id.get(&post_id).cloned() else {
+                        return Err(("post not found".into(), None));
+                    };
+                    if ing.principal != principal {
+                        return Err(("not your post".into(), None));
+                    }
+                    if reduced.redacted_posts.contains(&post_id) {
+                        return Err(("already redacted".into(), None));
+                    }
+                    let room_key = ing.room_id.trim().to_string();
+                    let ev = Event::PostRedacted(PostRedacted {
+                        ts: now_ms(),
+                        post_id: post_id.clone(),
+                        principal: principal.clone(),
+                    });
+                    state
+                        .event_log
+                        .append(&ev)
+                        .await
+                        .map_err(|e| (format!("{e}"), None))?;
+                    reduced.apply_event(ev);
+                    drop(reduced);
+
+                    use crate::canonical_path::canonicalize_tag;
+                    let thread_tag = canonicalize_tag(&ing.thread_tag);
+                    broadcast_web_refresh(&state, &room_key, &thread_tag).await;
+                    Ok(RpcResult::RedactPostOk {})
+                }
+                .await;
+                let _ = reply.send(out);
+            }
+
             WriteCmd::Redact {
                 post_id,
                 bearer,

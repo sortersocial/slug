@@ -21,6 +21,12 @@ pub enum WriteCmd {
         principal: String,
         reply: oneshot::Sender<WriteCmdResult>,
     },
+    /// Redact a post authored by `principal` without a bearer (system resolvers).
+    SystemRedact {
+        post_id: String,
+        principal: String,
+        reply: oneshot::Sender<WriteCmdResult>,
+    },
     Redact {
         post_id: String,
         bearer: String,

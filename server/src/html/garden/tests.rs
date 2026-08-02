@@ -120,10 +120,29 @@ fn suggest_next_vote_pair_prefers_unvoted_sibling_pair() {
 
 #[test]
 fn external_resolver_status_markup_reports_success_and_refresh() {
+    let stats = crate::resolvers::GithubResolveStats {
+        imported: 2,
+        deleted: 0,
+        kept: 0,
+    };
     let html =
-        external_resolver_status_markup(Ok(2), "/-/https://github.com/o/r").into_string();
+        external_resolver_status_markup(Ok(stats), "/-/https://github.com/o/r").into_string();
     assert!(html.contains("Imported 2 GitHub items."));
     assert!(html.contains("href=\"/-/https://github.com/o/r\""));
+}
+
+#[test]
+fn external_resolver_status_markup_reports_deletes() {
+    let stats = crate::resolvers::GithubResolveStats {
+        imported: 1,
+        deleted: 2,
+        kept: 3,
+    };
+    let html = external_resolver_status_markup(Ok(stats), "/-/https://github.com/o/r/issues")
+        .into_string();
+    assert!(html.contains("Imported 1 GitHub item."));
+    assert!(html.contains("Removed 2 closed/stale items."));
+    assert!(html.contains("Kept 3 still-open."));
 }
 
 #[test]

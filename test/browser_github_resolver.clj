@@ -33,7 +33,26 @@
             (do (Thread/sleep 200) (recur))
             false))))))
 
-(defn- start-mock-github [port]
+(defn- wait-for-http-absent [url needle timeout-ms]
+  (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
+    (loop []
+      (let [text (try
+                   (:body (oauth/http-get url))
+                   (catch Exception _ nil))]
+        (if (and (string? text) (not (str/includes? text needle)))
+          true
+          (if (< (System/currentTimeMillis) deadline)
+            (do (Thread/sleep 200) (recur))
+            false))))))
+
+(defn- issue-json [number title]
+  {:number number
+   :title title
+   :body (str "Body for #" number)
+   :state "open"
+   :user {:login "octo"}})
+
+(defn- start-mock-github [port !issues]
   (let [!paths (atom [])
         handler (fn [req]
                   (swap! !paths conj (:uri req))
@@ -53,15 +72,10 @@
                     {:status 200
                      :headers {"Content-Type" "application/json"}
                      :body (json/generate-string
-                            [{:number 42
-                              :title "Seeded issue"
-                              :body "Already pasted"}
-                             {:number 43
-                              :title "Imported sibling"
-                              :body "Loaded from mock GitHub"}
-                             {:number 99
-                              :title "PR should be filtered"
-                              :pull_request {}}])}
+                            (conj (vec @!issues)
+                                  {:number 99
+                                   :title "PR should be filtered"
+                                   :pull_request {}}))}
 
                     {:status 404 :body "not found"}))
         stop-fn (http/run-server handler {:port port})]
@@ -86,12 +100,15 @@
    (bind !server (atom nil))
    (bind !google (atom nil))
    (bind !github (atom nil))
+   (bind !issues (atom [(issue-json 42 "Seeded issue")
+                        (issue-json 43 "Imported sibling")]))
    (bind server-env (assoc (common/slug-server-env tmp-dir base-url google-url slug-port)
-                           "SLUG_GITHUB_API_BASE_URL" github-url))
+                           "SLUG_GITHUB_API_BASE_URL" github-url
+                           "SLUG_GITHUB_RESOLVER_COOLDOWN_MS" "0"))
    (try
      (reset! !google (oauth/start-mock-google google-port
                                               :google-users ["google-user-alice"]))
-     (reset! !github (start-mock-github github-port))
+     (reset! !github (start-mock-github github-port !issues))
      (reset! !server (common/start-server server-bin server-env))
      (is (common/wait-for-server base-url 10000) "server responds to /healthz")
 
@@ -129,21 +146,36 @@
                (is (wait-for-text pg "body" "-/https://github.com/octo/hello/releases" 15000)
                    "repo resolver imports releases section")
 
-               (page/navigate pg (str base-url "/-/https://github.com/octo/hello/issues/42"))
-               (locator/click (page/locator pg "[data-testid=\"github-resolve-siblings\"]"))
+               (page/navigate pg (str base-url "/-/https://github.com/octo/hello/issues"))
+               (locator/click (page/locator pg "[data-testid=\"github-resolve-children\"]"))
                (is (wait-for-http-text (str base-url "/-/https://github.com/octo/hello/issues")
                                        "-/https://github.com/octo/hello/issues/43"
                                        15000)
-                   "issue sibling resolver persisted issue siblings")
-               (core/with-page [pg2 (core/new-page-from-context ctx)]
-                 (page/navigate pg2 (str base-url "/-/https://github.com/octo/hello/issues"))
-                 (is (wait-for-text pg2 "body" "-/https://github.com/octo/hello/issues/43" 15000)
-                     "issue sibling resolver imports issue siblings"))))))
+                   "issues resolver imports open issues as children")
+               (is (wait-for-http-text (str base-url "/-/https://github.com/octo/hello/issues")
+                                       "-/https://github.com/octo/hello/issues/42"
+                                       15000)
+                   "issues resolver imports issue 42")
+
+               ;; Close #43 on GitHub; refresh should redact its system post.
+               (reset! !issues [(issue-json 42 "Seeded issue")])
+               (page/navigate pg (str base-url "/-/https://github.com/octo/hello/issues"))
+               (locator/click (page/locator pg "[data-testid=\"github-resolve-children\"]"))
+               (is (wait-for-http-absent (str base-url "/-/https://github.com/octo/hello/issues")
+                                         "-/https://github.com/octo/hello/issues/43"
+                                         15000)
+                   "closed issue removed from garden after refresh")
+               (is (wait-for-http-text (str base-url "/-/https://github.com/octo/hello/issues")
+                                       "-/https://github.com/octo/hello/issues/42"
+                                       15000)
+                   "still-open issue kept after refresh")))))
 
        (is (some #{"/users/octo/repos"} @(:paths @!github))
            "mock GitHub saw user repos request")
        (is (some #{"/repos/octo/hello/issues"} @(:paths @!github))
-           "mock GitHub saw repo issues request"))
+           "mock GitHub saw repo issues request")
+       (is (>= (count (filter #{"/repos/octo/hello/issues"} @(:paths @!github))) 2)
+           "issues endpoint hit on import and refresh"))
 
      (finally
        (when-some [s @!server] (common/kill-server s))
