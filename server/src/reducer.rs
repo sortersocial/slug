@@ -215,7 +215,8 @@ pub struct ForumThreadState {
 #[derive(Debug, Clone)]
 pub(crate) struct RankPositionCache {
     generation: u64,
-    global: HashMap<ItemId, usize>,
+    /// 1-indexed global rank and component-local Rank Centrality score.
+    global: HashMap<ItemId, (usize, f64)>,
     by_parent: HashMap<ItemId, HashMap<ItemId, usize>>,
     #[cfg(test)]
     recomputations: usize,
@@ -487,10 +488,14 @@ impl ReducerState {
         out
     }
 
-    /// 1-indexed position in the component-aware global flat list, for every
-    /// ranked item. Components largest-first, items ranked within each component.
-    /// Items outside any component (isolates, unvoted) are absent.
-    fn global_positions(group: &GroupState) -> HashMap<ItemId, usize> {
+    /// 1-indexed position and component-local score in the component-aware
+    /// global flat list. Components largest-first; items ranked within each
+    /// component. Isolates / unvoted items are absent.
+    ///
+    /// The score is Rank Centrality mass within the item's own connected
+    /// component — never a whole-graph solve that would mix disconnected
+    /// clusters.
+    fn global_positions(group: &GroupState) -> HashMap<ItemId, (usize, f64)> {
         let (mut comps, _) = crate::ranking::connected_components_from_voted_pairs(
             group.idx_to_item.len(),
             group.voted_pairs.iter().copied(),
@@ -501,23 +506,23 @@ impl ReducerState {
         let mut pos = 1usize;
         for ranked in crate::ranking::rank_partition(group, &comps, 10000, 1e-8) {
             for r in ranked {
-                out.insert(r.item, pos);
+                out.insert(r.item, (pos, r.score));
                 pos += 1;
             }
         }
         out
     }
 
-    /// `(scope_rank, global_rank)` for each of `items`, 0 where unranked.
+    /// `(scope_rank, global_rank, score)` for each of `items`.
+    /// Ranks are 0 where unranked; score is 0.0 where unranked.
     ///
-    /// Rank history needs these for every item an ingest votes on. Resolving them
-    /// one item at a time means re-ranking the entire graph per item — the whole
-    /// global ordering is computed here once, and each distinct parent scope once,
-    /// no matter how many items the post touches.
+    /// Rank history needs these for every item an ingest votes on. The whole
+    /// global ordering (with component-local scores) is computed once, and each
+    /// distinct parent scope once, no matter how many items the post touches.
     fn rank_positions_for(
         content: &mut ContentState,
         items: &[ItemId],
-    ) -> HashMap<ItemId, (usize, usize)> {
+    ) -> HashMap<ItemId, (usize, usize, f64)> {
         if items.is_empty() {
             return HashMap::new();
         }
@@ -584,11 +589,8 @@ impl ReducerState {
                         .and_then(|positions| positions.get(item).copied())
                 })
                 .unwrap_or(0);
-            let global = cache.global.get(item).copied().unwrap_or(0);
-            // This explicit loop keeps the cache borrowed once and avoids
-            // rebuilding any ranking while extracting the requested subset.
-            // The map is small (at most the distinct voted items in one post).
-            content_positions.insert(item.clone(), (scope, global));
+            let (global, score) = cache.global.get(item).copied().unwrap_or((0, 0.0));
+            content_positions.insert(item.clone(), (scope, global, score));
         }
         content_positions
     }
@@ -617,8 +619,7 @@ impl ReducerState {
         let principal = ing.principal.clone();
         let delegate = ing.delegate.clone();
 
-        let before: HashMap<ItemId, (usize, usize)> = if !voted_items.is_empty() {
-            crate::ranking::compute_group_ranking(&mut content.ranking_group, 10000, 1e-8);
+        let before: HashMap<ItemId, (usize, usize, f64)> = if !voted_items.is_empty() {
             Self::rank_positions_for(content, &voted_items)
         } else {
             HashMap::new()
@@ -699,19 +700,13 @@ impl ReducerState {
         }
 
         if !voted_items.is_empty() {
-            crate::ranking::compute_group_ranking(&mut content.ranking_group, 10000, 1e-8);
             let thread = canonical_thread.clone();
             let after = Self::rank_positions_for(content, &voted_items);
             for item in &voted_items {
-                let (after_scope, after_global) = after.get(item).copied().unwrap_or((0, 0));
-                let score = content
-                    .ranking_group
-                    .item_to_idx
-                    .get(item)
-                    .and_then(|&i| content.ranking_group.cached_scores.get(i))
-                    .copied()
-                    .unwrap_or(0.0);
-                let (before_scope, before_global) = before.get(item).copied().unwrap_or((0, 0));
+                let (after_scope, after_global, score) =
+                    after.get(item).copied().unwrap_or((0, 0, 0.0));
+                let (before_scope, before_global, _) =
+                    before.get(item).copied().unwrap_or((0, 0, 0.0));
                 let prev = content.rank_history.get(item).and_then(|v| v.last());
                 let scope_delta = if prev.is_none() {
                     0
