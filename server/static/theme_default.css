@@ -424,6 +424,13 @@ div.vote-meta {
 }
 code.vote-left, code.vote-right { color: var(--signal); }
 span.vote-ratio { color: var(--meta); font-size: 12px; }
+span.vote-ratio strong.vote-ratio-current { color: var(--signal); font-weight: 700; }
+span.vote-current-star {
+  display: inline-block;
+  font-size: 11px;
+  line-height: 1;
+  margin-left: 0.2em;
+}
 
 div.ratio-bar {
   border: var(--bv) solid;
