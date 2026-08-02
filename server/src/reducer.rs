@@ -264,6 +264,24 @@ impl ReducerState {
         self.content.get(scope)
     }
 
+    /// Most recent forum post bump in `room_id`, or room-created time if the room has no posts.
+    pub fn room_last_activity_ts(&self, room_id: &str) -> i64 {
+        let scope = ScopeId::Room(room_id.to_string());
+        let mut max_ts = 0i64;
+        for ((s, _), thread) in &self.forum_threads {
+            if s == &scope {
+                max_ts = max_ts.max(thread.last_activity_ts);
+            }
+        }
+        if max_ts > 0 {
+            return max_ts;
+        }
+        self.room_timeline
+            .get(room_id)
+            .and_then(|entries| entries.first().map(|e| e.ts))
+            .unwrap_or(0)
+    }
+
     /// 0-based chronological index of `post_id` in `(scope, thread_tag)` (forum routes `/t/tag/N`).
     pub fn try_thread_post_index_chronological(
         &self,

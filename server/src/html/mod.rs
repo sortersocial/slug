@@ -972,9 +972,44 @@ pub(super) fn recency_class(now_ms: i64, ts_ms: i64) -> &'static str {
     }
 }
 
+/// Freshness in 0..=100 for proportional timestamp color (100 = just now, 0 = ≥1 week).
+/// Linear fade over 7 days so color tracks age continuously.
+pub(super) fn recency_freshness_pct(now_ms: i64, ts_ms: i64) -> u8 {
+    const WEEK_SECS: i64 = 7 * 24 * 3600;
+    let age_secs = now_ms.saturating_sub(ts_ms).saturating_div(1000).max(0);
+    if age_secs >= WEEK_SECS {
+        return 0;
+    }
+    let remaining = WEEK_SECS - age_secs;
+    ((remaining * 100) / WEEK_SECS) as u8
+}
+
+/// Inline `color-mix` style for timestamps: fresher → `--age-fresh`, older → `--age-old`.
+pub(super) fn recency_color_style(now_ms: i64, ts_ms: i64) -> String {
+    let pct = recency_freshness_pct(now_ms, ts_ms);
+    format!("color:color-mix(in srgb,var(--age-fresh) {pct}%,var(--age-old))")
+}
+
 #[cfg(test)]
 mod authorship_tests {
     use super::*;
+
+    #[test]
+    fn recency_freshness_is_proportional() {
+        let now = 7 * 24 * 3600 * 1000;
+        assert_eq!(recency_freshness_pct(now, now), 100);
+        assert_eq!(recency_freshness_pct(now, now - 1000), 99); // ~1s old
+        // Mid-week ≈ 50%
+        assert_eq!(
+            recency_freshness_pct(now, now - 3 * 24 * 3600 * 1000 - 12 * 3600 * 1000),
+            50
+        );
+        assert_eq!(recency_freshness_pct(now, now - 7 * 24 * 3600 * 1000), 0);
+        assert_eq!(recency_freshness_pct(now, now - 14 * 24 * 3600 * 1000), 0);
+        let style = recency_color_style(now, now);
+        assert!(style.contains("100%"), "{style}");
+        assert!(style.contains("--age-fresh"), "{style}");
+    }
 
     #[test]
     fn human_or_missing_delegate_shows_username() {

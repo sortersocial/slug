@@ -6,7 +6,9 @@ use slug_types::MAX_FORUM_POST_PREVIEW_CHARS;
 
 use crate::html::js_string_literal;
 use crate::html::ui_action::{HtmlUiAction, UI_RPC_FIELD};
-use crate::html::{authorship_attr, profile_href, render_linkified_with_embeds_in_scope};
+use crate::html::{
+    authorship_attr, profile_href, recency_color_style, render_linkified_with_embeds_in_scope,
+};
 use crate::timeago;
 
 use super::nav::ThreadNav;
@@ -47,6 +49,7 @@ fn post_header_meta(
     let profile = profile_href(principal);
     let ts_hover = timeago::rfc3339_utc(ts);
     let ago = timeago::timeago(now, ts);
+    let ts_style = recency_color_style(now, ts);
     let attr = authorship_attr(principal, delegate);
     let author_style = format!("color:{}", attr.color);
     html! {
@@ -60,7 +63,7 @@ fn post_header_meta(
                     a href=(profile) class="post-author" style=(author_style.as_str()) { (attr.label.as_str()) }
                 }
                 " · "
-                span title=(ts_hover) { (ago) }
+                span class="ts-recency" style=(ts_style.as_str()) title=(ts_hover) { (ago) }
             }
             @if let Some(pid) = delete_post_id {
                 form class="post-delete-form" method="POST" action="/ui" {

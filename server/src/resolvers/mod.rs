@@ -9,7 +9,7 @@ pub mod default_external;
 pub use default_external::DefaultExternalResolver;
 pub use github::{
     resolve_github_children, try_render_github_import_markup, ExternalResolver, GitHubResolver,
-    GithubImportCard, GithubImportKind, ResolvedChild,
+    GithubImportCard, GithubImportKind, GithubResolveStats, ResolvedChild,
 };
 
 /// Extension point: add more `try_render_*` calls here as new resolvers ship.

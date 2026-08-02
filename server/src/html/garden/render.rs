@@ -12,11 +12,13 @@ use crate::{
         layout,
         now_ms,
         format_ratio, ratio_pct,
+        recency_color_style,
         render_item_body_in_scope,
         theme_from_jar,
         theme_next_from_uri,
     },
     middleware::canonical_view_url,
+    path_types::ItemId,
     reducer::ScopeId,
     state::AppState,
     timeago,
@@ -27,7 +29,10 @@ use super::{
     browse::{garden_layout_meta, scoped_bc_path_for, GardenBrowsePath},
     copy::garden_rank_copy_button_markup,
     external::{external_frame_allowed, external_source_href, github_resolver_controls},
-    item::{child_depth_from_uri, item_code_label, item_display_path, item_href},
+    item::{
+        child_depth_from_uri, garden_depth_select_markup, item_code_label, item_display_path,
+        item_href,
+    },
     item_page::{build_item_page_view_model, sibling_nav_markup},
     pin::{child_row_pin_or_vote, ont_pin_vote_controls, pinned_item_from_jar},
     vote::vote_pool_href,
@@ -75,7 +80,18 @@ pub(super) async fn render_scope_view(
                     @if model.sibling_nav.is_none() && model.item_has_parent {
                         span class="muted ont-item-unranked-note" { "unranked among siblings" }
                     }
-                    (ont_pin_vote_controls(&nav, &model.item, pin_ref.as_ref(), &next_for_pin))
+                    @let vote_item_href = model.sibling_nav.as_ref().and_then(|_| {
+                        ItemId::parse(&model.item)
+                            .and_then(|i| i.parent())
+                            .map(|p| vote_pool_href(&nav, p.as_str()))
+                    });
+                    (ont_pin_vote_controls(
+                        &nav,
+                        &model.item,
+                        pin_ref.as_ref(),
+                        &next_for_pin,
+                        vote_item_href.as_deref(),
+                    ))
                 }
                 @if let Some(body) = &model.body {
                     div class="ont-item-content" {
@@ -135,13 +151,15 @@ pub(super) async fn render_scope_view(
                         };
                         @let hover = timeago::rfc3339_utc(e.ts);
                         @let ago = timeago::timeago(now, e.ts);
+                        @let ts_style = recency_color_style(now, e.ts);
                         div class="rank-history-entry" {
                             div class="rank-history-meta" title=(hover) {
                                 span class="rank-history-pos" {
                                     (format!("#{} of {}{}", e.scope_rank, e.scope_total, delta_str))
                                 }
                                 " · "
-                                span class="muted" { (ago) (label) }
+                                span class="ts-recency" style=(ts_style.as_str()) { (ago) }
+                                span class="muted" { (label) }
                                 " · "
                                 a href=(thread_href(&e.thread)) { "#" (e.thread) }
                                 " "
@@ -193,10 +211,8 @@ pub(super) async fn render_scope_view(
                     + model.child_rankings.unranked_items.len();
                 h3 {
                     "ranked child groups"
-                    @if model.child_depth > 1 {
-                        " "
-                        span class="muted" { (format!("(depth {})", model.child_depth)) }
-                    }
+                    " "
+                    (garden_depth_select_markup(model.child_depth))
                     @if total_children > 0 {
                         " "
                         (garden_rank_copy_button_markup(

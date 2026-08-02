@@ -1218,12 +1218,17 @@ pub async fn handle_rpc_batch(
                     Err((_, m)) => line_err(m, None),
                     Ok(principal) => {
                         let reduced = state.reduced.read().await;
-                        let rooms: Vec<String> = reduced
+                        let mut rooms: Vec<(i64, String)> = reduced
                             .grants
                             .iter()
-                            .filter(|(_, members)| members.contains_key(&principal))
-                            .map(|(room, _)| room.clone())
+                            .filter(|(room, members)| {
+                                reduced.rooms.contains(*room) && members.contains_key(&principal)
+                            })
+                            .map(|(room, _)| (reduced.room_last_activity_ts(room), room.clone()))
                             .collect();
+                        // Newest activity first; stable tie-break on room id.
+                        rooms.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+                        let rooms: Vec<String> = rooms.into_iter().map(|(_, id)| id).collect();
                         line_ok(RpcResult::RoomList(RoomListResponse { rooms }))
                     }
                 }

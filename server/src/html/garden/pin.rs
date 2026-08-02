@@ -39,6 +39,7 @@ pub(super) fn ont_pin_vote_controls(
     current_storage: &str,
     pinned_room_and_item: Option<&(String, ItemId)>,
     next_path: &str,
+    vote_on_item_href: Option<&str>,
 ) -> maud::Markup {
     let room_wire = nav.room_wire.clone();
     let current = ItemId::parse(current_storage)
@@ -70,6 +71,13 @@ pub(super) fn ont_pin_vote_controls(
 
     html! {
         div class="ont-item-pin-zone" data-garden-room=(room_wire.as_str()) {
+            @if let Some(href) = vote_on_item_href {
+                a class="ont-vote-item-btn" data-testid="vote-on-this-item"
+                   href=(href)
+                   title="Compare this item with its siblings" {
+                    "vote on this item"
+                }
+            }
             @if let Some(pi) = pinned_item {
                 @if pi == &current {
                     form method="POST" action="/ui" data-navigate="full" class="ont-pin-form" {

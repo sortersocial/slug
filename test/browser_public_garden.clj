@@ -79,6 +79,8 @@
                (is (wait-for-text pg "body" "@alice" 15000) "alice session after login")
                (page/navigate pg (str base-url "/~"))
                (is (wait-for-text pg "body" "paths" 15000) "public garden index shows paths heading")
+               (is (wait-for-text pg "#garden-depth-select" "1" 5000)
+                   "depth select present on garden index")
                (is (wait-for-text pg "body" "ordering" 10000)
                    "ranked child group meta visible")
                (is (wait-for-text pg "body" "~/br-pub-a" 10000) "ranked list shows ~/br-pub-a")

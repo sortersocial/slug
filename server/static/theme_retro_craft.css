@@ -11,6 +11,10 @@
   --line: #2c2824;
   --code-bg: #1c1814;
 
+  /* Timestamp recency (color-mix endpoints) */
+  --age-fresh: #7d9;
+  --age-old:   var(--ink-dim);
+
   /* Semantic font stacks */
   --font-prose: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
   --font-ui:    system-ui, -apple-system, sans-serif;
@@ -425,6 +429,7 @@ button.cli-panel-row:hover {
   display: contents;
 }
 #theme-select,
+#garden-depth-select,
 #search-btn,
 a#src-link {
   border: 1px solid var(--line);
@@ -436,10 +441,17 @@ a#src-link {
   text-decoration: none;
 }
 #theme-select:hover,
+#garden-depth-select:hover,
 #search-btn:hover,
 a#src-link:hover {
   border-color: var(--accent);
   color: var(--accent);
+}
+.garden-depth-control {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.25rem;
+  font-weight: normal;
 }
 
 /* Ontology / garden — light paper in the shell */
@@ -658,7 +670,8 @@ body.view-ontology .ont-item-pin-zone {
 }
 
 body.view-ontology button.ont-pin-btn,
-body.view-ontology a.ont-vote-compare-btn {
+body.view-ontology a.ont-vote-compare-btn,
+body.view-ontology a.ont-vote-item-btn {
   background: #ebe6dc;
   border: 1px solid #c8c4bc;
   border-radius: 2px;
@@ -674,7 +687,8 @@ body.view-ontology a.ont-vote-compare-btn {
   gap: 0.3rem;
 }
 body.view-ontology button.ont-pin-btn:hover,
-body.view-ontology a.ont-vote-compare-btn:hover {
+body.view-ontology a.ont-vote-compare-btn:hover,
+body.view-ontology a.ont-vote-item-btn:hover {
   border-color: #a68e6b;
   color: #1a1814;
 }
@@ -684,7 +698,8 @@ body.view-ontology button.ont-pin-btn-active {
   color: #0d2d5c;
 }
 body.view-ontology button.ont-pin-btn:focus-visible,
-body.view-ontology a.ont-vote-compare-btn:focus-visible {
+body.view-ontology a.ont-vote-compare-btn:focus-visible,
+body.view-ontology a.ont-vote-item-btn:focus-visible {
   outline: 2px solid #1a4a8c;
   outline-offset: 2px;
 }
@@ -889,6 +904,15 @@ body.view-ontology .vote-compare-vs {
   letter-spacing: 0.1em;
   text-transform: uppercase;
   padding-top: 0.18rem;
+}
+@media (max-width: 600px) {
+  body.view-ontology .vote-compare-pair {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 0.65rem 0.5rem;
+  }
+  body.view-ontology .vote-compare-vs {
+    display: none;
+  }
 }
 body.view-ontology .vote-compare-item {
   display: inline-block;

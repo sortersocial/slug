@@ -19,8 +19,8 @@ use super::new_thread::{fragment_new_thread_slot, login_to_post_hint_markup};
 use super::page::auth_strip;
 use super::paginator::{render_thread_paginator, PAGE_SIZE};
 use crate::html::{
-    bc_threads, cli_panel, layout_with_post_stats, now_ms, recency_class, theme_from_jar,
-    theme_next_from_uri,
+    bc_threads, cli_panel, layout_with_post_stats, now_ms, recency_class, recency_color_style,
+    theme_from_jar, theme_next_from_uri,
 };
 
 #[derive(Clone)]
@@ -30,6 +30,13 @@ pub(super) struct ThreadRow {
     pub(super) last_ts: i64,
     pub(super) last_actor: String,
     pub(super) ingests: usize,
+}
+
+#[derive(Clone)]
+pub(super) struct RoomRow {
+    pub(super) id: String,
+    /// Most recent forum post in the room, or room-created time if empty.
+    pub(super) last_ts: i64,
 }
 
 pub(super) fn collect_thread_rows_for_scope(reduced: &ReducerState, scope: &ScopeId, now: i64) -> Vec<ThreadRow> {
@@ -55,14 +62,18 @@ pub(super) fn collect_thread_rows_for_scope(reduced: &ReducerState, scope: &Scop
         .collect()
 }
 
-pub(super) fn rooms_for_user(reduced: &ReducerState, username: &str) -> Vec<String> {
-    let mut v: Vec<String> = reduced
+/// Rooms the user can access, newest activity first (tie-break: room id).
+pub(super) fn rooms_for_user(reduced: &ReducerState, username: &str) -> Vec<RoomRow> {
+    let mut v: Vec<RoomRow> = reduced
         .grants
         .iter()
         .filter(|(rid, m)| reduced.rooms.contains(*rid) && m.contains_key(username))
-        .map(|(rid, _)| rid.clone())
+        .map(|(rid, _)| RoomRow {
+            id: rid.clone(),
+            last_ts: reduced.room_last_activity_ts(rid),
+        })
         .collect();
-    v.sort();
+    v.sort_by(|a, b| b.last_ts.cmp(&a.last_ts).then_with(|| a.id.cmp(&b.id)));
     v
 }
 
@@ -82,6 +93,7 @@ pub(super) fn render_thread_feed(nav: Option<&ThreadNav>, feed_id: &str, rows: &
                         @let hover = timeago::rfc3339_utc(r.last_ts);
                         @let ago = timeago::timeago(now, r.last_ts);
                         @let age_cls = recency_class(now, r.last_ts);
+                        @let ts_style = recency_color_style(now, r.last_ts);
                         li class=(age_cls) {
                             a href=(thread_href) {
                                 "#" (r.tag)
@@ -89,13 +101,15 @@ pub(super) fn render_thread_feed(nav: Option<&ThreadNav>, feed_id: &str, rows: &
                                     ": " (subtitle)
                                 }
                                 " "
-                                span class="muted" title=(hover) {
-                                    (ago)
-                                    @if !r.last_actor.is_empty() {
-                                        " by @" (r.last_actor)
+                                span title=(hover) {
+                                    span class="ts-recency" style=(ts_style.as_str()) { (ago) }
+                                    span class="muted" {
+                                        @if !r.last_actor.is_empty() {
+                                            " by @" (r.last_actor)
+                                        }
+                                        " · "
+                                        (format!("{}n", r.ingests))
                                     }
-                                    " · "
-                                    (format!("{}n", r.ingests))
                                 }
                             }
                         }
@@ -241,13 +255,21 @@ pub async fn home(
             @if !room_ids.is_empty() {
                 h2 { "your rooms" }
                 ul class="thread-feed" {
-                    @for rid in &room_ids {
-                        @if let Some(nav_r) = ThreadNav::from_room_id(rid) {
-                            @let slug = if let Some((_, s)) = rid.split_once('/') { s } else { rid.as_str() };
-                            li {
+                    @for room in &room_ids {
+                        @if let Some(nav_r) = ThreadNav::from_room_id(&room.id) {
+                            @let slug = if let Some((_, s)) = room.id.split_once('/') { s } else { room.id.as_str() };
+                            @let hover = timeago::rfc3339_utc(room.last_ts);
+                            @let ago = timeago::timeago(now, room.last_ts);
+                            @let age_cls = recency_class(now, room.last_ts);
+                            @let ts_style = recency_color_style(now, room.last_ts);
+                            li class=(age_cls) {
                                 a href=(nav_r.room_url()) {
                                     (slug)
-                                    span class="muted" { " · " (rid) }
+                                    " "
+                                    span title=(hover) {
+                                        span class="ts-recency" style=(ts_style.as_str()) { (ago) }
+                                        span class="muted" { " · " (room.id) }
+                                    }
                                 }
                             }
                         }

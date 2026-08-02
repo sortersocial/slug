@@ -211,7 +211,7 @@ pub(super) fn build_item_page_view_model(
         .unwrap_or_else(|| ItemId::parse("~/").unwrap())
         .normalized_storage();
     let item_has_parent = item_key.parent().is_some();
-    let child_depth = child_depth.clamp(1, 5);
+    let child_depth = child_depth.max(1);
     let child_rankings = if child_depth > 1 {
         let items = resolve_scope_recursive(content, &[item_key.as_str().to_string()], child_depth);
         build_rankings_for_item_set(content, &items)
