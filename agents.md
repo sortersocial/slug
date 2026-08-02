@@ -21,6 +21,8 @@ The web app is **not** a SPA with a JSON API for every interaction. Many mutatio
 - The home page (`GET /`) header shows public human/AI post counts from the reducer (`public_post_stats`: no `delegate` → human, `delegate` set → AI; `system:…` and redacted/private omitted). The `npx slugsocial` splash remains the static embedded `GUIDE.sorter` (no network).
 - Forum and garden item bodies use **`~/…` linkification** (`linkify_slugs_with_prefix` in `server/src/html/mod.rs`). When **`item_bodies`** is in scope, matching ontology links get a native **`title`** tooltip with a **truncated body preview** (hover in the browser).
 
+- **Thread pagination and the SSE push path are page-scoped.** Thread pages (`/t/:tag?offset=N`) are **fixed windows aligned to `PAGE_SIZE` boundaries** (`server/src/html/forum/paginator.rs`): the latest page grows by appending until full, so existing posts never shift; arbitrary `?offset=` values snap to the containing page. Live pushes after a post/redact/graduate (`broadcast_web_refresh` in `server/src/api/write_actor.rs` → `thread_region_page_morphs` in `server/src/html/forum/feed.rs`) morph `#thread-feed-region` only behind **client-side page-offset guards** (`JsBuilder::if_page_offset_*`): the latest page, the page before it (its paginator gains the live `newer →` link at rollover), and — for redactions — the page containing the changed post. Viewers reading older pages are never overwritten with the latest posts. The poster's own `POST /ui` response (`post_success_response` in `server/src/api/ui_html.rs`) morphs in place only on the latest page and otherwise redirects to it.
+
 ---
 
 ## `eval` on the frontend (core constraint)
@@ -69,6 +71,7 @@ Strict **CSP** that blocks `eval` would break the current app. Other projects ma
 | **`RoomMintInvite` links** | **RAM only** | `AppState.invites` — not appended as `InviteMinted` today; **lost on restart** (`server/src/state.rs`, `server/src/api/rpc.rs`). Event types `InviteMinted` / `InviteRedeemed` exist for replay and a possible future persisted mint (`server/src/reducer.rs`). |
 | **OAuth / pending sessions** | **RAM only** | `AppState.pending_sessions` (`server/src/state.rs`, `server/src/api/auth.rs`) |
 | **External resolver cooldowns** | **RAM only** | `AppState.resolver_runs` — debounce/rate-limit guard for on-demand resolver buttons (`SLUG_GITHUB_RESOLVER_COOLDOWN_MS`, default 15s). Resolver results themselves are durable synthetic `Ingest` / `PostRedacted` events in `events.jsonl`. |
+| **Rank-position memo** | **RAM only / derived** | `ContentState.rank_position_cache` — generation-keyed global ranks, component-local Rank Centrality scores, and per-parent scope ranks. Reuses one ingest’s “after” ordering as the next ingest’s “before”. Scores come from each connected component’s solve (never a whole-graph mix of disconnected clusters). Rebuilt lazily during event replay; never persisted. |
 | **Reducer projection** | **Derived** | Rebuilt from log on startup; not separately persisted |
 
 If you add a new ephemeral map or start persisting something that was RAM-only, **update this table and the code comments** (`server/src/state.rs` is a good anchor).

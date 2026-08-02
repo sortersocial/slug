@@ -4,7 +4,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::path_types::ItemId;
-use crate::ranking::{connected_components_from_voted_pairs, ranked_items_subset, RankedItem};
+use crate::ranking::{connected_components_from_voted_pairs, rank_partition, RankedItem};
 use crate::reducer::{ContentState, GroupState};
 
 #[derive(Debug, Clone)]
@@ -114,22 +114,42 @@ pub fn build_rankings_for_item_set(
 
     comps_local.sort_by(|a, b| b.len().cmp(&a.len()).then_with(|| a.cmp(b)));
 
-    let component_rankings: Vec<ScopedComponent> = comps_local
+    // Rank every component in one pass over the edge map, and count each
+    // component's pairs in one pass over `voted_pairs`. Doing either per
+    // component costs O(components x edges), which dominates page render time
+    // once a scope fragments into many small clusters.
+    let comps_global: Vec<Vec<usize>> = comps_local
         .iter()
         .map(|comp_local| {
-            let comp_global: Vec<usize> = comp_local
+            comp_local
                 .iter()
                 .filter_map(|li| local_to_global.get(*li).copied())
-                .collect();
-            let comp_set: HashSet<usize> = comp_global.iter().copied().collect();
-            let ranked = ranked_items_subset(group, &comp_global, 10000, 1e-8);
-            let pairs = group
-                .voted_pairs
-                .iter()
-                .filter(|(i, j)| comp_set.contains(i) && comp_set.contains(j))
-                .count();
-            ScopedComponent { pairs, ranked }
+                .collect()
         })
+        .collect();
+
+    let mut comp_of_local: Vec<Option<usize>> = vec![None; scoped_idxs.len()];
+    for (ci, comp_local) in comps_local.iter().enumerate() {
+        for &li in comp_local {
+            comp_of_local[li] = Some(ci);
+        }
+    }
+    let mut pair_counts: Vec<usize> = vec![0; comps_local.len()];
+    for (i, j) in &group.voted_pairs {
+        let (Some(&li), Some(&lj)) = (global_to_local.get(i), global_to_local.get(j)) else {
+            continue;
+        };
+        if let (Some(ci), Some(cj)) = (comp_of_local[li], comp_of_local[lj]) {
+            if ci == cj {
+                pair_counts[ci] += 1;
+            }
+        }
+    }
+
+    let component_rankings: Vec<ScopedComponent> = rank_partition(group, &comps_global, 10000, 1e-8)
+        .into_iter()
+        .zip(pair_counts)
+        .map(|(ranked, pairs)| ScopedComponent { pairs, ranked })
         .collect();
 
     let mut unranked_items: Vec<ItemId> = isolate_local_idxs
@@ -284,6 +304,7 @@ mod tests {
             item_snippets: HashMap::new(),
             item_threads: HashMap::new(),
             rank_history: HashMap::new(),
+            rank_position_cache: None,
         }
     }
 
@@ -366,6 +387,7 @@ mod tests {
             item_snippets: HashMap::new(),
             item_threads: HashMap::new(),
             rank_history: HashMap::new(),
+            rank_position_cache: None,
         };
         let roots = external_root_host_items(&content);
         assert_eq!(roots, vec![gh]);

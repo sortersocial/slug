@@ -27,7 +27,10 @@ pub use auth::{
 pub use editor::{editor_check, editor_page};
 pub use forum::{
     home, room_page, room_thread_post_view, room_thread_view, thread_feed_html,
-    thread_feed_html_for_room, thread_feed_region_markup, thread_post_view, thread_view, ThreadNav,
+    thread_feed_html_for_room, thread_post_view, thread_view, ThreadNav,
+};
+pub(crate) use forum::{
+    thread_latest_page_region, thread_region_page_morphs, ThreadRegionPageMorphs,
 };
 
 pub use forum::user_profile_page;
@@ -255,6 +258,50 @@ impl JsBuilder {
             path = js_string_literal(path),
         ));
         self
+    }
+
+    /// Guard on the viewer's thread-page offset (`?offset=N`, default 0, snapped
+    /// down to a [`forum::THREAD_PAGE_SIZE`] boundary — mirrors the server-side
+    /// snapping in the thread GET view). Used so SSE pushes only touch the pages
+    /// they belong to instead of overwriting whatever page the viewer selected.
+    fn if_page_offset(
+        mut self,
+        cmp: &str,
+        offset: usize,
+        f: impl FnOnce(JsBuilder) -> JsBuilder,
+    ) -> Self {
+        let inner = f(JsBuilder::new()).build();
+        self.snippets.push(format!(
+            "var __slugOffRaw = new URLSearchParams(window.location.search).get('offset'); var __slugOffN = __slugOffRaw ? (parseInt(__slugOffRaw, 10) || 0) : 0; var __slugPageOff = __slugOffN - (__slugOffN % {page}); if (__slugPageOff {cmp} {offset}) {{ {inner} }}",
+            page = forum::THREAD_PAGE_SIZE,
+        ));
+        self
+    }
+
+    /// Viewer is on the latest page (`>=` absorbs offsets past the end, which the
+    /// GET view clamps to the latest page).
+    pub(crate) fn if_page_offset_at_least(
+        self,
+        offset: usize,
+        f: impl FnOnce(JsBuilder) -> JsBuilder,
+    ) -> Self {
+        self.if_page_offset(">=", offset, f)
+    }
+
+    pub(crate) fn if_page_offset_equals(
+        self,
+        offset: usize,
+        f: impl FnOnce(JsBuilder) -> JsBuilder,
+    ) -> Self {
+        self.if_page_offset("===", offset, f)
+    }
+
+    pub(crate) fn if_page_offset_below(
+        self,
+        offset: usize,
+        f: impl FnOnce(JsBuilder) -> JsBuilder,
+    ) -> Self {
+        self.if_page_offset("<", offset, f)
     }
 
     pub(crate) fn redirect(mut self, to: &str) -> Self {
@@ -493,6 +540,31 @@ pub(super) fn ratio_pct(left: i32, right: i32) -> f64 {
 pub(super) fn format_ratio(left: i32, right: i32) -> String {
     let (l, r) = crate::dsl::reduce_ratio(left, right);
     format!("{l}:{r}")
+}
+
+/// Vote ratio markup with the side matching the current garden item bolded.
+pub(super) fn format_ratio_current_markup(
+    left: i32,
+    right: i32,
+    bold_left: bool,
+    bold_right: bool,
+) -> Markup {
+    let (l, r) = crate::dsl::reduce_ratio(left, right);
+    html! {
+        span class="vote-ratio" {
+            @if bold_left {
+                strong class="vote-ratio-current" { (l) }
+            } @else {
+                (l)
+            }
+            ":"
+            @if bold_right {
+                strong class="vote-ratio-current" { (r) }
+            } @else {
+                (r)
+            }
+        }
+    }
 }
 
 /// Render a single breadcrumb segment with `/` separator.
@@ -1115,5 +1187,35 @@ mod linkify_title_tests {
     fn no_title_when_body_missing_or_empty() {
         let html = linkify_slugs_with_prefix("x ~/a/b y", "/~", Some(&HashMap::new()));
         assert!(!html.contains(" title="));
+    }
+}
+
+#[cfg(test)]
+mod vote_ratio_markup_tests {
+    use super::*;
+
+    #[test]
+    fn format_ratio_current_markup_bolds_matching_side() {
+        let left = format_ratio_current_markup(75, 25, true, false).into_string();
+        assert!(
+            left.contains(r#"<strong class="vote-ratio-current">3</strong>:1"#),
+            "expected left side bolded, got {left}"
+        );
+
+        let right = format_ratio_current_markup(75, 25, false, true).into_string();
+        assert!(
+            right.contains(r#"3:<strong class="vote-ratio-current">1</strong>"#),
+            "expected right side bolded, got {right}"
+        );
+
+        let neither = format_ratio_current_markup(50, 50, false, false).into_string();
+        assert!(
+            neither.contains(">1:1<") || neither.contains("1:1"),
+            "expected plain reduced ratio, got {neither}"
+        );
+        assert!(
+            !neither.contains("vote-ratio-current"),
+            "no side should be bold when item is not in the pair: {neither}"
+        );
     }
 }

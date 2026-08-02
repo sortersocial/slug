@@ -104,6 +104,10 @@ pub(super) fn child_depth_from_uri(uri: &Uri) -> usize {
 }
 
 /// GET navigation depth control. Options: 1, 2, 3, ∞ (`all`).
+///
+/// Uses a GET form + `this.form.submit()` (not `new URL(...)`). Inline handlers
+/// resolve `URL` against `document.URL` (a string), which throws
+/// "URL is not a constructor" and leaves the page unchanged.
 pub(super) fn garden_depth_select_markup(current: usize) -> Markup {
     let current_val = garden_depth_query_value(current);
     let mut options: Vec<(String, String)> = vec![
@@ -116,18 +120,19 @@ pub(super) fn garden_depth_select_markup(current: usize) -> Markup {
         let insert_at = options.len().saturating_sub(1);
         options.insert(insert_at, (current_val.clone(), current_val.clone()));
     }
-    // Preserve other query params; depth=1 drops the param (default).
-    let onchange = "const u=new URL(location.href);const v=this.value;if(v==='1'){u.searchParams.delete('depth')}else{u.searchParams.set('depth',v)}location.assign(u.pathname+u.search+u.hash)";
     html! {
-        label class="garden-depth-control" {
-            span class="muted" { "depth" }
-            " "
-            select id="garden-depth-select" aria-label="Garden ranking depth" onchange=(onchange) {
-                @for (val, label) in &options {
-                    @if *val == current_val {
-                        option value=(val) selected { (label) }
-                    } @else {
-                        option value=(val) { (label) }
+        form method="get" class="garden-depth-control" {
+            label {
+                span class="muted" { "depth" }
+                " "
+                select id="garden-depth-select" name="depth" aria-label="Garden ranking depth"
+                    onchange="this.form.submit()" {
+                    @for (val, label) in &options {
+                        @if *val == current_val {
+                            option value=(val) selected { (label) }
+                        } @else {
+                            option value=(val) { (label) }
+                        }
                     }
                 }
             }
@@ -169,6 +174,9 @@ mod tests {
     fn garden_depth_select_marks_current() {
         let html = garden_depth_select_markup(2).into_string();
         assert!(html.contains("id=\"garden-depth-select\""));
+        assert!(html.contains("method=\"get\""));
+        assert!(html.contains("name=\"depth\""));
+        assert!(html.contains("onchange=\"this.form.submit()\""));
         assert!(html.contains("value=\"2\" selected"));
         assert!(html.contains("value=\"all\""));
         assert!(html.contains(">∞<"));
