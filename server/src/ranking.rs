@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::path_types::ItemId;
 use crate::reducer::GroupState;
+use crate::stationary::{self, RankChain, SolveOptions, Solution};
 
 #[derive(Debug, Clone)]
 pub struct RankedItem {
@@ -105,14 +106,21 @@ pub fn ranked_items(group: &mut GroupState, max_iters: usize, tol: f64) -> Vec<R
     items
 }
 
-fn compute_scores_from_edges(n: usize, edges: impl Iterator<Item = ((usize, usize), f64)>, max_iters: usize, tol: f64) -> Vec<f64> {
-    if n == 0 {
-        return vec![];
-    }
-    if n == 1 {
-        return vec![1.0];
-    }
-
+/// Build the Rank Centrality Markov chain from raw directed vote weights.
+///
+/// Rank Centrality (Negahban, Oh, Shah 2012, §3.1):
+///   P_ij = (1/d_max) * a_ij           for i ≠ j compared
+///   P_ii = 1 - (1/d_max) * Σ_k a_ik
+/// where d_i is the *degree* (number of distinct neighbors compared) and
+/// d_max = max_i d_i. Using the unweighted degree — not the sum of
+/// pairwise-normalized weights — is what guarantees aperiodicity: it
+/// forces P_ii > 0 for every non-maximum-degree node, and for max-degree
+/// nodes whenever any neighbor weight is below 1 (i.e. not a unanimous
+/// loss). Without this, regular comparison graphs (e.g. a pure star at
+/// ratio 2:1) produce a bipartite chain that oscillates instead of
+/// converging — see issue #146. (Direct solvers are immune either way:
+/// π depends only on the off-diagonals, which d_max scales uniformly.)
+pub fn chain_from_edges(n: usize, edges: impl Iterator<Item = ((usize, usize), f64)>) -> RankChain {
     // Collect raw edges into a map for pairwise normalization.
     let mut raw: HashMap<(usize, usize), f64> = HashMap::new();
     for ((src, dst), w) in edges {
@@ -125,90 +133,80 @@ fn compute_scores_from_edges(n: usize, edges: impl Iterator<Item = ((usize, usiz
     // Pairwise normalization: a_ij = A_ij / (A_ij + A_ji).
     // This ensures repeated votes on the same pair don't inflate influence
     // beyond what the ratio implies.
-    let keys: Vec<(usize, usize)> = raw.keys().copied().collect();
-    let mut normalized: HashMap<(usize, usize), f64> = HashMap::new();
+    //
+    // Sorted, not read straight off the `HashMap`: the summation order of every
+    // downstream reduction has to be a function of the graph alone, or scores
+    // wobble in their low bits between runs and near-ties can flip.
+    let mut keys: Vec<(usize, usize)> = raw.keys().copied().collect();
+    keys.sort_unstable();
+
+    let mut normalized: Vec<((usize, usize), f64)> = Vec::with_capacity(keys.len());
+    let mut neighbors: Vec<HashSet<usize>> = vec![HashSet::new(); n];
     for (i, j) in keys {
-        if normalized.contains_key(&(i, j)) {
-            continue;
-        }
         let w_ij = *raw.get(&(i, j)).unwrap_or(&0.0);
         let w_ji = *raw.get(&(j, i)).unwrap_or(&0.0);
         let total = w_ij + w_ji;
         if total <= 0.0 {
             continue;
         }
-        normalized.insert((i, j), w_ij / total);
-        if w_ji > 0.0 {
-            normalized.insert((j, i), w_ji / total);
-        }
+        normalized.push(((i, j), w_ij / total));
+        neighbors[i].insert(j);
+        neighbors[j].insert(i);
     }
 
-    // Rank Centrality (Negahban, Oh, Shah 2012, §3.1):
-    //   P_ij = (1/d_max) * A_ij           for i ≠ j compared
-    //   P_ii = 1 - (1/d_max) * Σ_k A_ik
-    // where d_i is the *degree* (number of distinct neighbors compared) and
-    // d_max = max_i d_i. Using the unweighted degree — not the sum of
-    // pairwise-normalized weights — is what guarantees aperiodicity: it
-    // forces P_ii > 0 for every non-maximum-degree node, and for max-degree
-    // nodes whenever any neighbor weight is below 1 (i.e. not a unanimous
-    // loss). Without this, regular comparison graphs (e.g. a pure star at
-    // ratio 2:1) produce a bipartite chain that oscillates instead of
-    // converging — see issue #146.
-    let mut out_edges: Vec<Vec<(usize, f64)>> = vec![Vec::new(); n];
-    let mut neighbors: Vec<HashSet<usize>> = vec![HashSet::new(); n];
-
-    for ((src, dst), w) in &normalized {
-        out_edges[*src].push((*dst, *w));
-        neighbors[*src].insert(*dst);
-        neighbors[*dst].insert(*src);
-    }
-
-    let weight_sum: Vec<f64> = out_edges
-        .iter()
-        .map(|es| es.iter().map(|(_, w)| *w).sum())
-        .collect();
     let d_max = neighbors.iter().map(|s| s.len()).max().unwrap_or(0);
-    if d_max == 0 {
-        return vec![1.0 / n as f64; n];
+    RankChain::from_normalized(n, normalized, d_max)
+}
+
+/// Stationary distribution for the chain induced by `edges`, with convergence
+/// diagnostics attached. See [`stationary::Solution`].
+///
+/// This is the API that replaces "return whatever the iteration reached":
+/// callers that care can inspect `converged`, `residual` and `method`, and
+/// non-convergence is logged rather than swallowed.
+pub fn solve_scores_from_edges(
+    n: usize,
+    edges: impl Iterator<Item = ((usize, usize), f64)>,
+    max_iters: usize,
+    tol: f64,
+) -> Solution {
+    if n == 0 {
+        return stationary::trivial(vec![]);
     }
-    let d_max_f = d_max as f64;
-
-    let mut scores = vec![1.0 / n as f64; n];
-    let mut next = vec![0.0f64; n];
-
-    for _ in 0..max_iters {
-        next.fill(0.0);
-        for i in 0..n {
-            let stay_prob = (d_max_f - weight_sum[i]) / d_max_f;
-            next[i] += scores[i] * stay_prob;
-
-            if out_edges[i].is_empty() {
-                continue;
-            }
-            for &(dst, w) in &out_edges[i] {
-                next[dst] += scores[i] * (w / d_max_f);
-            }
-        }
-
-        let diff: f64 = scores
-            .iter()
-            .zip(next.iter())
-            .map(|(a, b)| (a - b).abs())
-            .sum();
-
-        scores.clone_from_slice(&next);
-        if diff < tol {
-            break;
-        }
+    if n == 1 {
+        return stationary::trivial(vec![1.0]);
     }
 
-    let sum: f64 = scores.iter().sum();
-    if sum.is_finite() && sum > 0.0 {
-        for s in &mut scores {
-            *s /= sum;
-        }
+    let chain = chain_from_edges(n, edges);
+    let solution = stationary::solve(
+        &chain,
+        SolveOptions {
+            tol,
+            max_iters,
+            ..SolveOptions::default()
+        },
+    );
+
+    if !solution.converged {
+        tracing::warn!(
+            n,
+            method = solution.method.label(),
+            iterations = solution.iterations,
+            residual = solution.residual,
+            "rank centrality did not reach tolerance; this ranking may be misordered"
+        );
+    } else if solution.underflowed {
+        tracing::debug!(
+            n,
+            method = solution.method.label(),
+            "rank centrality scores span more than f64 holds; use log scores to order the tail"
+        );
     }
-    scores
+    solution
+}
+
+fn compute_scores_from_edges(n: usize, edges: impl Iterator<Item = ((usize, usize), f64)>, max_iters: usize, tol: f64) -> Vec<f64> {
+    solve_scores_from_edges(n, edges, max_iters, tol).pi
 }
 
 /// Rank-centrality within a subset of items (an induced subgraph), using the group's aggregated edges.
@@ -231,20 +229,25 @@ pub fn ranked_items_subset(group: &GroupState, idxs: &[usize], max_iters: usize,
         Some(((s, d), w))
     });
 
-    let scores = compute_scores_from_edges(idxs.len(), edges_iter, max_iters, tol);
+    let solved = solve_scores_from_edges(idxs.len(), edges_iter, max_iters, tol);
 
     // Filter out entries where idx_to_item doesn't have the slot (shouldn't happen, but be safe).
-    let mut items: Vec<RankedItem> = idxs
+    // Sorting on the *log* score, not `score`: on a long preference chain the
+    // true distribution spans more decades than f64 holds, so `score` ties off
+    // at the bottom while the log scores still order it correctly.
+    let mut items: Vec<(RankedItem, f64)> = idxs
         .iter()
         .enumerate()
         .filter_map(|(j, &orig)| {
             let item = group.idx_to_item.get(orig)?.clone();
-            Some(RankedItem { item, score: *scores.get(j).unwrap_or(&0.0) })
+            let score = *solved.pi.get(j).unwrap_or(&0.0);
+            let log_score = *solved.log_pi.get(j).unwrap_or(&f64::NEG_INFINITY);
+            Some((RankedItem { item, score }, log_score))
         })
         .collect();
 
-    items.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
-    items
+    items.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    items.into_iter().map(|(item, _)| item).collect()
 }
 
 /// Rank several disjoint node groups with a **single** pass over the edge map.
@@ -298,25 +301,22 @@ pub fn rank_partition(
         .iter()
         .zip(buckets)
         .map(|(nodes, edges)| {
-            let scores =
-                compute_scores_from_edges(nodes.len(), edges.into_iter(), max_iters, tol);
-            let mut items: Vec<RankedItem> = nodes
+            let solved =
+                solve_scores_from_edges(nodes.len(), edges.into_iter(), max_iters, tol);
+            // Sort on log scores (same reason as `ranked_items_subset`): deep
+            // preference chains underflow f64 mass while log-space still orders.
+            let mut items: Vec<(RankedItem, f64)> = nodes
                 .iter()
                 .enumerate()
                 .filter_map(|(local, &global)| {
                     let item = group.idx_to_item.get(global)?.clone();
-                    Some(RankedItem {
-                        item,
-                        score: *scores.get(local).unwrap_or(&0.0),
-                    })
+                    let score = *solved.pi.get(local).unwrap_or(&0.0);
+                    let log_score = *solved.log_pi.get(local).unwrap_or(&f64::NEG_INFINITY);
+                    Some((RankedItem { item, score }, log_score))
                 })
                 .collect();
-            items.sort_by(|a, b| {
-                b.score
-                    .partial_cmp(&a.score)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
-            items
+            items.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+            items.into_iter().map(|(item, _)| item).collect()
         })
         .collect()
 }
@@ -386,6 +386,82 @@ mod tests {
             "https://slug.social/zebra",
             "zebra won both votes and should rank #1"
         );
+    }
+
+    /// A long preference chain — the natural shape of a deep ontology or a
+    /// hand-ordered list — is where power iteration got the answer wrong. With
+    /// varied ratios and 1200 items the old solver reported success (its L1
+    /// step fell below 1e-8 after 4325 sweeps, well inside the cap) while
+    /// leaving 47% of items at the wrong rank, because an absolute step
+    /// tolerance says nothing about entries that are themselves 1e-300.
+    #[test]
+    fn deep_chain_is_ranked_in_exactly_the_right_order() {
+        let n = 1200usize;
+        let mut g = mk_group();
+        let name = |i: usize| format!("i{i:05}");
+        for i in 0..n - 1 {
+            let left = 2 + (i % 5) as i32;
+            g.apply_vote(vote(i as i64, &name(i), &name(i + 1), left, 1));
+        }
+
+        let idxs: Vec<usize> = (0..g.idx_to_item.len()).collect();
+        let ranked = ranked_items_subset(&g, &idxs, 10000, 1e-8);
+        assert_eq!(ranked.len(), n);
+        for (i, r) in ranked.iter().enumerate() {
+            let want = format!("https://slug.social/{}", name(i));
+            assert_eq!(r.item.as_str(), want, "position {i} of the chain ranking");
+        }
+    }
+
+    /// Same graph, edges presented in a different order: the scores must come
+    /// back bit-identical, not merely close.
+    #[test]
+    fn ranking_does_not_depend_on_edge_iteration_order() {
+        let n = 200usize;
+        let mut edges: Vec<((usize, usize), f64)> = Vec::new();
+        for i in 0..n - 1 {
+            edges.push(((i + 1, i), 3.0));
+            edges.push(((i, i + 1), 1.0));
+        }
+        for i in 0..n / 4 {
+            let j = (5 * i + 7) % n;
+            if i != j {
+                edges.push(((j, i), 2.0));
+                edges.push(((i, j), 1.0));
+            }
+        }
+
+        let reference = compute_scores_from_edges(n, edges.iter().copied(), 10000, 1e-8);
+        let mut state = 0x5EEDu64;
+        for _ in 0..5 {
+            let mut shuffled = edges.clone();
+            for k in (1..shuffled.len()).rev() {
+                state ^= state >> 12;
+                state ^= state << 25;
+                state ^= state >> 27;
+                let m = (state.wrapping_mul(0x2545_F491_4F6C_DD1D) % (k as u64 + 1)) as usize;
+                shuffled.swap(k, m);
+            }
+            let got = compute_scores_from_edges(n, shuffled.into_iter(), 10000, 1e-8);
+            assert_eq!(got, reference);
+        }
+    }
+
+    /// Convergence is reported, never assumed.
+    #[test]
+    fn solver_reports_convergence_for_every_shape() {
+        for n in [2usize, 3, 64, 900] {
+            let mut edges: Vec<((usize, usize), f64)> = Vec::new();
+            for i in 0..n - 1 {
+                edges.push(((i + 1, i), 2.0));
+                edges.push(((i, i + 1), 1.0));
+            }
+            let solved = solve_scores_from_edges(n, edges.into_iter(), 10000, 1e-8);
+            assert!(solved.converged, "chain n={n} reported non-convergence");
+            assert!(solved.residual < 1e-10, "chain n={n}: {:e}", solved.residual);
+            assert_eq!(solved.pi.len(), n);
+            assert_eq!(solved.log_pi.len(), n);
+        }
     }
 
     #[test]

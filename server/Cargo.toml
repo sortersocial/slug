@@ -49,4 +49,6 @@ harness = false
 name = "ingest_replay"
 harness = false
 
-
+[[bench]]
+name = "stationary_solvers"
+harness = false
