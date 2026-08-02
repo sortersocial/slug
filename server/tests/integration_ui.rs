@@ -426,6 +426,159 @@ async fn test_sse_public_thread_morph_includes_post_body_not_thread_not_found() 
     );
 }
 
+/// The SSE thread-region push must be page-scoped: guarded morphs for the latest
+/// page (append target) and the page before it, never an unguarded rewrite that
+/// would overwrite whatever `?offset=` page a viewer selected.
+#[tokio::test]
+async fn test_sse_thread_morph_is_page_scoped_after_rollover() {
+    let (addr, _tmp, _log, _state, _handle) = create_test_server_with_state().await;
+    let client = reqwest::Client::new();
+    let bearer = test_bearer();
+
+    let thread_tag = "sse-page-scope";
+    // 11 posts → posts 0..=9 fill page offset 0, post 10 starts the latest page (offset 10).
+    for i in 0..11 {
+        let commands = serde_json::json!([{
+            "Post": { "room": "public", "thread_tag": thread_tag, "text": format!("seed post {i}") }
+        }]);
+        let resp = rpc_batch(&client, addr, Some(&bearer), commands).await;
+        assert_eq!(resp["results"][0]["ok"], serde_json::json!(true));
+    }
+
+    let thread_path = format!("/t/{thread_tag}");
+    let sse_resp = client
+        .get(format!(
+            "http://{addr}/sse?path={}",
+            urlencoding::encode(&thread_path)
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert!(sse_resp.status().is_success());
+
+    let reply_text = "post eleven lands on the latest page";
+    let rpc = ui_post_ingest_rpc("public", thread_tag, reply_text);
+    let _post = client
+        .post(format!("http://{addr}/ui"))
+        .header("Authorization", format!("Bearer {bearer}"))
+        .form(&[("__rpc__", rpc.as_str())])
+        .send()
+        .await
+        .unwrap();
+
+    let mut body = String::new();
+    let mut sse_resp = sse_resp;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while std::time::Instant::now() < deadline {
+        match tokio::time::timeout(std::time::Duration::from_millis(500), sse_resp.chunk()).await {
+            Ok(Ok(Some(chunk))) => {
+                body.push_str(&String::from_utf8_lossy(&chunk));
+                if body.contains(reply_text) {
+                    break;
+                }
+            }
+            Ok(Ok(None)) => break,
+            Ok(Err(err)) => panic!("sse read failed: {err}"),
+            Err(_) => {}
+        }
+    }
+
+    assert!(
+        body.contains(reply_text),
+        "latest-page morph should include new post text"
+    );
+    assert!(
+        body.contains("__slugPageOff >= 10"),
+        "thread morph must be guarded to the latest page (offset 10); got: {}",
+        &body[..body.len().min(2000)]
+    );
+    assert!(
+        body.contains("__slugPageOff === 0"),
+        "previous page (offset 0) should get a guarded refresh so its paginator sees the newer page"
+    );
+    assert!(
+        body.contains("seed post 0"),
+        "previous-page refresh should re-render page-0 posts"
+    );
+    // The new post must only appear inside the latest-page morph, after its guard —
+    // never before the first page guard (which would be an unguarded rewrite).
+    let first_guard = body.find("__slugPageOff").unwrap();
+    let reply_at = body.find(reply_text).unwrap();
+    assert!(
+        reply_at > first_guard,
+        "new post markup must be inside a page-offset guard"
+    );
+}
+
+/// Arbitrary `?offset=` values snap to fixed page windows so post positions are
+/// stable as a thread grows.
+#[tokio::test]
+async fn test_thread_view_offset_snaps_to_page_boundaries() {
+    let (addr, _tmp, _log, _state, _handle) = create_test_server_with_state().await;
+    let client = reqwest::Client::new();
+    let bearer = test_bearer();
+
+    let thread_tag = "page-snap";
+    for i in 0..11 {
+        let commands = serde_json::json!([{
+            "Post": { "room": "public", "thread_tag": thread_tag, "text": format!("chrono post {i}") }
+        }]);
+        let resp = rpc_batch(&client, addr, Some(&bearer), commands).await;
+        assert_eq!(resp["results"][0]["ok"], serde_json::json!(true));
+    }
+
+    // Default page = oldest window 0..10.
+    let first = client
+        .get(format!("http://{addr}/t/{thread_tag}"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(first.contains("1–10 / 11"), "first page shows fixed window");
+    assert!(first.contains("chrono post 0"));
+    assert!(!first.contains("chrono post 10"));
+
+    // Mid-page offset snaps down to the containing page.
+    let snapped = client
+        .get(format!("http://{addr}/t/{thread_tag}?offset=7"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        snapped.contains("1–10 / 11"),
+        "offset=7 snaps to page starting at 0"
+    );
+
+    // Latest page is the short, page-aligned tail window.
+    let latest = client
+        .get(format!("http://{addr}/t/{thread_tag}?offset=10"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(latest.contains("11–11 / 11"), "latest page is offset 10");
+    assert!(latest.contains("chrono post 10"));
+    assert!(!latest.contains("chrono post 9"));
+
+    // Offsets past the end clamp to the latest page.
+    let clamped = client
+        .get(format!("http://{addr}/t/{thread_tag}?offset=999"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(clamped.contains("11–11 / 11"), "huge offset clamps to latest");
+}
+
 fn ui_vote_compare_post_rpc(
     room: &str,
     thread_tag: &str,

@@ -23,7 +23,7 @@ use crate::{
     html::{
         external_resolver_status_markup, fragment_new_thread_slot, login_to_post_hint_markup,
         parse_html_ui_from_form, room_members_section_markup, thread_feed_html,
-        thread_feed_html_for_room, thread_feed_region_markup, thread_ui_collapse_redacted_post,
+        thread_feed_html_for_room, thread_latest_page_region, thread_ui_collapse_redacted_post,
         garden_ui_copy_rank, thread_ui_copy_thread, thread_ui_expand_post_full,
         thread_ui_expand_redacted_post, ui_js_warn, user_can_post_room, user_can_view_room,
         HtmlUiAction, JsBuilder, ThreadNav,
@@ -760,7 +760,7 @@ async fn post_success_response(
         ScopeId::Public => thread_feed_html(state).await,
         ScopeId::Room(_) => thread_feed_html_for_room(state, &room).await,
     };
-    let thread_markup = thread_feed_region_markup(
+    let (latest_offset, thread_markup) = thread_latest_page_region(
         state,
         match &scope {
             ScopeId::Public => None,
@@ -774,18 +774,29 @@ async fn post_success_response(
         ScopeId::Public => "#thread-feed",
         ScopeId::Room(_) => "#room-thread-feed",
     };
+    let latest_page_location = if latest_offset == 0 {
+        thread_location.clone()
+    } else {
+        format!("{thread_location}?offset={latest_offset}")
+    };
 
     let builder = JsBuilder::new()
         .morph_selector(&error_target, empty_error_markup(&error_target))
         .morph_selector(feed_selector, feed_markup)
         .if_current_path_matches(&thread_location, |builder| {
-            let builder = builder.morph_selector("#thread-feed-region", thread_markup);
-            let builder = if !form_id.trim().is_empty() {
-                builder.qs(&format!("#{form_id}")).reset()
-            } else {
-                builder
-            };
-            builder
+            // Poster is viewing the latest page: append in place (page-aligned
+            // windows keep existing posts where they are).
+            let builder = builder.if_page_offset_at_least(latest_offset, |b| {
+                let b = b.morph_selector("#thread-feed-region", thread_markup);
+                if !form_id.trim().is_empty() {
+                    b.qs(&format!("#{form_id}")).reset()
+                } else {
+                    b
+                }
+            });
+            // Poster is on an older page: jump to the latest page so they see
+            // their new post instead of silently rewriting the page they read.
+            builder.if_page_offset_below(latest_offset, |b| b.redirect(&latest_page_location))
         })
         .if_current_path_not_matches(&thread_location, |builder| {
             builder.redirect(&thread_location)

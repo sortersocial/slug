@@ -3,7 +3,26 @@ use maud::{html, Markup};
 use super::copy::thread_copy_button_markup;
 use super::nav::ThreadNav;
 
-pub(super) const PAGE_SIZE: usize = 10;
+pub(crate) const PAGE_SIZE: usize = 10;
+
+/// Start offset of the page containing the newest post.
+///
+/// Thread pages are **fixed windows** aligned to multiples of [`PAGE_SIZE`]
+/// (`0..10`, `10..20`, …), so appending a post never shifts posts already on a
+/// page — the latest page just grows until it is full, then a new page starts.
+pub(crate) fn latest_page_offset(total: usize) -> usize {
+    if total == 0 {
+        0
+    } else {
+        ((total - 1) / PAGE_SIZE) * PAGE_SIZE
+    }
+}
+
+/// Snap a requested `?offset=` value to a valid page boundary for this thread.
+pub(crate) fn snap_page_offset(requested: usize, total: usize) -> usize {
+    let clamped = requested.min(latest_page_offset(total));
+    clamped - (clamped % PAGE_SIZE)
+}
 
 /// Prev/next links between chronological posts on a single-post (`/t/tag/N`) page.
 pub(super) fn render_post_permalink_nav(nav: &ThreadNav, tag: &str, index: usize, total: usize) -> Markup {
@@ -35,7 +54,7 @@ pub(super) fn render_thread_paginator(nav: &ThreadNav, tag: &str, offset: usize,
     } else {
         None
     };
-    let latest_offset = total.saturating_sub(PAGE_SIZE);
+    let latest_offset = latest_page_offset(total);
     let on_latest = offset >= latest_offset;
     let (id, scroll_href, scroll_label) = if top {
         ("top", "#bottom", "↓")
@@ -63,5 +82,29 @@ pub(super) fn render_thread_paginator(nav: &ThreadNav, tag: &str, offset: usize,
             }
             (thread_copy_button_markup(nav, tag, top))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn latest_page_offset_is_page_aligned() {
+        assert_eq!(latest_page_offset(0), 0);
+        assert_eq!(latest_page_offset(1), 0);
+        assert_eq!(latest_page_offset(PAGE_SIZE), 0);
+        assert_eq!(latest_page_offset(PAGE_SIZE + 1), PAGE_SIZE);
+        assert_eq!(latest_page_offset(2 * PAGE_SIZE), PAGE_SIZE);
+        assert_eq!(latest_page_offset(2 * PAGE_SIZE + 1), 2 * PAGE_SIZE);
+    }
+
+    #[test]
+    fn snap_page_offset_clamps_and_aligns() {
+        assert_eq!(snap_page_offset(0, 0), 0);
+        assert_eq!(snap_page_offset(7, 25), 0);
+        assert_eq!(snap_page_offset(PAGE_SIZE + 5, 25), PAGE_SIZE);
+        assert_eq!(snap_page_offset(999, 25), 2 * PAGE_SIZE);
+        assert_eq!(snap_page_offset(PAGE_SIZE, 5), 0);
     }
 }

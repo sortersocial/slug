@@ -53,7 +53,17 @@ fn content_for_room<'a>(reduced: &'a ReducerState, room: &str) -> &'a crate::red
     reduced.content.get(&scope).unwrap_or(empty_content())
 }
 
-async fn broadcast_web_refresh(state: &AppState, room_key: &str, thread_id: &str) {
+/// Push live updates to web subscribers after a thread changed (new post, redaction,
+/// graduation). The `#thread-feed-region` morphs are **page-scoped**: each one is
+/// guarded by the viewer's current `?offset` page, so viewers reading an older page
+/// are never yanked to the latest posts. `changed_post_index` is the chronological
+/// index of a changed existing post (e.g. a redaction) so its page refreshes too.
+async fn broadcast_web_refresh(
+    state: &AppState,
+    room_key: &str,
+    thread_id: &str,
+    changed_post_index: Option<usize>,
+) {
     let feed_id = if room_key == "public" {
         "thread-feed"
     } else {
@@ -73,8 +83,9 @@ async fn broadcast_web_refresh(state: &AppState, room_key: &str, thread_id: &str
         crate::html::thread_feed_html_for_room(state, room_key).await
     };
 
-    let thread_feed_markup =
-        crate::html::thread_feed_region_markup(state, Some(room_key), thread_id, None).await;
+    let morphs: crate::html::ThreadRegionPageMorphs =
+        crate::html::thread_region_page_morphs(state, Some(room_key), thread_id, None, changed_post_index)
+            .await;
 
     // Two SSE payloads: the bump-list morph must not ship private HTML to subscribers who only
     // matched `/` (public) or lack room access — see [`crate::api::stream::get_html_stream`].
@@ -82,8 +93,17 @@ async fn broadcast_web_refresh(state: &AppState, room_key: &str, thread_id: &str
     let feed_builder = feed_builder.qs("#new-thread-compose form").reset();
     let feed_js = feed_builder.build();
 
-    let thread_builder = JsBuilder::new().if_current_path_matches(&thread_url, |builder| {
-        builder.morph_selector("#thread-feed-region", thread_feed_markup)
+    let latest_offset = morphs.latest_offset;
+    let thread_builder = JsBuilder::new().if_current_path_matches(&thread_url, |mut builder| {
+        for page in morphs.pages {
+            let morph = |b: JsBuilder| b.morph_selector("#thread-feed-region", page.markup);
+            builder = if page.offset == latest_offset {
+                builder.if_page_offset_at_least(page.offset, morph)
+            } else {
+                builder.if_page_offset_equals(page.offset, morph)
+            };
+        }
+        builder
     });
     let thread_js = thread_builder.build();
 
@@ -411,7 +431,7 @@ pub async fn writer_actor(mut rx: mpsc::Receiver<WriteCmd>, state: AppState) {
 
                     use crate::canonical_path::canonicalize_tag;
                     let thread_tag_canon = canonicalize_tag(&thread_id);
-                    broadcast_web_refresh(&state, &room_key, &thread_tag_canon).await;
+                    broadcast_web_refresh(&state, &room_key, &thread_tag_canon, None).await;
 
                     let ranking_changes: Option<Vec<slug_types::ScopeRankChanges>> =
                         if return_rank_diff && !voted_parent_scopes.is_empty() {
@@ -522,7 +542,7 @@ pub async fn writer_actor(mut rx: mpsc::Receiver<WriteCmd>, state: AppState) {
 
                     use crate::canonical_path::canonicalize_tag;
                     let thread_tag_canon = canonicalize_tag(&thread_id);
-                    broadcast_web_refresh(&state, &room_key, &thread_tag_canon).await;
+                    broadcast_web_refresh(&state, &room_key, &thread_tag_canon, None).await;
                     let post_index = {
                         let reduced = state.reduced.read().await;
                         reduced.try_thread_post_index_chronological(
@@ -582,11 +602,16 @@ pub async fn writer_actor(mut rx: mpsc::Receiver<WriteCmd>, state: AppState) {
                         .await
                         .map_err(|e| (format!("{e}"), None))?;
                     reduced.apply_event(ev);
+                    let changed_idx = reduced.try_thread_post_index_chronological(
+                        &scope_from_room_wire(&room_key),
+                        &ing.thread_tag,
+                        &post_id,
+                    );
                     drop(reduced);
 
                     use crate::canonical_path::canonicalize_tag;
                     let thread_tag = canonicalize_tag(&ing.thread_tag);
-                    broadcast_web_refresh(&state, &room_key, &thread_tag).await;
+                    broadcast_web_refresh(&state, &room_key, &thread_tag, changed_idx).await;
                     Ok(RpcResult::RedactPostOk {})
                 }
                 .await;
@@ -635,11 +660,16 @@ pub async fn writer_actor(mut rx: mpsc::Receiver<WriteCmd>, state: AppState) {
                         .await
                         .map_err(|e| (format!("{e}"), None))?;
                     reduced.apply_event(ev);
+                    let changed_idx = reduced.try_thread_post_index_chronological(
+                        &scope,
+                        &ing.thread_tag,
+                        &post_id,
+                    );
                     drop(reduced);
 
                     use crate::canonical_path::canonicalize_tag;
                     let thread_tag = canonicalize_tag(&ing.thread_tag);
-                    broadcast_web_refresh(&state, &room_key, &thread_tag).await;
+                    broadcast_web_refresh(&state, &room_key, &thread_tag, changed_idx).await;
                     Ok(RpcResult::RedactPostOk {})
                 }
                 .await;
@@ -842,8 +872,8 @@ pub async fn writer_actor(mut rx: mpsc::Receiver<WriteCmd>, state: AppState) {
                     reduced.apply_event(grad_ev);
                     drop(reduced);
 
-                    broadcast_web_refresh(&state, "public", &thread_tag).await;
-                    broadcast_web_refresh(&state, &room, &thread_tag).await;
+                    broadcast_web_refresh(&state, "public", &thread_tag, None).await;
+                    broadcast_web_refresh(&state, &room, &thread_tag, None).await;
 
                     Ok(RpcResult::ThreadGraduatedOk {
                         thread_tag: thread_tag.clone(),

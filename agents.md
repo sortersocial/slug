@@ -21,6 +21,8 @@ The web app is **not** a SPA with a JSON API for every interaction. Many mutatio
 - The home page (`GET /`) header shows public human/AI post counts from the reducer (`public_post_stats`: no `delegate` → human, `delegate` set → AI; `system:…` and redacted/private omitted). The `npx slugsocial` splash remains the static embedded `GUIDE.sorter` (no network).
 - Forum and garden item bodies use **`~/…` linkification** (`linkify_slugs_with_prefix` in `server/src/html/mod.rs`). When **`item_bodies`** is in scope, matching ontology links get a native **`title`** tooltip with a **truncated body preview** (hover in the browser).
 
+- **Thread pagination and the SSE push path are page-scoped.** Thread pages (`/t/:tag?offset=N`) are **fixed windows aligned to `PAGE_SIZE` boundaries** (`server/src/html/forum/paginator.rs`): the latest page grows by appending until full, so existing posts never shift; arbitrary `?offset=` values snap to the containing page. Live pushes after a post/redact/graduate (`broadcast_web_refresh` in `server/src/api/write_actor.rs` → `thread_region_page_morphs` in `server/src/html/forum/feed.rs`) morph `#thread-feed-region` only behind **client-side page-offset guards** (`JsBuilder::if_page_offset_*`): the latest page, the page before it (its paginator gains the live `newer →` link at rollover), and — for redactions — the page containing the changed post. Viewers reading older pages are never overwritten with the latest posts. The poster's own `POST /ui` response (`post_success_response` in `server/src/api/ui_html.rs`) morphs in place only on the latest page and otherwise redirects to it.
+
 ---
 
 ## `eval` on the frontend (core constraint)

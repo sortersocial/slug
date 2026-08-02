@@ -17,7 +17,9 @@ use super::ingest::ingest_entry_markup;
 use super::nav::ThreadNav;
 use super::new_thread::{fragment_new_thread_slot, login_to_post_hint_markup};
 use super::page::auth_strip;
-use super::paginator::{render_thread_paginator, PAGE_SIZE};
+use super::paginator::{
+    latest_page_offset, render_thread_paginator, snap_page_offset, PAGE_SIZE,
+};
 use crate::html::{
     bc_threads, cli_panel, layout_with_post_stats, now_ms, recency_class, recency_color_style,
     theme_from_jar, theme_next_from_uri,
@@ -175,48 +177,124 @@ fn render_thread_feed_region_markup(
     }
 }
 
-pub async fn thread_feed_region_markup(
+/// One page-aligned `#thread-feed-region` render, addressed by its start offset.
+pub(crate) struct ThreadRegionPageMorph {
+    pub offset: usize,
+    pub markup: Markup,
+}
+
+/// Region markups for the pages a thread change can affect, first entry = latest page.
+pub(crate) struct ThreadRegionPageMorphs {
+    pub latest_offset: usize,
+    pub pages: Vec<ThreadRegionPageMorph>,
+}
+
+fn thread_not_found_region() -> Markup {
+    html! { div id="thread-feed-region" { p class="muted" { "thread not found" } } }
+}
+
+/// `room_id` is the wire form (`short/slug` or `"public"`). `broadcast_web_refresh` passes
+/// `Some("public")` for the public forum; `ThreadNav::from_room_id` only accepts `short/slug`.
+fn thread_nav_for_room_id(room_id: Option<&str>) -> Option<ThreadNav> {
+    match room_id {
+        Some("public") | None => Some(ThreadNav::public()),
+        Some(room_id) => ThreadNav::from_room_id(room_id),
+    }
+}
+
+/// Region markups for the pages a thread change can affect: the **latest page**
+/// (where new posts append), the page just before it (its paginator gains a live
+/// `newer →` link when a new page starts), and the page containing
+/// `changed_post_index` (redactions of posts on older pages). Offsets are
+/// page-aligned and deduplicated; older pages are never re-rendered, so viewers
+/// reading them are not disturbed.
+pub(crate) async fn thread_region_page_morphs(
     state: &AppState,
     room_id: Option<&str>,
     tag: &str,
     viewer: Option<&str>,
-) -> Markup {
+    changed_post_index: Option<usize>,
+) -> ThreadRegionPageMorphs {
     let tag = canonicalize_tag(tag);
-    // `room_id` is the wire form (`short/slug` or `"public"`). `broadcast_web_refresh` passes
-    // `Some("public")` for the public forum; `ThreadNav::from_room_id` only accepts `short/slug`.
-    let Some(nav) = (match room_id {
-        Some("public") | None => Some(ThreadNav::public()),
-        Some(room_id) => ThreadNav::from_room_id(room_id),
-    }) else {
-        return html! { div id="thread-feed-region" { p class="muted" { "thread not found" } } };
+    let Some(nav) = thread_nav_for_room_id(room_id) else {
+        return ThreadRegionPageMorphs {
+            latest_offset: 0,
+            pages: vec![ThreadRegionPageMorph {
+                offset: 0,
+                markup: thread_not_found_region(),
+            }],
+        };
     };
     let scope = nav.scope();
-    let all_ids: Vec<String> = {
-        let reduced = state.reduced.read().await;
-        reduced
-            .ingests_by_scope_thread
-            .get(&(scope.clone(), tag.clone()))
-            .map(|q| q.iter().rev().cloned().collect())
-            .unwrap_or_default()
-    };
-    let total = all_ids.len();
-    let offset = total.saturating_sub(PAGE_SIZE);
-    let page_ids: Vec<String> = all_ids.into_iter().skip(offset).take(PAGE_SIZE).collect();
+    let now = now_ms();
+
     let reduced = state.reduced.read().await;
-    let display_ingests = page_ids
-        .iter()
-        .filter_map(|id| reduced.ingests_by_id.get(id).cloned())
-        .collect::<Vec<_>>();
-    render_thread_feed_region_markup(
-        &nav,
-        &tag,
-        &display_ingests,
-        offset,
-        total,
-        now_ms(),
-        viewer,
-        &reduced,
-    )
+    let all_ids: Vec<String> = reduced
+        .ingests_by_scope_thread
+        .get(&(scope.clone(), tag.clone()))
+        .map(|q| q.iter().rev().cloned().collect())
+        .unwrap_or_default();
+    let total = all_ids.len();
+    let latest_offset = latest_page_offset(total);
+
+    let mut offsets: Vec<usize> = vec![latest_offset];
+    if latest_offset >= PAGE_SIZE {
+        offsets.push(latest_offset - PAGE_SIZE);
+    }
+    if let Some(idx) = changed_post_index {
+        let page = snap_page_offset(idx, total);
+        if !offsets.contains(&page) {
+            offsets.push(page);
+        }
+    }
+
+    let pages = offsets
+        .into_iter()
+        .map(|offset| {
+            let display_ingests: Vec<crate::events::Ingest> = all_ids
+                .iter()
+                .skip(offset)
+                .take(PAGE_SIZE)
+                .filter_map(|id| reduced.ingests_by_id.get(id).cloned())
+                .collect();
+            ThreadRegionPageMorph {
+                offset,
+                markup: render_thread_feed_region_markup(
+                    &nav,
+                    &tag,
+                    &display_ingests,
+                    offset,
+                    total,
+                    now,
+                    viewer,
+                    &reduced,
+                ),
+            }
+        })
+        .collect();
+
+    ThreadRegionPageMorphs {
+        latest_offset,
+        pages,
+    }
+}
+
+/// Latest-page region markup only — for the poster's own `POST /ui` response.
+pub(crate) async fn thread_latest_page_region(
+    state: &AppState,
+    room_id: Option<&str>,
+    tag: &str,
+    viewer: Option<&str>,
+) -> (usize, Markup) {
+    let morphs = thread_region_page_morphs(state, room_id, tag, viewer, None).await;
+    let latest_offset = morphs.latest_offset;
+    let markup = morphs
+        .pages
+        .into_iter()
+        .next()
+        .map(|p| p.markup)
+        .unwrap_or_else(thread_not_found_region);
+    (latest_offset, markup)
 }
 
 /// Home: private rooms (signed-in), then public bump-ordered threads.
