@@ -90,8 +90,9 @@ fn external_ancestor_chain(item: &ItemId) -> Vec<ItemId> {
 impl ExternalOntologyPath {
     pub(super) fn from_input(path: &str) -> Self {
         let p = path.trim_start_matches('/');
+        let p = slug_types::repair_collapsed_http_scheme(p);
         let raw = if p.starts_with("http://") || p.starts_with("https://") {
-            p.to_string()
+            p
         } else if p.is_empty() {
             "-/.".to_string()
         } else {
@@ -101,6 +102,33 @@ impl ExternalOntologyPath {
             return Self::from_item(ItemId::opaque("https://.".to_string()));
         };
         Self::from_item(parsed)
+    }
+
+    /// When the request path is legacy `host/path` (or a collapsed `https:/…`), return the
+    /// canonical garden local path `/-/https://host/path` for a redirect.
+    pub(super) fn legacy_redirect_target(request_path: &str) -> Option<String> {
+        let p = request_path.trim_start_matches('/');
+        if p.is_empty() {
+            return None;
+        }
+        let repaired = slug_types::repair_collapsed_http_scheme(p);
+        // Already canonical full-URL wire form.
+        if repaired.starts_with("http://") || repaired.starts_with("https://") {
+            // Collapsed scheme was repaired — still redirect so the address bar shows `https://`.
+            if repaired.as_str() != p {
+                let item = ItemId::parse(&repaired)?;
+                let disp = item.display_path();
+                return Some(format!("/{}", disp.trim_start_matches('/')));
+            }
+            return None;
+        }
+        // Legacy host-first: `github.com/org/repo`
+        let item = ItemId::parse(&format!("-/{repaired}"))?;
+        if !(item.as_str().starts_with("https://") || item.as_str().starts_with("http://")) {
+            return None;
+        }
+        let disp = item.display_path();
+        Some(format!("/{}", disp.trim_start_matches('/')))
     }
 
     pub(super) fn from_item(item: ItemId) -> Self {
@@ -157,5 +185,27 @@ mod tests {
             path.breadcrumb_chain()[2].as_str(),
             "https://example.com/a/b"
         );
+    }
+
+    #[test]
+    fn legacy_host_path_redirects_to_https_wire_form() {
+        assert_eq!(
+            ExternalOntologyPath::legacy_redirect_target("github.com/org/repo").as_deref(),
+            Some("/-/https://github.com/org/repo")
+        );
+        assert_eq!(
+            ExternalOntologyPath::legacy_redirect_target("https://github.com/org/repo").as_deref(),
+            None
+        );
+    }
+
+    #[test]
+    fn collapsed_https_scheme_redirects_to_repaired_canonical() {
+        assert_eq!(
+            ExternalOntologyPath::legacy_redirect_target("https:/github.com/org/repo").as_deref(),
+            Some("/-/https://github.com/org/repo")
+        );
+        let repaired = ExternalOntologyPath::from_input("https:/github.com/org/repo");
+        assert_eq!(repaired.as_str(), "https://github.com/org/repo");
     }
 }

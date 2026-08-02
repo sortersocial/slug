@@ -213,6 +213,13 @@ pub async fn external_ontology_path(
     jar: CookieJar,
     uri: Uri,
 ) -> impl IntoResponse {
+    if let Some(canonical) = ExternalOntologyPath::legacy_redirect_target(&path) {
+        let loc = match uri.query() {
+            Some(q) if !q.is_empty() => format!("{canonical}?{q}"),
+            _ => canonical,
+        };
+        return axum::response::Redirect::permanent(&loc).into_response();
+    }
     let path = ExternalOntologyPath::from_input(&path);
     render_scope_view(
         state,
@@ -222,6 +229,7 @@ pub async fn external_ontology_path(
         uri,
     )
     .await
+    .into_response()
 }
 
 pub async fn room_garden_index(
@@ -370,8 +378,22 @@ pub async fn room_external_ontology_path(
         return room_not_found_page(&jar, &uri).into_response();
     }
     drop(reduced);
+    if let Some(canonical_tail) = ExternalOntologyPath::legacy_redirect_target(&path) {
+        // canonical_tail is `/-/https://…`; under a room it becomes `/r/{seg}/-/https://…`
+        let tail = canonical_tail
+            .strip_prefix("/-/")
+            .unwrap_or(canonical_tail.trim_start_matches('/'));
+        let base = format!("{}-/{tail}", nav.garden_root_url().trim_end_matches('~'));
+        let loc = match uri.query() {
+            Some(q) if !q.is_empty() => format!("{base}?{q}"),
+            _ => base,
+        };
+        return axum::response::Redirect::permanent(&loc).into_response();
+    }
     let path = ExternalOntologyPath::from_input(&path);
-    render_scope_view(state, GardenBrowsePath::External(path), nav, jar, uri).await
+    render_scope_view(state, GardenBrowsePath::External(path), nav, jar, uri)
+        .await
+        .into_response()
 }
 
 pub async fn room_ontology_path(

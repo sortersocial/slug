@@ -10,7 +10,7 @@ pub mod thread_xml;
 pub use item_id::ItemId;
 pub use item_wire::{
     canonicalize_item, item_parent_path, item_path_segments, normalize_slug_ontology_storage_url,
-    SLUG_TILDE_ONTOLOGY_ROOT,
+    repair_collapsed_http_scheme, SLUG_TILDE_ONTOLOGY_ROOT,
 };
 pub use paths::{
     canonicalize_tag, ForumThreadUrl, GardenItemUrl, RelativePath,
