@@ -542,6 +542,31 @@ pub(super) fn format_ratio(left: i32, right: i32) -> String {
     format!("{l}:{r}")
 }
 
+/// Vote ratio markup with the side matching the current garden item bolded.
+pub(super) fn format_ratio_current_markup(
+    left: i32,
+    right: i32,
+    bold_left: bool,
+    bold_right: bool,
+) -> Markup {
+    let (l, r) = crate::dsl::reduce_ratio(left, right);
+    html! {
+        span class="vote-ratio" {
+            @if bold_left {
+                strong class="vote-ratio-current" { (l) }
+            } @else {
+                (l)
+            }
+            ":"
+            @if bold_right {
+                strong class="vote-ratio-current" { (r) }
+            } @else {
+                (r)
+            }
+        }
+    }
+}
+
 /// Render a single breadcrumb segment with `/` separator.
 pub(super) fn bc_segment(label: &str, href: &str, is_current: bool) -> Markup {
     html! {
@@ -1156,5 +1181,35 @@ mod linkify_title_tests {
     fn no_title_when_body_missing_or_empty() {
         let html = linkify_slugs_with_prefix("x ~/a/b y", "/~", Some(&HashMap::new()));
         assert!(!html.contains(" title="));
+    }
+}
+
+#[cfg(test)]
+mod vote_ratio_markup_tests {
+    use super::*;
+
+    #[test]
+    fn format_ratio_current_markup_bolds_matching_side() {
+        let left = format_ratio_current_markup(75, 25, true, false).into_string();
+        assert!(
+            left.contains(r#"<strong class="vote-ratio-current">3</strong>:1"#),
+            "expected left side bolded, got {left}"
+        );
+
+        let right = format_ratio_current_markup(75, 25, false, true).into_string();
+        assert!(
+            right.contains(r#"3:<strong class="vote-ratio-current">1</strong>"#),
+            "expected right side bolded, got {right}"
+        );
+
+        let neither = format_ratio_current_markup(50, 50, false, false).into_string();
+        assert!(
+            neither.contains(">1:1<") || neither.contains("1:1"),
+            "expected plain reduced ratio, got {neither}"
+        );
+        assert!(
+            !neither.contains("vote-ratio-current"),
+            "no side should be bold when item is not in the pair: {neither}"
+        );
     }
 }

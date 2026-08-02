@@ -11,7 +11,7 @@ use crate::{
         forum::ThreadNav,
         layout,
         now_ms,
-        format_ratio, ratio_pct,
+        format_ratio_current_markup, ratio_pct,
         recency_color_style,
         render_item_body_in_scope,
         theme_from_jar,
@@ -172,13 +172,30 @@ pub(super) async fn render_scope_view(
                             } @else {
                                 @for v in &e.caused_by {
                                     @let pct = ratio_pct(v.ratio_left, v.ratio_right);
-                                    @let left_class = if v.a.as_str() == model.item { "ratio-left current" } else { "ratio-left" };
-                                    @let right_class = if v.b.as_str() == model.item { "ratio-right current" } else { "ratio-right" };
+                                    @let a_is_current = v.a.as_str() == model.item;
+                                    @let b_is_current = v.b.as_str() == model.item;
+                                    @let left_class = if a_is_current { "ratio-left current" } else { "ratio-left" };
+                                    @let right_class = if b_is_current { "ratio-right current" } else { "ratio-right" };
                                     div class="rank-history-vote" {
                                         div class="ont-vote-header" {
-                                            a class="item-link" href=(item_href(v.a.as_str(), &nav)) { code { (item_code_label(v.a.as_str())) } }
-                                            span class="vote-ratio" { (format_ratio(v.ratio_left, v.ratio_right)) }
-                                            a class="item-link" href=(item_href(v.b.as_str(), &nav)) { code { (item_code_label(v.b.as_str())) } }
+                                            a class="item-link" href=(item_href(v.a.as_str(), &nav)) {
+                                                code { (item_code_label(v.a.as_str())) }
+                                                @if a_is_current {
+                                                    span class="vote-current-star" aria-label="current item" { "⭐" }
+                                                }
+                                            }
+                                            (format_ratio_current_markup(
+                                                v.ratio_left,
+                                                v.ratio_right,
+                                                a_is_current,
+                                                b_is_current,
+                                            ))
+                                            a class="item-link" href=(item_href(v.b.as_str(), &nav)) {
+                                                code { (item_code_label(v.b.as_str())) }
+                                                @if b_is_current {
+                                                    span class="vote-current-star" aria-label="current item" { "⭐" }
+                                                }
+                                            }
                                         }
                                         div class="ratio-bar" {
                                             div class=(left_class) style={(format!("width: {:.3}%;", pct))} {}
