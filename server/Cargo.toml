@@ -35,5 +35,18 @@ urlencoding = "2"
 tempfile = "3"
 http = "1"
 quinn-proto = "0.11.14"  # pin: RUSTSEC-2026-0008
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "ranking_kernel"
+harness = false
+
+[[bench]]
+name = "garden_render"
+harness = false
+
+[[bench]]
+name = "ingest_replay"
+harness = false
 
 
