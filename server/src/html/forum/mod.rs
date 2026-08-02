@@ -15,7 +15,11 @@ mod room_members;
 mod thread_morph;
 mod views;
 
-pub use feed::{home, thread_feed_html, thread_feed_html_for_room, thread_feed_region_markup};
+pub use feed::{home, thread_feed_html, thread_feed_html_for_room};
+pub(crate) use feed::{
+    thread_latest_page_region, thread_region_page_morphs, ThreadRegionPageMorphs,
+};
+pub(crate) use paginator::PAGE_SIZE as THREAD_PAGE_SIZE;
 pub use nav::ThreadNav;
 pub use post_single::{room_thread_post_view, thread_post_view};
 pub use profile::user_profile_page;

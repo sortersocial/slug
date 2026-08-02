@@ -24,7 +24,7 @@ use super::ingest::ingest_entry_markup;
 use super::nav::ThreadNav;
 use super::new_thread::fragment_new_thread_slot;
 use super::page::{auth_strip, bc_room};
-use super::paginator::{render_thread_paginator, PAGE_SIZE};
+use super::paginator::{render_thread_paginator, snap_page_offset, PAGE_SIZE};
 use super::room_members::room_members_section_markup;
 use crate::html::ui_action::UI_RPC_FIELD;
 use crate::html::{
@@ -90,7 +90,9 @@ async fn thread_view_inner(
     };
 
     let total = all_ids.len();
-    let offset = q.offset.unwrap_or(0);
+    // Pages are fixed windows aligned to PAGE_SIZE boundaries (see paginator.rs);
+    // arbitrary `?offset=` values snap to the containing page.
+    let offset = snap_page_offset(q.offset.unwrap_or(0), total);
     let page_ids: Vec<String> = all_ids.into_iter().skip(offset).take(PAGE_SIZE).collect();
 
     let (display_ingests, _subtitle) = {

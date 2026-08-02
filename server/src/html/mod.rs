@@ -27,7 +27,10 @@ pub use auth::{
 pub use editor::{editor_check, editor_page};
 pub use forum::{
     home, room_page, room_thread_post_view, room_thread_view, thread_feed_html,
-    thread_feed_html_for_room, thread_feed_region_markup, thread_post_view, thread_view, ThreadNav,
+    thread_feed_html_for_room, thread_post_view, thread_view, ThreadNav,
+};
+pub(crate) use forum::{
+    thread_latest_page_region, thread_region_page_morphs, ThreadRegionPageMorphs,
 };
 
 pub use forum::user_profile_page;
@@ -255,6 +258,50 @@ impl JsBuilder {
             path = js_string_literal(path),
         ));
         self
+    }
+
+    /// Guard on the viewer's thread-page offset (`?offset=N`, default 0, snapped
+    /// down to a [`forum::THREAD_PAGE_SIZE`] boundary — mirrors the server-side
+    /// snapping in the thread GET view). Used so SSE pushes only touch the pages
+    /// they belong to instead of overwriting whatever page the viewer selected.
+    fn if_page_offset(
+        mut self,
+        cmp: &str,
+        offset: usize,
+        f: impl FnOnce(JsBuilder) -> JsBuilder,
+    ) -> Self {
+        let inner = f(JsBuilder::new()).build();
+        self.snippets.push(format!(
+            "var __slugOffRaw = new URLSearchParams(window.location.search).get('offset'); var __slugOffN = __slugOffRaw ? (parseInt(__slugOffRaw, 10) || 0) : 0; var __slugPageOff = __slugOffN - (__slugOffN % {page}); if (__slugPageOff {cmp} {offset}) {{ {inner} }}",
+            page = forum::THREAD_PAGE_SIZE,
+        ));
+        self
+    }
+
+    /// Viewer is on the latest page (`>=` absorbs offsets past the end, which the
+    /// GET view clamps to the latest page).
+    pub(crate) fn if_page_offset_at_least(
+        self,
+        offset: usize,
+        f: impl FnOnce(JsBuilder) -> JsBuilder,
+    ) -> Self {
+        self.if_page_offset(">=", offset, f)
+    }
+
+    pub(crate) fn if_page_offset_equals(
+        self,
+        offset: usize,
+        f: impl FnOnce(JsBuilder) -> JsBuilder,
+    ) -> Self {
+        self.if_page_offset("===", offset, f)
+    }
+
+    pub(crate) fn if_page_offset_below(
+        self,
+        offset: usize,
+        f: impl FnOnce(JsBuilder) -> JsBuilder,
+    ) -> Self {
+        self.if_page_offset("<", offset, f)
     }
 
     pub(crate) fn redirect(mut self, to: &str) -> Self {
