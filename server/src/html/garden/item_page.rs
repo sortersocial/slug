@@ -27,6 +27,33 @@ pub(super) struct SiblingNavGroup {
 #[derive(Debug, Clone)]
 pub(super) struct SiblingNavBar {
     pub(super) groups: Vec<SiblingNavGroup>,
+    /// 1-based rank within the largest ranking component, when the current item is in it.
+    pub(super) largest_group_rank: Option<(usize, usize)>,
+    /// For the winner of the largest ranking group: percentile among that group's size
+    /// (`((n - 1) * 100) / n`, e.g. 99 for n=100).
+    pub(super) winner_percentile: Option<u32>,
+}
+
+/// Ordinal suffix for percentile display (`1st`, `2nd`, `3rd`, `99th`, …).
+pub(super) fn ordinal_suffix(n: u32) -> &'static str {
+    let mod100 = n % 100;
+    if (11..=13).contains(&mod100) {
+        return "th";
+    }
+    match n % 10 {
+        1 => "st",
+        2 => "nd",
+        3 => "rd",
+        _ => "th",
+    }
+}
+
+/// Percentile for the winner of a ranking group of size `n` (requires n ≥ 2).
+pub(super) fn winner_percentile_for_group_size(n: usize) -> Option<u32> {
+    if n < 2 {
+        return None;
+    }
+    Some((((n - 1) * 100) / n) as u32)
 }
 
 #[derive(Debug, Clone)]
@@ -88,29 +115,72 @@ fn build_sibling_nav(
     if sibling_total <= 1 {
         return None;
     }
-    Some(SiblingNavBar { groups })
+
+    // Components are already sorted largest-first; only the first is the "largest ranking group".
+    let current_path = current.to_storage_string();
+    let (largest_group_rank, winner_percentile) =
+        match rankings.component_rankings.first() {
+            Some(largest) if largest.ranked.len() >= 2 => {
+                let of = largest.ranked.len();
+                match largest.ranked.iter().position(|r| {
+                    r.item.clone().normalized_storage().as_str() == current_path
+                }) {
+                    Some(idx) => {
+                        let rank = idx + 1;
+                        let pct = if rank == 1 {
+                            winner_percentile_for_group_size(of)
+                        } else {
+                            None
+                        };
+                        (Some((rank, of)), pct)
+                    }
+                    None => (None, None),
+                }
+            }
+            _ => (None, None),
+        };
+
+    Some(SiblingNavBar {
+        groups,
+        largest_group_rank,
+        winner_percentile,
+    })
 }
 
 pub(super) fn sibling_nav_markup(nav: &ThreadNav, bar: &SiblingNavBar, current_item: &str) -> maud::Markup {
     html! {
-        nav class="breadcrumb ont-sibling-nav" aria-label="siblings under same parent" {
-            @for (gi, group) in bar.groups.iter().enumerate() {
-                @if gi > 0 {
-                    span class="ont-sibling-nav-group-sep" aria-hidden="true" { "·" }
-                }
-                span class="ont-sibling-nav-group" {
-                    @for (i, link) in group.links.iter().enumerate() {
-                        @if i > 0 {
-                            span class="bc-sep ont-sibling-nav-intra" aria-hidden="true" { " " }
+        div class="ont-sibling-nav-wrap" {
+            nav class="breadcrumb ont-sibling-nav" aria-label="siblings under same parent" {
+                @for (gi, group) in bar.groups.iter().enumerate() {
+                    @if gi > 0 {
+                        span class="ont-sibling-nav-group-sep" aria-hidden="true" { "·" }
+                    }
+                    span class="ont-sibling-nav-group" {
+                        @for (i, link) in group.links.iter().enumerate() {
+                            @if i > 0 {
+                                span class="bc-sep ont-sibling-nav-intra" aria-hidden="true" { " " }
+                            }
+                            @let n = i + 1;
+                            @let href = item_href(&link.path, nav);
+                            @let tip = item_display_path(&link.path);
+                            @let is_current = link.path == current_item;
+                            @if is_current {
+                                a href=(href) title=(tip) aria-current="page" { "[" (n) "]" }
+                            } @else {
+                                a href=(href) title=(tip) { (n) }
+                            }
                         }
-                        @let n = i + 1;
-                        @let href = item_href(&link.path, nav);
-                        @let tip = item_display_path(&link.path);
-                        @let is_current = link.path == current_item;
-                        @if is_current {
-                            a href=(href) title=(tip) aria-current="page" { "[" (n) "]" }
-                        } @else {
-                            a href=(href) title=(tip) { (n) }
+                    }
+                }
+            }
+            @if let Some((rank, of)) = bar.largest_group_rank {
+                div class="ont-sibling-nav-score muted" {
+                    span class="ont-sibling-nav-rank" {
+                        (format!("rank: {}/{}", rank, of))
+                    }
+                    @if let Some(pct) = bar.winner_percentile {
+                        span class="ont-sibling-nav-percentile" {
+                            (format!("top {}{} percentile", pct, ordinal_suffix(pct)))
                         }
                     }
                 }
@@ -198,6 +268,32 @@ fn build_rank_history(
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod unit_tests {
+    use super::{ordinal_suffix, winner_percentile_for_group_size};
+
+    #[test]
+    fn ordinal_suffix_handles_teens_and_units() {
+        assert_eq!(ordinal_suffix(1), "st");
+        assert_eq!(ordinal_suffix(2), "nd");
+        assert_eq!(ordinal_suffix(3), "rd");
+        assert_eq!(ordinal_suffix(4), "th");
+        assert_eq!(ordinal_suffix(11), "th");
+        assert_eq!(ordinal_suffix(12), "th");
+        assert_eq!(ordinal_suffix(13), "th");
+        assert_eq!(ordinal_suffix(21), "st");
+        assert_eq!(ordinal_suffix(99), "th");
+    }
+
+    #[test]
+    fn winner_percentile_matches_group_size() {
+        assert_eq!(winner_percentile_for_group_size(1), None);
+        assert_eq!(winner_percentile_for_group_size(2), Some(50));
+        assert_eq!(winner_percentile_for_group_size(5), Some(80));
+        assert_eq!(winner_percentile_for_group_size(100), Some(99));
+    }
 }
 
 pub(super) fn build_item_page_view_model(

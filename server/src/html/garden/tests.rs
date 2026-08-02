@@ -1,7 +1,7 @@
 use super::{
     access::content_for_garden_view,
     external::{external_frame_allowed, external_resolver_status_markup, external_source_href},
-    item_page::build_item_page_view_model,
+    item_page::{build_item_page_view_model, sibling_nav_markup},
     pin::ont_pin_vote_controls,
     vote::{
         canonical_edge_items, edge_vote_count_for_pair, edge_vote_entries_for_pair,
@@ -182,6 +182,80 @@ fn item_page_model_computes_sibling_nav_in_component() {
     assert_eq!(nav.groups.len(), 2);
     assert_eq!(nav.groups[0].links.len(), 2);
     assert_eq!(nav.groups[1].links.len(), 1);
+    // Winner of the largest ranking group (size 2): rank 1/2 + top 50th percentile.
+    assert_eq!(nav.largest_group_rank, Some((1, 2)));
+    assert_eq!(nav.winner_percentile, Some(50));
+}
+
+#[test]
+fn sibling_nav_rank_score_only_for_largest_group_member() {
+    let mut reduced = ReducerState::default();
+    apply_ingest(
+        &mut reduced,
+        1,
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n\
+         ~/topic {topic body}\n\
+         ~/topic/a {alpha}\n\
+         ~/topic/b {beta}\n\
+         ~/topic/c {gamma}\n\
+         ~/topic/d {delta}\n\
+         ~/topic/e {epsilon}\n\
+         {a beats b}\n             ~/topic/a 2:1 ~/topic/b\n\
+         {b beats c}\n             ~/topic/b 2:1 ~/topic/c\n\
+         {d beats e}\n             ~/topic/d 2:1 ~/topic/e\n",
+    );
+
+    // Largest component is a/b/c (size 3); d/e is size 2.
+    let winner = build_item_page_view_model(&reduced, &ScopeId::Public, "~/topic/a", 1);
+    let winner_nav = winner.sibling_nav.expect("sibling nav");
+    assert_eq!(winner_nav.largest_group_rank, Some((1, 3)));
+    assert_eq!(winner_nav.winner_percentile, Some(66)); // (3-1)*100/3
+
+    let mid = build_item_page_view_model(&reduced, &ScopeId::Public, "~/topic/b", 1);
+    let mid_nav = mid.sibling_nav.expect("sibling nav");
+    assert_eq!(mid_nav.largest_group_rank, Some((2, 3)));
+    assert_eq!(mid_nav.winner_percentile, None);
+
+    // Member of the smaller ranking group: no rank/percentile score.
+    let small = build_item_page_view_model(&reduced, &ScopeId::Public, "~/topic/d", 1);
+    let small_nav = small.sibling_nav.expect("sibling nav");
+    assert_eq!(small_nav.largest_group_rank, None);
+    assert_eq!(small_nav.winner_percentile, None);
+}
+
+#[test]
+fn sibling_nav_markup_includes_rank_and_winner_percentile() {
+    let mut reduced = ReducerState::default();
+    apply_ingest(
+        &mut reduced,
+        1,
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n\
+         ~/topic {topic body}\n\
+         ~/topic/a {alpha}\n\
+         ~/topic/b {beta}\n\
+         ~/topic/c {gamma}\n\
+         {a beats b}\n             ~/topic/a 2:1 ~/topic/b\n\
+         {b beats c}\n             ~/topic/b 2:1 ~/topic/c\n",
+    );
+
+    let winner = build_item_page_view_model(&reduced, &ScopeId::Public, "~/topic/a", 1);
+    let winner_nav = winner.sibling_nav.expect("sibling nav");
+    let nav = ThreadNav::public();
+    let html = sibling_nav_markup(&nav, &winner_nav, "~/topic/a").into_string();
+    assert!(html.contains("rank: 1/3"), "missing rank in {html}");
+    assert!(
+        html.contains("top 66th percentile"),
+        "missing winner percentile in {html}"
+    );
+
+    let mid = build_item_page_view_model(&reduced, &ScopeId::Public, "~/topic/b", 1);
+    let mid_nav = mid.sibling_nav.expect("sibling nav");
+    let mid_html = sibling_nav_markup(&nav, &mid_nav, "~/topic/b").into_string();
+    assert!(mid_html.contains("rank: 2/3"), "missing mid rank in {mid_html}");
+    assert!(
+        !mid_html.contains("percentile"),
+        "non-winner should omit percentile: {mid_html}"
+    );
 }
 
 #[test]
