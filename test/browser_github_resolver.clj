@@ -130,6 +130,14 @@
                (page/navigate pg (str base-url "/login"))
                (is (wait-for-text pg "body" "@alice" 15000) "alice session after login")
 
+               (page/navigate pg (str base-url "/-/github.com/octo/hello"))
+               ;; Legacy host-first URL should land on canonical /-/https://…
+               (is (wait-for-text pg "body" "GitHub resolver" 15000)
+                   "legacy URL reaches resolver page after redirect")
+               (let [url (page/url pg)]
+                 (is (str/includes? url "/-/https://github.com/octo/hello")
+                     (str "address bar uses canonical https wire form, got " url)))
+
                (page/navigate pg (str base-url "/-/https://github.com/octo"))
                (is (wait-for-text pg "#external-resolver-panel" "GitHub resolver" 15000)
                    "user page shows resolver panel")

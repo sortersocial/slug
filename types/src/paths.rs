@@ -517,6 +517,26 @@ mod tests {
     }
 
     #[test]
+    fn canonicalize_repairs_collapsed_https_scheme_in_dash_path() {
+        assert_eq!(
+            canonicalize_item("-/https:/github.com/org/repo"),
+            "https://github.com/org/repo"
+        );
+        assert_eq!(
+            canonicalize_item("https:/github.com/org/repo"),
+            "https://github.com/org/repo"
+        );
+    }
+
+    #[test]
+    fn legacy_and_https_dash_forms_share_storage_identity() {
+        assert_eq!(
+            canonicalize_item("-/github.com/org/repo"),
+            canonicalize_item("-/https://github.com/org/repo")
+        );
+    }
+
+    #[test]
     fn item_id_parent_external_strips_last_segment() {
         let c = ItemId::parse("https://spotify.com/track/1").unwrap();
         assert_eq!(c.parent().unwrap().as_str(), "https://spotify.com/track");

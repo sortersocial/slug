@@ -23,6 +23,21 @@ fn finalize_external_identity_url(s: String) -> String {
     strip_redundant_root_slash(&normalized).unwrap_or(normalized)
 }
 
+/// Some clients/proxies collapse `https://` → `https:/` inside a path. Repair before parsing.
+pub fn repair_collapsed_http_scheme(s: &str) -> String {
+    if let Some(rest) = s.strip_prefix("https:/") {
+        if !rest.starts_with('/') {
+            return format!("https://{rest}");
+        }
+    }
+    if let Some(rest) = s.strip_prefix("http:/") {
+        if !rest.starts_with('/') {
+            return format!("http://{rest}");
+        }
+    }
+    s.to_string()
+}
+
 /// `url::Url` serializes bare hosts with a `/` path; we keep host-only items slash-free for stable
 /// keys matching the pre-normalizer spellings.
 fn strip_redundant_root_slash(s: &str) -> Option<String> {
@@ -46,15 +61,15 @@ pub fn canonicalize_item(input: &str) -> String {
     }
 
     if let Some(rest) = s.strip_prefix("-/") {
-        let rest = rest.trim().trim_start_matches('/');
-        // New wire form: `/-/https://host/path` (full URL after the dash prefix).
+        let rest = repair_collapsed_http_scheme(rest.trim().trim_start_matches('/'));
+        // Canonical wire form: `/-/https://host/path` (full URL after the dash prefix).
         if rest.starts_with("http://") || rest.starts_with("https://") {
-            return finalize_external_identity_url(rest.to_string());
+            return finalize_external_identity_url(rest);
         }
         // Legacy wire form: `/-/host/path` (host-first segments).
         let (host, tail) = rest
             .split_once('/')
-            .map_or((rest, ""), |(h, t)| (h, t));
+            .map_or((rest.as_str(), ""), |(h, t)| (h, t));
         let host = host.trim().to_lowercase();
         if host.is_empty() {
             return String::new();
@@ -83,6 +98,8 @@ pub fn canonicalize_item(input: &str) -> String {
         };
     }
 
+    let s = repair_collapsed_http_scheme(s);
+
     if let Some(rest) = s.strip_prefix("https://") {
         let (host, tail) = rest.split_once('/').map_or((rest, ""), |(h, t)| (h, t));
         let host = host.trim().to_lowercase();
@@ -103,7 +120,7 @@ pub fn canonicalize_item(input: &str) -> String {
     }
 
     let is_tilde = s.starts_with("~/");
-    let rest = s.strip_prefix("~/").or_else(|| s.strip_prefix("/")).unwrap_or(s);
+    let rest = s.strip_prefix("~/").or_else(|| s.strip_prefix("/")).unwrap_or(&s);
 
     let tail = rest
         .split('/')

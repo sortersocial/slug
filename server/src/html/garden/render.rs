@@ -57,11 +57,14 @@ pub(super) async fn render_scope_view(
     let external_href = external_source_href(&model.item);
     let external_can_embed = external_frame_allowed(&model.item);
     let (garden_room, garden_prefix) = garden_layout_meta(&nav);
-    let next_for_pin = uri
-        .path_and_query()
-        .map(|pq| pq.as_str().to_string())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "/".to_string());
+    // Canonical `/-/https://…` (or room-scoped) path — not the raw request URI (legacy host-first).
+    let next_for_pin = {
+        let base = item_href(&model.item, &nav);
+        match uri.query() {
+            Some(q) if !q.is_empty() && !base.contains('?') => format!("{base}?{q}"),
+            _ => base,
+        }
+    };
 
     let url_key = canonical_view_url(&uri);
     let view_count = state.views.get_views(&url_key);
