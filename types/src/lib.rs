@@ -13,7 +13,7 @@ pub use item_wire::{
     repair_collapsed_http_scheme, SLUG_TILDE_ONTOLOGY_ROOT,
 };
 pub use paths::{
-    canonicalize_tag, ForumThreadUrl, GardenItemUrl, RelativePath,
+    canonicalize_tag, validate_thread_tag, ForumThreadUrl, GardenItemUrl, RelativePath,
     room_id_from_route_segment, room_route_segment, ROOM_SHORT_ID_LEN,
     TildeHttpPathTail, TildeOntologyPath, TildePath, tilde_http_path_to_item_id,
 };

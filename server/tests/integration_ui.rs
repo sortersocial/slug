@@ -34,6 +34,33 @@ async fn test_post_check_returns_targeted_js_error_for_missing_thread_tag() {
 }
 
 #[tokio::test]
+async fn test_post_check_rejects_thread_tag_with_slash() {
+    let (addr, _tmp, _log, _handle) = create_test_server().await;
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    let bearer = test_bearer();
+
+    let rpc = ui_check_ingest_rpc("public", "foo/bar", "hello", "thread-compose-errors");
+    let resp = client
+        .post(format!("http://{addr}/ui"))
+        .header("Authorization", format!("Bearer {bearer}"))
+        .form(&[("__rpc__", rpc.as_str())])
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), reqwest::StatusCode::OK);
+    let js = resp.text().await.unwrap();
+    assert!(js.contains("#thread-compose-errors"));
+    assert!(
+        js.contains("must not contain"),
+        "expected slash rejection morph, got: {js}"
+    );
+}
+
+#[tokio::test]
 async fn test_choose_username_returns_evalable_js() {
     let (addr, _tmp, _log, state, _handle) = create_test_server_with_state().await;
     let client = reqwest::Client::builder()
