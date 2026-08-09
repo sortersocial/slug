@@ -17,3 +17,6 @@ scripts/*.js
 scripts/*.mjs
 scripts/*.cjs
 tmp/
+
+.clj-kondo/
+.lsp/
