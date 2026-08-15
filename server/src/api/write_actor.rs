@@ -285,7 +285,10 @@ pub async fn writer_actor(mut rx: mpsc::Receiver<WriteCmd>, state: AppState) {
                         ),
                     };
 
-                    let (room_key, thread_id) = normalize_room_and_thread(&room, &thread_tag);
+                    let (room_key, thread_id) = normalize_room_and_thread(&room, &thread_tag)
+                        .map_err(|msg| {
+                            (msg, Some("thread tags are one /t/:tag segment (no '/')".into()))
+                        })?;
                     let scope = scope_from_room_wire(&room_key);
                     let is_private = !matches!(scope, ScopeId::Public);
                     if is_private && !reduced.rooms.contains(&room_key) {
@@ -503,7 +506,8 @@ pub async fn writer_actor(mut rx: mpsc::Receiver<WriteCmd>, state: AppState) {
                 reply,
             } => {
                 let out = async {
-                    let (room_key, thread_id) = normalize_room_and_thread(&room, &thread_tag);
+                    let (room_key, thread_id) = normalize_room_and_thread(&room, &thread_tag)
+                        .map_err(|msg| (msg, Some("system thread tags must not contain '/'".into())))?;
                     let scope = scope_from_room_wire(&room_key);
                     let is_private = !matches!(scope, ScopeId::Public);
                     let mut reduced = state.reduced.write().await;

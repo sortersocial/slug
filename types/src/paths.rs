@@ -70,6 +70,22 @@ pub fn canonicalize_tag(input: &str) -> String {
     input.trim().trim_start_matches('#').to_lowercase()
 }
 
+/// Canonicalize a forum thread tag for **writes**, rejecting values that break `/t/:tag` routing.
+///
+/// Read/replay paths keep using [`canonicalize_tag`] so historical tags still resolve.
+/// System import tags (e.g. `import:https:::github.com:org:repo`) are allowed — they use `:`
+/// instead of `/`.
+pub fn validate_thread_tag(input: &str) -> Result<String, String> {
+    let tag = canonicalize_tag(input);
+    if tag.is_empty() {
+        return Err("thread tag must not be empty".to_string());
+    }
+    if tag.contains('/') {
+        return Err("thread tag must not contain '/'".to_string());
+    }
+    Ok(tag)
+}
+
 // ---------------------------------------------------------------------------
 // Storage + input path newtypes
 // ---------------------------------------------------------------------------
@@ -581,5 +597,21 @@ mod tests {
     #[test]
     fn too_short_room_route_segment_rejected() {
         assert!(room_id_from_route_segment("9ab12cd").is_none());
+    }
+
+    #[test]
+    fn validate_thread_tag_accepts_plain_slugs() {
+        assert_eq!(validate_thread_tag("#Hello-World").unwrap(), "hello-world");
+        assert_eq!(
+            validate_thread_tag("import:https:::github.com:org:repo").unwrap(),
+            "import:https:::github.com:org:repo"
+        );
+    }
+
+    #[test]
+    fn validate_thread_tag_rejects_slash_and_empty() {
+        assert!(validate_thread_tag("foo/bar").is_err());
+        assert!(validate_thread_tag("  ").is_err());
+        assert!(validate_thread_tag("#").is_err());
     }
 }

@@ -3,6 +3,30 @@ mod support;
 use support::*;
 
 #[tokio::test]
+async fn test_post_rejects_thread_tag_with_slash() {
+    let (addr, _tmp, _log, _handle) = create_test_server().await;
+    let client = reqwest::Client::new();
+    let b = test_bearer();
+
+    let batch = serde_json::json!([{
+        "Post": {
+            "room": "public",
+            "thread_tag": "foo/bar",
+            "text": "hello from a bad tag\n",
+            "return_rank_diff": false
+        }
+    }]);
+    let body = rpc_batch(&client, addr, Some(&b), batch).await;
+    let line = &body["results"][0];
+    assert_eq!(line["ok"], false);
+    let err = line["error"].as_str().unwrap_or_default();
+    assert!(
+        err.contains('/') || err.to_lowercase().contains("slash") || err.contains("thread tag"),
+        "expected slash rejection, got: {err}"
+    );
+}
+
+#[tokio::test]
 async fn test_ingest_actor_with_colons_is_detected_and_validated() {
     let (addr, _tmp, _log, _handle) = create_test_server().await;
     let client = reqwest::Client::new();

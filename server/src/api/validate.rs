@@ -2,7 +2,7 @@ use axum::http::StatusCode;
 use std::collections::HashSet;
 
 use crate::{
-    canonical_path::canonicalize_tag,
+    canonical_path::validate_thread_tag,
     dsl,
     path_types::ItemId,
     reducer::{ReducerState, ScopeId},
@@ -142,9 +142,9 @@ pub fn validate_ingest_document(
     })
 }
 
-pub fn normalize_room_and_thread(room: &str, thread_tag: &str) -> (String, String) {
-    (
+pub fn normalize_room_and_thread(room: &str, thread_tag: &str) -> Result<(String, String), String> {
+    Ok((
         room.trim().to_string(),
-        canonicalize_tag(thread_tag),
-    )
+        validate_thread_tag(thread_tag)?,
+    ))
 }

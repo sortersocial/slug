@@ -17,7 +17,7 @@ use crate::{
         handle_rpc_batch,
         rpc::{rpc_post_redact, rpc_post_with_bearer, rpc_room_delete, rpc_thread_graduate},
     },
-    canonical_path::canonicalize_tag,
+    canonical_path::{canonicalize_tag, validate_thread_tag},
     resolvers::resolve_github_children,
     html::vote_compare_post_success_js,
     html::{
@@ -104,7 +104,17 @@ async fn dispatch_ui_action(
                 return js_redirect("/login").into_response();
             };
             let room = room.trim().to_string();
-            let thread_tag = thread_tag.trim().to_string();
+            let thread_tag = match validate_thread_tag(&thread_tag) {
+                Ok(t) => t,
+                Err(msg) => {
+                    return form_js_error(
+                        error_target.as_ref(),
+                        &msg,
+                        "Thread tags are one /t/:tag path segment (no '/').",
+                    )
+                    .into_response();
+                }
+            };
             if text.trim().is_empty() {
                 return form_js_error(
                     error_target.as_ref(),
@@ -156,12 +166,19 @@ async fn dispatch_ui_action(
                 return js_redirect("/login").into_response();
             };
             let room = room.trim().to_string();
-            let thread_tag = canonicalize_tag(&thread_tag);
-            if thread_tag.is_empty() {
+            if let Err(msg) = validate_thread_tag(&thread_tag) {
+                if msg.contains("empty") {
+                    return form_js_error(
+                        error_target.as_ref(),
+                        "missing thread tag",
+                        "Set a thread tag before posting.",
+                    )
+                    .into_response();
+                }
                 return form_js_error(
                     error_target.as_ref(),
-                    "missing thread tag",
-                    "Set a thread tag before posting.",
+                    &msg,
+                    "Thread tags are one /t/:tag path segment (no '/').",
                 )
                 .into_response();
             }
@@ -208,15 +225,25 @@ async fn dispatch_ui_action(
             };
             let err_tgt = Some("vote-compare-errors".to_string());
             let room = room.trim().to_string();
-            let thread_tag = canonicalize_tag(&thread_tag);
-            if thread_tag.is_empty() {
-                return form_js_error(
-                    err_tgt.as_ref(),
-                    "missing thread",
-                    "Thread tag is required.",
-                )
-                .into_response();
-            }
+            let thread_tag = match validate_thread_tag(&thread_tag) {
+                Ok(t) => t,
+                Err(msg) if msg.contains("empty") => {
+                    return form_js_error(
+                        err_tgt.as_ref(),
+                        "missing thread",
+                        "Thread tag is required.",
+                    )
+                    .into_response();
+                }
+                Err(msg) => {
+                    return form_js_error(
+                        err_tgt.as_ref(),
+                        &msg,
+                        "Thread tags are one /t/:tag path segment (no '/').",
+                    )
+                    .into_response();
+                }
+            };
             let exp = explanation.trim();
             if exp.is_empty() {
                 return form_js_error(

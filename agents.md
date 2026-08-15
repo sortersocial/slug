@@ -37,6 +37,8 @@ Strict **CSP** that blocks `eval` would break the current app. Other projects ma
 
 - **`RpcCommand` / `POST /api/v0/rpc`** (`types/src/lib.rs`, `server/src/api/rpc.rs`): **Bearer-authenticated** JSON API for CLI, automation, and programmatic clients. Durable effects go through here (append to event log, then `apply_event`).
 
+- **Forum thread tags on write:** `validate_thread_tag` (`types/src/paths.rs`) canonicalizes then rejects empty tags and any tag containing `/` (would break `/t/:tag` routing). The new-thread form already constrains the charset client-side (`pattern="[a-z0-9_\\-]{1,64}"`); server write paths (`WriteCmd::Post` / `SystemIngest`, and UI `PostIngest` / `CheckIngest` / `VoteComparePost`) enforce the slash rule. Read/replay still uses `canonicalize_tag` only so historical tags keep resolving. System import tags use `:` instead of `/` (e.g. `import:https:::github.com:org:repo`).
+
 - **`HtmlUiAction` / `POST /ui`** (`server/src/html/ui_action.rs`, `server/src/api/ui_html.rs`): **Browser session** (cookie) UI commands. Payload is `__rpc__` + form fields. Most responses are **JS morphs**; some actions return **HTTP redirects** (see below).
 
 - **Do not add one-off POST routes** for browser mutations. New browser actions belong in **`HtmlUiAction`** behind **`POST /ui`**; new programmatic verbs belong in **`RpcCommand`** behind **`POST /api/v0/rpc`**. Ordinary shareable pages remain normal **`GET`** routes.
@@ -116,7 +118,7 @@ cargo run -p sorterc -- scan path/to/events.jsonl [--pretty]
 
 ### Testing
 
-- **Rust tests:** `cargo nextest run --workspace` (163 tests; requires `cargo-nextest`)
+- **Rust tests:** `cargo nextest run --workspace` (requires `cargo-nextest`)
 - **Clojure integration + browser tests:** `clojure -M:kaocha` (runs both `:http-integration` and `:browser` suites; the test harness builds release binaries, starts its own server instances with mock OAuth, and runs Playwright browser tests)
 - **Lint:** `cargo clippy --workspace` (warnings are expected; zero errors required)
 
