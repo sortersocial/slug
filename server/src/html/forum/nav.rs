@@ -2,6 +2,14 @@ use crate::canonical_path::canonicalize_item;
 use crate::reducer::ScopeId;
 use slug_types::room_route_segment;
 
+/// Posts per page on `/t/:tag` (and room thread) list views.
+pub(crate) const THREAD_PAGE_SIZE: usize = 10;
+
+/// DOM `id` / URL fragment for a chronological post on a thread page (`#post-N`).
+pub(crate) fn post_fragment_id(post_idx: usize) -> String {
+    format!("post-{post_idx}")
+}
+
 /// URL helpers for public `/t/…` and private room threads `/r/{short}{slug}/t/…`.
 #[derive(Clone)]
 pub struct ThreadNav {
@@ -81,6 +89,16 @@ impl ThreadNav {
         }
     }
 
+    /// Thread list URL for the page that contains `post_idx`, with `#post-N` to scroll to it.
+    pub(crate) fn thread_url_for_post(&self, tag: &str, post_idx: usize) -> String {
+        let offset = (post_idx / THREAD_PAGE_SIZE) * THREAD_PAGE_SIZE;
+        format!(
+            "{}#{}",
+            self.thread_page_url(tag, offset),
+            post_fragment_id(post_idx)
+        )
+    }
+
     pub(crate) fn post_url(&self, tag: &str, idx: usize) -> String {
         format!("{}/{}/{}", self.thread_path_prefix, tag, idx)
     }
@@ -94,5 +112,35 @@ impl ThreadNav {
                 format!("/r/{seg}")
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn thread_url_for_post_uses_page_offset_and_fragment() {
+        let nav = ThreadNav::public();
+        assert_eq!(nav.thread_url_for_post("hist-test", 0), "/t/hist-test#post-0");
+        assert_eq!(nav.thread_url_for_post("hist-test", 9), "/t/hist-test#post-9");
+        assert_eq!(
+            nav.thread_url_for_post("hist-test", 10),
+            "/t/hist-test?offset=10#post-10"
+        );
+        assert_eq!(
+            nav.thread_url_for_post("hist-test", 25),
+            "/t/hist-test?offset=20#post-25"
+        );
+    }
+
+    #[test]
+    fn room_thread_url_for_post_keeps_room_prefix() {
+        let nav = ThreadNav::from_room_id("abcd123/demo").unwrap();
+        assert_eq!(
+            nav.thread_url_for_post("topic", 12),
+            "/r/abcd123demo/t/topic?offset=10#post-12"
+        );
+        assert_eq!(nav.post_url("topic", 12), "/r/abcd123demo/t/topic/12");
     }
 }

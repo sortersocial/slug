@@ -1,9 +1,9 @@
 use maud::{html, Markup};
 
 use super::copy::thread_copy_button_markup;
-use super::nav::ThreadNav;
+use super::nav::{ThreadNav, THREAD_PAGE_SIZE};
 
-pub(crate) const PAGE_SIZE: usize = 10;
+pub(crate) const PAGE_SIZE: usize = THREAD_PAGE_SIZE;
 
 /// Start offset of the page containing the newest post.
 ///

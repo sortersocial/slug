@@ -7,7 +7,7 @@ use crate::state::AppState;
 
 use super::access::user_can_view_room;
 use super::ingest::{ingest_entry_markup, post_header_row, redacted_header_row};
-use super::nav::ThreadNav;
+use super::nav::{post_fragment_id, ThreadNav};
 use crate::html::{render_linkified_with_embeds_in_scope, JsBuilder, now_ms};
 
 pub(crate) async fn thread_ui_expand_post_full(
@@ -54,8 +54,9 @@ pub(crate) async fn thread_ui_expand_post_full(
     let ing_id = ing.id.clone();
     drop(reduced);
 
+    let frag = post_fragment_id(post_index);
     let full_html = html! {
-        div class="ingest-entry" data-ingest-id=(ing_id) {
+        div class="ingest-entry" id=(frag.as_str()) data-ingest-id=(ing_id) {
             (post_header_row(
                 &nav,
                 &tag,
@@ -122,8 +123,9 @@ pub(crate) async fn thread_ui_expand_redacted_post(
     let ing_id = ing.id.clone();
     drop(reduced);
 
+    let frag = post_fragment_id(post_index);
     let full_html = html! {
-        div class="ingest-entry ingest-redacted-expanded" data-ingest-id=(ing_id) {
+        div class="ingest-entry ingest-redacted-expanded" id=(frag.as_str()) data-ingest-id=(ing_id) {
             (redacted_header_row(&nav, &tag, post_index, &ing, now, true))
             (render_linkified_with_embeds_in_scope(
                 &ing.raw,

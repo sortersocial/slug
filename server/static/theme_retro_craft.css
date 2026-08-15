@@ -111,6 +111,7 @@ div.ingest-entry {
   margin: 0 0 0.65rem;
   max-width: 100%;
   min-width: 0;
+  scroll-margin-top: 48px;
   width: 100%;
 }
 div.ingest-entry-truncated {

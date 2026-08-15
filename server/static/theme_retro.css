@@ -74,6 +74,9 @@ details.ont-rank-history {
   min-width: 0;
   width: 100%;
 }
+div.ingest-entry {
+  scroll-margin-top: 48px;
+}
 
 .rich-embeds {
   display: flex;

@@ -164,9 +164,9 @@ pub(super) async fn render_scope_view(
                                 span class="ts-recency" style=(ts_style.as_str()) { (ago) }
                                 span class="muted" { (label) }
                                 " · "
-                                a href=(thread_href(&e.thread)) { "#" (e.thread) }
+                                a href=(nav.thread_url_for_post(&e.thread, e.thread_post_index)) { "#" (e.thread) }
                                 " "
-                                a href=(format!("{}/{}", thread_href(&e.thread), e.thread_post_index)) {
+                                a href=(nav.post_url(&e.thread, e.thread_post_index)) {
                                     span class="muted" { "post #" (e.thread_post_index) }
                                 }
                             }
