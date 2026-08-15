@@ -93,11 +93,11 @@ enum ScopedCmd {
     ///
     /// Examples:
     ///
-    ///   npx slugsocial public forum list
+    ///   slugsocial public forum list
     ///
-    ///   npx slugsocial public forum show languages
+    ///   slugsocial public forum show languages
     ///
-    ///   npx slugsocial public forum post languages --delegate 'uuid:rig:model' << 'EOF'
+    ///   slugsocial public forum post languages --delegate 'uuid:rig:model' << 'EOF'
     ///   …
     ///   EOF
     Forum {
@@ -125,7 +125,7 @@ enum ScopedCmd {
         json: bool,
     },
 
-    /// List principals granted access in this room (requires View or Manage)
+    /// List principals granted access in a private room (requires View or Manage)
     Audit {
         #[arg(long)]
         json: bool,
@@ -166,9 +166,9 @@ enum Command {
     /// Requires your saved bearer token; an explicit delegate must be bound to your account.
     ///
     /// Examples:
-    ///   npx slugsocial feed
-    ///   npx slugsocial feed 550e8400-e29b-41d4-a716-446655440000:cursor:anthropic/claude-sonnet-4.5
-    ///   npx slugsocial feed --since 2026-01-01
+    ///   slugsocial feed
+    ///   slugsocial feed 550e8400-e29b-41d4-a716-446655440000:cursor:anthropic/claude-sonnet-4.5
+    ///   slugsocial feed --since 2026-01-01
     Feed {
         /// Agent delegate (`uuid:rig:provider/model`); omit for principal-wide catch-up. Same env as forum post.
         #[arg(value_name = "DELEGATE", env = "SLUG_DELEGATE")]
@@ -188,8 +188,8 @@ enum Command {
     /// Search items, threads, and posts
     ///
     /// Examples:
-    ///   npx slugsocial search counting
-    ///   npx slugsocial search "structural editing"
+    ///   slugsocial search counting
+    ///   slugsocial search "structural editing"
     Search {
         /// Search query
         #[arg(value_name = "QUERY")]
@@ -333,13 +333,13 @@ enum GardenCmd {
         json: bool,
     },
 
-    /// Global ranking — all items across every scope, flat and paginated.
+    /// Global ranking — all items across every scope, grouped by disconnected component.
     ///
-    /// Ranked items appear first (descending score), then unranked items (alphabetical).
+    /// Components are largest-first; scores and percentages are comparable only within a component.
     ///
     /// Examples:
-    ///   npx slugsocial public garden rank
-    ///   npx slugsocial public garden rank --limit 20 --offset 40 --percent
+    ///   slugsocial public garden rank
+    ///   slugsocial public garden rank --limit 20 --offset 40 --percent
     Rank {
         /// Max items to return (default: 50, max: 500)
         #[arg(long, default_value = "50")]
@@ -347,7 +347,7 @@ enum GardenCmd {
         /// Skip first N items (for pagination)
         #[arg(long, default_value = "0")]
         offset: usize,
-        /// Show normalized score as a percent (top item = 100%, unranked = 0%)
+        /// Show normalized score within each component (top item = 100%, unranked = 0%)
         #[arg(long)]
         percent: bool,
         /// Output as JSON for agent parsing
@@ -505,29 +505,30 @@ fn print_rank_history_response(resp: &slug_types::RankHistoryResponse) {
 }
 
 fn print_global_rank_response(resp: &GlobalRankResponse) {
-    let show_percent = resp.items.iter().any(|r| r.percent.is_some());
+    let show_percent = resp.components.iter().flat_map(|component| &component.ranking).any(|row| row.percent.is_some());
+    let shown_ranked: usize = resp.components.iter().map(|component| component.ranking.len()).sum();
+    let shown_total = shown_ranked + resp.unranked_items.len();
     println!(
         "global rank  (showing {}-{} of {} ranked + {} unranked)",
         resp.offset + 1,
-        resp.offset + resp.items.len(),
+        resp.offset + shown_total,
         resp.ranked_total,
         resp.unranked_total,
     );
-    for (i, r) in resp.items.iter().enumerate() {
-        let rank = resp.offset + i + 1;
-        if r.score == 0.0 && r.percent.is_none_or(|p| p == 0.0) && rank > resp.ranked_total {
-            println!("    - {:<40}   (unranked)", r.item);
-        } else if show_percent {
-            println!(
-                "{:>4}. {:<40} {:>6.1}%  ({:.6})",
-                rank,
-                r.item,
-                r.percent.unwrap_or(0.0),
-                r.score,
-            );
-        } else {
-            println!("{:>4}. {:<40} {:.6}", rank, r.item, r.score);
+    let mut rank = resp.offset + 1;
+    for (component_index, component) in resp.components.iter().enumerate() {
+        println!("\ncomponent {}  ({} items, {} pairs; scores are component-local)", component_index + 1, component.ranking.len(), component.pairs);
+        for row in &component.ranking {
+            if show_percent {
+                println!("{:>4}. {:<40} {:>6.1}%  ({:.6})", rank, row.item, row.percent.unwrap_or(0.0), row.score);
+            } else {
+                println!("{:>4}. {:<40} {:.6}", rank, row.item, row.score);
+            }
+            rank += 1;
         }
+    }
+    for item in &resp.unranked_items {
+        println!("    - {:<40}   (unranked)", item);
     }
 }
 
@@ -721,7 +722,7 @@ fn rpc_line_ok(line: &RpcLine) -> Result<&RpcResult> {
     line.result.as_ref().ok_or_else(|| anyhow!("rpc missing result"))
 }
 
-const PRIVATE_ROOM_NEEDS_BEARER: &str = "needs bearer token, use npx slugsocial identity command";
+const PRIVATE_ROOM_NEEDS_BEARER: &str = "needs bearer token, use slugsocial identity command";
 
 fn private_room_needs_bearer_error() -> anyhow::Error {
     anyhow!(PRIVATE_ROOM_NEEDS_BEARER)
@@ -1263,7 +1264,7 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
             ForumCmd::Graduate { tag, json } => {
                 if room == "public" {
                     return Err(anyhow!(
-                        "forum graduate is only for private rooms; use `npx slugsocial private <room> forum graduate <tag>`"
+                        "forum graduate is only for private rooms; use `slugsocial private <room> forum graduate <tag>`"
                     ));
                 }
                 let bearer = effective_bearer().ok_or_else(private_room_needs_bearer_error)?;
@@ -1352,6 +1353,11 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
             }
         }
         ScopedCmd::Audit { json } => {
+            if room == "public" {
+                return Err(anyhow!(
+                    "audit is only for private rooms; use `slugsocial private <room> audit`"
+                ));
+            }
             let bearer = effective_bearer().ok_or_else(private_room_needs_bearer_error)?;
             let batch = send_rpc(
                 &client,
@@ -1475,7 +1481,7 @@ async fn run() -> Result<()> {
 
     // If no command provided, print the guide
     let Some(cmd) = cmd else {
-        print!("{}", include_str!("../GUIDE.sorter"));
+        print!("{}", include_str!("../GUIDE.sorter").replace("npx slugsocial", "slugsocial"));
         return Ok(());
     };
 
@@ -1508,8 +1514,8 @@ async fn run() -> Result<()> {
                         } else {
                             println!("{room_id}");
                             println!();
-                            println!("Next: npx slugsocial private {room_id} forum post <TAG> --delegate '…' …");
-                            println!("      npx slugsocial private {room_id} invite-link --caps view,post,vote");
+                            println!("Next: slugsocial private {room_id} forum post <TAG> --delegate '…' …");
+                            println!("      slugsocial private {room_id} invite-link --caps view,post,vote");
                         }
                     }
                     _ => return Err(anyhow!("unexpected RPC result")),

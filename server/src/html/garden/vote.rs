@@ -25,7 +25,7 @@ use crate::{
     middleware::canonical_view_url,
     path_types::ItemId,
     reducer::{ContentState, ScopeId},
-    scope_rank::suggest_next_pair_in_pool,
+    scope_rank::{comparable_items, is_comparable_item, suggest_next_pair_in_pool},
     state::AppState,
 };
 
@@ -312,6 +312,7 @@ pub(super) fn suggest_next_vote_pair(
     } else {
         Vec::new()
     };
+    let pool = comparable_items(content, pool);
     if pool.len() < 2 {
         return None;
     }
@@ -442,9 +443,14 @@ async fn vote_compare_inner(
                 .get(pool)
                 .map(|s| s.iter().cloned().collect())
                 .unwrap_or_default();
+            let children = comparable_items(content, children);
             if children.len() < 2 {
                 drop(reduced);
-                return (StatusCode::BAD_REQUEST, "pool has fewer than 2 children to compare").into_response();
+                return (
+                    StatusCode::BAD_REQUEST,
+                    "pool needs at least 2 direct items with bodies; folder paths are scopes, not vote targets",
+                )
+                    .into_response();
             }
             let pair = suggest_next_pair_in_pool(&content.ranking_group, &children, None);
             drop(reduced);
@@ -458,6 +464,13 @@ async fn vote_compare_inner(
 
     let reduced = state.reduced.read().await;
     let content = content_for_garden_view(&reduced, &nav.scope());
+    if !is_comparable_item(content, &left) || !is_comparable_item(content, &right) {
+        return (
+            StatusCode::BAD_REQUEST,
+            "comparison items must be defined with non-empty bodies; folder paths are scopes, not vote targets",
+        )
+            .into_response();
+    }
     let viewer = optional_principal(&headers, &jar, &reduced);
     let logged_in = viewer.is_some();
     let can_post = match &nav.scope() {

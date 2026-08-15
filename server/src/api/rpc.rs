@@ -18,9 +18,9 @@ use crate::{
     events::{Event, Ingest, ThreadCapability},
     identity::{parse_agent, parse_username},
     path_types::ItemId,
-    ranking::{connected_components_from_voted_pairs, rank_partition, ranked_items_subset},
+    ranking::ranked_items_subset,
     reducer::{scope_from_room_wire, ReducerState, ScopeId},
-    scope_rank::suggest_next_pair_in_pool,
+    scope_rank::{comparable_items, suggest_next_pair_in_pool},
     state::{AppState, InviteState},
     write_cmd::WriteCmd,
 };
@@ -797,16 +797,17 @@ async fn rpc_get_pair(state: &AppState, room: String, parent_path: String) -> Re
         let specs = parse_parent_specs(tmp.as_ref());
         validate_garden_parent_scope_paths(content, &specs, false)?;
 
-        if specs.is_empty() {
+        let candidates = if specs.is_empty() {
             content.ranking_group.idx_to_item.clone()
         } else {
             crate::scope_rank::resolve_scope(content, &specs)
-        }
+        };
+        comparable_items(content, candidates)
     };
     if pool.len() < 2 {
         return Err((
-            format!("need at least 2 items under parent /{}", parent_path.trim()),
-            Some("add items via ingest".into()),
+            format!("need at least 2 comparable items under parent /{}", parent_path.trim()),
+            Some("define at least 2 direct items with non-empty bodies; folder paths are scopes, not vote targets".into()),
         ));
     }
     let selected: Option<(ItemId, ItemId)> = {
@@ -1175,7 +1176,9 @@ pub async fn handle_rpc_batch(
                     Err((_, m)) => line_err(m, None),
                     Ok(principal) => {
                         let reduced = state.reduced.read().await;
-                        if !reduced.rooms.contains(&room) {
+                        if room == "public" {
+                            line_err("audit is only available for private rooms", None)
+                        } else if !reduced.rooms.contains(&room) {
                             line_err("unknown room", None)
                         } else {
                             let can_audit = reduced.user_has_cap(&room, &principal, ThreadCapability::View)
@@ -1293,55 +1296,32 @@ pub async fn handle_rpc_batch(
                 let want_percent = percent.unwrap_or(false);
                 let reduced = state.reduced.read().await;
                 let content = content_for_room(&reduced, &room);
-                let group = &content.ranking_group;
-                let n = group.idx_to_item.len();
-                let (mut comps, _) = connected_components_from_voted_pairs(
-                    n, group.voted_pairs.iter().copied(),
-                );
-                comps.sort_by_key(|b| std::cmp::Reverse(b.len()));
-
-                let mut ranked: Vec<RankRow> = Vec::new();
-                for items in rank_partition(group, &comps, 10000, 1e-8) {
-                    let top = items.first().map(|r| r.score).unwrap_or(1.0);
-                    let bot = items.last().map(|r| r.score).unwrap_or(0.0);
-                    let range = (top - bot).max(1e-12);
-                    for r in items {
-                        let pct = want_percent.then(|| ((r.score - bot) / range * 100.0).clamp(0.0, 100.0));
-                        ranked.push(RankRow {
-                            item: GardenItemUrl::from_stored(&r.item, &room),
-                            score: r.score,
-                            percent: pct,
-                        });
+                let all_items: Vec<ItemId> = content.items.iter().cloned().collect();
+                let rankings = crate::scope_rank::build_rankings_for_item_set(content, &all_items);
+                let ranked_total: usize = rankings.component_rankings.iter().map(|component| component.ranked.len()).sum();
+                let unranked_total = rankings.unranked_items.len();
+                let components: Vec<RankComponent> = rankings.component_rankings.into_iter().map(|component| {
+                    let top = component.ranked.first().map(|r| r.score).unwrap_or(1.0).max(1e-12);
+                    RankComponent {
+                        pairs: component.pairs,
+                        ranking: component.ranked.into_iter().map(|ranked| RankRow {
+                            item: GardenItemUrl::from_stored(&ranked.item, &room),
+                            score: ranked.score,
+                            percent: want_percent.then(|| (ranked.score / top * 100.0).clamp(0.0, 100.0)),
+                        }).collect(),
                     }
-                }
-
-                let ranked_total = ranked.len();
-                let mut unranked: Vec<ItemId> = content
-                    .items
-                    .iter()
-                    .filter(|it| !group.item_to_idx.contains_key(*it))
-                    .cloned()
-                    .collect();
-                unranked.sort();
-                let unranked_total = unranked.len();
-
-                let page: Vec<RankRow> = ranked
-                    .into_iter()
-                    .chain(unranked.into_iter().map(|it| RankRow {
-                        item: GardenItemUrl::from_stored(&it, &room),
-                        score: 0.0,
-                        percent: want_percent.then_some(0.0),
-                    }))
-                    .skip(offset)
-                    .take(limit)
-                    .collect();
+                }).collect();
+                let unranked: Vec<GardenItemUrl> = rankings.unranked_items.into_iter()
+                    .map(|item| GardenItemUrl::from_stored(&item, &room)).collect();
+                let (components, unranked_items) = paginate_rankings(components, unranked, offset, Some(limit));
 
                 line_ok(RpcResult::GlobalRank(GlobalRankResponse {
                     ranked_total,
                     unranked_total,
                     offset,
                     limit,
-                    items: page,
+                    components,
+                    unranked_items,
                 }))
             }
             RpcCommand::GetPair { room, parent_path } => {

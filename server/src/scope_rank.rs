@@ -46,6 +46,24 @@ pub fn resolve_scope(content: &ContentState, specs: &[String]) -> Vec<ItemId> {
     out
 }
 
+/// Whether an item is eligible for comparison. Organizational path segments may be valid scopes
+/// without being defined items, so they must not enter a vote pair.
+pub fn is_comparable_item(content: &ContentState, item: &ItemId) -> bool {
+    content.items.contains(item)
+        && content
+            .item_bodies
+            .get(item)
+            .is_some_and(|body| !body.trim().is_empty())
+}
+
+/// Retain only direct scope members that can actually be submitted as vote targets.
+pub fn comparable_items(content: &ContentState, items: Vec<ItemId>) -> Vec<ItemId> {
+    items
+        .into_iter()
+        .filter(|item| is_comparable_item(content, item))
+        .collect()
+}
+
 /// Resolve scope specs recursively up to `depth` levels deep.
 /// depth=1 is equivalent to resolve_scope (direct children only).
 /// depth=2 includes grandchildren, etc.
@@ -341,6 +359,17 @@ mod tests {
         assert!(out.contains(&ItemId::parse("https://slug.social/a/2").unwrap()));
         assert!(out.contains(&ItemId::parse("https://slug.social/b/1").unwrap()));
         assert!(out.contains(&ItemId::parse("https://slug.social/b/2").unwrap()));
+    }
+
+    #[test]
+    fn comparable_items_excludes_bodyless_organizational_nodes() {
+        let folder = ItemId::parse("~/models/anthropic").unwrap().normalized_storage();
+        let leaf = ItemId::parse("~/models/claude").unwrap().normalized_storage();
+        let mut content = content_with_children(&[]);
+        content.items.insert(leaf.clone());
+        content.item_bodies.insert(leaf.clone(), "A model.".into());
+
+        assert_eq!(comparable_items(&content, vec![folder, leaf.clone()]), vec![leaf]);
     }
 
     #[test]

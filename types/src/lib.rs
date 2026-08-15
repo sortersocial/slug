@@ -37,12 +37,12 @@ pub struct ApiError {
 pub struct RankRow {
     pub item: GardenItemUrl,
     pub score: f64,
-    /// Normalized score as a percentage of the top item (0–100). Present when ?percent=true.
+    /// Normalized score within this connected component (0–100). Present when ?percent=true.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub percent: Option<f64>,
 }
 
-/// Flat, paginated global ranking across all items regardless of scope.
+/// Paginated global ranking across all items, grouped by disconnected component.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GlobalRankResponse {
     /// Total ranked items (have at least one vote connecting them to another item).
@@ -53,8 +53,11 @@ pub struct GlobalRankResponse {
     pub offset: usize,
     /// Pagination limit applied.
     pub limit: usize,
-    /// The page of items: ranked items first (descending score), then unranked (alphabetical).
-    pub items: Vec<RankRow>,
+    /// Ranked components, ordered largest-first. Scores and percentages are comparable within,
+    /// but not across, components.
+    pub components: Vec<RankComponent>,
+    /// Unranked items included in this page after the ranked components.
+    pub unranked_items: Vec<GardenItemUrl>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -436,7 +439,7 @@ pub enum RpcCommand {
         #[serde(default = "default_invite_max_uses")]
         max_uses: usize,
     },
-    /// List principals granted access in a room (requires View or Manage).
+    /// List principals granted access in a private room (requires View or Manage).
     RoomAudit {
         room: String,
     },

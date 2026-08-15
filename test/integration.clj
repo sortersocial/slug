@@ -174,7 +174,7 @@
       (bind private-post-json (json/parse-string (:out private-post-result) true))
       (is (:ok private-post-json) "private forum post ok=true")
 
-      (bind private-needs-bearer-hint "needs bearer token, use npx slugsocial identity command")
+      (bind private-needs-bearer-hint "needs bearer token, use slugsocial identity command")
       (bind show-no-token (common/run-cli cli-bin base-url
                                          ["private" private-room-id "forum" "show" private-thread "--json"]))
       (is (not (zero? (:exit show-no-token)))
@@ -183,7 +183,7 @@
       (is (not (str/blank? show-no-token-combined))
                "private forum show without token must not be completely silent (stdout+stderr)")
       (is (str/includes? show-no-token-combined private-needs-bearer-hint)
-               "private forum show without token must mention identity / bearer (npx slugsocial hint)")
+               "private forum show without token must mention identity / bearer command")
 
       (bind show-bad-token (common/run-cli cli-bin base-url
                                           ["private" private-room-id "forum" "show" private-thread "--json"]
