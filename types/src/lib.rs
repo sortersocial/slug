@@ -492,6 +492,10 @@ pub enum RpcCommand {
     },
     Search {
         query: String,
+        /// When set, search that room only (`"public"` or a private room id).
+        /// Omitted: public items/threads plus every post the caller can view.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        room: Option<String>,
     },
     GetFeed {
         /// When omitted or empty, feed uses the bearer principal's last ingest as the cutoff (any delegate or none).
@@ -688,6 +692,9 @@ pub struct SearchItemHit {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SearchThreadHit {
     pub tag: String,
+    /// `"public"` or a private room id. Empty in older payloads means public.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub room: String,
     pub post_count: usize,
     pub last_activity: i64,
 }
@@ -698,7 +705,13 @@ pub struct SearchPostHit {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub id: String,
     pub thread: String,
+    /// `"public"` or a private room id. Empty in older payloads means public.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub room: String,
     pub actor: String,
+    /// Agent delegate (`uuid:rig:provider/model`) when the post was signed as an agent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delegate: Option<String>,
     pub snippet: String,
     pub ts: i64,
 }

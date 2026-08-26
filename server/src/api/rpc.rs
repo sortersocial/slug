@@ -708,34 +708,24 @@ fn snippet_around(text: &str, words: &[String], max_len: usize) -> String {
     text[start..end].to_string()
 }
 
-fn rpc_search(
-    reduced: &ReducerState,
-    q: &str,
-    limit: usize,
-    principal: Option<&str>,
-) -> SearchResponse {
-    let words = tokenize_query(q);
-    if words.is_empty() {
-        return SearchResponse {
-            items: vec![],
-            threads: vec![],
-            posts: vec![],
-        };
-    }
-    let content = reduced.public();
+fn score_search_items(
+    content: &crate::reducer::ContentState,
+    room: &str,
+    words: &[String],
+) -> Vec<(u32, SearchItemHit)> {
     let mut scored_items: Vec<(u32, SearchItemHit)> = Vec::new();
     for item in &content.items {
         let mut score: u32 = 0;
-        if text_contains_all(item.as_str(), &words) {
+        if text_contains_all(item.as_str(), words) {
             score += 10;
-        } else if text_contains_any(item.as_str(), &words) > 0 {
+        } else if text_contains_any(item.as_str(), words) > 0 {
             score += 5;
         }
         if let Some(body) = content.item_bodies.get(item) {
-            if text_contains_all(body, &words) {
+            if text_contains_all(body, words) {
                 score += 6;
             } else {
-                let any = text_contains_any(body, &words);
+                let any = text_contains_any(body, words);
                 if any > 0 {
                     score += any as u32;
                 }
@@ -745,18 +735,46 @@ fn rpc_search(
             scored_items.push((
                 score,
                 SearchItemHit {
-                    path: GardenItemUrl::from_storage_str(item.as_str(), "public"),
+                    path: GardenItemUrl::from_storage_str(item.as_str(), room),
                     body: content
                         .item_bodies
                         .get(item)
-                        .map(|b| snippet_around(b, &words, 120)),
+                        .map(|b| snippet_around(b, words, 120)),
                 },
             ));
         }
     }
+    scored_items
+}
+
+fn rpc_search(
+    reduced: &ReducerState,
+    q: &str,
+    limit: usize,
+    principal: Option<&str>,
+    room_filter: Option<&str>,
+) -> SearchResponse {
+    let words = tokenize_query(q);
+    if words.is_empty() {
+        return SearchResponse {
+            items: vec![],
+            threads: vec![],
+            posts: vec![],
+        };
+    }
+    let want_scope = room_filter.map(scope_from_room_wire);
+    let mut scored_items = if let Some(room) = room_filter {
+        score_search_items(content_for_room(reduced, room), room, &words)
+    } else {
+        score_search_items(reduced.public(), "public", &words)
+    };
     let mut scored_threads: Vec<(u32, i64, SearchThreadHit)> = Vec::new();
     for ((scope, tag), ts) in &reduced.forum_threads {
-        if scope != &ScopeId::Public {
+        if let Some(ref want) = want_scope {
+            if scope != want {
+                continue;
+            }
+        } else if scope != &ScopeId::Public {
             continue;
         }
         let mut score: u32 = 0;
@@ -768,14 +786,19 @@ fn rpc_search(
         if score > 0 {
             let post_count = reduced
                 .ingests_by_scope_thread
-                .get(&(ScopeId::Public, tag.clone()))
+                .get(&(scope.clone(), tag.clone()))
                 .map(|q| q.len())
                 .unwrap_or(0);
+            let room = match scope {
+                ScopeId::Public => String::new(),
+                ScopeId::Room(rid) => rid.clone(),
+            };
             scored_threads.push((
                 score,
                 ts.last_activity_ts,
                 SearchThreadHit {
                     tag: format!("#{tag}"),
+                    room,
                     post_count,
                     last_activity: ts.last_activity_ts,
                 },
@@ -808,12 +831,17 @@ fn rpc_search(
             else {
                 continue;
             };
+            if let Some(ref want) = want_scope {
+                if &scope != want {
+                    continue;
+                }
+            }
             if !can_view_scope(reduced, &scope, principal) {
                 continue;
             }
-            let thread = match scope {
-                ScopeId::Public => format!("#{tag}"),
-                ScopeId::Room(rid) => format!("{rid}/#{tag}"),
+            let (thread, room) = match &scope {
+                ScopeId::Public => (format!("#{tag}"), String::new()),
+                ScopeId::Room(rid) => (format!("{rid}/#{tag}"), rid.clone()),
             };
             scored_posts.push((
                 score,
@@ -821,7 +849,9 @@ fn rpc_search(
                 SearchPostHit {
                     id: ingest.id.clone(),
                     thread,
+                    room,
                     actor: ingest.principal.clone(),
+                    delegate: ingest.delegate.clone(),
                     snippet: snippet_around(&ingest.raw, &words, 160),
                     ts: ingest.ts,
                 },
@@ -1674,17 +1704,36 @@ pub async fn dispatch_rpc(state: &AppState, headers: &HeaderMap, cmd: RpcCommand
                 line_ok(RpcResult::RecentVotes(RecentVotesResponse { votes: out }))
             }
         }
-        RpcCommand::Search { query } => {
+        RpcCommand::Search { query, room } => {
             let reduced = state.reduced.read().await;
             let limit = 50usize;
-            match principal_from_optional_bearer(&headers, &reduced) {
-                Ok(principal) => line_ok(RpcResult::Search(rpc_search(
-                    &reduced,
-                    &query,
-                    limit,
-                    principal.as_deref(),
-                ))),
-                Err((e, h)) => line_err(e, h),
+            let room_key = room.as_deref().map(str::trim).filter(|s| !s.is_empty());
+            if let Some(room) = room_key {
+                if let Err((e, h)) = authorize_room_read(&reduced, &headers, room) {
+                    line_err(e, h)
+                } else {
+                    match principal_from_optional_bearer(&headers, &reduced) {
+                        Ok(principal) => line_ok(RpcResult::Search(rpc_search(
+                            &reduced,
+                            &query,
+                            limit,
+                            principal.as_deref(),
+                            room_key,
+                        ))),
+                        Err((e, h)) => line_err(e, h),
+                    }
+                }
+            } else {
+                match principal_from_optional_bearer(&headers, &reduced) {
+                    Ok(principal) => line_ok(RpcResult::Search(rpc_search(
+                        &reduced,
+                        &query,
+                        limit,
+                        principal.as_deref(),
+                        room_key,
+                    ))),
+                    Err((e, h)) => line_err(e, h),
+                }
             }
         }
         RpcCommand::GetFeed {

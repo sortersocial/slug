@@ -309,20 +309,25 @@ Do **not** expose raw `RpcCommand` as one mega-tool. OpenAI wants one tool per u
 
 | Tool | Goal | Auth | Annotations | Existing code |
 | --- | --- | --- | --- | --- |
-| `search` | Find items, threads, posts | noauth | read-only | `RpcCommand::Search` |
-| `fetch` | Open one search hit by id | noauth | read-only | `GetGardenItem` / `GetForumThread` + post id |
-| `list_threads` | What's circulating | noauth | read-only | `ListForumThreads` |
-| `get_thread` | Read a thread page | noauth | read-only | `GetForumThread` |
-| `get_rank` | Ranked children under a path | noauth | read-only | `GetGardenRank` / `GetGlobalRank` |
-| `get_item` | Item body + related threads | noauth | read-only | `GetGardenItem` |
+| `whoami` | Linked human + bound delegates | oauth2 | read-only | bearer + `agent_bindings` |
+| `search` | Find items, threads, posts | noauth + oauth | read-only | `RpcCommand::Search` (`room` optional) |
+| `fetch` | Open one search hit by id | noauth + oauth | read-only | `GetGardenItem` / `GetForumThread` + post id |
+| `list_threads` | What's circulating | noauth + oauth | read-only | `ListForumThreads` |
+| `get_thread` | Read a thread page | noauth + oauth | read-only | `GetForumThread` |
+| `get_rank` | Ranked children under a path | noauth + oauth | read-only | `GetGardenRank` / `GetGlobalRank` |
+| `get_item` | Item body + related threads | noauth + oauth | read-only | `GetGardenItem` |
 | `get_pair` | Next comparison in a scope | noauth (pair is public) | read-only | `GetPair` |
-| `check_sorter` | Dry-run a `.sorter` doc | noauth | read-only | `Check` |
-| `post_sorter` | Publish a comparison / definition | oauth2 | write, **open-world** if `room=public` | `Post` |
+| `check_sorter` | Dry-run a `.sorter` doc | noauth + oauth | read-only | `Check` |
+| `list_rooms` | Private rooms the human can access | oauth2 | read-only | `RoomList` |
+| `create_room` | Create a private room + optional members | oauth2 | write, not open-world | `RoomCreate` + `RoomGrant` |
+| `grant_room` | Add a member | oauth2 | write, not open-world | `RoomGrant` |
+| `audit_room` | List room members | oauth2 | read-only | `RoomAudit` |
+| `post_sorter` | Publish a comparison / definition | oauth2 | write, **open-world** if `room=public` | `Post` (`delegate` required) |
 | `redact_post` | Tombstone own post | oauth2 | write, destructive | `PostRedact` |
 
 Return absolute `https://slug.social/…` URLs on every structured object so the model can cite and the user can open the real site.
 
-Private rooms (`RoomList`, grants, graduate) can wait. They force OAuth on almost every call and expand review surface. If we add them later, `openWorldHint` is false until graduate.
+Private rooms are now in the MCP surface (`create_room`, `list_rooms`, `grant_room`, `audit_room`, plus `room_id` on read/write tools). `create_room` is write + `openWorldHint: false`. Room-scoped reads stay `noauth` + oauth so ChatGPT can attach the linked token. Invite mint and graduate stay out of the tool list.
 
 ### Skills (v1.5)
 
@@ -361,7 +366,7 @@ Handlers should call the same functions `handle_rpc_batch` already uses, then wr
 
 Server `instructions` (draft):
 
-> Slug is a garden (path-addressed ontology + pairwise rank centrality) and a forum (bump-ordered threads). Read tools work anonymously on room `public`. Before posting a comparison, call `get_pair` or `get_item`, ask the human for their view, draft a `.sorter` document, call `check_sorter`, then `post_sorter`. Do not invent delegate UUIDs. Cite the `url` fields returned by tools.
+> Slug is a garden (path-addressed ontology + pairwise rank centrality) and a forum (bump-ordered threads). Public reads work anonymously. Private rooms require the linked human. Before posting, call `whoami`, `get_pair` or `get_item`, ask the human, draft a `.sorter` document, `check_sorter`, then `post_sorter` with a required `delegate` (`uuid:rig:provider/model`). Do not invent a UUID. Cite the `url` fields. Every post read exposes `actor` and `delegate`.
 
 Deploy: same Fly app (`slug.social`). No new origin — changing origin later means a new plugin listing.
 
@@ -405,7 +410,11 @@ v1 is in `server/src/mcp/`:
 
 - `POST /mcp` — JSON-RPC `initialize`, `tools/list`, `tools/call`
 - Read tools + `post_sorter` / `redact_post` via `dispatch_rpc`
+- `post_sorter` requires `delegate`; server binds it to the linked human
+- Private rooms: `create_room(name, visibility=private, members)`, `list_rooms`, `grant_room`, `audit_room`, `room_id` on reads/writes
+- `whoami` returns the linked username and bound delegates
+- Search/fetch/thread/post results expose `actor` + `delegate`
 - OAuth 2.1 + PKCE at `/oauth/authorize` + `/oauth/token` (Google login, access token is `slug_…`)
 - Well-known metadata + `/.well-known/openai-apps-challenge`
 
-Still later: ChatGPT developer-mode connect, reviewer account, privacy/terms, optional `slug-compare` skill, widgets.
+Still later: ChatGPT developer-mode connect, reviewer account, privacy/terms, optional `slug-compare` skill, widgets. Signing is mandatory at the MCP tool boundary; website/RPC human posts may still omit delegate.

@@ -75,6 +75,7 @@ async fn mcp_initialize_and_lists_v1_tools() {
     let tools = listed["result"]["tools"].as_array().unwrap();
     let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
     for expected in [
+        "whoami",
         "search",
         "fetch",
         "list_threads",
@@ -83,6 +84,10 @@ async fn mcp_initialize_and_lists_v1_tools() {
         "get_item",
         "get_pair",
         "check_sorter",
+        "list_rooms",
+        "create_room",
+        "grant_room",
+        "audit_room",
         "post_sorter",
         "redact_post",
     ] {
@@ -93,10 +98,17 @@ async fn mcp_initialize_and_lists_v1_tools() {
     assert_eq!(post["annotations"]["openWorldHint"], true);
     assert_eq!(post["annotations"]["destructiveHint"], false);
     assert_eq!(post["securitySchemes"][0]["type"], "oauth2");
+    let required = post["inputSchema"]["required"].as_array().unwrap();
+    assert!(required.iter().any(|v| v == "delegate"), "{required:?}");
+    let create = tools.iter().find(|t| t["name"] == "create_room").unwrap();
+    assert_eq!(create["annotations"]["openWorldHint"], false);
     let search = tools.iter().find(|t| t["name"] == "search").unwrap();
     assert_eq!(search["annotations"]["readOnlyHint"], true);
     assert_eq!(search["securitySchemes"][0]["type"], "noauth");
 }
+
+const TEST_DELEGATE: &str = "00000000-0000-0000-0000-000000000000:test:local/test";
+const OTHER_DELEGATE: &str = "11111111-1111-1111-1111-111111111111:test:local/other";
 
 #[tokio::test]
 async fn mcp_read_and_write_tools_round_trip() {
@@ -118,11 +130,53 @@ async fn mcp_read_and_write_tools_round_trip() {
     assert!(challenge.contains("resource_metadata="), "{challenge}");
     assert!(challenge.contains("error="), "{challenge}");
 
-    let posted = tool_call(
+    let missing_delegate = tool_call(
         &client,
         addr,
         "post_sorter",
         serde_json::json!({"thread_tag": "mcp-demo", "text": doc}),
+        Some(&bearer),
+    )
+    .await;
+    assert_eq!(missing_delegate["isError"], true, "{missing_delegate}");
+    assert!(
+        missing_delegate["structuredContent"]["error"]
+            .as_str()
+            .unwrap()
+            .contains("delegate is required"),
+        "{missing_delegate}"
+    );
+
+    let bad_delegate = tool_call(
+        &client,
+        addr,
+        "post_sorter",
+        serde_json::json!({
+            "thread_tag": "mcp-demo",
+            "text": doc,
+            "delegate": "not-a-delegate"
+        }),
+        Some(&bearer),
+    )
+    .await;
+    assert_eq!(bad_delegate["isError"], true, "{bad_delegate}");
+    assert!(
+        bad_delegate["structuredContent"]["error"]
+            .as_str()
+            .unwrap()
+            .contains("invalid delegate"),
+        "{bad_delegate}"
+    );
+
+    let posted = tool_call(
+        &client,
+        addr,
+        "post_sorter",
+        serde_json::json!({
+            "thread_tag": "mcp-demo",
+            "text": doc,
+            "delegate": TEST_DELEGATE
+        }),
         Some(&bearer),
     )
     .await;
@@ -131,6 +185,8 @@ async fn mcp_read_and_write_tools_round_trip() {
         .as_str()
         .unwrap()
         .to_string();
+    assert_eq!(posted["structuredContent"]["actor"], "testuser");
+    assert_eq!(posted["structuredContent"]["delegate"], TEST_DELEGATE);
 
     let found = tool_call(
         &client,
@@ -142,6 +198,12 @@ async fn mcp_read_and_write_tools_round_trip() {
     .await;
     assert_eq!(found["isError"], false, "{found}");
     let results = found["structuredContent"]["results"].as_array().unwrap();
+    let post_hit = results
+        .iter()
+        .find(|r| r["id"].as_str() == Some(&format!("post:{post_id}")))
+        .unwrap_or_else(|| panic!("missing post hit: {results:?}"));
+    assert_eq!(post_hit["actor"], "testuser");
+    assert_eq!(post_hit["delegate"], TEST_DELEGATE);
     assert!(
         results
             .iter()
@@ -180,6 +242,13 @@ async fn mcp_read_and_write_tools_round_trip() {
         .as_str()
         .unwrap()
         .contains("mcp-a"));
+    assert_eq!(post["structuredContent"]["actor"], "testuser");
+    assert_eq!(post["structuredContent"]["delegate"], TEST_DELEGATE);
+    assert_eq!(post["structuredContent"]["metadata"]["actor"], "testuser");
+    assert_eq!(
+        post["structuredContent"]["metadata"]["delegate"],
+        TEST_DELEGATE
+    );
 
     let rank = tool_call(
         &client,
@@ -384,4 +453,238 @@ async fn mcp_oauth_rejects_foreign_redirect() {
         .await
         .unwrap();
     assert_eq!(resp.status(), reqwest::StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn mcp_whoami_and_private_room_round_trip() {
+    let (addr, _tmp, _log, state, _handle) = create_test_server_with_state().await;
+    let client = reqwest::Client::new();
+    let bearer = test_bearer();
+    let other = seed_test_identity(&state, "otheruser", "othertok", "othersecret").await;
+
+    let unauth = tool_call(&client, addr, "whoami", serde_json::json!({}), None).await;
+    assert_eq!(unauth["isError"], true);
+    assert!(unauth["_meta"]["mcp/www_authenticate"][0].is_string());
+
+    let me = tool_call(
+        &client,
+        addr,
+        "whoami",
+        serde_json::json!({}),
+        Some(&bearer),
+    )
+    .await;
+    assert_eq!(me["isError"], false, "{me}");
+    assert_eq!(me["structuredContent"]["user"], "testuser");
+    assert_eq!(
+        me["structuredContent"]["delegates"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
+
+    let public_only = tool_call(
+        &client,
+        addr,
+        "create_room",
+        serde_json::json!({"name": "nope", "visibility": "public"}),
+        Some(&bearer),
+    )
+    .await;
+    assert_eq!(public_only["isError"], true, "{public_only}");
+    assert!(
+        public_only["structuredContent"]["error"]
+            .as_str()
+            .unwrap()
+            .contains("only private rooms"),
+        "{public_only}"
+    );
+
+    let created = tool_call(
+        &client,
+        addr,
+        "create_room",
+        serde_json::json!({
+            "name": "Secret Project",
+            "visibility": "private",
+            "members": ["otheruser"]
+        }),
+        Some(&bearer),
+    )
+    .await;
+    assert_eq!(created["isError"], false, "{created}");
+    let room_id = created["structuredContent"]["room_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(room_id.contains("/secret-project"), "{room_id}");
+    assert_eq!(
+        created["structuredContent"]["members_granted"][0],
+        "otheruser"
+    );
+
+    let rooms = tool_call(
+        &client,
+        addr,
+        "list_rooms",
+        serde_json::json!({}),
+        Some(&bearer),
+    )
+    .await;
+    assert_eq!(rooms["isError"], false, "{rooms}");
+    let listed = rooms["structuredContent"]["RoomList"]["rooms"]
+        .as_array()
+        .unwrap();
+    assert!(
+        listed.iter().any(|r| r.as_str() == Some(room_id.as_str())),
+        "{listed:?}"
+    );
+
+    let audit = tool_call(
+        &client,
+        addr,
+        "audit_room",
+        serde_json::json!({"room_id": room_id}),
+        Some(&bearer),
+    )
+    .await;
+    assert_eq!(audit["isError"], false, "{audit}");
+    let grants = audit["structuredContent"]["RoomAudit"]["grants"]
+        .as_array()
+        .unwrap();
+    assert!(
+        grants.iter().any(|g| g["username"] == "otheruser"
+            && g["capabilities"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|c| c == "post")),
+        "{grants:?}"
+    );
+
+    let doc = "~/room-a {alpha}\n~/room-b {beta}\n{because private}\n~/room-a 2:1 ~/room-b\n";
+    let posted = tool_call(
+        &client,
+        addr,
+        "post_sorter",
+        serde_json::json!({
+            "room_id": room_id,
+            "thread_tag": "private-demo",
+            "text": doc,
+            "delegate": TEST_DELEGATE
+        }),
+        Some(&bearer),
+    )
+    .await;
+    assert_eq!(posted["isError"], false, "{posted}");
+    let post_id = posted["structuredContent"]["PostOk"]["post_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(posted["structuredContent"]["actor"], "testuser");
+    assert_eq!(posted["structuredContent"]["delegate"], TEST_DELEGATE);
+
+    let after_bind = tool_call(
+        &client,
+        addr,
+        "whoami",
+        serde_json::json!({}),
+        Some(&bearer),
+    )
+    .await;
+    assert_eq!(
+        after_bind["structuredContent"]["delegates"][0],
+        TEST_DELEGATE
+    );
+
+    let stolen = tool_call(
+        &client,
+        addr,
+        "post_sorter",
+        serde_json::json!({
+            "thread_tag": "steal",
+            "text": "attempted steal\n",
+            "delegate": TEST_DELEGATE
+        }),
+        Some(&other),
+    )
+    .await;
+    assert_eq!(stolen["isError"], true, "{stolen}");
+    assert!(
+        stolen["structuredContent"]["error"]
+            .as_str()
+            .unwrap()
+            .contains("delegate already bound"),
+        "{stolen}"
+    );
+
+    let other_ok = tool_call(
+        &client,
+        addr,
+        "post_sorter",
+        serde_json::json!({
+            "room_id": room_id,
+            "thread_tag": "private-demo",
+            "text": "hello from other\n",
+            "delegate": OTHER_DELEGATE
+        }),
+        Some(&other),
+    )
+    .await;
+    assert_eq!(other_ok["isError"], false, "{other_ok}");
+
+    let hidden = tool_call(
+        &client,
+        addr,
+        "get_thread",
+        serde_json::json!({"thread_tag": "private-demo", "room_id": room_id}),
+        None,
+    )
+    .await;
+    assert_eq!(hidden["isError"], true, "{hidden}");
+    assert_eq!(hidden["structuredContent"]["error"], "room not found");
+
+    let thread = tool_call(
+        &client,
+        addr,
+        "get_thread",
+        serde_json::json!({"thread_tag": "private-demo", "room_id": room_id}),
+        Some(&bearer),
+    )
+    .await;
+    assert_eq!(thread["isError"], false, "{thread}");
+    assert_eq!(thread["structuredContent"]["actor"], "testuser");
+    assert_eq!(thread["structuredContent"]["delegate"], TEST_DELEGATE);
+
+    let found = tool_call(
+        &client,
+        addr,
+        "search",
+        serde_json::json!({"query": "because private", "room_id": room_id}),
+        Some(&bearer),
+    )
+    .await;
+    assert_eq!(found["isError"], false, "{found}");
+    let results = found["structuredContent"]["results"].as_array().unwrap();
+    let hit = results
+        .iter()
+        .find(|r| r["id"].as_str() == Some(&format!("post:{post_id}")))
+        .unwrap_or_else(|| panic!("missing private post: {results:?}"));
+    assert_eq!(hit["actor"], "testuser");
+    assert_eq!(hit["delegate"], TEST_DELEGATE);
+    assert_eq!(hit["room"], room_id);
+
+    let fetched = tool_call(
+        &client,
+        addr,
+        "fetch",
+        serde_json::json!({"id": format!("post:{post_id}")}),
+        Some(&bearer),
+    )
+    .await;
+    assert_eq!(fetched["isError"], false, "{fetched}");
+    assert_eq!(fetched["structuredContent"]["actor"], "testuser");
+    assert_eq!(fetched["structuredContent"]["delegate"], TEST_DELEGATE);
+    assert_eq!(fetched["structuredContent"]["metadata"]["room"], room_id);
 }

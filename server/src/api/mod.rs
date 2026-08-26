@@ -10,7 +10,7 @@ pub use auth::{
     get_auth_callback, get_auth_complete, get_auth_login, get_choose_username, get_join_invite,
     get_logout, get_pending_session, get_web_login, get_whoami, optional_principal,
     post_choose_username, post_pending_session, resolve_web_session, session_cookie_header_value,
-    WebSession, SLUG_SESSION_COOKIE,
+    verify_bearer_principal, WebSession, SLUG_SESSION_COOKIE,
 };
 
 pub use helpers::{

@@ -1566,7 +1566,7 @@ async fn run() -> Result<()> {
                 &client,
                 base,
                 None,
-                vec![RpcCommand::Search { query }],
+                vec![RpcCommand::Search { query, room: None }],
             )
             .await?;
             let resp = match rpc_line_ok(&batch.results[0])? {
