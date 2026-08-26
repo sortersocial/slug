@@ -1,16 +1,11 @@
 use std::collections::HashSet;
 use std::sync::OnceLock;
 
-use axum::{
-    extract::State,
-    http::HeaderMap,
-    response::IntoResponse,
-    Json,
-};
-use tokio::sync::oneshot;
+use axum::{extract::State, http::HeaderMap, response::IntoResponse, Json};
 use rand::seq::SliceRandom;
 use slug_types::paths::{ForumThreadUrl, GardenItemUrl, TildeOntologyPath};
 use slug_types::*;
+use tokio::sync::oneshot;
 
 use crate::{
     canonical_path::{canonicalize_item, canonicalize_tag},
@@ -98,12 +93,13 @@ fn rpc_feed(
         .enumerate()
         .rev()
         .filter(|(index, id)| {
-            reduced.ingests_by_id.get(id.as_str()).is_some_and(|ing| {
-                match requested_since {
+            reduced
+                .ingests_by_id
+                .get(id.as_str())
+                .is_some_and(|ing| match requested_since {
                     Some(cutoff) => ing.ts > cutoff,
                     None => implicit_anchor_index.is_none_or(|anchor| *index > anchor),
-                }
-            })
+                })
         })
         .map(|(_, id)| id.as_str())
         .filter(|id| {
@@ -122,11 +118,8 @@ fn rpc_feed(
         .filter_map(|id| reduced.ingests_by_id.get(id))
         .map(|ing| {
             let scope = scope_from_room_wire(&ing.room_id);
-            let thread_post_index = reduced.try_thread_post_index_chronological(
-                &scope,
-                &ing.thread_tag,
-                &ing.id,
-            );
+            let thread_post_index =
+                reduced.try_thread_post_index_chronological(&scope, &ing.thread_tag, &ing.id);
             FeedPost {
                 ts: ing.ts,
                 id: ing.id.clone(),
@@ -146,7 +139,10 @@ fn rpc_feed(
     }
 }
 
-fn principal_from_optional_bearer(headers: &HeaderMap, reduced: &ReducerState) -> Result<Option<String>, RpcErr> {
+fn principal_from_optional_bearer(
+    headers: &HeaderMap,
+    reduced: &ReducerState,
+) -> Result<Option<String>, RpcErr> {
     if headers.contains_key(axum::http::header::AUTHORIZATION) {
         verify_bearer_principal(headers, reduced)
             .map(Some)
@@ -162,7 +158,11 @@ fn principal_from_optional_bearer(headers: &HeaderMap, reduced: &ReducerState) -
 /// explicit View capability. Unknown and unauthorized private rooms are both returned as
 /// "not found"
 /// to avoid resource-enumeration leaks.
-fn authorize_room_read(reduced: &ReducerState, headers: &HeaderMap, room: &str) -> Result<Option<String>, RpcErr> {
+fn authorize_room_read(
+    reduced: &ReducerState,
+    headers: &HeaderMap,
+    room: &str,
+) -> Result<Option<String>, RpcErr> {
     let scope = scope_from_room_wire(room);
     let ScopeId::Room(room_id) = scope else {
         return Ok(None);
@@ -194,7 +194,9 @@ fn gen_invite_token() -> String {
     use rand::Rng;
     const ALPHABET: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyz";
     let mut rng = rand::thread_rng();
-    let tail: String = (0..16).map(|_| ALPHABET[rng.gen_range(0..ALPHABET.len())] as char).collect();
+    let tail: String = (0..16)
+        .map(|_| ALPHABET[rng.gen_range(0..ALPHABET.len())] as char)
+        .collect();
     format!("inv_{tail}")
 }
 
@@ -297,8 +299,7 @@ pub async fn rpc_post_redact(
         })
         .await
         .map_err(|_| ("writer unavailable".into(), None))?;
-    rx.await
-        .map_err(|_| ("writer dropped".into(), None))?
+    rx.await.map_err(|_| ("writer dropped".into(), None))?
 }
 
 pub async fn rpc_room_delete(
@@ -317,8 +318,7 @@ pub async fn rpc_room_delete(
         })
         .await
         .map_err(|_| ("writer unavailable".into(), None))?;
-    rx.await
-        .map_err(|_| ("writer dropped".into(), None))?
+    rx.await.map_err(|_| ("writer dropped".into(), None))?
 }
 
 pub async fn rpc_thread_graduate(
@@ -339,8 +339,7 @@ pub async fn rpc_thread_graduate(
         })
         .await
         .map_err(|_| ("writer unavailable".into(), None))?;
-    rx.await
-        .map_err(|_| ("writer dropped".into(), None))?
+    rx.await.map_err(|_| ("writer dropped".into(), None))?
 }
 
 async fn rpc_post(
@@ -367,8 +366,7 @@ async fn rpc_post(
         })
         .await
         .map_err(|_| ("writer unavailable".into(), None))?;
-    rx.await
-        .map_err(|_| ("writer dropped".into(), None))?
+    rx.await.map_err(|_| ("writer dropped".into(), None))?
 }
 
 /// Post forum content using a raw bearer token (CLI `Authorization` header or browser session cookie).
@@ -451,8 +449,12 @@ async fn rpc_check(
         for s in &v.doc.statements {
             if let dsl::Stmt::Vote { item1, item2, .. } = s {
                 if let (Ok(a), Ok(b)) = (resolve_item(item1), resolve_item(item2)) {
-                    if let Some(p) = a.parent() { parents.insert(p); }
-                    if let Some(p) = b.parent() { parents.insert(p); }
+                    if let Some(p) = a.parent() {
+                        parents.insert(p);
+                    }
+                    if let Some(p) = b.parent() {
+                        parents.insert(p);
+                    }
                 }
             }
         }
@@ -504,7 +506,9 @@ async fn rpc_check(
         ]
     } else {
         vec![
-            format!("npx slugsocial private {room_key} forum post <TAG> --delegate <uuid:rig:model>"),
+            format!(
+                "npx slugsocial private {room_key} forum post <TAG> --delegate <uuid:rig:model>"
+            ),
             format!("npx slugsocial private {room_key} forum list"),
             ForumThreadUrl::from_room_tag(&room_key, &thread_id).into_inner(),
         ]
@@ -557,7 +561,11 @@ fn rpc_forum_thread_detail(
     if let Some(pid) = post_id {
         let thread_ids = reduced.ingests_by_scope_thread.get(&key);
         let index = thread_ids.and_then(|ids| {
-            ids.iter().rev().enumerate().find(|(_, id)| *id == pid).map(|(i, _)| i)
+            ids.iter()
+                .rev()
+                .enumerate()
+                .find(|(_, id)| *id == pid)
+                .map(|(i, _)| i)
         });
         return match index.and_then(|idx| reduced.ingests_by_id.get(pid).map(|ing| (idx, ing))) {
             None => Err(("post not found".into(), None)),
@@ -576,7 +584,11 @@ fn rpc_forum_thread_detail(
                         ts: ing.ts,
                         actor: ing.principal.clone(),
                         delegate: ing.delegate.clone(),
-                        body: if redacted { String::new() } else { ing.raw.clone() },
+                        body: if redacted {
+                            String::new()
+                        } else {
+                            ing.raw.clone()
+                        },
                         truncated: false,
                         redacted,
                         redacted_at_ts,
@@ -600,7 +612,9 @@ fn rpc_forum_thread_detail(
         .filter_map(|(idx, id)| reduced.ingests_by_id.get(&id).map(|ing| (idx, ing.clone())))
         .filter(|(_, ing)| since.is_none_or(|s| ing.ts >= s))
         .filter(|(_, ing)| before.is_none_or(|b| ing.ts < b))
-        .filter(|(_, ing)| actor_prefix.is_empty() || ing.principal.to_lowercase().starts_with(actor_prefix))
+        .filter(|(_, ing)| {
+            actor_prefix.is_empty() || ing.principal.to_lowercase().starts_with(actor_prefix)
+        })
         .collect();
 
     let total = filtered.len();
@@ -672,21 +686,34 @@ fn text_contains_any(text: &str, words: &[String]) -> usize {
 
 fn snippet_around(text: &str, words: &[String], max_len: usize) -> String {
     let lower = text.to_lowercase();
-    let first_pos = words.iter().filter_map(|w| lower.find(w.as_str())).min().unwrap_or(0);
+    let first_pos = words
+        .iter()
+        .filter_map(|w| lower.find(w.as_str()))
+        .min()
+        .unwrap_or(0);
     let start = first_pos.saturating_sub(max_len / 3);
     let start = if start > 0 {
         let mut i = start;
-        while i < text.len() && !text.is_char_boundary(i) { i += 1; }
+        while i < text.len() && !text.is_char_boundary(i) {
+            i += 1;
+        }
         text[i..].find(' ').map(|j| i + j + 1).unwrap_or(i)
     } else {
         0
     };
     let mut end = (start + max_len).min(text.len());
-    while end < text.len() && !text.is_char_boundary(end) { end += 1; }
+    while end < text.len() && !text.is_char_boundary(end) {
+        end += 1;
+    }
     text[start..end].to_string()
 }
 
-fn rpc_search(reduced: &ReducerState, q: &str, limit: usize, principal: Option<&str>) -> SearchResponse {
+fn rpc_search(
+    reduced: &ReducerState,
+    q: &str,
+    limit: usize,
+    principal: Option<&str>,
+) -> SearchResponse {
     let words = tokenize_query(q);
     if words.is_empty() {
         return SearchResponse {
@@ -699,62 +726,88 @@ fn rpc_search(reduced: &ReducerState, q: &str, limit: usize, principal: Option<&
     let mut scored_items: Vec<(u32, SearchItemHit)> = Vec::new();
     for item in &content.items {
         let mut score: u32 = 0;
-        if text_contains_all(item.as_str(), &words) { score += 10; }
-        else if text_contains_any(item.as_str(), &words) > 0 { score += 5; }
+        if text_contains_all(item.as_str(), &words) {
+            score += 10;
+        } else if text_contains_any(item.as_str(), &words) > 0 {
+            score += 5;
+        }
         if let Some(body) = content.item_bodies.get(item) {
-            if text_contains_all(body, &words) { score += 6; }
-            else {
+            if text_contains_all(body, &words) {
+                score += 6;
+            } else {
                 let any = text_contains_any(body, &words);
-                if any > 0 { score += any as u32; }
+                if any > 0 {
+                    score += any as u32;
+                }
             }
         }
         if score > 0 {
-            scored_items.push((score, SearchItemHit {
-                path: GardenItemUrl::from_storage_str(item.as_str(), "public"),
-                body: content.item_bodies.get(item).map(|b| snippet_around(b, &words, 120)),
-            }));
+            scored_items.push((
+                score,
+                SearchItemHit {
+                    path: GardenItemUrl::from_storage_str(item.as_str(), "public"),
+                    body: content
+                        .item_bodies
+                        .get(item)
+                        .map(|b| snippet_around(b, &words, 120)),
+                },
+            ));
         }
     }
     let mut scored_threads: Vec<(u32, i64, SearchThreadHit)> = Vec::new();
     for ((scope, tag), ts) in &reduced.forum_threads {
-        if scope != &ScopeId::Public { continue; }
+        if scope != &ScopeId::Public {
+            continue;
+        }
         let mut score: u32 = 0;
-        if text_contains_all(tag, &words) { score += 8; }
-        else if text_contains_any(tag, &words) > 0 { score += 4; }
+        if text_contains_all(tag, &words) {
+            score += 8;
+        } else if text_contains_any(tag, &words) > 0 {
+            score += 4;
+        }
         if score > 0 {
             let post_count = reduced
                 .ingests_by_scope_thread
                 .get(&(ScopeId::Public, tag.clone()))
                 .map(|q| q.len())
                 .unwrap_or(0);
-            scored_threads.push((score, ts.last_activity_ts, SearchThreadHit {
-                tag: format!("#{tag}"),
-                post_count,
-                last_activity: ts.last_activity_ts,
-            }));
+            scored_threads.push((
+                score,
+                ts.last_activity_ts,
+                SearchThreadHit {
+                    tag: format!("#{tag}"),
+                    post_count,
+                    last_activity: ts.last_activity_ts,
+                },
+            ));
         }
     }
     let mut scored_posts: Vec<(u32, i64, SearchPostHit)> = Vec::new();
     for (id, ingest) in &reduced.ingests_by_id {
         let mut score: u32 = 0;
-        if text_contains_all(&ingest.raw, &words) { score += 4; }
-        else {
+        if text_contains_all(&ingest.raw, &words) {
+            score += 4;
+        } else {
             let any = text_contains_any(&ingest.raw, &words);
-            if any > 0 { score += any as u32; }
+            if any > 0 {
+                score += any as u32;
+            }
         }
         if score > 0 {
-            let Some((scope, tag)) = reduced
-                .ingests_by_scope_thread
-                .iter()
-                .find_map(|((scope, tag), ids)| {
-                    if ids.contains(id) {
-                        Some((scope.clone(), tag.clone()))
-                    } else {
-                        None
-                    }
-                }) else {
-                    continue;
-                };
+            let Some((scope, tag)) =
+                reduced
+                    .ingests_by_scope_thread
+                    .iter()
+                    .find_map(|((scope, tag), ids)| {
+                        if ids.contains(id) {
+                            Some((scope.clone(), tag.clone()))
+                        } else {
+                            None
+                        }
+                    })
+            else {
+                continue;
+            };
             if !can_view_scope(reduced, &scope, principal) {
                 continue;
             }
@@ -762,12 +815,17 @@ fn rpc_search(reduced: &ReducerState, q: &str, limit: usize, principal: Option<&
                 ScopeId::Public => format!("#{tag}"),
                 ScopeId::Room(rid) => format!("{rid}/#{tag}"),
             };
-            scored_posts.push((score, ingest.ts, SearchPostHit {
-                thread,
-                actor: ingest.principal.clone(),
-                snippet: snippet_around(&ingest.raw, &words, 160),
-                ts: ingest.ts,
-            }));
+            scored_posts.push((
+                score,
+                ingest.ts,
+                SearchPostHit {
+                    id: ingest.id.clone(),
+                    thread,
+                    actor: ingest.principal.clone(),
+                    snippet: snippet_around(&ingest.raw, &words, 160),
+                    ts: ingest.ts,
+                },
+            ));
         }
     }
     scored_items.sort_by(|a, b| b.0.cmp(&a.0));
@@ -783,7 +841,11 @@ fn rpc_search(reduced: &ReducerState, q: &str, limit: usize, principal: Option<&
     }
 }
 
-async fn rpc_get_pair(state: &AppState, room: String, parent_path: String) -> Result<RpcResult, RpcErr> {
+async fn rpc_get_pair(
+    state: &AppState,
+    room: String,
+    parent_path: String,
+) -> Result<RpcResult, RpcErr> {
     let scope = scope_from_room_wire(&room);
     let reduced_arc = state.reduced.clone();
     let pool: Vec<ItemId> = {
@@ -853,7 +915,12 @@ async fn rpc_get_pair(state: &AppState, room: String, parent_path: String) -> Re
                 }
                 if pick.is_none() {
                     for _ in 0..64 {
-                        let (Some(a), Some(b)) = (pool.choose(&mut rng).cloned(), pool.choose(&mut rng).cloned()) else { break; };
+                        let (Some(a), Some(b)) = (
+                            pool.choose(&mut rng).cloned(),
+                            pool.choose(&mut rng).cloned(),
+                        ) else {
+                            break;
+                        };
                         if a != b && !is_pair_voted(group, a.as_str(), b.as_str()) {
                             pick = Some((a, b));
                             break;
@@ -902,33 +969,51 @@ pub async fn handle_rpc_batch(
     let mut results = Vec::with_capacity(commands.len());
 
     for cmd in commands {
-        let line = match cmd {
-            RpcCommand::Post {
-                room,
-                thread_tag,
-                delegate,
-                text,
-                return_rank_diff,
-            } => match rpc_post(&state, &headers, room, thread_tag, delegate, text, return_rank_diff).await {
-                Ok(r) => line_ok(r),
-                Err((e, h)) => line_err(e, h),
-            },
-            RpcCommand::Check { room, text } => match rpc_check(&state, &headers, room, text).await {
-                Ok(r) => line_ok(r),
-                Err((e, h)) => line_err(e, h),
-            },
-            RpcCommand::GetGardenRank {
-                room,
-                parent_path,
-                depth,
-                offset,
-                limit,
-                percent,
-            } => {
-                let reduced = state.reduced.read().await;
-                if let Err((e, h)) = authorize_room_read(&reduced, &headers, &room) {
-                    line_err(e, h)
-                } else {
+        results.push(dispatch_rpc(&state, &headers, cmd).await);
+    }
+
+    Json(RpcBatchResponse { results }).into_response()
+}
+
+/// Run one RPC command. Shared by `POST /api/v0/rpc` and the ChatGPT MCP tools.
+pub async fn dispatch_rpc(state: &AppState, headers: &HeaderMap, cmd: RpcCommand) -> RpcLine {
+    match cmd {
+        RpcCommand::Post {
+            room,
+            thread_tag,
+            delegate,
+            text,
+            return_rank_diff,
+        } => match rpc_post(
+            &state,
+            &headers,
+            room,
+            thread_tag,
+            delegate,
+            text,
+            return_rank_diff,
+        )
+        .await
+        {
+            Ok(r) => line_ok(r),
+            Err((e, h)) => line_err(e, h),
+        },
+        RpcCommand::Check { room, text } => match rpc_check(&state, &headers, room, text).await {
+            Ok(r) => line_ok(r),
+            Err((e, h)) => line_err(e, h),
+        },
+        RpcCommand::GetGardenRank {
+            room,
+            parent_path,
+            depth,
+            offset,
+            limit,
+            percent,
+        } => {
+            let reduced = state.reduced.read().await;
+            if let Err((e, h)) = authorize_room_read(&reduced, &headers, &room) {
+                line_err(e, h)
+            } else {
                 let content = content_for_room(&reduced, &room);
                 let popt = if parent_path.trim().is_empty() {
                     None
@@ -947,24 +1032,28 @@ pub async fn handle_rpc_batch(
                     Ok(r) => line_ok(RpcResult::GardenRank(r)),
                     Err((e, h)) => line_err(e, h),
                 }
-                }
             }
-            RpcCommand::GetGardenItem {
-                room,
-                item_path,
-                full,
-            } => {
-                let reduced = state.reduced.read().await;
-                if let Err((e, h)) = authorize_room_read(&reduced, &headers, &room) {
-                    line_err(e, h)
-                } else {
+        }
+        RpcCommand::GetGardenItem {
+            room,
+            item_path,
+            full,
+        } => {
+            let reduced = state.reduced.read().await;
+            if let Err((e, h)) = authorize_room_read(&reduced, &headers, &room) {
+                line_err(e, h)
+            } else {
                 let content = content_for_room(&reduced, &room);
                 let item_str = canonicalize_item(&item_path);
-                let item = ItemId::parse(&item_str).unwrap_or_else(|| ItemId::opaque(item_str.clone()));
+                let item =
+                    ItemId::parse(&item_str).unwrap_or_else(|| ItemId::opaque(item_str.clone()));
                 if !content.items.contains(&item) {
                     line_err(
                         "item not found",
-                        Some(format!("{} does not exist", GardenItemUrl::from_storage_str(&item_str, &room))),
+                        Some(format!(
+                            "{} does not exist",
+                            GardenItemUrl::from_storage_str(&item_str, &room)
+                        )),
                     )
                 } else {
                     let want_full = full.unwrap_or(false);
@@ -997,25 +1086,26 @@ pub async fn handle_rpc_batch(
                         threads,
                     }))
                 }
-                }
             }
-            RpcCommand::GetForumThread {
-                room,
-                thread_tag,
-                offset,
-                limit,
-                since,
-                before,
-                actor,
-                post_id,
-            } => {
-                let reduced = state.reduced.read().await;
-                if let Err((e, h)) = authorize_room_read(&reduced, &headers, &room) {
-                    line_err(e, h)
-                } else {
+        }
+        RpcCommand::GetForumThread {
+            room,
+            thread_tag,
+            offset,
+            limit,
+            since,
+            before,
+            actor,
+            post_id,
+        } => {
+            let reduced = state.reduced.read().await;
+            if let Err((e, h)) = authorize_room_read(&reduced, &headers, &room) {
+                line_err(e, h)
+            } else {
                 let actor_prefix = match actor.as_deref().map(str::trim) {
                     None | Some("") => Ok(String::new()),
-                    Some(s) => parse_username(s).map_err(|msg| ("invalid actor filter".to_string(), Some(msg))),
+                    Some(s) => parse_username(s)
+                        .map_err(|msg| ("invalid actor filter".to_string(), Some(msg))),
                 };
                 match actor_prefix {
                     Err((e, h)) => line_err(e, h),
@@ -1038,282 +1128,301 @@ pub async fn handle_rpc_batch(
                         }
                     }
                 }
+            }
+        }
+        RpcCommand::ListForumThreads { room } => {
+            let reduced = state.reduced.read().await;
+            if let Err((e, h)) = authorize_room_read(&reduced, &headers, &room) {
+                line_err(e, h)
+            } else {
+                line_ok(RpcResult::ForumThreads(rpc_list_forum_threads(
+                    &reduced, &room,
+                )))
+            }
+        }
+        RpcCommand::RoomCreate { slug } => match parse_bearer(&headers) {
+            Err((_, m)) => line_err(m, None),
+            Ok(bearer) => {
+                let (tx, rx) = oneshot::channel();
+                match state
+                    .write_tx
+                    .send(WriteCmd::RoomCreate {
+                        slug,
+                        bearer,
+                        reply: tx,
+                    })
+                    .await
+                {
+                    Err(_) => line_err("writer unavailable", None),
+                    Ok(()) => match rx.await {
+                        Err(_) => line_err("writer dropped", None),
+                        Ok(Ok(r)) => line_ok(r),
+                        Ok(Err((msg, hint))) => line_err(msg, hint),
+                    },
                 }
             }
-            RpcCommand::ListForumThreads { room } => {
+        },
+        RpcCommand::RoomGrant {
+            room,
+            username,
+            capabilities,
+        } => match parse_bearer(&headers) {
+            Err((_, m)) => line_err(m, None),
+            Ok(bearer) => {
+                let (tx, rx) = oneshot::channel();
+                match state
+                    .write_tx
+                    .send(WriteCmd::Grant {
+                        room,
+                        username,
+                        capabilities,
+                        bearer,
+                        reply: tx,
+                    })
+                    .await
+                {
+                    Err(_) => line_err("writer unavailable", None),
+                    Ok(()) => match rx.await {
+                        Err(_) => line_err("writer dropped", None),
+                        Ok(Ok(r)) => line_ok(r),
+                        Ok(Err((msg, hint))) => line_err(msg, hint),
+                    },
+                }
+            }
+        },
+        // Invite links are stored in AppState only (not JSONL); they do not survive restart.
+        RpcCommand::RoomMintInvite {
+            room,
+            capabilities,
+            max_uses,
+        } => {
+            let principal = {
                 let reduced = state.reduced.read().await;
-                if let Err((e, h)) = authorize_room_read(&reduced, &headers, &room) {
-                    line_err(e, h)
-                } else {
-                    line_ok(RpcResult::ForumThreads(rpc_list_forum_threads(&reduced, &room)))
-                }
-            }
-            RpcCommand::RoomCreate { slug } => {
-                match parse_bearer(&headers) {
-                    Err((_, m)) => line_err(m, None),
-                    Ok(bearer) => {
-                        let (tx, rx) = oneshot::channel();
-                        match state
-                            .write_tx
-                            .send(WriteCmd::RoomCreate {
-                                slug,
-                                bearer,
-                                reply: tx,
-                            })
-                            .await
-                        {
-                            Err(_) => line_err("writer unavailable", None),
-                            Ok(()) => match rx.await {
-                                Err(_) => line_err("writer dropped", None),
-                                Ok(Ok(r)) => line_ok(r),
-                                Ok(Err((msg, hint))) => line_err(msg, hint),
-                            },
-                        }
-                    }
-                }
-            }
-            RpcCommand::RoomGrant {
-                room,
-                username,
-                capabilities,
-            } => {
-                match parse_bearer(&headers) {
-                    Err((_, m)) => line_err(m, None),
-                    Ok(bearer) => {
-                        let (tx, rx) = oneshot::channel();
-                        match state
-                            .write_tx
-                            .send(WriteCmd::Grant {
-                                room,
-                                username,
-                                capabilities,
-                                bearer,
-                                reply: tx,
-                            })
-                            .await
-                        {
-                            Err(_) => line_err("writer unavailable", None),
-                            Ok(()) => match rx.await {
-                                Err(_) => line_err("writer dropped", None),
-                                Ok(Ok(r)) => line_ok(r),
-                                Ok(Err((msg, hint))) => line_err(msg, hint),
-                            },
-                        }
-                    }
-                }
-            }
-            // Invite links are stored in AppState only (not JSONL); they do not survive restart.
-            RpcCommand::RoomMintInvite {
-                room,
-                capabilities,
-                max_uses,
-            } => {
-                let principal = {
-                    let reduced = state.reduced.read().await;
-                    verify_bearer_principal(&headers, &reduced)
-                };
-                match principal {
-                    Err((_, m)) => line_err(m, None),
-                    Ok(principal) => {
-                        let can_manage = {
-                            let reduced = state.reduced.read().await;
-                            reduced.user_has_cap(&room, &principal, ThreadCapability::Manage)
-                        };
-                        if !can_manage {
-                            line_err("requires Manage capability", None)
-                        } else if capabilities.is_empty() {
-                            line_err("capabilities must not be empty", None)
-                        } else {
-                            match capabilities
-                                .iter()
-                                .map(|c| parse_capability(c.trim()))
-                                .collect::<Result<Vec<ThreadCapability>, String>>()
-                            {
-                                Err(msg) => line_err(msg, None),
-                                Ok(caps) => {
-                                    let max_uses = max_uses.clamp(1, 100_000);
-                                    let now = now_ms();
-                                    let expires_at_ms = now + INVITE_TTL_MS;
-                                    let token = loop {
-                                        let t = gen_invite_token();
-                                        let taken = {
-                                            let invites = state.invites.read().await;
-                                            invites.contains_key(&t)
-                                        };
-                                        if !taken {
-                                            break t;
-                                        }
-                                    };
-                                    let inv = InviteState {
-                                        room_id: room.clone(),
-                                        capabilities: caps,
-                                        expires_at_ms,
-                                        max_uses,
-                                        current_uses: 0,
-                                        inviter: principal,
-                                    };
-                                    state.invites.write().await.insert(token.clone(), inv);
-                                    let public_url = std::env::var("SLUG_PUBLIC_URL")
-                                        .unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
-                                    let invite_url = format!("{public_url}/join/{token}");
-                                    line_ok(RpcResult::RoomInviteMinted {
-                                        invite_url,
-                                        expires_at_ms: Some(expires_at_ms),
-                                        max_uses,
-                                    })
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            RpcCommand::RoomAudit { room } => {
-                let principal = {
-                    let reduced = state.reduced.read().await;
-                    verify_bearer_principal(&headers, &reduced)
-                };
-                match principal {
-                    Err((_, m)) => line_err(m, None),
-                    Ok(principal) => {
+                verify_bearer_principal(&headers, &reduced)
+            };
+            match principal {
+                Err((_, m)) => line_err(m, None),
+                Ok(principal) => {
+                    let can_manage = {
                         let reduced = state.reduced.read().await;
-                        if room == "public" {
-                            line_err("audit is only available for private rooms", None)
-                        } else if !reduced.rooms.contains(&room) {
-                            line_err("unknown room", None)
-                        } else {
-                            let can_audit = reduced.user_has_cap(&room, &principal, ThreadCapability::View)
-                                || reduced.user_has_cap(&room, &principal, ThreadCapability::Manage);
-                            if !can_audit {
-                                line_err("requires View or Manage capability", None)
-                            } else {
-                                let grants: Vec<RoomAuditEntry> = reduced
-                                    .grants
-                                    .get(&room)
-                                    .map(|m| {
-                                        let mut v: Vec<RoomAuditEntry> = m
-                                            .iter()
-                                            .map(|(username, caps)| {
-                                                let mut c: Vec<String> =
-                                                    caps.iter().copied().map(capability_wire).collect();
-                                                c.sort();
-                                                RoomAuditEntry {
-                                                    username: username.clone(),
-                                                    capabilities: c,
-                                                }
-                                            })
-                                            .collect();
-                                        v.sort_by(|a, b| a.username.cmp(&b.username));
-                                        v
-                                    })
-                                    .unwrap_or_default();
-                                line_ok(RpcResult::RoomAudit(RoomAuditResponse { room, grants }))
-                            }
-                        }
-                    }
-                }
-            }
-            RpcCommand::RoomList => {
-                let principal = {
-                    let reduced = state.reduced.read().await;
-                    verify_bearer_principal(&headers, &reduced)
-                };
-                match principal {
-                    Err((_, m)) => line_err(m, None),
-                    Ok(principal) => {
-                        let reduced = state.reduced.read().await;
-                        let mut rooms: Vec<(i64, String)> = reduced
-                            .grants
+                        reduced.user_has_cap(&room, &principal, ThreadCapability::Manage)
+                    };
+                    if !can_manage {
+                        line_err("requires Manage capability", None)
+                    } else if capabilities.is_empty() {
+                        line_err("capabilities must not be empty", None)
+                    } else {
+                        match capabilities
                             .iter()
-                            .filter(|(room, members)| {
-                                reduced.rooms.contains(*room) && members.contains_key(&principal)
-                            })
-                            .map(|(room, _)| (reduced.room_last_activity_ts(room), room.clone()))
-                            .collect();
-                        // Newest activity first; stable tie-break on room id.
-                        rooms.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
-                        let rooms: Vec<String> = rooms.into_iter().map(|(_, id)| id).collect();
-                        line_ok(RpcResult::RoomList(RoomListResponse { rooms }))
+                            .map(|c| parse_capability(c.trim()))
+                            .collect::<Result<Vec<ThreadCapability>, String>>()
+                        {
+                            Err(msg) => line_err(msg, None),
+                            Ok(caps) => {
+                                let max_uses = max_uses.clamp(1, 100_000);
+                                let now = now_ms();
+                                let expires_at_ms = now + INVITE_TTL_MS;
+                                let token = loop {
+                                    let t = gen_invite_token();
+                                    let taken = {
+                                        let invites = state.invites.read().await;
+                                        invites.contains_key(&t)
+                                    };
+                                    if !taken {
+                                        break t;
+                                    }
+                                };
+                                let inv = InviteState {
+                                    room_id: room.clone(),
+                                    capabilities: caps,
+                                    expires_at_ms,
+                                    max_uses,
+                                    current_uses: 0,
+                                    inviter: principal,
+                                };
+                                state.invites.write().await.insert(token.clone(), inv);
+                                let public_url = std::env::var("SLUG_PUBLIC_URL")
+                                    .unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
+                                let invite_url = format!("{public_url}/join/{token}");
+                                line_ok(RpcResult::RoomInviteMinted {
+                                    invite_url,
+                                    expires_at_ms: Some(expires_at_ms),
+                                    max_uses,
+                                })
+                            }
+                        }
                     }
                 }
             }
-            RpcCommand::RoomDelete { room } => match rpc_room_delete(&state, &headers, room).await {
+        }
+        RpcCommand::RoomAudit { room } => {
+            let principal = {
+                let reduced = state.reduced.read().await;
+                verify_bearer_principal(&headers, &reduced)
+            };
+            match principal {
+                Err((_, m)) => line_err(m, None),
+                Ok(principal) => {
+                    let reduced = state.reduced.read().await;
+                    if room == "public" {
+                        line_err("audit is only available for private rooms", None)
+                    } else if !reduced.rooms.contains(&room) {
+                        line_err("unknown room", None)
+                    } else {
+                        let can_audit =
+                            reduced.user_has_cap(&room, &principal, ThreadCapability::View)
+                                || reduced.user_has_cap(
+                                    &room,
+                                    &principal,
+                                    ThreadCapability::Manage,
+                                );
+                        if !can_audit {
+                            line_err("requires View or Manage capability", None)
+                        } else {
+                            let grants: Vec<RoomAuditEntry> = reduced
+                                .grants
+                                .get(&room)
+                                .map(|m| {
+                                    let mut v: Vec<RoomAuditEntry> = m
+                                        .iter()
+                                        .map(|(username, caps)| {
+                                            let mut c: Vec<String> =
+                                                caps.iter().copied().map(capability_wire).collect();
+                                            c.sort();
+                                            RoomAuditEntry {
+                                                username: username.clone(),
+                                                capabilities: c,
+                                            }
+                                        })
+                                        .collect();
+                                    v.sort_by(|a, b| a.username.cmp(&b.username));
+                                    v
+                                })
+                                .unwrap_or_default();
+                            line_ok(RpcResult::RoomAudit(RoomAuditResponse { room, grants }))
+                        }
+                    }
+                }
+            }
+        }
+        RpcCommand::RoomList => {
+            let principal = {
+                let reduced = state.reduced.read().await;
+                verify_bearer_principal(&headers, &reduced)
+            };
+            match principal {
+                Err((_, m)) => line_err(m, None),
+                Ok(principal) => {
+                    let reduced = state.reduced.read().await;
+                    let mut rooms: Vec<(i64, String)> = reduced
+                        .grants
+                        .iter()
+                        .filter(|(room, members)| {
+                            reduced.rooms.contains(*room) && members.contains_key(&principal)
+                        })
+                        .map(|(room, _)| (reduced.room_last_activity_ts(room), room.clone()))
+                        .collect();
+                    // Newest activity first; stable tie-break on room id.
+                    rooms.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+                    let rooms: Vec<String> = rooms.into_iter().map(|(_, id)| id).collect();
+                    line_ok(RpcResult::RoomList(RoomListResponse { rooms }))
+                }
+            }
+        }
+        RpcCommand::RoomDelete { room } => match rpc_room_delete(&state, &headers, room).await {
+            Ok(r) => line_ok(r),
+            Err((e, h)) => line_err(e, h),
+        },
+        RpcCommand::ThreadGraduate { room, thread_tag } => {
+            match rpc_thread_graduate(&state, &headers, room, thread_tag).await {
                 Ok(r) => line_ok(r),
                 Err((e, h)) => line_err(e, h),
-            },
-            RpcCommand::ThreadGraduate { room, thread_tag } => {
-                match rpc_thread_graduate(&state, &headers, room, thread_tag).await {
-                    Ok(r) => line_ok(r),
-                    Err((e, h)) => line_err(e, h),
+            }
+        }
+        RpcCommand::RoomRevoke {
+            room,
+            username,
+            capability,
+        } => match parse_bearer(&headers) {
+            Err((_, m)) => line_err(m, None),
+            Ok(bearer) => {
+                let (tx, rx) = oneshot::channel();
+                match state
+                    .write_tx
+                    .send(WriteCmd::Revoke {
+                        room,
+                        username,
+                        capability,
+                        bearer,
+                        reply: tx,
+                    })
+                    .await
+                {
+                    Err(_) => line_err("writer unavailable", None),
+                    Ok(()) => match rx.await {
+                        Err(_) => line_err("writer dropped", None),
+                        Ok(Ok(r)) => line_ok(r),
+                        Ok(Err((msg, hint))) => line_err(msg, hint),
+                    },
                 }
             }
-            RpcCommand::RoomRevoke {
-                room,
-                username,
-                capability,
-            } => {
-                match parse_bearer(&headers) {
-                    Err((_, m)) => line_err(m, None),
-                    Ok(bearer) => {
-                        let (tx, rx) = oneshot::channel();
-                        match state
-                            .write_tx
-                            .send(WriteCmd::Revoke {
-                                room,
-                                username,
-                                capability,
-                                bearer,
-                                reply: tx,
-                            })
-                            .await
-                        {
-                            Err(_) => line_err("writer unavailable", None),
-                            Ok(()) => match rx.await {
-                                Err(_) => line_err("writer dropped", None),
-                                Ok(Ok(r)) => line_ok(r),
-                                Ok(Err((msg, hint))) => line_err(msg, hint),
-                            },
-                        }
-                    }
-                }
-            },
-            RpcCommand::GetGlobalRank {
-                room,
-                limit,
-                offset,
-                percent,
-            } => {
-                {
-                    let reduced = state.reduced.read().await;
-                    if let Err((e, h)) = authorize_room_read(&reduced, &headers, &room) {
-                        results.push(line_err(e, h));
-                        continue;
-                    }
-                }
+        },
+        RpcCommand::GetGlobalRank {
+            room,
+            limit,
+            offset,
+            percent,
+        } => {
+            let reduced = state.reduced.read().await;
+            if let Err((e, h)) = authorize_room_read(&reduced, headers, &room) {
+                line_err(e, h)
+            } else {
                 const DEFAULT_LIMIT: usize = 50;
                 const MAX_LIMIT: usize = 500;
                 let limit = limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT);
                 let offset = offset.unwrap_or(0);
                 let want_percent = percent.unwrap_or(false);
-                let reduced = state.reduced.read().await;
                 let content = content_for_room(&reduced, &room);
                 let all_items: Vec<ItemId> = content.items.iter().cloned().collect();
                 let rankings = crate::scope_rank::build_rankings_for_item_set(content, &all_items);
-                let ranked_total: usize = rankings.component_rankings.iter().map(|component| component.ranked.len()).sum();
+                let ranked_total: usize = rankings
+                    .component_rankings
+                    .iter()
+                    .map(|component| component.ranked.len())
+                    .sum();
                 let unranked_total = rankings.unranked_items.len();
-                let components: Vec<RankComponent> = rankings.component_rankings.into_iter().map(|component| {
-                    let top = component.ranked.first().map(|r| r.score).unwrap_or(1.0).max(1e-12);
-                    RankComponent {
-                        pairs: component.pairs,
-                        ranking: component.ranked.into_iter().map(|ranked| RankRow {
-                            item: GardenItemUrl::from_stored(&ranked.item, &room),
-                            score: ranked.score,
-                            percent: want_percent.then(|| (ranked.score / top * 100.0).clamp(0.0, 100.0)),
-                        }).collect(),
-                    }
-                }).collect();
-                let unranked: Vec<GardenItemUrl> = rankings.unranked_items.into_iter()
-                    .map(|item| GardenItemUrl::from_stored(&item, &room)).collect();
-                let (components, unranked_items) = paginate_rankings(components, unranked, offset, Some(limit));
+                let components: Vec<RankComponent> = rankings
+                    .component_rankings
+                    .into_iter()
+                    .map(|component| {
+                        let top = component
+                            .ranked
+                            .first()
+                            .map(|r| r.score)
+                            .unwrap_or(1.0)
+                            .max(1e-12);
+                        RankComponent {
+                            pairs: component.pairs,
+                            ranking: component
+                                .ranked
+                                .into_iter()
+                                .map(|ranked| RankRow {
+                                    item: GardenItemUrl::from_stored(&ranked.item, &room),
+                                    score: ranked.score,
+                                    percent: want_percent
+                                        .then(|| (ranked.score / top * 100.0).clamp(0.0, 100.0)),
+                                })
+                                .collect(),
+                        }
+                    })
+                    .collect();
+                let unranked: Vec<GardenItemUrl> = rankings
+                    .unranked_items
+                    .into_iter()
+                    .map(|item| GardenItemUrl::from_stored(&item, &room))
+                    .collect();
+                let (components, unranked_items) =
+                    paginate_rankings(components, unranked, offset, Some(limit));
 
                 line_ok(RpcResult::GlobalRank(GlobalRankResponse {
                     ranked_total,
@@ -1324,35 +1433,40 @@ pub async fn handle_rpc_batch(
                     unranked_items,
                 }))
             }
-            RpcCommand::GetPair { room, parent_path } => {
-                let reduced = state.reduced.read().await;
-                if let Err((e, h)) = authorize_room_read(&reduced, &headers, &room) {
-                    line_err(e, h)
-                } else {
-                    drop(reduced);
-                    match rpc_get_pair(&state, room, parent_path).await {
-                        Ok(r) => line_ok(r),
-                        Err((e, h)) => line_err(e, h),
-                    }
+        }
+        RpcCommand::GetPair { room, parent_path } => {
+            let reduced = state.reduced.read().await;
+            if let Err((e, h)) = authorize_room_read(&reduced, &headers, &room) {
+                line_err(e, h)
+            } else {
+                drop(reduced);
+                match rpc_get_pair(&state, room, parent_path).await {
+                    Ok(r) => line_ok(r),
+                    Err((e, h)) => line_err(e, h),
                 }
             }
-            RpcCommand::GetMatchup {
-                room,
-                item_path,
-                limit,
-            } => {
-                let reduced = state.reduced.read().await;
-                if let Err((e, h)) = authorize_room_read(&reduced, &headers, &room) {
-                    line_err(e, h)
-                } else {
+        }
+        RpcCommand::GetMatchup {
+            room,
+            item_path,
+            limit,
+        } => {
+            let reduced = state.reduced.read().await;
+            if let Err((e, h)) = authorize_room_read(&reduced, &headers, &room) {
+                line_err(e, h)
+            } else {
                 let content = content_for_room(&reduced, &room);
                 let item_str = canonicalize_item(&item_path);
-                let item = ItemId::parse(&item_str).unwrap_or_else(|| ItemId::opaque(item_str.clone()));
+                let item =
+                    ItemId::parse(&item_str).unwrap_or_else(|| ItemId::opaque(item_str.clone()));
                 let limit = limit.unwrap_or(50).clamp(1, 200);
                 if !content.items.contains(&item) {
                     line_err(
                         "item not found",
-                        Some(format!("{} does not exist", GardenItemUrl::from_storage_str(&item_str, &room))),
+                        Some(format!(
+                            "{} does not exist",
+                            GardenItemUrl::from_storage_str(&item_str, &room)
+                        )),
                     )
                 } else {
                     let votes: Vec<VoteRow> = content
@@ -1366,7 +1480,8 @@ pub async fn handle_rpc_batch(
                                     a: GardenItemUrl::from_stored(&v.a, &room),
                                     b: GardenItemUrl::from_stored(&v.b, &room),
                                     ratio: {
-                                        let (l, r) = crate::dsl::reduce_ratio(v.ratio_left, v.ratio_right);
+                                        let (l, r) =
+                                            crate::dsl::reduce_ratio(v.ratio_left, v.ratio_right);
                                         format!("{l}:{r}")
                                     },
                                     actor: Some(v.principal.clone()),
@@ -1381,75 +1496,97 @@ pub async fn handle_rpc_batch(
                         votes,
                     }))
                 }
-                }
-            },
-            RpcCommand::GetRankHistory { room, item_path } => {
-                let reduced = state.reduced.read().await;
-                if let Err((e, h)) = authorize_room_read(&reduced, &headers, &room) {
-                    line_err(e, h)
-                } else {
+            }
+        }
+        RpcCommand::GetRankHistory { room, item_path } => {
+            let reduced = state.reduced.read().await;
+            if let Err((e, h)) = authorize_room_read(&reduced, &headers, &room) {
+                line_err(e, h)
+            } else {
                 let content = content_for_room(&reduced, &room);
                 let scope = scope_from_room_wire(&room);
                 let item_str = canonicalize_item(&item_path);
-                let item = ItemId::parse(&item_str).unwrap_or_else(|| ItemId::opaque(item_str.clone()));
+                let item =
+                    ItemId::parse(&item_str).unwrap_or_else(|| ItemId::opaque(item_str.clone()));
                 let entries = content.rank_history.get(&item).cloned().unwrap_or_default();
-                let history: Vec<RankHistoryRow> = entries.iter().map(|e| {
-                    let caused_by: Vec<VoteRow> = reduced.ingests_by_id.get(&e.post_id)
-                        .and_then(|ing| crate::dsl::parse_full(&ing.raw).ok())
-                        .map(|doc| {
-                            doc.statements.into_iter().filter_map(|s| {
-                                if let crate::dsl::Stmt::Vote { item1, item2, ratio_left, ratio_right, explanation } = s {
-                                    let a = canonicalize_item(&item1);
-                                    let b = canonicalize_item(&item2);
-                                    if a == item_str || b == item_str {
-                                        Some(VoteRow {
-                                            ts: e.ts,
-                                            a: GardenItemUrl::from_storage_str(&a, &room),
-                                            b: GardenItemUrl::from_storage_str(&b, &room),
-                                    ratio: {
-                                        let (l, r) = crate::dsl::reduce_ratio(ratio_left, ratio_right);
-                                        format!("{l}:{r}")
-                                    },
-                                    actor: reduced.ingests_by_id.get(&e.post_id).map(|ing| ing.principal.clone()),
-                                            body: explanation,
-                                            thread: Some(format!("#{}", e.thread)),
-                                        })
-                                    } else {
-                                        None
-                                    }
-                                } else {
-                                    None
-                                }
-                            }).collect()
-                        })
-                        .unwrap_or_default();
-                    let thread_post_index =
-                        reduced.thread_post_index_chronological(&scope, &e.thread, &e.post_id);
-                    RankHistoryRow {
-                        ts: e.ts,
-                        scope_rank: e.scope_rank,
-                        scope_rank_delta: e.scope_rank_delta,
-                        scope_total: e.scope_total,
-                        global_rank: e.global_rank,
-                        global_rank_delta: e.global_rank_delta,
-                        global_total: e.global_total,
-                        score: e.score,
-                        thread: format!("#{}", e.thread),
-                        thread_post_index,
-                        caused_by,
-                    }
-                }).collect();
+                let history: Vec<RankHistoryRow> = entries
+                    .iter()
+                    .map(|e| {
+                        let caused_by: Vec<VoteRow> = reduced
+                            .ingests_by_id
+                            .get(&e.post_id)
+                            .and_then(|ing| crate::dsl::parse_full(&ing.raw).ok())
+                            .map(|doc| {
+                                doc.statements
+                                    .into_iter()
+                                    .filter_map(|s| {
+                                        if let crate::dsl::Stmt::Vote {
+                                            item1,
+                                            item2,
+                                            ratio_left,
+                                            ratio_right,
+                                            explanation,
+                                        } = s
+                                        {
+                                            let a = canonicalize_item(&item1);
+                                            let b = canonicalize_item(&item2);
+                                            if a == item_str || b == item_str {
+                                                Some(VoteRow {
+                                                    ts: e.ts,
+                                                    a: GardenItemUrl::from_storage_str(&a, &room),
+                                                    b: GardenItemUrl::from_storage_str(&b, &room),
+                                                    ratio: {
+                                                        let (l, r) = crate::dsl::reduce_ratio(
+                                                            ratio_left,
+                                                            ratio_right,
+                                                        );
+                                                        format!("{l}:{r}")
+                                                    },
+                                                    actor: reduced
+                                                        .ingests_by_id
+                                                        .get(&e.post_id)
+                                                        .map(|ing| ing.principal.clone()),
+                                                    body: explanation,
+                                                    thread: Some(format!("#{}", e.thread)),
+                                                })
+                                            } else {
+                                                None
+                                            }
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .collect()
+                            })
+                            .unwrap_or_default();
+                        let thread_post_index =
+                            reduced.thread_post_index_chronological(&scope, &e.thread, &e.post_id);
+                        RankHistoryRow {
+                            ts: e.ts,
+                            scope_rank: e.scope_rank,
+                            scope_rank_delta: e.scope_rank_delta,
+                            scope_total: e.scope_total,
+                            global_rank: e.global_rank,
+                            global_rank_delta: e.global_rank_delta,
+                            global_total: e.global_total,
+                            score: e.score,
+                            thread: format!("#{}", e.thread),
+                            thread_post_index,
+                            caused_by,
+                        }
+                    })
+                    .collect();
                 line_ok(RpcResult::RankHistory(RankHistoryResponse {
                     item: GardenItemUrl::from_storage_str(&item_str, &room),
                     history,
                 }))
-                }
-            },
-            RpcCommand::GetLeaves { room } => {
-                let reduced = state.reduced.read().await;
-                if let Err((e, h)) = authorize_room_read(&reduced, &headers, &room) {
-                    line_err(e, h)
-                } else {
+            }
+        }
+        RpcCommand::GetLeaves { room } => {
+            let reduced = state.reduced.read().await;
+            if let Err((e, h)) = authorize_room_read(&reduced, &headers, &room) {
+                line_err(e, h)
+            } else {
                 let content = content_for_room(&reduced, &room);
                 let parents: HashSet<String> = content
                     .item_children
@@ -1464,50 +1601,58 @@ pub async fn handle_rpc_batch(
                     .collect();
                 paths.sort();
                 line_ok(RpcResult::Leaves(LeavesResponse { paths }))
-                }
-            },
-            RpcCommand::GetPaths { room } => {
-                let reduced = state.reduced.read().await;
-                if let Err((e, h)) = authorize_room_read(&reduced, &headers, &room) {
-                    line_err(e, h)
-                } else {
+            }
+        }
+        RpcCommand::GetPaths { room } => {
+            let reduced = state.reduced.read().await;
+            if let Err((e, h)) = authorize_room_read(&reduced, &headers, &room) {
+                line_err(e, h)
+            } else {
                 let content = content_for_room(&reduced, &room);
                 let out: Vec<PathSummary> = content
                     .item_children
                     .get(&ItemId::ontology_root())
                     .map(|roots| {
-                        let mut v: Vec<PathSummary> = roots.iter()
+                        let mut v: Vec<PathSummary> = roots
+                            .iter()
                             .map(|path| {
-                                let children = content.item_children.get(path).map(|s| s.len()).unwrap_or(0);
+                                let children = content
+                                    .item_children
+                                    .get(path)
+                                    .map(|s| s.len())
+                                    .unwrap_or(0);
                                 PathSummary {
                                     path: TildeOntologyPath::from_stored(path),
                                     children,
                                     web: GardenItemUrl::from_stored(path, &room),
                                 }
-                            }).collect();
+                            })
+                            .collect();
                         v.sort_by(|a, b| a.path.as_str().cmp(b.path.as_str()));
                         v
                     })
                     .unwrap_or_default();
                 line_ok(RpcResult::Paths(PathsResponse { paths: out }))
-                }
-            },
-            RpcCommand::GetRecentVotes {
-                room,
-                parent,
-                limit,
-            } => {
-                let reduced = state.reduced.read().await;
-                if let Err((e, h)) = authorize_room_read(&reduced, &headers, &room) {
-                    line_err(e, h)
-                } else {
+            }
+        }
+        RpcCommand::GetRecentVotes {
+            room,
+            parent,
+            limit,
+        } => {
+            let reduced = state.reduced.read().await;
+            if let Err((e, h)) = authorize_room_read(&reduced, &headers, &room) {
+                line_err(e, h)
+            } else {
                 let content = content_for_room(&reduced, &room);
                 let group = &content.ranking_group;
                 let limit = limit.unwrap_or(25).clamp(1, 200);
                 let iter = group.recent_votes.iter();
                 let iter: Box<dyn Iterator<Item = _>> = if let Some(p) = &parent {
                     let parent_can = canonicalize_item(p);
-                    Box::new(iter.filter(move |v| vote_touches_path(v.a.as_str(), v.b.as_str(), &parent_can)))
+                    Box::new(iter.filter(move |v| {
+                        vote_touches_path(v.a.as_str(), v.b.as_str(), &parent_can)
+                    }))
                 } else {
                     Box::new(iter)
                 };
@@ -1524,58 +1669,66 @@ pub async fn handle_rpc_batch(
                         actor: Some(v.principal.clone()),
                         body: v.body.clone(),
                         thread: Some(v.thread_tag.clone()),
-                    }).collect();
+                    })
+                    .collect();
                 line_ok(RpcResult::RecentVotes(RecentVotesResponse { votes: out }))
-                }
-            },
-            RpcCommand::Search { query } => {
-                let reduced = state.reduced.read().await;
-                let limit = 50usize;
-                match principal_from_optional_bearer(&headers, &reduced) {
-                    Ok(principal) => line_ok(RpcResult::Search(rpc_search(&reduced, &query, limit, principal.as_deref()))),
-                    Err((e, h)) => line_err(e, h),
-                }
-            },
-            RpcCommand::GetFeed {
-                delegate,
-                since,
-                limit,
-            } => {
-                const DEFAULT_LIMIT: usize = 50;
-                const MAX_LIMIT: usize = 200;
-                let reduced = state.reduced.read().await;
-                match verify_bearer_principal(&headers, &reduced) {
-                    Err((_, m)) => line_err(m, None),
-                    Ok(viewer) => {
-                        let delegate_parsed: Option<Result<String, String>> = delegate
-                            .as_deref()
-                            .map(str::trim)
-                            .filter(|s| !s.is_empty())
-                            .map(parse_agent);
-                        match delegate_parsed {
-                            Some(Err(msg)) => {
-                                drop(reduced);
-                                line_err("invalid delegate", Some(msg))
-                            }
-                            Some(Ok(delegate_stored)) => {
-                                let line = if reduced.agent_bindings.get(&delegate_stored) != Some(&viewer) {
+            }
+        }
+        RpcCommand::Search { query } => {
+            let reduced = state.reduced.read().await;
+            let limit = 50usize;
+            match principal_from_optional_bearer(&headers, &reduced) {
+                Ok(principal) => line_ok(RpcResult::Search(rpc_search(
+                    &reduced,
+                    &query,
+                    limit,
+                    principal.as_deref(),
+                ))),
+                Err((e, h)) => line_err(e, h),
+            }
+        }
+        RpcCommand::GetFeed {
+            delegate,
+            since,
+            limit,
+        } => {
+            const DEFAULT_LIMIT: usize = 50;
+            const MAX_LIMIT: usize = 200;
+            let reduced = state.reduced.read().await;
+            match verify_bearer_principal(&headers, &reduced) {
+                Err((_, m)) => line_err(m, None),
+                Ok(viewer) => {
+                    let delegate_parsed: Option<Result<String, String>> = delegate
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(parse_agent);
+                    match delegate_parsed {
+                        Some(Err(msg)) => {
+                            drop(reduced);
+                            line_err("invalid delegate", Some(msg))
+                        }
+                        Some(Ok(delegate_stored)) => {
+                            let line =
+                                if reduced.agent_bindings.get(&delegate_stored) != Some(&viewer) {
                                     line_err(
                                         "not your delegate",
-                                        Some("this delegate is not bound to your signed-in account".into()),
+                                        Some(
+                                            "this delegate is not bound to your signed-in account"
+                                                .into(),
+                                        ),
                                     )
                                 } else {
-                                    let implicit_anchor = reduced
-                                        .ingests_ordered
-                                        .iter()
-                                        .enumerate()
-                                        .rev()
-                                        .find_map(|(index, id)| {
-                                            reduced.ingests_by_id.get(id).and_then(|ing| {
-                                                (ing.delegate.as_deref()
-                                                    == Some(delegate_stored.as_str()))
-                                                .then_some((index, ing.ts))
-                                            })
-                                        });
+                                    let implicit_anchor =
+                                        reduced.ingests_ordered.iter().enumerate().rev().find_map(
+                                            |(index, id)| {
+                                                reduced.ingests_by_id.get(id).and_then(|ing| {
+                                                    (ing.delegate.as_deref()
+                                                        == Some(delegate_stored.as_str()))
+                                                    .then_some((index, ing.ts))
+                                                })
+                                            },
+                                        );
                                     let limit = limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT);
                                     line_ok(RpcResult::Feed(rpc_feed(
                                         &reduced,
@@ -1586,47 +1739,41 @@ pub async fn handle_rpc_batch(
                                         limit,
                                     )))
                                 };
-                                drop(reduced);
-                                line
-                            }
-                            None => {
-                                // Session catch-up: last time *you* posted anything (delegate or not), so revisiting
-                                // an old chat with only a token still gets a sane cutoff.
-                                let implicit_anchor = reduced
-                                    .ingests_ordered
-                                    .iter()
-                                    .enumerate()
-                                    .rev()
-                                    .find_map(|(index, id)| {
+                            drop(reduced);
+                            line
+                        }
+                        None => {
+                            // Session catch-up: last time *you* posted anything (delegate or not), so revisiting
+                            // an old chat with only a token still gets a sane cutoff.
+                            let implicit_anchor =
+                                reduced.ingests_ordered.iter().enumerate().rev().find_map(
+                                    |(index, id)| {
                                         reduced.ingests_by_id.get(id).and_then(|ing| {
                                             (ing.principal == viewer).then_some((index, ing.ts))
                                         })
-                                    });
-                                let limit = limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT);
-                                let line = line_ok(RpcResult::Feed(rpc_feed(
-                                    &reduced,
-                                    &viewer,
-                                    None,
-                                    since,
-                                    implicit_anchor,
-                                    limit,
-                                )));
-                                drop(reduced);
-                                line
-                            }
+                                    },
+                                );
+                            let limit = limit.unwrap_or(DEFAULT_LIMIT).min(MAX_LIMIT);
+                            let line = line_ok(RpcResult::Feed(rpc_feed(
+                                &reduced,
+                                &viewer,
+                                None,
+                                since,
+                                implicit_anchor,
+                                limit,
+                            )));
+                            drop(reduced);
+                            line
                         }
                     }
                 }
-            },
-            RpcCommand::PostRedact { post_id } => {
-                match rpc_post_redact(&state, &headers, post_id).await {
-                    Ok(r) => line_ok(r),
-                    Err((e, h)) => line_err(e, h),
-                }
             }
-        };
-        results.push(line);
+        }
+        RpcCommand::PostRedact { post_id } => {
+            match rpc_post_redact(state, headers, post_id).await {
+                Ok(r) => line_ok(r),
+                Err((e, h)) => line_err(e, h),
+            }
+        }
     }
-
-    Json(RpcBatchResponse { results }).into_response()
 }

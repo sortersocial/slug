@@ -694,6 +694,9 @@ pub struct SearchThreadHit {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SearchPostHit {
+    /// Stable ingest id. Present for MCP `fetch` and omitted from older cached payloads.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub id: String,
     pub thread: String,
     pub actor: String,
     pub snippet: String,

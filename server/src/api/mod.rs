@@ -2,35 +2,24 @@ mod auth;
 mod helpers;
 mod rpc;
 mod stream;
-mod validate;
 mod ui_html;
+mod validate;
 pub(crate) mod write_actor;
 
 pub use auth::{
-    get_join_invite,
-    get_pending_session,
-    get_whoami,
-    post_pending_session,
-    post_choose_username,
-    get_auth_login,
-    get_auth_callback,
-    get_auth_complete,
-    get_choose_username,
-    get_web_login,
-    get_logout,
-    optional_principal,
-    resolve_web_session,
-    session_cookie_header_value,
-    WebSession,
-    SLUG_SESSION_COOKIE,
+    get_auth_callback, get_auth_complete, get_auth_login, get_choose_username, get_join_invite,
+    get_logout, get_pending_session, get_web_login, get_whoami, optional_principal,
+    post_choose_username, post_pending_session, resolve_web_session, session_cookie_header_value,
+    WebSession, SLUG_SESSION_COOKIE,
 };
 
 pub use helpers::{
     api_error, compute_connectivity_stats, is_pair_voted, now_ms, paginate_rankings,
-    parse_parent_specs, pick_random_distinct_item_pair, resolve_item, sha256_hex, vote_touches_path,
+    parse_parent_specs, pick_random_distinct_item_pair, public_url, resolve_item, sha256_hex,
+    vote_touches_path,
 };
 
-pub use rpc::handle_rpc_batch;
+pub use rpc::{dispatch_rpc, handle_rpc_batch};
 
 pub use stream::{get_html_stream, get_stream};
 
@@ -61,7 +50,8 @@ mod tests {
     fn validate_ingest_document_parse_error() {
         let reduced = ReducerState::default();
         let text = "~/t/a { unclosed ";
-        let err = validate_ingest_document(&reduced, text, &crate::reducer::ScopeId::Public).unwrap_err();
+        let err =
+            validate_ingest_document(&reduced, text, &crate::reducer::ScopeId::Public).unwrap_err();
         assert_eq!(err.0, StatusCode::BAD_REQUEST);
         assert_eq!(err.1, "parse error");
     }
@@ -82,7 +72,8 @@ mod tests {
     fn validate_ingest_document_rejects_vote_on_undefined_item() {
         let reduced = ReducerState::default();
         let text = "~/t/a {x}\n{why}\n~/t/b 1:1 ~/t/missing\n";
-        let err = validate_ingest_document(&reduced, text, &crate::reducer::ScopeId::Public).unwrap_err();
+        let err =
+            validate_ingest_document(&reduced, text, &crate::reducer::ScopeId::Public).unwrap_err();
         assert_eq!(err.0, StatusCode::BAD_REQUEST);
         assert!(err.1.contains("undefined item"));
     }
@@ -105,7 +96,8 @@ mod tests {
     fn validate_ingest_document_rejects_item_without_body() {
         let reduced = ReducerState::default();
         let text = "~/t/a\n";
-        let err = validate_ingest_document(&reduced, text, &crate::reducer::ScopeId::Public).unwrap_err();
+        let err =
+            validate_ingest_document(&reduced, text, &crate::reducer::ScopeId::Public).unwrap_err();
         assert_eq!(err.0, StatusCode::BAD_REQUEST);
         assert!(err.1.contains("missing body"));
     }

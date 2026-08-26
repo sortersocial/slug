@@ -4,8 +4,8 @@ use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc, RwLock};
 
 use crate::{
-    event_log::EventLog, events::ThreadCapability, resolvers::GitHubResolver,
-    reducer::ReducerState, write_cmd::WriteCmd,
+    event_log::EventLog, events::ThreadCapability, reducer::ReducerState,
+    resolvers::GitHubResolver, write_cmd::WriteCmd,
 };
 
 /// Ephemeral invite link (24h TTL, in-memory only; not written to the event log).
@@ -30,7 +30,32 @@ pub struct PendingSession {
     pub redeem_invite: Option<String>,
     /// Local path to navigate to after browser onboarding completes.
     pub redirect_next: Option<String>,
+    /// ChatGPT / MCP OAuth 2.1 authorize request waiting on this Google login.
+    pub mcp_oauth: Option<McpOauthRequest>,
     pub complete: Option<(String /*username*/, String /*bearer*/)>,
+}
+
+/// In-flight MCP authorization-code request (RAM only, like [`PendingSession`]).
+#[derive(Debug, Clone)]
+pub struct McpOauthRequest {
+    pub client_id: String,
+    pub redirect_uri: String,
+    pub state: Option<String>,
+    pub code_challenge: String,
+    pub resource: String,
+    pub scope: Option<String>,
+}
+
+/// One-time authorization code minted after the human finishes Google login.
+#[derive(Debug, Clone)]
+pub struct McpOauthCode {
+    pub username: String,
+    pub bearer: String,
+    pub client_id: String,
+    pub redirect_uri: String,
+    pub code_challenge: String,
+    pub resource: String,
+    pub created_ts: i64,
 }
 
 /// An SSE event broadcast to all live stream subscribers when an ingest occurs.
@@ -73,6 +98,8 @@ pub struct AppState {
     pub event_log: Arc<EventLog>,
     pub reduced: Arc<RwLock<ReducerState>>,
     pub pending_sessions: Arc<RwLock<HashMap<String, PendingSession>>>,
+    /// MCP OAuth authorization codes (`code` → grant). RAM only; 10-minute TTL.
+    pub mcp_oauth_codes: Arc<RwLock<HashMap<String, McpOauthCode>>>,
     /// Ephemeral invite tokens (`inv_…`): in this process only, not written to the event log.
     /// Minted via `RoomMintInvite`; restarting the server drops any unused links. (Log event
     /// types `InviteMinted` / `InviteRedeemed` exist for replay and a possible future persisted path.)
@@ -108,6 +135,7 @@ impl AppState {
             event_log: Arc::new(event_log),
             reduced: Arc::new(RwLock::new(ReducerState::default())),
             pending_sessions: Arc::new(RwLock::new(HashMap::new())),
+            mcp_oauth_codes: Arc::new(RwLock::new(HashMap::new())),
             invites: Arc::new(RwLock::new(HashMap::new())),
             stream_tx,
             js_tx,

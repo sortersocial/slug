@@ -1,27 +1,42 @@
-use axum::{
-    http::StatusCode,
-    response::IntoResponse,
-    Json,
-};
+use axum::{http::StatusCode, response::IntoResponse, Json};
 use sha2::{Digest, Sha256};
 use slug_types::paths::GardenItemUrl;
 use slug_types::ItemId;
 use slug_types::*;
 use std::collections::HashMap;
 
-use crate::{
-    canonical_path::canonicalize_item,
-    ranking::connected_components_from_voted_pairs,
-};
+use crate::{canonical_path::canonicalize_item, ranking::connected_components_from_voted_pairs};
 
-pub fn api_error(status: StatusCode, error: impl Into<String>, hint: Option<String>) -> axum::response::Response {
-    (status, Json(ApiError { ok: false, error: error.into(), hint })).into_response()
+pub fn api_error(
+    status: StatusCode,
+    error: impl Into<String>,
+    hint: Option<String>,
+) -> axum::response::Response {
+    (
+        status,
+        Json(ApiError {
+            ok: false,
+            error: error.into(),
+            hint,
+        }),
+    )
+        .into_response()
 }
 
 pub fn sha256_hex(s: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(s.as_bytes());
     format!("{:x}", hasher.finalize())
+}
+
+/// Public origin for OAuth metadata, MCP resource ids, and login redirects.
+pub fn public_url() -> String {
+    std::env::var("SLUG_PUBLIC_URL")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "http://127.0.0.1:8080".to_string())
+        .trim_end_matches('/')
+        .to_string()
 }
 
 pub fn now_ms() -> i64 {
@@ -48,7 +63,10 @@ pub fn parse_parent_specs(parent: Option<&String>) -> Vec<String> {
     if s.is_empty() {
         return vec![];
     }
-    s.split(',').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect()
+    s.split(',')
+        .map(|x| x.trim().to_string())
+        .filter(|x| !x.is_empty())
+        .collect()
 }
 
 /// Validate multi-parent garden scopes against [`ContentState`]: every explicit parent path must be a
@@ -63,7 +81,9 @@ pub fn validate_garden_parent_scope_paths(
         return Ok(());
     }
     let none_exist = specs.iter().all(|spec| {
-        let Some(canon) = ItemId::parse(spec) else { return true };
+        let Some(canon) = ItemId::parse(spec) else {
+            return true;
+        };
         !content.items.contains(&canon) && !content.item_children.contains_key(&canon)
     });
     if none_exist {
@@ -142,13 +162,24 @@ pub fn pick_random_distinct_item_pair(items: &[ItemId]) -> Option<(ItemId, ItemI
 pub fn is_pair_voted(group: &crate::reducer::GroupState, a: &str, b: &str) -> bool {
     let a_key = ItemId::parse(a).unwrap_or_else(|| ItemId::opaque(a.to_string()));
     let b_key = ItemId::parse(b).unwrap_or_else(|| ItemId::opaque(b.to_string()));
-    let Some(&a_idx) = group.item_to_idx.get(&a_key) else { return false; };
-    let Some(&b_idx) = group.item_to_idx.get(&b_key) else { return false; };
-    let (i, j) = if a_idx < b_idx { (a_idx, b_idx) } else { (b_idx, a_idx) };
+    let Some(&a_idx) = group.item_to_idx.get(&a_key) else {
+        return false;
+    };
+    let Some(&b_idx) = group.item_to_idx.get(&b_key) else {
+        return false;
+    };
+    let (i, j) = if a_idx < b_idx {
+        (a_idx, b_idx)
+    } else {
+        (b_idx, a_idx)
+    };
     group.voted_pairs.contains(&(i, j))
 }
 
-pub fn compute_connectivity_stats(group: &crate::reducer::GroupState, pool: &[ItemId]) -> ConnectivityStats {
+pub fn compute_connectivity_stats(
+    group: &crate::reducer::GroupState,
+    pool: &[ItemId],
+) -> ConnectivityStats {
     let n = pool.len();
 
     let global_idxs: Vec<Option<usize>> = pool
@@ -185,7 +216,11 @@ pub fn compute_connectivity_stats(group: &crate::reducer::GroupState, pool: &[It
     ConnectivityStats {
         items: n,
         components: num_components,
-        comparisons_until_connected: if num_components > 0 { num_components - 1 } else { 0 },
+        comparisons_until_connected: if num_components > 0 {
+            num_components - 1
+        } else {
+            0
+        },
         pairs_voted,
         pairs_possible: n * n.saturating_sub(1) / 2,
     }

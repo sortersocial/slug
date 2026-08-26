@@ -399,4 +399,13 @@ Not relevant yet. Instant Checkout / Agentic Commerce is beta for selected marke
 5. Optional: import `slug-compare` skill from `GUIDE.sorter`.
 6. Submit universal plugin. Widgets only after the text tools feel good.
 
-No code in this note. Next implementation PR should start at step 1.
+## Implementation status (this branch)
+
+v1 is in `server/src/mcp/`:
+
+- `POST /mcp` — JSON-RPC `initialize`, `tools/list`, `tools/call`
+- Read tools + `post_sorter` / `redact_post` via `dispatch_rpc`
+- OAuth 2.1 + PKCE at `/oauth/authorize` + `/oauth/token` (Google login, access token is `slug_…`)
+- Well-known metadata + `/.well-known/openai-apps-challenge`
+
+Still later: ChatGPT developer-mode connect, reviewer account, privacy/terms, optional `slug-compare` skill, widgets.

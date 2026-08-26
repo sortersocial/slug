@@ -116,9 +116,17 @@ fn redirect_with_session_cookie(
     bearer: &str,
     jar: &CookieJar,
 ) -> Response {
+    redirect_absolute_with_session_cookie(&format!("{public_url}{path_and_query}"), bearer, jar)
+}
+
+fn redirect_absolute_with_session_cookie(
+    location: &str,
+    bearer: &str,
+    jar: &CookieJar,
+) -> Response {
     let mut res = Response::builder()
         .status(StatusCode::TEMPORARY_REDIRECT)
-        .header(header::LOCATION, format!("{public_url}{path_and_query}"))
+        .header(header::LOCATION, location)
         .body(Body::empty())
         .unwrap();
     let headers = res.headers_mut();
@@ -282,6 +290,7 @@ pub async fn get_join_invite(
         provider_id: None,
         redeem_invite: Some(token),
         redirect_next: redirect_next.clone(),
+        mcp_oauth: None,
         complete: None,
     };
     state
@@ -467,10 +476,27 @@ pub async fn get_auth_callback(
                 }
                 Ok(Ok(())) => {}
             }
-            let redirect_to =
-                safe_local_redirect(s.redirect_next.as_deref()).unwrap_or_else(|| "/".to_string());
             let cookie_bearer = bearer.clone();
-            s.complete = Some((username, bearer));
+            s.complete = Some((username.clone(), bearer));
+            drop(sessions_write);
+            if let Some(mcp_loc) = crate::mcp::oauth::finish_mcp_oauth_if_pending(
+                &state,
+                &q.state,
+                &username,
+                &cookie_bearer,
+            )
+            .await
+            {
+                return redirect_absolute_with_session_cookie(&mcp_loc, &cookie_bearer, &jar)
+                    .into_response();
+            }
+            let redirect_to = {
+                let sessions_read = sessions.read().await;
+                sessions_read
+                    .get(&q.state)
+                    .and_then(|s| safe_local_redirect(s.redirect_next.as_deref()))
+                    .unwrap_or_else(|| "/".to_string())
+            };
             return redirect_with_session_cookie(&public_url, &redirect_to, &cookie_bearer, &jar)
                 .into_response();
         }
@@ -596,13 +622,24 @@ pub async fn post_choose_username(
         Ok(Ok(b)) => b,
     };
 
-    let redirect_to = {
+    {
         let mut sessions_write = sessions.write().await;
         let s = sessions_write
             .get_mut(&form.session)
             .expect("session checked above");
         s.complete = Some((canon_user.clone(), bearer.clone()));
-        safe_local_redirect(s.redirect_next.as_deref())
+    }
+    if let Some(mcp_loc) =
+        crate::mcp::oauth::finish_mcp_oauth_if_pending(&state, &form.session, &canon_user, &bearer)
+            .await
+    {
+        return js_signed_in_fragment(&bearer, &jar, &mcp_loc).into_response();
+    }
+    let redirect_to = {
+        let sessions_read = sessions.read().await;
+        sessions_read
+            .get(&form.session)
+            .and_then(|s| safe_local_redirect(s.redirect_next.as_deref()))
             .unwrap_or_else(|| "/auth/complete".to_string())
     };
 
@@ -633,6 +670,7 @@ pub async fn get_web_login(
         provider_id: None,
         redeem_invite: None,
         redirect_next: redirect_next.clone(),
+        mcp_oauth: None,
         complete: None,
     };
     state
@@ -694,6 +732,7 @@ pub async fn post_pending_session(
         provider_id: None,
         redeem_invite: None,
         redirect_next: None,
+        mcp_oauth: None,
         complete: None,
     };
     let sessions = pending_sessions(&state);
