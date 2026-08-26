@@ -456,6 +456,42 @@ async fn mcp_oauth_rejects_foreign_redirect() {
 }
 
 #[tokio::test]
+async fn mcp_oauth_accepts_claude_redirect() {
+    let (addr, _tmp, _log, _handle) = create_test_server().await;
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    let resp = client
+        .get(format!("http://{addr}/oauth/authorize"))
+        .query(&[
+            ("response_type", "code"),
+            (
+                "client_id",
+                "https://claude.ai/oauth/mcp-oauth-client-metadata",
+            ),
+            ("redirect_uri", "https://claude.ai/api/mcp/auth_callback"),
+            ("code_challenge", "LGZJYPXoCfqeQ2pG8EKrCEHgLugRSKQ1j3qQQB8GYeU"),
+            ("code_challenge_method", "S256"),
+            ("state", "B9ix7zIQCbjJTQCfADcaXjg0VrzzLftlF61gz0nbDm0"),
+            ("scope", "slug.read slug.write"),
+            ("resource", "http://127.0.0.1:8080/mcp"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), reqwest::StatusCode::TEMPORARY_REDIRECT);
+    let loc = resp
+        .headers()
+        .get("location")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+    assert!(loc.contains("/auth/login?session="), "{loc}");
+}
+
+#[tokio::test]
 async fn mcp_whoami_and_private_room_round_trip() {
     let (addr, _tmp, _log, state, _handle) = create_test_server_with_state().await;
     let client = reqwest::Client::new();

@@ -1,7 +1,7 @@
-//! Thin OAuth 2.1 authorization server for ChatGPT / Codex MCP clients.
+//! Thin OAuth 2.1 authorization server for ChatGPT / Codex / Claude MCP clients.
 //!
-//! ChatGPT is the OAuth client. Humans still sign in with the existing Google
-//! login. On success we mint a one-time authorization code and the token
+//! Those hosts are the OAuth clients. Humans still sign in with the existing
+//! Google login. On success we mint a one-time authorization code and the token
 //! endpoint returns the same `slug_…` bearer the rest of the app already
 //! verifies.
 
@@ -102,18 +102,19 @@ pub struct AuthorizeQuery {
     pub scope: Option<String>,
 }
 
+fn https_redirect_host_allowed(host: &str) -> bool {
+    matches!(host, "chatgpt.com" | "chat.openai.com" | "claude.ai")
+        || host.ends_with(".chatgpt.com")
+        || host.ends_with(".chat.openai.com")
+        || host.ends_with(".claude.ai")
+}
+
 pub fn redirect_uri_allowed(redirect_uri: &str) -> bool {
     let Ok(url) = url::Url::parse(redirect_uri) else {
         return false;
     };
     match url.scheme() {
-        "https" => {
-            let host = url.host_str().unwrap_or_default();
-            host == "chatgpt.com"
-                || host.ends_with(".chatgpt.com")
-                || host == "chat.openai.com"
-                || host.ends_with(".chat.openai.com")
-        }
+        "https" => https_redirect_host_allowed(url.host_str().unwrap_or_default()),
         "http" => {
             let host = url.host_str().unwrap_or_default();
             host == "127.0.0.1" || host == "localhost" || host == "[::1]"
@@ -157,7 +158,7 @@ pub async fn oauth_authorize(
     if !redirect_uri_allowed(&redirect_uri) {
         return (
             StatusCode::BAD_REQUEST,
-            "redirect_uri is not an allowed ChatGPT or localhost callback",
+            "redirect_uri is not an allowed ChatGPT, Claude, or localhost callback",
         )
             .into_response();
     }
@@ -255,7 +256,7 @@ pub async fn oauth_authorize(
     .into_response()
 }
 
-/// After Google login / username choice, mint a code and send the user back to ChatGPT.
+/// After Google login / username choice, mint a code and send the user back to the MCP client.
 pub async fn finish_mcp_oauth_if_pending(
     state: &AppState,
     session_id: &str,
@@ -459,8 +460,16 @@ mod tests {
         assert!(redirect_uri_allowed(
             "https://chatgpt.com/connector/oauth/abc"
         ));
+        assert!(redirect_uri_allowed(
+            "https://claude.ai/api/mcp/auth_callback"
+        ));
+        assert!(redirect_uri_allowed(
+            "https://www.claude.ai/api/mcp/auth_callback"
+        ));
         assert!(redirect_uri_allowed("http://127.0.0.1:9/cb"));
+        assert!(redirect_uri_allowed("http://localhost:3118/callback"));
         assert!(!redirect_uri_allowed("https://evil.example/cb"));
+        assert!(!redirect_uri_allowed("https://notclaude.ai/api/mcp/auth_callback"));
         assert!(!redirect_uri_allowed("/local"));
     }
 }
