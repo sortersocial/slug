@@ -9,7 +9,9 @@ use crate::state::AppState;
 pub fn canonical_view_url(uri: &axum::http::Uri) -> String {
     let path = uri.path();
     if let Some(query) = uri.query() {
-        let mut pairs: Vec<_> = url::form_urlencoded::parse(query.as_bytes()).into_owned().collect();
+        let mut pairs: Vec<_> = url::form_urlencoded::parse(query.as_bytes())
+            .into_owned()
+            .collect();
         if pairs.is_empty() {
             return path.to_string();
         }
@@ -36,6 +38,9 @@ pub async fn view_count_middleware(
             && !path.starts_with("/api")
             && !path.starts_with("/sse")
             && !path.starts_with("/auth")
+            && !path.starts_with("/oauth")
+            && !path.starts_with("/.well-known")
+            && path != "/mcp"
             && path != "/healthz"
             && path != "/ui"
         {
