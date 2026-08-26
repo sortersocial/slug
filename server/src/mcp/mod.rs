@@ -12,9 +12,14 @@ use axum::{
     Json,
 };
 use serde_json::{json, Value};
+use slug_types::paths::{room_id_from_route_segment, ForumThreadUrl};
 use slug_types::*;
 
-use crate::{api::dispatch_rpc, state::AppState};
+use crate::{
+    api::{dispatch_rpc, verify_bearer_principal},
+    identity::parse_agent,
+    state::AppState,
+};
 
 use self::oauth::{cors_headers, www_authenticate_challenge};
 
@@ -22,11 +27,17 @@ const SERVER_NAME: &str = "slug-social";
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 const INSTRUCTIONS: &str = "\
 Slug is a garden (path-addressed ontology + pairwise rank centrality) and a forum \
-(bump-ordered threads). Read tools work anonymously on room public. Before posting \
-a comparison, call get_pair or get_item, ask the human for their view, draft a \
-.sorter document, call check_sorter, then post_sorter. Do not invent delegate \
-UUIDs. Cite the url fields returned by tools. Writes require the user to link \
-their slug.social account.";
+(bump-ordered threads). Public reads work anonymously. Private rooms require the \
+linked human account. Before posting: call whoami, get_pair or get_item, ask the \
+human for their view, draft a .sorter document, call check_sorter, then post_sorter. \
+post_sorter requires delegate as uuid:rig:provider/model. Do not invent a UUID; \
+ask the human for the exact delegate string and pass it on every post. The server \
+binds a delegate to the first linked human who uses it and rejects other humans. \
+create_room only creates private rooms. Cite the url fields returned by tools. \
+Every post and fetch of a post exposes actor (human username) and delegate \
+(agent id or null). Writes require the user to link their slug.social account.";
+
+const MEMBER_CAPS: &[&str] = &["view", "post", "vote", "add_item"];
 
 pub async fn mcp_options() -> impl IntoResponse {
     let mut res = StatusCode::NO_CONTENT.into_response();
@@ -138,8 +149,11 @@ fn annotations(read_only: bool, open_world: bool, destructive: bool) -> Value {
     })
 }
 
-fn noauth() -> Value {
-    json!([{"type": "noauth"}])
+fn oauth_or_anon() -> Value {
+    json!([
+        {"type": "noauth"},
+        {"type": "oauth2", "scopes": ["slug.write"]}
+    ])
 }
 
 fn oauth_write() -> Value {
@@ -167,49 +181,73 @@ fn tool(
     })
 }
 
+fn room_id_schema() -> Value {
+    json!({
+        "type": "string",
+        "description": "Room id: \"public\" (default) or a private room id from create_room / list_rooms (shortid/slug)."
+    })
+}
+
+fn search_result_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "results": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "string"},
+                        "title": {"type": "string"},
+                        "url": {"type": "string"},
+                        "actor": {"type": ["string", "null"]},
+                        "delegate": {"type": ["string", "null"]}
+                    },
+                    "required": ["id", "title", "url"]
+                }
+            }
+        },
+        "required": ["results"]
+    })
+}
+
 fn tools_list() -> Value {
     json!({
         "tools": [
             tool(
+                "whoami",
+                "Linked identity",
+                "Return the linked human username and every delegate bound to that human. Call this before posting so you pass a real delegate instead of inventing one.",
+                json!({"type": "object", "properties": {}}),
+                json!({"type": "object"}),
+                annotations(true, false, false),
+                oauth_write(),
+            ),
+            tool(
                 "search",
                 "Search slug",
-                "Search public garden items, forum threads, and posts. Use this first when the user asks about something on slug.social.",
+                "Search garden items, forum threads, and posts. Omit room_id for public items/threads plus every post the linked human can view. Set room_id to search one private room.",
                 json!({
                     "type": "object",
                     "properties": {
-                        "query": {"type": "string", "description": "Search query"}
+                        "query": {"type": "string", "description": "Search query"},
+                        "room_id": room_id_schema()
                     },
                     "required": ["query"]
                 }),
-                json!({
-                    "type": "object",
-                    "properties": {
-                        "results": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "id": {"type": "string"},
-                                    "title": {"type": "string"},
-                                    "url": {"type": "string"}
-                                },
-                                "required": ["id", "title", "url"]
-                            }
-                        }
-                    },
-                    "required": ["results"]
-                }),
+                search_result_schema(),
                 annotations(true, false, false),
-                noauth(),
+                oauth_or_anon(),
             ),
             tool(
                 "fetch",
                 "Fetch slug document",
-                "Open one search hit by id (item:, thread:, or post:). Returns full text and a citation URL.",
+                "Open one search hit by id (item:, thread:, or post:). Returns full text, a citation URL, and actor/delegate provenance when the document is a post.",
                 json!({
                     "type": "object",
                     "properties": {
-                        "id": {"type": "string", "description": "Id from search, e.g. item:~/languages/rust"}
+                        "id": {"type": "string", "description": "Id from search, e.g. item:~/languages/rust or post:<uuid>"},
+                        "room_id": room_id_schema()
                     },
                     "required": ["id"]
                 }),
@@ -220,30 +258,36 @@ fn tools_list() -> Value {
                         "title": {"type": "string"},
                         "text": {"type": "string"},
                         "url": {"type": "string"},
-                        "metadata": {"type": "object"}
+                        "metadata": {"type": "object"},
+                        "actor": {"type": ["string", "null"]},
+                        "delegate": {"type": ["string", "null"]}
                     },
                     "required": ["id", "title", "text", "url"]
                 }),
                 annotations(true, false, false),
-                noauth(),
+                oauth_or_anon(),
             ),
             tool(
                 "list_threads",
                 "List forum threads",
-                "List recently active public forum threads (bump-ordered).",
-                json!({"type": "object", "properties": {}}),
+                "List recently active forum threads (bump-ordered) in a room.",
+                json!({
+                    "type": "object",
+                    "properties": { "room_id": room_id_schema() }
+                }),
                 json!({"type": "object"}),
                 annotations(true, false, false),
-                noauth(),
+                oauth_or_anon(),
             ),
             tool(
                 "get_thread",
                 "Read a forum thread",
-                "Read a public forum thread page. Use the tag without #.",
+                "Read a forum thread page. Use the tag without #. Each post includes actor and delegate.",
                 json!({
                     "type": "object",
                     "properties": {
                         "thread_tag": {"type": "string"},
+                        "room_id": room_id_schema(),
                         "offset": {"type": "integer"},
                         "limit": {"type": "integer"},
                         "post_id": {"type": "string"}
@@ -252,7 +296,7 @@ fn tools_list() -> Value {
                 }),
                 json!({"type": "object"}),
                 annotations(true, false, false),
-                noauth(),
+                oauth_or_anon(),
             ),
             tool(
                 "get_rank",
@@ -262,6 +306,7 @@ fn tools_list() -> Value {
                     "type": "object",
                     "properties": {
                         "parent_path": {"type": "string", "description": "Garden parent, default ~"},
+                        "room_id": room_id_schema(),
                         "depth": {"type": "integer"},
                         "offset": {"type": "integer"},
                         "limit": {"type": "integer"},
@@ -270,7 +315,7 @@ fn tools_list() -> Value {
                 }),
                 json!({"type": "object"}),
                 annotations(true, false, false),
-                noauth(),
+                oauth_or_anon(),
             ),
             tool(
                 "get_item",
@@ -280,13 +325,14 @@ fn tools_list() -> Value {
                     "type": "object",
                     "properties": {
                         "item_path": {"type": "string"},
+                        "room_id": room_id_schema(),
                         "full": {"type": "boolean"}
                     },
                     "required": ["item_path"]
                 }),
                 json!({"type": "object"}),
                 annotations(true, false, false),
-                noauth(),
+                oauth_or_anon(),
             ),
             tool(
                 "get_pair",
@@ -295,12 +341,13 @@ fn tools_list() -> Value {
                 json!({
                     "type": "object",
                     "properties": {
-                        "parent_path": {"type": "string", "description": "Garden parent, default ~"}
+                        "parent_path": {"type": "string", "description": "Garden parent, default ~"},
+                        "room_id": room_id_schema()
                     }
                 }),
                 json!({"type": "object"}),
                 annotations(true, false, false),
-                noauth(),
+                oauth_or_anon(),
             ),
             tool(
                 "check_sorter",
@@ -309,25 +356,97 @@ fn tools_list() -> Value {
                 json!({
                     "type": "object",
                     "properties": {
-                        "text": {"type": "string", "description": "Full .sorter document"}
+                        "text": {"type": "string", "description": "Full .sorter document"},
+                        "room_id": room_id_schema()
                     },
                     "required": ["text"]
                 }),
                 json!({"type": "object"}),
                 annotations(true, false, false),
-                noauth(),
+                oauth_or_anon(),
+            ),
+            tool(
+                "list_rooms",
+                "List rooms",
+                "List private rooms the linked human can access.",
+                json!({"type": "object", "properties": {}}),
+                json!({"type": "object"}),
+                annotations(true, false, false),
+                oauth_write(),
+            ),
+            tool(
+                "create_room",
+                "Create a private room",
+                "Create a private room owned by the linked human. visibility must be \"private\". Optional members are extra usernames granted view/post/vote/add_item (not manage).",
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "Room name / slug (lowercase alphanumeric and hyphens)"},
+                        "visibility": {"type": "string", "enum": ["private"], "description": "Only private rooms can be created"},
+                        "members": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Usernames to grant view/post/vote/add_item"
+                        }
+                    },
+                    "required": ["name", "visibility"]
+                }),
+                json!({"type": "object"}),
+                annotations(false, false, false),
+                oauth_write(),
+            ),
+            tool(
+                "grant_room",
+                "Grant room access",
+                "Grant capabilities in a private room you manage. Default capabilities are view, post, vote, add_item.",
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "room_id": {"type": "string"},
+                        "username": {"type": "string"},
+                        "capabilities": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "view, post, vote, add_item, manage"
+                        }
+                    },
+                    "required": ["room_id", "username"]
+                }),
+                json!({"type": "object"}),
+                annotations(false, false, false),
+                oauth_write(),
+            ),
+            tool(
+                "audit_room",
+                "Audit room members",
+                "List principals and capabilities in a private room.",
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "room_id": {"type": "string"}
+                    },
+                    "required": ["room_id"]
+                }),
+                json!({"type": "object"}),
+                annotations(true, false, false),
+                oauth_write(),
             ),
             tool(
                 "post_sorter",
                 "Publish a .sorter document",
-                "Publish a comparison or item definition to a public forum thread. Requires the user to link slug.social. Ask the human before posting. Do not invent delegate UUIDs.",
+                "Publish a comparison or item definition to a forum thread. delegate is required (uuid:rig:provider/model) and is bound to the linked human. Ask the human for the exact delegate; do not invent one. room_id defaults to public. thread_tag is the forum channel inside that room.",
                 json!({
                     "type": "object",
                     "properties": {
                         "thread_tag": {"type": "string", "description": "Forum tag without #"},
-                        "text": {"type": "string", "description": "Full .sorter document"}
+                        "text": {"type": "string", "description": "Full .sorter document"},
+                        "delegate": {
+                            "type": "string",
+                            "description": "Required agent identity: uuid:rig:provider/model"
+                        },
+                        "room_id": room_id_schema()
                     },
-                    "required": ["thread_tag", "text"]
+                    "required": ["thread_tag", "text", "delegate"]
                 }),
                 json!({"type": "object"}),
                 annotations(false, true, false),
@@ -378,6 +497,39 @@ fn arg_bool(args: &Value, key: &str) -> Option<bool> {
     })
 }
 
+fn arg_room(args: &Value) -> String {
+    arg_string(args, "room_id")
+        .or_else(|| arg_string(args, "room"))
+        .unwrap_or_else(|| "public".into())
+}
+
+fn arg_string_list(args: &Value, key: &str) -> Vec<String> {
+    match args.get(key) {
+        Some(Value::Array(items)) => items
+            .iter()
+            .filter_map(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect(),
+        Some(Value::String(s)) => s
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn slug_from_name(name: &str) -> String {
+    name.trim()
+        .to_lowercase()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
 fn tool_ok(structured: Value, summary: impl Into<String>) -> Value {
     let text = if structured.is_null() {
         summary.into()
@@ -405,7 +557,7 @@ fn tool_err(message: impl Into<String>, hint: Option<String>) -> Value {
 }
 
 fn auth_required() -> Value {
-    let desc = "Link your slug.social account to post or redact.";
+    let desc = "Link your slug.social account to continue.";
     json!({
         "structuredContent": {"error": desc},
         "content": [{"type": "text", "text": desc}],
@@ -416,6 +568,14 @@ fn auth_required() -> Value {
             ]
         }
     })
+}
+
+fn require_bearer(headers: &HeaderMap) -> Option<Value> {
+    if bearer_from_headers(headers).is_none() {
+        Some(auth_required())
+    } else {
+        None
+    }
 }
 
 fn bearer_from_headers(headers: &HeaderMap) -> Option<String> {
@@ -441,8 +601,47 @@ async fn rpc(
     }
 }
 
-fn thread_url(tag: &str) -> String {
-    ForumThreadUrl::from_room_tag("public", tag.trim_start_matches('#')).into_inner()
+fn write_rpc_err(e: String, h: Option<String>) -> Value {
+    if e.contains("Authorization") || e.contains("token") || e.contains("Bearer") {
+        auth_required()
+    } else {
+        tool_err(e, h)
+    }
+}
+
+fn thread_url(room: &str, tag: &str) -> String {
+    ForumThreadUrl::from_room_tag(room, tag.trim_start_matches('#')).into_inner()
+}
+
+fn room_or_public(room: &str) -> &str {
+    if room.trim().is_empty() {
+        "public"
+    } else {
+        room
+    }
+}
+
+fn merge_provenance(mut obj: Value, actor: Option<&str>, delegate: Option<&str>) -> Value {
+    if let Some(map) = obj.as_object_mut() {
+        map.insert(
+            "actor".into(),
+            actor.map(Value::from).unwrap_or(Value::Null),
+        );
+        map.insert(
+            "delegate".into(),
+            delegate.map(Value::from).unwrap_or(Value::Null),
+        );
+    }
+    obj
+}
+
+fn post_item_provenance(item: &ThreadItem) -> (Option<&str>, Option<&str>) {
+    match item {
+        ThreadItem::Post {
+            actor, delegate, ..
+        } => (Some(actor.as_str()), delegate.as_deref()),
+        ThreadItem::System { .. } => (None, None),
+    }
 }
 
 fn search_results(resp: SearchResponse) -> Value {
@@ -452,21 +651,33 @@ fn search_results(resp: SearchResponse) -> Value {
         results.push(json!({
             "id": format!("item:{url}"),
             "title": url,
-            "url": url
+            "url": url,
+            "actor": Value::Null,
+            "delegate": Value::Null
         }));
     }
     for th in resp.threads {
         let tag = th.tag.trim_start_matches('#');
-        let url = thread_url(tag);
+        let room = room_or_public(&th.room);
+        let url = thread_url(room, tag);
         results.push(json!({
             "id": format!("thread:{tag}"),
             "title": format!("#{}", tag),
-            "url": url
+            "url": url,
+            "room": room,
+            "actor": Value::Null,
+            "delegate": Value::Null
         }));
     }
     for post in resp.posts {
-        let tag = post.thread.trim_start_matches('#');
-        let url = thread_url(tag);
+        let tag = post
+            .thread
+            .rsplit('#')
+            .next()
+            .unwrap_or(post.thread.as_str())
+            .trim_start_matches('#');
+        let room = room_or_public(&post.room);
+        let url = thread_url(room, tag);
         let id = if post.id.is_empty() {
             format!("thread:{tag}")
         } else {
@@ -476,21 +687,44 @@ fn search_results(resp: SearchResponse) -> Value {
         results.push(json!({
             "id": id,
             "title": title,
-            "url": url
+            "url": url,
+            "room": room,
+            "actor": post.actor,
+            "delegate": post.delegate
         }));
     }
     json!({"results": results})
+}
+
+fn room_from_garden_url(raw: &str) -> Option<String> {
+    let path = if let Some(idx) = raw.find("/r/") {
+        &raw[idx + 3..]
+    } else {
+        return None;
+    };
+    let seg = path.split('/').next().filter(|s| !s.is_empty())?;
+    room_id_from_route_segment(seg)
+}
+
+async fn linked_principal(state: &AppState, headers: &HeaderMap) -> Result<String, Value> {
+    if bearer_from_headers(headers).is_none() {
+        return Err(auth_required());
+    }
+    let reduced = state.reduced.read().await;
+    verify_bearer_principal(headers, &reduced).map_err(|_| auth_required())
 }
 
 async fn tools_call(state: &AppState, headers: &HeaderMap, params: &Value) -> Value {
     let name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
     let args = params.get("arguments").cloned().unwrap_or(json!({}));
     match name {
+        "whoami" => whoami(state, headers).await,
         "search" => {
             let Some(query) = arg_string(&args, "query") else {
                 return tool_err("query is required", None);
             };
-            match rpc(state, headers, RpcCommand::Search { query }).await {
+            let room = arg_string(&args, "room_id").or_else(|| arg_string(&args, "room"));
+            match rpc(state, headers, RpcCommand::Search { query, room }).await {
                 Ok(RpcResult::Search(resp)) => {
                     let structured = search_results(resp);
                     let n = structured["results"]
@@ -509,7 +743,7 @@ async fn tools_call(state: &AppState, headers: &HeaderMap, params: &Value) -> Va
                 state,
                 headers,
                 RpcCommand::ListForumThreads {
-                    room: "public".into(),
+                    room: arg_room(&args),
                 },
             )
             .await
@@ -526,7 +760,7 @@ async fn tools_call(state: &AppState, headers: &HeaderMap, params: &Value) -> Va
                 state,
                 headers,
                 RpcCommand::GetForumThread {
-                    room: "public".into(),
+                    room: arg_room(&args),
                     thread_tag,
                     offset: arg_usize(&args, "offset"),
                     limit: arg_usize(&args, "limit"),
@@ -538,7 +772,7 @@ async fn tools_call(state: &AppState, headers: &HeaderMap, params: &Value) -> Va
             )
             .await
             {
-                Ok(r) => tool_ok(serde_json::to_value(r).unwrap_or(Value::Null), "thread"),
+                Ok(r) => tool_ok(with_thread_provenance(r), "thread"),
                 Err((e, h)) => tool_err(e, h),
             }
         }
@@ -547,7 +781,7 @@ async fn tools_call(state: &AppState, headers: &HeaderMap, params: &Value) -> Va
                 state,
                 headers,
                 RpcCommand::GetGardenRank {
-                    room: "public".into(),
+                    room: arg_room(&args),
                     parent_path: arg_string(&args, "parent_path").unwrap_or_else(|| "~".into()),
                     depth: arg_usize(&args, "depth"),
                     offset: arg_usize(&args, "offset"),
@@ -569,7 +803,7 @@ async fn tools_call(state: &AppState, headers: &HeaderMap, params: &Value) -> Va
                 state,
                 headers,
                 RpcCommand::GetGardenItem {
-                    room: "public".into(),
+                    room: arg_room(&args),
                     item_path,
                     full: arg_bool(&args, "full"),
                 },
@@ -585,7 +819,7 @@ async fn tools_call(state: &AppState, headers: &HeaderMap, params: &Value) -> Va
                 state,
                 headers,
                 RpcCommand::GetPair {
-                    room: "public".into(),
+                    room: arg_room(&args),
                     parent_path: arg_string(&args, "parent_path").unwrap_or_else(|| "~".into()),
                 },
             )
@@ -603,7 +837,7 @@ async fn tools_call(state: &AppState, headers: &HeaderMap, params: &Value) -> Va
                 state,
                 headers,
                 RpcCommand::Check {
-                    room: "public".into(),
+                    room: arg_room(&args),
                     text,
                 },
             )
@@ -613,55 +847,41 @@ async fn tools_call(state: &AppState, headers: &HeaderMap, params: &Value) -> Va
                 Err((e, h)) => tool_err(e, h),
             }
         }
-        "post_sorter" => {
-            if bearer_from_headers(headers).is_none() {
-                return auth_required();
+        "list_rooms" => {
+            if let Some(err) = require_bearer(headers) {
+                return err;
             }
-            let Some(thread_tag) = arg_string(&args, "thread_tag") else {
-                return tool_err("thread_tag is required", None);
-            };
-            let Some(text) = arg_string(&args, "text") else {
-                return tool_err("text is required", None);
-            };
-            match rpc(
-                state,
-                headers,
-                RpcCommand::Post {
-                    room: "public".into(),
-                    thread_tag,
-                    delegate: None,
-                    text,
-                    return_rank_diff: true,
-                },
-            )
-            .await
-            {
-                Ok(r) => tool_ok(serde_json::to_value(r).unwrap_or(Value::Null), "posted"),
-                Err((e, h)) => {
-                    if e.contains("Authorization") || e.contains("token") || e.contains("Bearer") {
-                        auth_required()
-                    } else {
-                        tool_err(e, h)
-                    }
-                }
+            match rpc(state, headers, RpcCommand::RoomList).await {
+                Ok(r) => tool_ok(serde_json::to_value(r).unwrap_or(Value::Null), "rooms"),
+                Err((e, h)) => write_rpc_err(e, h),
             }
         }
+        "create_room" => create_room(state, headers, &args).await,
+        "grant_room" => grant_room(state, headers, &args).await,
+        "audit_room" => {
+            if let Some(err) = require_bearer(headers) {
+                return err;
+            }
+            let Some(room_id) = arg_string(&args, "room_id").or_else(|| arg_string(&args, "room"))
+            else {
+                return tool_err("room_id is required", None);
+            };
+            match rpc(state, headers, RpcCommand::RoomAudit { room: room_id }).await {
+                Ok(r) => tool_ok(serde_json::to_value(r).unwrap_or(Value::Null), "audit"),
+                Err((e, h)) => write_rpc_err(e, h),
+            }
+        }
+        "post_sorter" => post_sorter(state, headers, &args).await,
         "redact_post" => {
-            if bearer_from_headers(headers).is_none() {
-                return auth_required();
+            if let Some(err) = require_bearer(headers) {
+                return err;
             }
             let Some(post_id) = arg_string(&args, "post_id") else {
                 return tool_err("post_id is required", None);
             };
             match rpc(state, headers, RpcCommand::PostRedact { post_id }).await {
                 Ok(r) => tool_ok(serde_json::to_value(r).unwrap_or(Value::Null), "redacted"),
-                Err((e, h)) => {
-                    if e.contains("Authorization") || e.contains("token") || e.contains("Bearer") {
-                        auth_required()
-                    } else {
-                        tool_err(e, h)
-                    }
-                }
+                Err((e, h)) => write_rpc_err(e, h),
             }
         }
         "" => tool_err("tool name is required", None),
@@ -669,10 +889,192 @@ async fn tools_call(state: &AppState, headers: &HeaderMap, params: &Value) -> Va
     }
 }
 
+async fn whoami(state: &AppState, headers: &HeaderMap) -> Value {
+    let user = match linked_principal(state, headers).await {
+        Ok(u) => u,
+        Err(err) => return err,
+    };
+    let delegates = {
+        let reduced = state.reduced.read().await;
+        let mut ds: Vec<String> = reduced
+            .agent_bindings
+            .iter()
+            .filter(|(_, owner)| *owner == &user)
+            .map(|(agent, _)| agent.clone())
+            .collect();
+        ds.sort();
+        ds
+    };
+    tool_ok(
+        json!({"user": user, "delegates": delegates}),
+        format!("linked as {user}"),
+    )
+}
+
+async fn create_room(state: &AppState, headers: &HeaderMap, args: &Value) -> Value {
+    if let Some(err) = require_bearer(headers) {
+        return err;
+    }
+    let visibility = arg_string(args, "visibility").unwrap_or_else(|| "private".into());
+    if visibility != "private" {
+        return tool_err(
+            "only private rooms can be created",
+            Some("visibility must be \"private\"; public is the shared site, not a room".into()),
+        );
+    }
+    let Some(name) = arg_string(args, "name").or_else(|| arg_string(args, "slug")) else {
+        return tool_err("name is required", None);
+    };
+    let slug = slug_from_name(&name);
+    let members = arg_string_list(args, "members");
+    let created = match rpc(state, headers, RpcCommand::RoomCreate { slug }).await {
+        Ok(RpcResult::RoomCreated { room_id }) => room_id,
+        Ok(_) => return tool_err("unexpected create_room result", None),
+        Err((e, h)) => return write_rpc_err(e, h),
+    };
+    let mut granted = Vec::new();
+    let mut grant_errors = Vec::new();
+    for username in members {
+        match rpc(
+            state,
+            headers,
+            RpcCommand::RoomGrant {
+                room: created.clone(),
+                username: username.clone(),
+                capabilities: MEMBER_CAPS.iter().map(|s| (*s).to_string()).collect(),
+            },
+        )
+        .await
+        {
+            Ok(_) => granted.push(username),
+            Err((e, h)) => {
+                let mut msg = format!("{username}: {e}");
+                if let Some(hint) = h {
+                    msg.push_str(" (");
+                    msg.push_str(&hint);
+                    msg.push(')');
+                }
+                grant_errors.push(msg);
+            }
+        }
+    }
+    let structured = json!({
+        "room_id": created,
+        "visibility": "private",
+        "members_granted": granted,
+        "member_errors": grant_errors
+    });
+    tool_ok(structured, format!("created private room {created}"))
+}
+
+async fn grant_room(state: &AppState, headers: &HeaderMap, args: &Value) -> Value {
+    if let Some(err) = require_bearer(headers) {
+        return err;
+    }
+    let Some(room_id) = arg_string(args, "room_id").or_else(|| arg_string(args, "room")) else {
+        return tool_err("room_id is required", None);
+    };
+    let Some(username) = arg_string(args, "username") else {
+        return tool_err("username is required", None);
+    };
+    let capabilities = {
+        let listed = arg_string_list(args, "capabilities");
+        if listed.is_empty() {
+            MEMBER_CAPS.iter().map(|s| (*s).to_string()).collect()
+        } else {
+            listed
+        }
+    };
+    match rpc(
+        state,
+        headers,
+        RpcCommand::RoomGrant {
+            room: room_id,
+            username,
+            capabilities,
+        },
+    )
+    .await
+    {
+        Ok(r) => tool_ok(serde_json::to_value(r).unwrap_or(Value::Null), "granted"),
+        Err((e, h)) => write_rpc_err(e, h),
+    }
+}
+
+async fn post_sorter(state: &AppState, headers: &HeaderMap, args: &Value) -> Value {
+    if let Some(err) = require_bearer(headers) {
+        return err;
+    }
+    let Some(thread_tag) = arg_string(args, "thread_tag") else {
+        return tool_err("thread_tag is required", None);
+    };
+    let Some(text) = arg_string(args, "text") else {
+        return tool_err("text is required", None);
+    };
+    let Some(raw_delegate) = arg_string(args, "delegate") else {
+        return tool_err(
+            "delegate is required",
+            Some("pass uuid:rig:provider/model from the human; do not invent a UUID".into()),
+        );
+    };
+    let delegate = match parse_agent(&raw_delegate) {
+        Ok(d) => d,
+        Err(msg) => return tool_err("invalid delegate format", Some(msg)),
+    };
+    let room = arg_room(args);
+    let actor = match linked_principal(state, headers).await {
+        Ok(u) => u,
+        Err(err) => return err,
+    };
+    match rpc(
+        state,
+        headers,
+        RpcCommand::Post {
+            room,
+            thread_tag,
+            delegate: Some(delegate.clone()),
+            text,
+            return_rank_diff: true,
+        },
+    )
+    .await
+    {
+        Ok(r) => {
+            let mut structured = serde_json::to_value(r).unwrap_or(Value::Null);
+            structured = merge_provenance(structured, Some(&actor), Some(&delegate));
+            tool_ok(structured, "posted")
+        }
+        Err((e, h)) => write_rpc_err(e, h),
+    }
+}
+
+fn with_thread_provenance(result: RpcResult) -> Value {
+    let Ok(value) = serde_json::to_value(&result) else {
+        return Value::Null;
+    };
+    let (actor, delegate) = result_first_post(&result)
+        .map(|(a, d)| (Some(a), d))
+        .unwrap_or((None, None));
+    merge_provenance(value, actor, delegate)
+}
+
+fn result_first_post(result: &RpcResult) -> Option<(&str, Option<&str>)> {
+    match result {
+        RpcResult::ForumThread(th) => th.items.iter().find_map(|item| match item {
+            ThreadItem::Post {
+                actor, delegate, ..
+            } => Some((actor.as_str(), delegate.as_deref())),
+            _ => None,
+        }),
+        _ => None,
+    }
+}
+
 async fn fetch_doc(state: &AppState, headers: &HeaderMap, args: &Value) -> Value {
     let Some(raw_id) = arg_string(args, "id") else {
         return tool_err("id is required", None);
     };
+    let explicit_room = arg_string(args, "room_id").or_else(|| arg_string(args, "room"));
     let id = if raw_id.starts_with("item:")
         || raw_id.starts_with("thread:")
         || raw_id.starts_with("post:")
@@ -684,11 +1086,14 @@ async fn fetch_doc(state: &AppState, headers: &HeaderMap, args: &Value) -> Value
         format!("thread:{raw_id}")
     };
     if let Some(path) = id.strip_prefix("item:") {
+        let room = explicit_room
+            .or_else(|| room_from_garden_url(path))
+            .unwrap_or_else(|| "public".into());
         match rpc(
             state,
             headers,
             RpcCommand::GetGardenItem {
-                room: "public".into(),
+                room,
                 item_path: path.to_string(),
                 full: Some(true),
             },
@@ -703,7 +1108,14 @@ async fn fetch_doc(state: &AppState, headers: &HeaderMap, args: &Value) -> Value
                     "title": url,
                     "text": text,
                     "url": url,
-                    "metadata": {"threads": item.threads, "truncated": item.truncated}
+                    "actor": Value::Null,
+                    "delegate": Value::Null,
+                    "metadata": {
+                        "threads": item.threads,
+                        "truncated": item.truncated,
+                        "actor": Value::Null,
+                        "delegate": Value::Null
+                    }
                 });
                 tool_ok(structured, "item")
             }
@@ -711,11 +1123,12 @@ async fn fetch_doc(state: &AppState, headers: &HeaderMap, args: &Value) -> Value
             Err((e, h)) => tool_err(e, h),
         }
     } else if let Some(tag) = id.strip_prefix("thread:") {
+        let room = explicit_room.unwrap_or_else(|| "public".into());
         match rpc(
             state,
             headers,
             RpcCommand::GetForumThread {
-                room: "public".into(),
+                room: room.clone(),
                 thread_tag: tag.to_string(),
                 offset: Some(0),
                 limit: Some(50),
@@ -728,14 +1141,30 @@ async fn fetch_doc(state: &AppState, headers: &HeaderMap, args: &Value) -> Value
         .await
         {
             Ok(RpcResult::ForumThread(th)) => {
-                let url = thread_url(tag);
+                let url = thread_url(&room, tag);
                 let text = serde_json::to_string_pretty(&th).unwrap_or_default();
+                let (actor, delegate) = th
+                    .items
+                    .iter()
+                    .find_map(|item| match post_item_provenance(item) {
+                        (Some(a), d) => Some((a.to_string(), d.map(str::to_string))),
+                        _ => None,
+                    })
+                    .map(|(a, d)| (Some(a), d))
+                    .unwrap_or((None, None));
                 let structured = json!({
                     "id": id,
                     "title": format!("#{}", tag.trim_start_matches('#')),
                     "text": text,
                     "url": url,
-                    "metadata": {"total": th.total}
+                    "actor": actor,
+                    "delegate": delegate,
+                    "metadata": {
+                        "total": th.total,
+                        "room": room,
+                        "actor": actor,
+                        "delegate": delegate
+                    }
                 });
                 tool_ok(structured, "thread")
             }
@@ -743,21 +1172,19 @@ async fn fetch_doc(state: &AppState, headers: &HeaderMap, args: &Value) -> Value
             Err((e, h)) => tool_err(e, h),
         }
     } else if let Some(post_id) = id.strip_prefix("post:") {
-        let thread_tag = {
+        let (thread_tag, room) = {
             let reduced = state.reduced.read().await;
-            reduced
-                .ingests_by_id
-                .get(post_id)
-                .map(|ing| ing.thread_tag.clone())
+            match reduced.ingests_by_id.get(post_id) {
+                Some(ing) => (ing.thread_tag.clone(), ing.room_id.clone()),
+                None => return tool_err("post not found", None),
+            }
         };
-        let Some(thread_tag) = thread_tag else {
-            return tool_err("post not found", None);
-        };
+        let room = explicit_room.unwrap_or(room);
         match rpc(
             state,
             headers,
             RpcCommand::GetForumThread {
-                room: "public".into(),
+                room: room.clone(),
                 thread_tag,
                 offset: None,
                 limit: None,
@@ -770,18 +1197,30 @@ async fn fetch_doc(state: &AppState, headers: &HeaderMap, args: &Value) -> Value
         .await
         {
             Ok(RpcResult::ForumThread(th)) => {
-                let url = thread_url(th.thread.trim_start_matches('#'));
-                let text = match th.items.first() {
-                    Some(ThreadItem::Post { body, .. }) => body.clone(),
-                    Some(ThreadItem::System { text, .. }) => text.clone(),
-                    None => String::new(),
+                let url = thread_url(&room, th.thread.trim_start_matches('#'));
+                let (text, actor, delegate) = match th.items.first() {
+                    Some(ThreadItem::Post {
+                        body,
+                        actor,
+                        delegate,
+                        ..
+                    }) => (body.clone(), Some(actor.clone()), delegate.clone()),
+                    Some(ThreadItem::System { text, .. }) => (text.clone(), None, None),
+                    None => (String::new(), None, None),
                 };
                 let structured = json!({
                     "id": id,
                     "title": th.thread,
                     "text": text,
                     "url": url,
-                    "metadata": {"thread": th.thread}
+                    "actor": actor,
+                    "delegate": delegate,
+                    "metadata": {
+                        "thread": th.thread,
+                        "room": room,
+                        "actor": actor,
+                        "delegate": delegate
+                    }
                 });
                 tool_ok(structured, "post")
             }
