@@ -786,6 +786,54 @@ async fn mcp_whoami_and_private_room_round_trip() {
     assert_eq!(hidden["isError"], true, "{hidden}");
     assert_eq!(hidden["structuredContent"]["error"], "room not found");
 
+    let leaked_search = tool_call(
+        &client,
+        addr,
+        "search",
+        serde_json::json!({"query": "because private"}),
+        None,
+    )
+    .await;
+    assert_eq!(leaked_search["isError"], false, "{leaked_search}");
+    let leaked = leaked_search["structuredContent"]["results"]
+        .as_array()
+        .unwrap();
+    assert!(
+        !leaked.iter().any(|r| {
+            r["id"].as_str() == Some(&format!("post:{post_id}"))
+                || r["room"].as_str() == Some(room_id.as_str())
+        }),
+        "unauthenticated search must not return private-room hits: {leaked:?}"
+    );
+
+    let scoped_unauth = tool_call(
+        &client,
+        addr,
+        "search",
+        serde_json::json!({"query": "because private", "room_id": room_id}),
+        None,
+    )
+    .await;
+    assert_eq!(scoped_unauth["isError"], true, "{scoped_unauth}");
+    assert_eq!(
+        scoped_unauth["structuredContent"]["error"],
+        "room not found"
+    );
+
+    let leaked_fetch = tool_call(
+        &client,
+        addr,
+        "fetch",
+        serde_json::json!({"id": format!("post:{post_id}")}),
+        None,
+    )
+    .await;
+    assert_eq!(leaked_fetch["isError"], true, "{leaked_fetch}");
+    assert_eq!(
+        leaked_fetch["structuredContent"]["error"],
+        "room not found"
+    );
+
     let thread = tool_call(
         &client,
         addr,
