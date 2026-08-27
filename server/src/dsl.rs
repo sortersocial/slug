@@ -20,6 +20,11 @@ pub enum Stmt {
         ratio_right: i32,
         /// Required non-empty explanation (from leading `{ ... }`).
         explanation: String,
+        aspect: Option<String>,
+    },
+    Aspect {
+        slug: Option<String>,
+        prompt: Option<String>,
     },
     Prose {
         text: String,
@@ -288,6 +293,76 @@ fn is_item_name(s: &str) -> bool {
         }
     }
     true
+}
+
+pub fn is_valid_aspect_slug(s: &str) -> bool {
+    let len = s.len();
+    (1..=64).contains(&len)
+        && s.bytes()
+            .all(|b| matches!(b, b'a'..=b'z' | b'0'..=b'9' | b'_' | b'-'))
+}
+
+fn try_parse_aspect_line(stripped: &str, masker: &BlockMasker) -> Option<Stmt> {
+    if !stripped.starts_with(':') {
+        return None;
+    }
+    let rest = stripped[1..].trim_end();
+    if rest.is_empty() {
+        return Some(Stmt::Aspect {
+            slug: None,
+            prompt: None,
+        });
+    }
+    let bytes = rest.as_bytes();
+    let mut slug_len = 0usize;
+    while slug_len < bytes.len() {
+        if bytes[slug_len..].starts_with(b"__BLOCK_") {
+            break;
+        }
+        if !matches!(bytes[slug_len], b'a'..=b'z' | b'0'..=b'9' | b'_' | b'-') {
+            break;
+        }
+        slug_len += 1;
+        if slug_len > 64 {
+            return None;
+        }
+    }
+    if slug_len == 0 {
+        return None;
+    }
+    if slug_len == 64 {
+        if let Some(tail) = bytes.get(64..) {
+            if !tail.starts_with(b"__BLOCK_")
+                && tail
+                    .first()
+                    .is_some_and(|b| matches!(b, b'a'..=b'z' | b'0'..=b'9' | b'_' | b'-'))
+            {
+                return None;
+            }
+        }
+    }
+    let slug = &rest[..slug_len];
+    if !is_valid_aspect_slug(slug) {
+        return None;
+    }
+    let after = rest[slug_len..].trim_start();
+    if after.is_empty() {
+        return Some(Stmt::Aspect {
+            slug: Some(slug.to_string()),
+            prompt: None,
+        });
+    }
+    let (tok, end) = parse_block_token_at(after, 0)?;
+    if masker.block_kind(&tok) == Some(BlockKind::CodeFence) {
+        return None;
+    }
+    if !after[end..].trim().is_empty() {
+        return None;
+    }
+    Some(Stmt::Aspect {
+        slug: Some(slug.to_string()),
+        prompt: Some(masker.extract_body(&tok)),
+    })
 }
 
 fn is_block_token(s: &str) -> bool {
@@ -598,6 +673,7 @@ fn parse_block_prefixed_statement(
         ratio_left,
         ratio_right,
         explanation,
+        aspect: None,
     })
 }
 
@@ -643,7 +719,9 @@ fn parse_line(masked_line: &str, masker: &BlockMasker) -> Result<Vec<Stmt>, DslE
     let first = stripped.chars().next().unwrap();
     match first {
         '#' => Err(DslError::Parse("not a DSL line".to_string())),
-        ':' => Err(DslError::Parse("leading ':' is not supported".to_string())),
+        ':' => try_parse_aspect_line(stripped, masker)
+            .map(|s| vec![s])
+            .ok_or_else(|| DslError::Parse("not a DSL line".to_string())),
         '@' => Err(DslError::Parse("not a DSL line".to_string())),
         '_' => {
             let Some((tok, end)) = parse_block_token_at(stripped, 0) else {
@@ -684,6 +762,7 @@ pub fn parse_full(text: &str) -> Result<Document, DslError> {
     let mut statements: Vec<Stmt> = Vec::new();
     let mut prose_buffer: Vec<&str> = Vec::new();
     let mut pending_block: Option<String> = None;
+    let mut current_aspect: Option<String> = None;
 
     let flush_prose = |buf: &mut Vec<&str>, out: &mut Vec<Stmt>, masker: &BlockMasker| {
         if buf.is_empty() {
@@ -706,7 +785,11 @@ pub fn parse_full(text: &str) -> Result<Document, DslError> {
                 || stripped.starts_with("https://")
                 || stripped.starts_with("http://")
             {
-                statements.push(parse_block_prefixed_statement(tok, stripped, &masker)?);
+                let mut stmt = parse_block_prefixed_statement(tok, stripped, &masker)?;
+                if let Stmt::Vote { aspect, .. } = &mut stmt {
+                    *aspect = current_aspect.clone();
+                }
+                statements.push(stmt);
                 pending_block = None;
                 continue;
             }
@@ -715,11 +798,20 @@ pub fn parse_full(text: &str) -> Result<Document, DslError> {
             ));
         }
 
+        if let Some(aspect_stmt) = try_parse_aspect_line(stripped, &masker) {
+            flush_prose(&mut prose_buffer, &mut statements, &masker);
+            if let Stmt::Aspect { slug, .. } = &aspect_stmt {
+                current_aspect = slug.clone();
+            }
+            statements.push(aspect_stmt);
+            continue;
+        }
+
         if !stripped.is_empty()
             && (stripped.starts_with("-/")
                 || {
                     let c = stripped.chars().next().unwrap();
-                    ":/!~_".contains(c)
+                    "/!~_".contains(c)
                 }
                 || stripped.starts_with("https://")
                 || stripped.starts_with("http://"))
@@ -739,7 +831,13 @@ pub fn parse_full(text: &str) -> Result<Document, DslError> {
             }
 
             // Parse DSL line; DSL statements are not prose, so errors should propagate.
+            let start = statements.len();
             statements.extend(parse_line(line, &masker)?);
+            for stmt in &mut statements[start..] {
+                if let Stmt::Vote { aspect, .. } = stmt {
+                    *aspect = current_aspect.clone();
+                }
+            }
         } else {
             prose_buffer.push(line);
         }
@@ -925,7 +1023,8 @@ mod tests {
                 item2: "~/b".to_string(),
                 ratio_left: 3,
                 ratio_right: 1,
-                explanation: "because".to_string()
+                explanation: "because".to_string(),
+                aspect: None,
             }]
         );
 
@@ -937,7 +1036,8 @@ mod tests {
                 item2: "~/b".to_string(),
                 ratio_left: 2,
                 ratio_right: 1,
-                explanation: "because".to_string()
+                explanation: "because".to_string(),
+                aspect: None,
             }]
         );
 
@@ -949,7 +1049,8 @@ mod tests {
                 item2: "~/b".to_string(),
                 ratio_left: 1,
                 ratio_right: 1,
-                explanation: "because".to_string()
+                explanation: "because".to_string(),
+                aspect: None,
             }]
         );
     }
@@ -1071,7 +1172,8 @@ mod tests {
                 item2: "~/b".to_string(),
                 ratio_left: 2,
                 ratio_right: 1,
-                explanation: "because".to_string()
+                explanation: "because".to_string(),
+                aspect: None,
             }]
         );
     }
@@ -1100,25 +1202,199 @@ mod tests {
                 item2: "~/whitepaper/b".to_string(),
                 ratio_left: 3,
                 ratio_right: 1,
-                explanation: "because".to_string()
+                explanation: "because".to_string(),
+                aspect: None,
             }]
         );
     }
 
     #[test]
-    fn parse_rejects_leading_colon() {
-        let inputs = [":beauty", ":x", ":"];
+    fn parse_aspect_declaration_and_prompt() {
+        let d1 = parse_full(":beauty").unwrap();
+        assert_eq!(
+            d1.statements,
+            vec![Stmt::Aspect {
+                slug: Some("beauty".to_string()),
+                prompt: None,
+            }]
+        );
+
+        let d2 = parse_full(":beauty { winner is more beautiful }").unwrap();
+        assert_eq!(
+            d2.statements,
+            vec![Stmt::Aspect {
+                slug: Some("beauty".to_string()),
+                prompt: Some("winner is more beautiful".to_string()),
+            }]
+        );
+
+        let d3 = parse_full(":beauty{no space}").unwrap();
+        assert_eq!(
+            d3.statements,
+            vec![Stmt::Aspect {
+                slug: Some("beauty".to_string()),
+                prompt: Some("no space".to_string()),
+            }]
+        );
+
+        let d4 = parse_full(":a-b_c1").unwrap();
+        assert_eq!(
+            d4.statements,
+            vec![Stmt::Aspect {
+                slug: Some("a-b_c1".to_string()),
+                prompt: None,
+            }]
+        );
+    }
+
+    #[test]
+    fn parse_aspect_prompt_preserves_fenced_braces() {
+        let input = ":beauty {\n```json\n{\"criterion\": true}\n```\n}";
+        let doc = parse_full(input).unwrap();
+        assert_eq!(
+            doc.statements,
+            vec![Stmt::Aspect {
+                slug: Some("beauty".to_string()),
+                prompt: Some("```json\n{\"criterion\": true}\n```".to_string()),
+            }]
+        );
+    }
+
+    #[test]
+    fn parse_bare_colon_resets_aspect() {
+        let doc = parse_full(":").unwrap();
+        assert_eq!(
+            doc.statements,
+            vec![Stmt::Aspect {
+                slug: None,
+                prompt: None,
+            }]
+        );
+        let doc = parse_full(":   ").unwrap();
+        assert_eq!(
+            doc.statements,
+            vec![Stmt::Aspect {
+                slug: None,
+                prompt: None,
+            }]
+        );
+    }
+
+    #[test]
+    fn parse_invalid_colon_lines_remain_prose() {
+        let inputs = [
+            ":)",
+            ": note",
+            "::x",
+            ":UPPER",
+            ":has space {x}",
+            ":beauty extra",
+            ":Beauty",
+        ];
         for input in &inputs {
-            let result = parse_full(input);
-            assert!(result.is_err(), "expected parse error for {input:?}");
-            assert!(
-                result
-                    .unwrap_err()
-                    .to_string()
-                    .contains("leading ':' is not supported"),
-                "wrong error for {input:?}"
+            let doc = parse_full(input).unwrap();
+            assert_eq!(
+                doc.statements,
+                vec![Stmt::Prose {
+                    text: input.to_string()
+                }],
+                "expected prose for {input:?}"
             );
         }
+    }
+
+    #[test]
+    fn parse_invalid_colon_lines_merge_with_adjacent_prose() {
+        let input = "hello\n:)\nworld";
+        let doc = parse_full(input).unwrap();
+        assert_eq!(
+            doc.statements,
+            vec![Stmt::Prose {
+                text: "hello\n:)\nworld".to_string()
+            }]
+        );
+    }
+
+    #[test]
+    fn parse_aspect_lexical_inheritance_across_votes_and_switches() {
+        let input = "\
+~/t/a {a}\n\
+~/t/b {b}\n\
+:beauty { more beautiful }\n\
+{pretty}\n\
+~/t/a 3:1 ~/t/b\n\
+{also pretty}\n\
+~/t/b 2:1 ~/t/a\n\
+:\n\
+{canonical}\n\
+~/t/a 1:1 ~/t/b\n\
+:speed\n\
+{faster}\n\
+~/t/a 4:1 ~/t/b\n";
+        let doc = parse_full(input).unwrap();
+        let votes: Vec<&Stmt> = doc
+            .statements
+            .iter()
+            .filter(|s| matches!(s, Stmt::Vote { .. }))
+            .collect();
+        assert_eq!(votes.len(), 4);
+        assert!(matches!(
+            votes[0],
+            Stmt::Vote {
+                aspect: Some(a),
+                ..
+            } if a == "beauty"
+        ));
+        assert!(matches!(
+            votes[1],
+            Stmt::Vote {
+                aspect: Some(a),
+                ..
+            } if a == "beauty"
+        ));
+        assert!(matches!(votes[2], Stmt::Vote { aspect: None, .. }));
+        assert!(matches!(
+            votes[3],
+            Stmt::Vote {
+                aspect: Some(a),
+                ..
+            } if a == "speed"
+        ));
+        let aspects: Vec<_> = doc
+            .statements
+            .iter()
+            .filter_map(|s| match s {
+                Stmt::Aspect { slug, prompt } => Some((slug.as_deref(), prompt.is_some())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            aspects,
+            vec![
+                (Some("beauty"), true),
+                (None, false),
+                (Some("speed"), false),
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_aspect_does_not_affect_item_definitions() {
+        let input = ":beauty\n~/t/x {defined after aspect}";
+        let doc = parse_full(input).unwrap();
+        assert_eq!(
+            doc.statements,
+            vec![
+                Stmt::Aspect {
+                    slug: Some("beauty".to_string()),
+                    prompt: None,
+                },
+                Stmt::Item {
+                    title: "~/t/x".to_string(),
+                    body: Some("defined after aspect".to_string()),
+                },
+            ]
+        );
     }
 
     #[test]
@@ -1206,6 +1482,7 @@ mod tests {
                 ratio_left: 3,
                 ratio_right: 1,
                 explanation: "because".to_string(),
+                aspect: None,
             }]
         );
     }

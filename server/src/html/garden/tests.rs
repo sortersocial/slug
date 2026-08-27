@@ -2,6 +2,7 @@ use super::{
     access::content_for_garden_view,
     external::{external_frame_allowed, external_resolver_status_markup, external_source_href},
     item_page::{build_item_page_view_model, sibling_nav_markup},
+    render::aspect_ranking_sections_markup,
     pin::ont_pin_vote_controls,
     vote::{
         canonical_edge_items, edge_vote_count_for_pair, edge_vote_entries_for_pair,
@@ -279,6 +280,76 @@ fn sibling_nav_splits_each_unranked_into_its_own_group() {
     assert_eq!(nav.groups[0].links.len(), 2);
     assert_eq!(nav.groups[1].links.len(), 1);
     assert_eq!(nav.groups[2].links.len(), 1);
+}
+
+#[test]
+fn item_page_renders_aspect_section_below_canonical() {
+    let mut reduced = ReducerState::default();
+    apply_ingest(
+        &mut reduced,
+        1,
+        "~/topic {root}\n\
+         ~/topic/a {alpha}\n\
+         ~/topic/b {beta}\n\
+         {canonical}\n\
+         ~/topic/a 3:1 ~/topic/b\n\
+         :beauty { winner is more beautiful }\n\
+         {pretty}\n\
+         ~/topic/b 2:1 ~/topic/a\n",
+    );
+
+    let model = build_item_page_view_model(&reduced, &ScopeId::Public, "~/topic", 1);
+    assert_eq!(model.child_rankings.component_rankings.len(), 1);
+    assert_eq!(model.aspect_rankings.len(), 1);
+    assert_eq!(model.aspect_rankings[0].slug, "beauty");
+    assert_eq!(
+        model.aspect_rankings[0].prompt.as_deref(),
+        Some("winner is more beautiful")
+    );
+    assert_eq!(model.aspect_rankings[0].rankings.component_rankings.len(), 1);
+    let canon_top = model.child_rankings.component_rankings[0].ranked[0]
+        .item
+        .as_str();
+    let aspect_top = model.aspect_rankings[0].rankings.component_rankings[0].ranked[0]
+        .item
+        .as_str();
+    assert!(canon_top.contains("topic/a"));
+    assert!(aspect_top.contains("topic/b"));
+
+    let content = content_for_garden_view(&reduced, &ScopeId::Public);
+    let html = aspect_ranking_sections_markup(
+        &model.aspect_rankings,
+        &ThreadNav::public(),
+        None,
+        content,
+        "/~/topic",
+    )
+    .into_string();
+    assert!(
+        html.contains("ont-tab-panel-aspect"),
+        "missing aspect section: {html}"
+    );
+    assert!(html.contains(":beauty"), "missing aspect heading: {html}");
+    assert!(
+        html.contains("winner is more beautiful"),
+        "missing aspect prompt: {html}"
+    );
+    assert!(
+        html.contains("ont-ranking-list"),
+        "missing ranking list: {html}"
+    );
+}
+
+#[test]
+fn item_page_omits_aspect_section_without_aspect_votes() {
+    let mut reduced = ReducerState::default();
+    apply_ingest(
+        &mut reduced,
+        1,
+        "~/topic {root}\n~/topic/a {alpha}\n~/topic/b {beta}\n{canonical}\n~/topic/a 3:1 ~/topic/b\n",
+    );
+    let model = build_item_page_view_model(&reduced, &ScopeId::Public, "~/topic", 1);
+    assert!(model.aspect_rankings.is_empty());
 }
 
 #[test]

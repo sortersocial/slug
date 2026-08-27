@@ -70,6 +70,8 @@ pub struct RankComponent {
 pub struct RankResponse {
     pub components: Vec<RankComponent>,
     pub unranked_items: Vec<GardenItemUrl>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aspect: Option<String>,
 }
 
 /// Graph connectivity stats for a scope, returned with pair suggestions.
@@ -392,6 +394,8 @@ pub enum RpcCommand {
         limit: Option<usize>,
         #[serde(default)]
         percent: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        aspect: Option<String>,
     },
     GetGardenItem {
         room: String,
@@ -660,6 +664,8 @@ pub struct IngestResponse {
 pub struct CheckScopeRanking {
     /// Parent scope path (e.g. "/models" or "/" for root).
     pub parent: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aspect: Option<String>,
     pub components: Vec<RankComponent>,
     pub unranked_items: Vec<GardenItemUrl>,
 }

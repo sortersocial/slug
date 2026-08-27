@@ -3,8 +3,11 @@ use maud::html;
 use crate::{
     html::forum::ThreadNav,
     path_types::ItemId,
-    reducer::ScopeId,
-    scope_rank::{build_children_rankings, build_rankings_for_item_set, resolve_scope_recursive, ChildrenRankings},
+    reducer::{ContentState, ScopeId},
+    scope_rank::{
+        build_children_rankings, build_children_rankings_in_group, build_rankings_for_item_set,
+        resolve_scope_recursive, ChildrenRankings,
+    },
 };
 
 use super::{
@@ -69,6 +72,13 @@ pub(super) struct RankHistoryEntryView {
 }
 
 #[derive(Debug, Clone)]
+pub(super) struct AspectRankingView {
+    pub(super) slug: String,
+    pub(super) prompt: Option<String>,
+    pub(super) rankings: ChildrenRankings,
+}
+
+#[derive(Debug, Clone)]
 pub(super) struct ItemPageViewModel {
     pub(super) item: String,
     pub(super) body: Option<String>,
@@ -76,10 +86,44 @@ pub(super) struct ItemPageViewModel {
     /// False at the tilde ontology root (`~/`): sibling-rank footnote does not apply.
     pub(super) item_has_parent: bool,
     pub(super) child_rankings: ChildrenRankings,
+    pub(super) aspect_rankings: Vec<AspectRankingView>,
     pub(super) child_depth: usize,
     pub(super) rank_history: Vec<RankHistoryEntryView>,
     /// Forum threads that mention or vote on this item.
     pub(super) threads: Vec<String>,
+}
+
+pub(super) fn aspect_rankings_for_parent(
+    content: &ContentState,
+    parent: &ItemId,
+) -> Vec<AspectRankingView> {
+    let parent = parent.clone().normalized_storage();
+    let mut slugs: Vec<String> = content
+        .aspect_groups
+        .keys()
+        .filter(|(p, _)| p == &parent)
+        .map(|(_, slug)| slug.clone())
+        .collect();
+    slugs.sort();
+    slugs.dedup();
+    slugs
+        .into_iter()
+        .filter_map(|slug| {
+            let group = content.aspect_group(&parent, &slug)?;
+            if group.voted_pairs.is_empty() {
+                return None;
+            }
+            let rankings = build_children_rankings_in_group(content, &parent, group);
+            if rankings.component_rankings.is_empty() {
+                return None;
+            }
+            Some(AspectRankingView {
+                prompt: content.aspect_prompt(&slug).map(str::to_string),
+                slug,
+                rankings,
+            })
+        })
+        .collect()
 }
 
 fn build_sibling_nav(
@@ -218,6 +262,8 @@ fn build_rank_history(
                                 ratio_left,
                                 ratio_right,
                                 explanation,
+                                aspect: None,
+                                ..
                             } = s
                             {
                                 let a_str = crate::canonical_path::canonicalize_item(&item1);
@@ -335,6 +381,7 @@ pub(super) fn build_item_page_view_model(
         sibling_nav,
         item_has_parent,
         child_rankings,
+        aspect_rankings: aspect_rankings_for_parent(content, &item_key),
         child_depth,
         rank_history,
         threads,

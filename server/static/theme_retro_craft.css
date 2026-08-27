@@ -45,6 +45,15 @@ h1, h2, h3 {
   letter-spacing: 0.14em;
   margin: 1.5rem 0 0.5rem;
 }
+h4.ont-aspect-heading {
+  color: var(--ink-dim);
+  font-family: var(--font-ui);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  margin: 1.75rem 0 0.35rem;
+}
+p.ont-aspect-prompt { margin: 0 0 0.5rem; }
 
 a {
   color: var(--accent);

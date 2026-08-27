@@ -107,7 +107,13 @@ pub fn build_rankings_for_item_set(
     content: &ContentState,
     items_in_scope: &[ItemId],
 ) -> ChildrenRankings {
-    let group = &content.ranking_group;
+    build_rankings_for_group_and_items(&content.ranking_group, items_in_scope)
+}
+
+pub fn build_rankings_for_group_and_items(
+    group: &GroupState,
+    items_in_scope: &[ItemId],
+) -> ChildrenRankings {
     let mut items_in_scope: Vec<ItemId> = items_in_scope.to_vec();
     items_in_scope.sort();
 
@@ -199,6 +205,20 @@ pub fn build_children_rankings(content: &ContentState, parent: &ItemId) -> Child
         .map(|s| s.iter().cloned().collect())
         .unwrap_or_default();
     build_rankings_for_item_set(content, &items)
+}
+
+pub fn build_children_rankings_in_group(
+    content: &ContentState,
+    parent: &ItemId,
+    group: &GroupState,
+) -> ChildrenRankings {
+    let parent = parent.clone().normalized_storage();
+    let items: Vec<ItemId> = content
+        .item_children
+        .get(&parent)
+        .map(|s| s.iter().cloned().collect())
+        .unwrap_or_default();
+    build_rankings_for_group_and_items(group, &items)
 }
 
 /// Host-only `https://…` roots for the external garden index (`/-/`).
@@ -314,15 +334,8 @@ mod tests {
             item_children.insert(parent, set);
         }
         ContentState {
-            ranking_group: crate::reducer::GroupState::new(),
-            items: HashSet::new(),
-            item_bodies: HashMap::new(),
             item_children,
-            item_votes: HashMap::new(),
-            item_snippets: HashMap::new(),
-            item_threads: HashMap::new(),
-            rank_history: HashMap::new(),
-            rank_position_cache: None,
+            ..Default::default()
         }
     }
 
@@ -408,15 +421,9 @@ mod tests {
         let mut items = HashSet::new();
         items.insert(repo.clone());
         let content = ContentState {
-            ranking_group: crate::reducer::GroupState::new(),
             items,
-            item_bodies: HashMap::new(),
             item_children,
-            item_votes: HashMap::new(),
-            item_snippets: HashMap::new(),
-            item_threads: HashMap::new(),
-            rank_history: HashMap::new(),
-            rank_position_cache: None,
+            ..Default::default()
         };
         let roots = external_root_host_items(&content);
         assert_eq!(roots, vec![gh]);

@@ -327,7 +327,7 @@ pub async fn writer_actor(mut rx: mpsc::Receiver<WriteCmd>, state: AppState) {
                                 dsl::Stmt::Item { .. } => {
                                     required.insert(ThreadCapability::AddItem);
                                 }
-                                dsl::Stmt::Prose { .. } => {
+                                dsl::Stmt::Prose { .. } | dsl::Stmt::Aspect { .. } => {
                                     required.insert(ThreadCapability::Post);
                                 }
                             }
@@ -361,7 +361,13 @@ pub async fn writer_actor(mut rx: mpsc::Receiver<WriteCmd>, state: AppState) {
                     let voted_parent_scopes: Vec<ItemId> = {
                         let mut parents: HashSet<ItemId> = HashSet::new();
                         for s in &v.doc.statements {
-                            if let dsl::Stmt::Vote { item1, item2, .. } = s {
+                            if let dsl::Stmt::Vote {
+                                item1,
+                                item2,
+                                aspect: None,
+                                ..
+                            } = s
+                            {
                                 if let (Ok(a), Ok(b)) = (resolve_item(item1), resolve_item(item2)) {
                                     if let Some(p) = a.parent() {
                                         parents.insert(p);

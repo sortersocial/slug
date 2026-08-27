@@ -100,6 +100,15 @@ h1, h2, h3 {
   margin: 14px 0 6px;
   text-transform: uppercase;
 }
+h4.ont-aspect-heading {
+  color: var(--meta);
+  font-size: 11px;
+  font-weight: bold;
+  letter-spacing: 0.12em;
+  margin: 18px 0 4px;
+  text-transform: uppercase;
+}
+p.ont-aspect-prompt { margin: 0 0 8px; }
 
 /* ----------------------------------------------------------------
    LINKS (default)

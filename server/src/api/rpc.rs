@@ -23,7 +23,7 @@ use crate::{
 use super::auth::{parse_bearer, verify_bearer_principal};
 use super::helpers::{
     compute_connectivity_stats, is_pair_voted, now_ms, paginate_rankings, parse_parent_specs,
-    pick_random_distinct_item_pair, resolve_item, validate_garden_parent_scope_paths,
+    pick_random_distinct_item_pair, validate_garden_parent_scope_paths,
     vote_touches_path,
 };
 use super::validate::validate_ingest_document;
@@ -221,14 +221,48 @@ fn build_rank_response_for_content(
     limit: Option<usize>,
     want_percent: bool,
     room_wire: &str,
+    aspect: Option<String>,
 ) -> Result<RankResponse, RpcErr> {
     let parent_owned = parent.map(|s| s.to_string());
     let specs = parse_parent_specs(parent_owned.as_ref());
     let is_global = parent.map(|p| p.trim() == "~").unwrap_or(false);
 
+    if let Some(ref slug) = aspect {
+        if !crate::dsl::is_valid_aspect_slug(slug) {
+            return Err((
+                "invalid aspect".into(),
+                Some("aspect slugs are [a-z0-9_-]{1,64}".into()),
+            ));
+        }
+        if specs.len() > 1 {
+            return Err((
+                "aspect ranking requires a single parent".into(),
+                None,
+            ));
+        }
+    }
+
     validate_garden_parent_scope_paths(content, &specs, is_global)?;
     let depth = depth.max(1);
-    let rankings = if is_global {
+    let rankings = if let Some(ref slug) = aspect {
+        let parent_id = if is_global || specs.is_empty() {
+            ItemId::ontology_root()
+        } else {
+            ItemId::parse(&specs[0]).unwrap_or_else(|| ItemId::opaque(specs[0].clone()))
+        };
+        let empty = crate::reducer::GroupState::new();
+        let group = content
+            .aspect_group(&parent_id, slug)
+            .unwrap_or(&empty);
+        let items = if depth > 1 && !is_global && !specs.is_empty() {
+            crate::scope_rank::resolve_scope_recursive(content, &specs, depth)
+        } else if is_global || specs.is_empty() {
+            crate::scope_rank::resolve_scope(content, &[parent_id.as_str().to_string()])
+        } else {
+            crate::scope_rank::resolve_scope(content, &specs)
+        };
+        crate::scope_rank::build_rankings_for_group_and_items(group, &items)
+    } else if is_global {
         let all_items: Vec<ItemId> = content.items.iter().cloned().collect();
         crate::scope_rank::build_rankings_for_item_set(content, &all_items)
     } else if specs.is_empty() {
@@ -280,6 +314,7 @@ fn build_rank_response_for_content(
     Ok(RankResponse {
         components,
         unranked_items,
+        aspect,
     })
 }
 
@@ -414,7 +449,7 @@ async fn rpc_check(
                 dsl::Stmt::Item { .. } => {
                     required.insert(ThreadCapability::AddItem);
                 }
-                dsl::Stmt::Prose { .. } => {
+                dsl::Stmt::Prose { .. } | dsl::Stmt::Aspect { .. } => {
                     required.insert(ThreadCapability::Post);
                 }
             }
@@ -444,59 +479,7 @@ async fn rpc_check(
     let mut simulated = { reduced_arc.read().await.clone() };
     simulated.apply_event(event);
 
-    let voted_parents: Vec<ItemId> = {
-        let mut parents: HashSet<ItemId> = HashSet::new();
-        for s in &v.doc.statements {
-            if let dsl::Stmt::Vote { item1, item2, .. } = s {
-                if let (Ok(a), Ok(b)) = (resolve_item(item1), resolve_item(item2)) {
-                    if let Some(p) = a.parent() {
-                        parents.insert(p);
-                    }
-                    if let Some(p) = b.parent() {
-                        parents.insert(p);
-                    }
-                }
-            }
-        }
-        let mut out: Vec<ItemId> = parents.into_iter().collect();
-        out.sort();
-        out
-    };
-
-    let rankings: Vec<CheckScopeRanking> = voted_parents
-        .iter()
-        .map(|parent| {
-            let scoped_content = simulated
-                .content_for_scope(&scope)
-                .unwrap_or_else(|| simulated.public());
-            let scoped = crate::scope_rank::build_children_rankings(scoped_content, parent);
-            let components: Vec<RankComponent> = scoped
-                .component_rankings
-                .into_iter()
-                .map(|comp| RankComponent {
-                    pairs: comp.pairs,
-                    ranking: comp
-                        .ranked
-                        .into_iter()
-                        .map(|r| RankRow {
-                            item: GardenItemUrl::from_stored(&r.item, &room_key),
-                            score: r.score,
-                            percent: None,
-                        })
-                        .collect(),
-                })
-                .collect();
-            CheckScopeRanking {
-                parent: GardenItemUrl::from_stored(parent, &room_key).into_inner(),
-                components,
-                unranked_items: scoped
-                    .unranked_items
-                    .into_iter()
-                    .map(|it| GardenItemUrl::from_stored(&it, &room_key))
-                    .collect(),
-            }
-        })
-        .collect();
+    let rankings = crate::offline::rankings_for_document(&simulated, &scope, &room_key, &v.doc);
 
     let check_next = if room_key == "public" {
         vec![
@@ -1039,6 +1022,7 @@ pub async fn dispatch_rpc(state: &AppState, headers: &HeaderMap, cmd: RpcCommand
             offset,
             limit,
             percent,
+            aspect,
         } => {
             let reduced = state.reduced.read().await;
             if let Err((e, h)) = authorize_room_read(&reduced, &headers, &room) {
@@ -1058,6 +1042,7 @@ pub async fn dispatch_rpc(state: &AppState, headers: &HeaderMap, cmd: RpcCommand
                     limit,
                     percent.unwrap_or(false),
                     &room,
+                    aspect.filter(|s| !s.trim().is_empty()),
                 ) {
                     Ok(r) => line_ok(RpcResult::GardenRank(r)),
                     Err((e, h)) => line_err(e, h),
@@ -1556,6 +1541,8 @@ pub async fn dispatch_rpc(state: &AppState, headers: &HeaderMap, cmd: RpcCommand
                                             ratio_left,
                                             ratio_right,
                                             explanation,
+                                            aspect: None,
+                                            ..
                                         } = s
                                         {
                                             let a = canonicalize_item(&item1);

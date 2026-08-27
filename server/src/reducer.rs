@@ -237,6 +237,11 @@ pub struct ContentState {
     pub item_threads: HashMap<ItemId, HashSet<String>>,
     /// Per-item rank history, oldest first.
     pub rank_history: HashMap<ItemId, Vec<RankHistoryEntry>>,
+    /// Aspect ranking groups keyed by (parent item, aspect slug).
+    /// Canonical votes stay in `ranking_group`.
+    pub aspect_groups: HashMap<(ItemId, String), GroupState>,
+    /// Prompt text per aspect slug in this room; last non-empty write wins.
+    pub aspect_prompts: HashMap<String, String>,
     /// RAM-only memo of rank positions at `ranking_group.generation`.
     ///
     /// The next vote ingest's "before" positions are exactly the previous vote
@@ -246,6 +251,16 @@ pub struct ContentState {
     /// computation; item-only ingests do not invalidate it because isolates do
     /// not affect any ranked component.
     pub(crate) rank_position_cache: Option<RankPositionCache>,
+}
+
+impl ContentState {
+    pub fn aspect_group(&self, parent: &ItemId, aspect: &str) -> Option<&GroupState> {
+        self.aspect_groups.get(&(parent.clone(), aspect.to_string()))
+    }
+
+    pub fn aspect_prompt(&self, aspect: &str) -> Option<&str> {
+        self.aspect_prompts.get(aspect).map(String::as_str)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -604,7 +619,13 @@ impl ReducerState {
             .statements
             .iter()
             .filter_map(|s| {
-                if let dsl::Stmt::Vote { item1, item2, .. } = s {
+                if let dsl::Stmt::Vote {
+                    item1,
+                    item2,
+                    aspect: None,
+                    ..
+                } = s
+                {
                     Some([item1, item2])
                 } else {
                     None
@@ -643,12 +664,20 @@ impl ReducerState {
                         }
                     }
                 }
+                dsl::Stmt::Aspect { slug, prompt } => {
+                    if let (Some(s), Some(p)) = (slug, prompt) {
+                        if !p.trim().is_empty() {
+                            content.aspect_prompts.insert(s, p);
+                        }
+                    }
+                }
                 dsl::Stmt::Vote {
                     item1,
                     item2,
                     ratio_left,
                     ratio_right,
                     explanation,
+                    aspect,
                 } => {
                     let Some(item_a) = Self::normalize_item(&item1) else {
                         continue;
@@ -677,10 +706,22 @@ impl ReducerState {
                     Self::add_child_edge(content, &item_a);
                     Self::add_child_edge(content, &item_b);
 
-                    content.ranking_group.apply_vote(vote.clone());
+                    if let Some(asp) = aspect {
+                        if let (Some(pa), Some(pb)) = (item_a.parent(), item_b.parent()) {
+                            if pa == pb {
+                                content
+                                    .aspect_groups
+                                    .entry((pa, asp))
+                                    .or_default()
+                                    .apply_vote(vote);
+                            }
+                        }
+                    } else {
+                        content.ranking_group.apply_vote(vote.clone());
 
-                    for it in [&item_a, &item_b] {
-                        nav!(content.item_votes, keypath(it.clone()), push_front(vote.clone()));
+                        for it in [&item_a, &item_b] {
+                            nav!(content.item_votes, keypath(it.clone()), push_front(vote.clone()));
+                        }
                     }
                 }
                 dsl::Stmt::Prose { .. } => {}
@@ -1063,5 +1104,182 @@ mod rank_position_cache_tests {
             "the second ingest must reuse its before positions and recompute only after voting"
         );
         assert_eq!(content.rank_history[&ItemId::parse("~/memo/b").unwrap()].len(), 2);
+    }
+}
+
+#[cfg(test)]
+mod aspect_tests {
+    use super::*;
+    use crate::events::PostRedacted;
+    use crate::ranking::ranked_items;
+
+    fn ingest(id: &str, raw: &str) -> Ingest {
+        Ingest {
+            ts: 1,
+            id: id.to_string(),
+            raw: raw.to_string(),
+            principal: "tester".to_string(),
+            delegate: None,
+            room_id: "public".to_string(),
+            thread_tag: "aspects".to_string(),
+        }
+    }
+
+    fn parent_songs() -> ItemId {
+        ItemId::parse("~/songs").unwrap()
+    }
+
+    const SETUP: &str = "\
+~/songs/a { a }\n\
+~/songs/b { b }\n\
+{ canonical }\n\
+~/songs/a 3:1 ~/songs/b\n\
+:beauty { more beautiful }\n\
+{ pretty }\n\
+~/songs/a 2:1 ~/songs/b\n\
+:speed { faster }\n\
+{ zippy }\n\
+~/songs/a 4:1 ~/songs/b\n";
+
+    #[test]
+    fn aspect_votes_create_separate_groups_and_leave_canonical_unchanged() {
+        let mut state = ReducerState::default();
+        state.apply_event(Event::Ingest(ingest("setup", SETUP)));
+
+        let content = state.public();
+        assert_eq!(content.ranking_group.voted_pairs.len(), 1);
+        assert_eq!(content.ranking_group.recent_votes.len(), 1);
+        assert_eq!(content.ranking_group.recent_votes[0].ratio_left, 3);
+        assert_eq!(content.ranking_group.recent_votes[0].ratio_right, 1);
+
+        let beauty = content
+            .aspect_group(&parent_songs(), "beauty")
+            .expect("beauty group");
+        assert_eq!(beauty.voted_pairs.len(), 1);
+        assert_eq!(beauty.recent_votes[0].ratio_left, 2);
+        assert_eq!(beauty.recent_votes[0].ratio_right, 1);
+
+        let speed = content
+            .aspect_group(&parent_songs(), "speed")
+            .expect("speed group");
+        assert_eq!(speed.voted_pairs.len(), 1);
+        assert_eq!(speed.recent_votes[0].ratio_left, 4);
+        assert_eq!(speed.recent_votes[0].ratio_right, 1);
+
+        assert_eq!(
+            content.aspect_prompt("beauty"),
+            Some("more beautiful")
+        );
+        assert_eq!(content.aspect_prompt("speed"), Some("faster"));
+        assert!(content.item_votes.values().all(|votes| {
+            votes.iter().all(|v| v.ratio_left == 3 && v.ratio_right == 1)
+        }));
+    }
+
+    #[test]
+    fn aspect_prompt_overwrite_matches_item_body_last_write() {
+        let mut state = ReducerState::default();
+        state.apply_event(Event::Ingest(ingest(
+            "first",
+            ":beauty { first prompt }\n~/songs/a { a }",
+        )));
+        state.apply_event(Event::Ingest(ingest(
+            "second",
+            ":beauty { second prompt }",
+        )));
+        assert_eq!(state.public().aspect_prompt("beauty"), Some("second prompt"));
+        state.apply_event(Event::Ingest(ingest("empty", ":beauty {   }")));
+        assert_eq!(state.public().aspect_prompt("beauty"), Some("second prompt"));
+    }
+
+    #[test]
+    fn redacting_post_with_aspect_votes_removes_them() {
+        let mut state = ReducerState::default();
+        state.apply_event(Event::Ingest(ingest(
+            "items",
+            "~/songs/a { a }\n~/songs/b { b }\n{ canonical }\n~/songs/a 3:1 ~/songs/b",
+        )));
+        state.apply_event(Event::Ingest(ingest(
+            "aspects",
+            ":beauty\n{ pretty }\n~/songs/a 2:1 ~/songs/b",
+        )));
+        assert!(state.public().aspect_group(&parent_songs(), "beauty").is_some());
+        assert_eq!(state.public().ranking_group.voted_pairs.len(), 1);
+
+        state.apply_event(Event::PostRedacted(PostRedacted {
+            ts: 2,
+            post_id: "aspects".to_string(),
+            principal: "tester".to_string(),
+        }));
+
+        let content = state.public();
+        assert!(
+            content.aspect_group(&parent_songs(), "beauty").is_none(),
+            "redacted aspect votes must leave the group"
+        );
+        assert!(content.aspect_prompt("beauty").is_none());
+        assert_eq!(content.ranking_group.voted_pairs.len(), 1);
+        assert_eq!(content.ranking_group.recent_votes[0].ratio_left, 3);
+    }
+
+    #[test]
+    fn replay_determinism_same_events_same_rankings() {
+        let events = [
+            Event::Ingest(ingest("setup", SETUP)),
+            Event::Ingest(ingest(
+                "more",
+                ":\n{ more canonical }\n~/songs/b 2:1 ~/songs/a",
+            )),
+        ];
+        let mut a = ReducerState::default();
+        let mut b = ReducerState::default();
+        for ev in &events {
+            a.apply_event(ev.clone());
+            b.apply_event(ev.clone());
+        }
+
+        let ca = a.public();
+        let cb = b.public();
+        assert_eq!(ca.ranking_group.idx_to_item, cb.ranking_group.idx_to_item);
+        assert_eq!(ca.ranking_group.voted_pairs, cb.ranking_group.voted_pairs);
+        assert_eq!(ca.aspect_groups.len(), cb.aspect_groups.len());
+        for (key, ga) in &ca.aspect_groups {
+            let gb = cb.aspect_groups.get(key).expect("matching aspect group");
+            assert_eq!(ga.idx_to_item, gb.idx_to_item);
+            assert_eq!(ga.voted_pairs, gb.voted_pairs);
+            let mut ra = ga.clone();
+            let mut rb = gb.clone();
+            let la = ranked_items(&mut ra, 20000, 1e-9);
+            let lb = ranked_items(&mut rb, 20000, 1e-9);
+            assert_eq!(
+                la.iter().map(|r| r.item.as_str()).collect::<Vec<_>>(),
+                lb.iter().map(|r| r.item.as_str()).collect::<Vec<_>>()
+            );
+        }
+        assert_eq!(ca.aspect_prompts, cb.aspect_prompts);
+    }
+
+    #[test]
+    fn thread_graduation_reparse_inherits_aspects() {
+        let raw = SETUP;
+        let mut private = ingest("priv", raw);
+        private.room_id = "aa11bb/studio".to_string();
+        let mut public = ingest("pub", raw);
+        public.room_id = "public".to_string();
+
+        let mut state = ReducerState::default();
+        state.apply_event(Event::Ingest(private));
+        state.apply_event(Event::Ingest(public));
+
+        let priv_content = state
+            .content_for_scope(&ScopeId::Room("aa11bb/studio".into()))
+            .expect("private scope");
+        let pub_content = state.public();
+        assert!(priv_content.aspect_group(&parent_songs(), "beauty").is_some());
+        assert!(pub_content.aspect_group(&parent_songs(), "beauty").is_some());
+        assert_eq!(
+            priv_content.aspect_prompt("beauty"),
+            pub_content.aspect_prompt("beauty")
+        );
     }
 }

@@ -31,6 +31,7 @@ use super::{
     browse::{GardenBrowsePath, scoped_bc_path_external},
     copy::garden_rank_copy_button_markup,
     item::{child_depth_from_uri, garden_depth_select_markup, item_display_path, item_href},
+    item_page::aspect_rankings_for_parent,
     render::render_scope_view,
 };
 
@@ -41,17 +42,19 @@ pub async fn garden_index(
 ) -> impl IntoResponse {
     let nav = ThreadNav::public();
     let child_depth = child_depth_from_uri(&uri);
-    let child_rankings = {
+    let (child_rankings, aspect_rankings) = {
         let reduced = state.reduced.read().await;
         let content = reduced.public();
         let root = ItemId::ontology_root();
-        if child_depth > 1 {
+        let child_rankings = if child_depth > 1 {
             let items =
                 resolve_scope_recursive(content, &[root.as_str().to_string()], child_depth);
             build_rankings_for_item_set(content, &items)
         } else {
             build_children_rankings(content, &root)
-        }
+        };
+        let aspect_rankings = aspect_rankings_for_parent(content, &root);
+        (child_rankings, aspect_rankings)
     };
 
     let url_key = canonical_view_url(&uri);
@@ -98,6 +101,29 @@ pub async fn garden_index(
                                 li {
                                     @let href = item_href(name.as_str(), &nav);
                                     a href=(href) { (item_display_path(name.as_str())) }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            @for aspect in &aspect_rankings {
+                section class="ont-tab-panel ont-tab-panel-aspect" {
+                    h4 class="ont-aspect-heading" { ":" (aspect.slug) }
+                    @if let Some(prompt) = &aspect.prompt {
+                        p class="muted ont-aspect-prompt" { (prompt) }
+                    }
+                    @for (ci, comp) in aspect.rankings.component_rankings.iter().enumerate() {
+                        div class="ont-group-shell" {
+                            div class="ont-group-meta" {
+                                (format!("ordering {} items={} pairs={}", ci + 1, comp.ranked.len(), comp.pairs))
+                            }
+                            ol class="ont-ranking-list" {
+                                @for r in comp.ranked.iter() {
+                                    @let href = item_href(r.item.as_str(), &nav);
+                                    li {
+                                        a href=(href) { (item_display_path(r.item.as_str())) }
+                                    }
                                 }
                             }
                         }

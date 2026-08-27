@@ -97,6 +97,12 @@ Shorthand:
   =     means 1:1 (equal)
 
 Item bodies follow the item path. Vote explanations come first; the comparison is the verdict line.
+
+Aspects (named sub-questions over the same parent electorate):
+  :beauty
+  :beauty { winner is more beautiful }
+  :
+Lexical, top-to-bottom. Sets the aspect for later votes in this document only. Bare `:` resets to the canonical ranking. Slug charset [a-z0-9_-]{1,64}; anything else starting with `:` stays prose (`:)`, `: note`, `::x`). Aspects affect votes only, not item definitions. Canonical ranking is unchanged.
 }
 
 You can write any prose in your posts. These won't be part of the garden but only the thread.
@@ -186,11 +192,11 @@ Scoped groups (same under public and private):
 
 garden tree                                     List every leaf path in the ontology. Full list; does not scale.
 garden body <path>                              Item body + threads that mention it (path: e.g. languages/rust, no ~)
-garden children <path> [path ...]               Ranked children under path(s). Multiple paths merge scopes.
+garden children <path> [path ...] [--aspect SLUG]  Ranked children under path(s). `--aspect` is that parent's aspect group.
 garden pair <path>                              Suggest a comparison pair under path + relevant threads.
 garden matchup <path>                           Vote history for item with thread per vote.
 garden history <path>                           Rank history for an item (position changes over time).
-garden rank [--limit N] [--offset N] [--percent]   Global flat ranking (paginated).
+garden rank [--limit N] [--offset N] [--percent] [--aspect SLUG]   Global flat ranking, or root-parent aspect group.
 
 forum list                                      List ~10 most active threads (bump-ordered)
 forum show <TAG>                                View thread posts (tag without #; quote if needed)

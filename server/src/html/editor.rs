@@ -9,7 +9,7 @@ use maud::{html, Markup};
 use serde::Deserialize;
 
 use crate::{
-    api::{resolve_item, validate_ingest_document},
+    api::validate_ingest_document,
     html::JsBuilder,
     middleware::canonical_view_url,
     reducer::ScopeId,
@@ -102,21 +102,12 @@ pub async fn editor_check(
             let mut simulated = { reduced_arc.read().await.clone() };
             simulated.apply_event(event);
 
-            // Collect voted parent scopes.
-            let voted_parents: Vec<crate::path_types::ItemId> = {
-                let mut parents = std::collections::HashSet::new();
-                for s in &v.doc.statements {
-                    if let crate::dsl::Stmt::Vote { item1, item2, .. } = s {
-                        if let (Ok(a), Ok(b)) = (resolve_item(item1), resolve_item(item2)) {
-                            if let Some(p) = a.parent() { parents.insert(p); }
-                            if let Some(p) = b.parent() { parents.insert(p); }
-                        }
-                    }
-                }
-                let mut out: Vec<crate::path_types::ItemId> = parents.into_iter().collect();
-                out.sort();
-                out
-            };
+            let rankings = crate::offline::rankings_for_document(
+                &simulated,
+                &ScopeId::Public,
+                "public",
+                &v.doc,
+            );
 
             let status = html! {
                 span class="editor-ok" {
@@ -126,25 +117,27 @@ pub async fn editor_check(
 
             let results = html! {
                 div id="editor-results" {
-                    @for parent in &voted_parents {
-                        @let scoped = crate::scope_rank::build_children_rankings(simulated.public(), parent);
-                        @let label = format!("/{}", parent.tilde_tail().unwrap_or(parent.as_str()));
-                        h3 { "ranking: " (label) }
-                        @for comp in &scoped.component_rankings {
+                    @for scope in &rankings {
+                        @let heading = match &scope.aspect {
+                            Some(slug) => format!("ranking: {} :{}", scope.parent, slug),
+                            None => format!("ranking: {}", scope.parent),
+                        };
+                        h3 { (heading) }
+                        @for comp in &scope.components {
                             ol class="editor-ranking" {
-                                @for r in &comp.ranked {
+                                @for r in &comp.ranking {
                                     li {
-                                        code { "~/" (r.item) }
+                                        code { (r.item.as_str()) }
                                         " "
                                         span class="muted" { (format!("{:.3}", r.score)) }
                                     }
                                 }
                             }
                         }
-                        @if !scoped.unranked_items.is_empty() {
+                        @if !scope.unranked_items.is_empty() {
                             p class="muted" {
                                 "unranked: "
-                                (scoped.unranked_items.iter().map(|i| format!("~/{i}")).collect::<Vec<_>>().join(", "))
+                                (scope.unranked_items.iter().map(|i| i.as_str().to_string()).collect::<Vec<_>>().join(", "))
                             }
                         }
                     }

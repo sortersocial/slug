@@ -106,6 +106,7 @@ fn document_stats(doc: &dsl::Document) -> CompileStats {
             dsl::Stmt::Item { .. } => items += 1,
             dsl::Stmt::Vote { .. } => votes += 1,
             dsl::Stmt::Prose { .. } => prose_blocks += 1,
+            dsl::Stmt::Aspect { .. } => {}
         }
     }
     CompileStats {
@@ -138,38 +139,61 @@ fn threads_in_document(text: &str) -> Vec<String> {
     tags
 }
 
-fn voted_parent_scopes(doc: &dsl::Document) -> Vec<ItemId> {
-    let mut parents = HashSet::new();
+fn voted_ranking_keys(doc: &dsl::Document) -> Vec<(ItemId, Option<String>)> {
+    let mut keys = HashSet::new();
     for stmt in &doc.statements {
-        if let dsl::Stmt::Vote { item1, item2, .. } = stmt {
+        if let dsl::Stmt::Vote {
+            item1,
+            item2,
+            aspect,
+            ..
+        } = stmt
+        {
             if let (Ok(a), Ok(b)) = (resolve_item(item1), resolve_item(item2)) {
                 if let Some(p) = a.parent() {
-                    parents.insert(p);
+                    keys.insert((p, aspect.clone()));
                 }
                 if let Some(p) = b.parent() {
-                    parents.insert(p);
+                    keys.insert((p, aspect.clone()));
                 }
             }
         }
     }
-    let mut out: Vec<ItemId> = parents.into_iter().collect();
+    let mut out: Vec<(ItemId, Option<String>)> = keys.into_iter().collect();
     out.sort();
     out
 }
 
-fn rankings_for_simulated(
+pub fn rankings_for_document(
     simulated: &ReducerState,
     scope: &ScopeId,
     room_wire: &str,
     doc: &dsl::Document,
 ) -> Vec<CheckScopeRanking> {
-    voted_parent_scopes(doc)
-        .iter()
-        .map(|parent| {
+    use crate::scope_rank::build_rankings_for_group_and_items;
+
+    voted_ranking_keys(doc)
+        .into_iter()
+        .map(|(parent, aspect)| {
             let scoped_content = simulated
                 .content_for_scope(scope)
                 .unwrap_or_else(|| simulated.public());
-            let scoped = build_children_rankings(scoped_content, parent);
+            let empty = crate::reducer::GroupState::new();
+            let scoped = if let Some(ref slug) = aspect {
+                let group = scoped_content
+                    .aspect_group(&parent, slug)
+                    .unwrap_or(&empty);
+                build_rankings_for_group_and_items(
+                    group,
+                    &scoped_content
+                        .item_children
+                        .get(&parent)
+                        .map(|s| s.iter().cloned().collect::<Vec<_>>())
+                        .unwrap_or_default(),
+                )
+            } else {
+                build_children_rankings(scoped_content, &parent)
+            };
             let components: Vec<RankComponent> = scoped
                 .component_rankings
                 .into_iter()
@@ -187,7 +211,8 @@ fn rankings_for_simulated(
                 })
                 .collect();
             CheckScopeRanking {
-                parent: GardenItemUrl::from_stored(parent, room_wire).into_inner(),
+                parent: GardenItemUrl::from_stored(&parent, room_wire).into_inner(),
+                aspect,
                 components,
                 unranked_items: scoped
                     .unranked_items
@@ -234,7 +259,7 @@ fn compile_document_inner(
     Ok(CompileResult {
         ok: true,
         threads: threads_in_document(text),
-        rankings: rankings_for_simulated(&simulated, &scope, room_key, &validated.doc),
+        rankings: rankings_for_document(&simulated, &scope, room_key, &validated.doc),
         stats: document_stats(&validated.doc),
         ingest_id,
         ingest_line,
@@ -388,6 +413,46 @@ mod tests {
         .unwrap_err();
         assert!(!err.ok);
         assert!(err.error.contains("undefined"));
+    }
+
+    #[test]
+    fn compile_canonical_plus_two_aspects_emits_three_ranking_groups() {
+        let text = "\
+~/songs/a { a }\n\
+~/songs/b { b }\n\
+{ canonical }\n\
+~/songs/a 3:1 ~/songs/b\n\
+:beauty { more beautiful }\n\
+{ pretty }\n\
+~/songs/a 2:1 ~/songs/b\n\
+:speed { faster }\n\
+{ zippy }\n\
+~/songs/a 4:1 ~/songs/b\n";
+        let result = compile_document(&ReducerState::default(), "public", text).unwrap();
+        assert!(result.ok);
+        assert_eq!(result.rankings.len(), 3);
+        let aspects: Vec<Option<&str>> = result
+            .rankings
+            .iter()
+            .map(|r| r.aspect.as_deref())
+            .collect();
+        assert_eq!(aspects, vec![None, Some("beauty"), Some("speed")]);
+        for ranking in &result.rankings {
+            assert_eq!(ranking.components.len(), 1);
+            assert_eq!(ranking.components[0].ranking.len(), 2);
+        }
+        assert!(result.rankings[0].components[0].ranking[0]
+            .item
+            .as_str()
+            .contains("songs/a"));
+        assert!(result.rankings[1].components[0].ranking[0]
+            .item
+            .as_str()
+            .contains("songs/a"));
+        assert!(result.rankings[2].components[0].ranking[0]
+            .item
+            .as_str()
+            .contains("songs/a"));
     }
 
     #[test]

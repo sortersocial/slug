@@ -18,6 +18,7 @@ fn parses_tutorial_fixture_with_prose() {
             dsl::Stmt::Item { .. } => items += 1,
             dsl::Stmt::Vote { .. } => votes += 1,
             dsl::Stmt::Prose { .. } => prose += 1,
+            dsl::Stmt::Aspect { .. } => {}
         }
     }
 
@@ -64,6 +65,7 @@ fn parses_external_dash_vote_line() {
             ratio_left: 2,
             ratio_right: 1,
             explanation: "reason".to_string(),
+            aspect: None,
         }]
     );
 }

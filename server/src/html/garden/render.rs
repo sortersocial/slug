@@ -19,7 +19,7 @@ use crate::{
     },
     middleware::canonical_view_url,
     path_types::ItemId,
-    reducer::ScopeId,
+    reducer::{ContentState, ScopeId},
     state::AppState,
     timeago,
 };
@@ -33,10 +33,79 @@ use super::{
         child_depth_from_uri, garden_depth_select_markup, item_code_label, item_display_path,
         item_href,
     },
-    item_page::{build_item_page_view_model, sibling_nav_markup},
+    item_page::{build_item_page_view_model, sibling_nav_markup, AspectRankingView},
     pin::{child_row_pin_or_vote, ont_pin_vote_controls, pinned_item_from_jar},
     vote::vote_pool_href,
 };
+
+pub(super) fn ont_ranking_lists_markup(
+    rankings: &crate::scope_rank::ChildrenRankings,
+    nav: &ThreadNav,
+    pin_ref: Option<&(String, ItemId)>,
+    scope_content: &ContentState,
+    next_for_pin: &str,
+) -> maud::Markup {
+    html! {
+        @for (ci, comp) in rankings.component_rankings.iter().enumerate() {
+            div class="ont-group-shell" {
+                div class="ont-group-meta" {
+                    (format!("ordering {} items={} pairs={}", ci + 1, comp.ranked.len(), comp.pairs))
+                }
+                ol class="ont-ranking-list" {
+                    @for r in comp.ranked.iter() {
+                        @let item_url = item_href(r.item.as_str(), nav);
+                        @let score_str = format!("{:.3}", r.score);
+                        li data-garden-item=(r.item.as_str()) {
+                            (child_row_pin_or_vote(nav, &r.item, pin_ref, scope_content, next_for_pin))
+                            a class="item-link" href=(item_url) { code { (item_display_path(r.item.as_str())) } }
+                            span class="ont-rank-score" { (score_str) }
+                        }
+                    }
+                }
+            }
+        }
+        @if !rankings.unranked_items.is_empty() {
+            div class="ont-group-shell ont-group-unsorted" {
+                div class="ont-group-meta" { "unranked" }
+                ul class="ont-group-list" {
+                    @for name in &rankings.unranked_items {
+                        li data-garden-item=(name.as_str()) {
+                            (child_row_pin_or_vote(nav, name, pin_ref, scope_content, next_for_pin))
+                            @let href = item_href(name.as_str(), nav);
+                            a class="item-link" href=(href) { code { (item_display_path(name.as_str())) } }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub(super) fn aspect_ranking_sections_markup(
+    aspects: &[AspectRankingView],
+    nav: &ThreadNav,
+    pin_ref: Option<&(String, ItemId)>,
+    scope_content: &ContentState,
+    next_for_pin: &str,
+) -> maud::Markup {
+    html! {
+        @for aspect in aspects {
+            section class="ont-tab-panel ont-tab-panel-aspect" {
+                h4 class="ont-aspect-heading" { ":" (aspect.slug) }
+                @if let Some(prompt) = &aspect.prompt {
+                    p class="muted ont-aspect-prompt" { (prompt) }
+                }
+                (ont_ranking_lists_markup(
+                    &aspect.rankings,
+                    nav,
+                    pin_ref,
+                    scope_content,
+                    next_for_pin,
+                ))
+            }
+        }
+    }
+}
 
 pub(super) async fn render_scope_view(
     state: AppState,
@@ -251,42 +320,22 @@ pub(super) async fn render_scope_view(
                 }
                 @if model.child_rankings.component_rankings.is_empty() {
                     p class="muted" { "no voted pairs yet in this scope" }
-                } @else {
-                    @for (ci, comp) in model.child_rankings.component_rankings.iter().enumerate() {
-                        div class="ont-group-shell" {
-                            div class="ont-group-meta" {
-                                (format!("ordering {} items={} pairs={}", ci + 1, comp.ranked.len(), comp.pairs))
-                            }
-                            ol class="ont-ranking-list" {
-                                @for r in comp.ranked.iter() {
-                                    @let item_url = item_href(r.item.as_str(), &nav);
-                                    @let score_str = format!("{:.3}", r.score);
-                                    li data-garden-item=(r.item.as_str()) {
-                                        (child_row_pin_or_vote(&nav, &r.item, pin_ref.as_ref(), scope_content, &next_for_pin))
-                                        a class="item-link" href=(item_url) { code { (item_display_path(r.item.as_str())) } }
-                                        span class="ont-rank-score" { (score_str) }
-                                    }
-                                }
-                            }
-                        }
-                    }
                 }
-
-                @if !model.child_rankings.unranked_items.is_empty() {
-                    div class="ont-group-shell ont-group-unsorted" {
-                        div class="ont-group-meta" { "unranked" }
-                        ul class="ont-group-list" {
-                            @for name in &model.child_rankings.unranked_items {
-                                li data-garden-item=(name.as_str()) {
-                                    (child_row_pin_or_vote(&nav, name, pin_ref.as_ref(), scope_content, &next_for_pin))
-                                    @let href = item_href(name.as_str(), &nav);
-                                    a class="item-link" href=(href) { code { (item_display_path(name.as_str())) } }
-                                }
-                            }
-                        }
-                    }
-                }
+                (ont_ranking_lists_markup(
+                    &model.child_rankings,
+                    &nav,
+                    pin_ref.as_ref(),
+                    scope_content,
+                    &next_for_pin,
+                ))
             }
+            (aspect_ranking_sections_markup(
+                &model.aspect_rankings,
+                &nav,
+                pin_ref.as_ref(),
+                scope_content,
+                &next_for_pin,
+            ))
             @let cli = match &scope {
                 ScopeId::Public => format!("npx slugsocial public garden body {cli_path_arg}"),
                 ScopeId::Room(room_id) => format!("npx slugsocial private {room_id} garden body {cli_path_arg}"),

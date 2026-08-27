@@ -304,6 +304,9 @@ enum GardenCmd {
         /// Pass `all` (or `∞` / `inf`) for every descendant.
         #[arg(long, value_name = "N|all")]
         depth: Option<String>,
+        /// Rank under this aspect slug instead of the canonical ranking.
+        #[arg(long, value_name = "SLUG")]
+        aspect: Option<String>,
         /// Output as JSON for agent parsing
         #[arg(long)]
         json: bool,
@@ -350,6 +353,9 @@ enum GardenCmd {
         /// Show normalized score within each component (top item = 100%, unranked = 0%)
         #[arg(long)]
         percent: bool,
+        /// Rank the ontology-root electorate under this aspect (GetGardenRank).
+        #[arg(long, value_name = "SLUG")]
+        aspect: Option<String>,
         /// Output as JSON for agent parsing
         #[arg(long)]
         json: bool,
@@ -534,6 +540,9 @@ fn print_global_rank_response(resp: &GlobalRankResponse) {
 
 /// Print rank response: each component's ranking, then unranked (one line per item).
 fn print_rank_response(resp: &RankResponse) {
+    if let Some(aspect) = &resp.aspect {
+        println!("aspect: :{aspect}");
+    }
     for comp in &resp.components {
         for (i, r) in comp.ranking.iter().enumerate() {
             println!("{:>3}. {:<24} {:.6}", i + 1, r.item, r.score);
@@ -546,7 +555,10 @@ fn print_rank_response(resp: &RankResponse) {
 
 fn print_check_rankings(rankings: &[CheckScopeRanking]) {
     for scope in rankings {
-        println!("scope: {}", scope.parent);
+        match &scope.aspect {
+            Some(aspect) => println!("scope: {} :{}", scope.parent, aspect),
+            None => println!("scope: {}", scope.parent),
+        }
         for comp in &scope.components {
             if scope.components.len() > 1 {
                 println!("(component: {} pairs)", comp.pairs);
@@ -974,7 +986,7 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
                     _ => return Err(anyhow!("unexpected RPC result")),
                 }
             }
-            GardenCmd::Children { paths, depth, json } => {
+            GardenCmd::Children { paths, depth, json, aspect } => {
                 let paths: Vec<String> = paths
                     .iter()
                     .map(|p| normalize_ontology_path_input(p).map_err(anyhow::Error::msg))
@@ -996,6 +1008,7 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
                         offset: None,
                         limit: None,
                         percent: None,
+                        aspect,
                     }],
                 )
                 .await?;
@@ -1083,28 +1096,56 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
                     _ => return Err(anyhow!("unexpected RPC result")),
                 }
             }
-            GardenCmd::Rank { limit, offset, percent, json } => {
-                let batch = send_rpc(
-                    &client,
-                    base,
-                    scoped_read_bearer,
-                    vec![RpcCommand::GetGlobalRank {
-                        room: room.to_string(),
-                        limit: Some(limit),
-                        offset: Some(offset),
-                        percent: Some(percent),
-                    }],
-                )
-                .await?;
-                match rpc_line_ok_scoped_read(&batch.results[0], room)? {
-                    RpcResult::GlobalRank(resp) => {
-                        if json {
-                            println!("{}", serde_json::to_string_pretty(&resp)?);
-                        } else {
-                            print_global_rank_response(resp);
+            GardenCmd::Rank { limit, offset, percent, json, aspect } => {
+                if let Some(aspect) = aspect {
+                    let batch = send_rpc(
+                        &client,
+                        base,
+                        scoped_read_bearer,
+                        vec![RpcCommand::GetGardenRank {
+                            room: room.to_string(),
+                            parent_path: "~".to_string(),
+                            depth: None,
+                            offset: Some(offset),
+                            limit: Some(limit),
+                            percent: Some(percent),
+                            aspect: Some(aspect),
+                        }],
+                    )
+                    .await?;
+                    match rpc_line_ok_scoped_read(&batch.results[0], room)? {
+                        RpcResult::GardenRank(resp) => {
+                            if json {
+                                println!("{}", serde_json::to_string_pretty(&resp)?);
+                            } else {
+                                print_rank_response(&resp);
+                            }
                         }
+                        _ => return Err(anyhow!("unexpected RPC result")),
                     }
-                    _ => return Err(anyhow!("unexpected RPC result")),
+                } else {
+                    let batch = send_rpc(
+                        &client,
+                        base,
+                        scoped_read_bearer,
+                        vec![RpcCommand::GetGlobalRank {
+                            room: room.to_string(),
+                            limit: Some(limit),
+                            offset: Some(offset),
+                            percent: Some(percent),
+                        }],
+                    )
+                    .await?;
+                    match rpc_line_ok_scoped_read(&batch.results[0], room)? {
+                        RpcResult::GlobalRank(resp) => {
+                            if json {
+                                println!("{}", serde_json::to_string_pretty(&resp)?);
+                            } else {
+                                print_global_rank_response(resp);
+                            }
+                        }
+                        _ => return Err(anyhow!("unexpected RPC result")),
+                    }
                 }
             }
         },

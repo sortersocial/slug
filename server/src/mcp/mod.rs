@@ -393,7 +393,8 @@ fn tools_list() -> Value {
                         "depth": {"type": "integer"},
                         "offset": {"type": "integer"},
                         "limit": {"type": "integer"},
-                        "percent": {"type": "boolean"}
+                        "percent": {"type": "boolean"},
+                        "aspect": {"type": "string", "description": "Optional aspect slug; omit for the canonical ranking"}
                     }
                 }),
                 json!({"type": "object"}),
@@ -880,6 +881,7 @@ async fn tools_call(state: &AppState, headers: &HeaderMap, params: &Value) -> Va
                     offset: arg_usize(&args, "offset"),
                     limit: arg_usize(&args, "limit"),
                     percent: arg_bool(&args, "percent"),
+                    aspect: arg_string(&args, "aspect"),
                 },
             )
             .await

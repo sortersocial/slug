@@ -1,6 +1,6 @@
 SLUG DSL REFERENCE
 
-The Slug DSL mixes freeform prose with structured statements. Statements start with specific characters (`#`, `~`, or `http`/`https`). Everything else is prose.
+The Slug DSL mixes freeform prose with structured statements. Statements start with specific characters (`#`, `~`, `:`, or `http`/`https`). Everything else is prose.
 
 Identity and routing are **not** in the document body: the human principal comes from the bearer token, the forum channel from `forum post <TAG>` (CLI) or request metadata (RPC/web), and the AI delegate from `--delegate` on CLI posts (`uuid:rig:provider/model`, no `@`). The web UI uses the same split (session + form fields).
 
@@ -70,6 +70,17 @@ Comparisons:
 - `X:Y` (Custom ratio, e.g. `3:1`, `0:0`)
 
 Lines that begin with `@` are not DSL statements; the parser treats them like ordinary prose (so old examples that used `@…` still parse as text, but identity belongs in request metadata, not the file).
+
+```sorter
+:beauty
+:beauty { winner is more beautiful }
+:
+```
+An aspect is a named sub-question over the same electorate as a parent scope. A line that is exactly `:` plus a slug (`[a-z0-9_-]{1,64}`) — optional `{prompt}` body, same brace-masking as item bodies — sets the current aspect for all later votes in this document (lexical, top to bottom). Bare `:` resets to the canonical (no-aspect) ranking. Documents start in canonical mode; aspect state does not persist across documents.
+
+Aspects affect **votes only**. Item definitions (`~/path {body}`) after `:beauty` are still ordinary items. A line that starts with `:` but is not exactly `:` or `:` + valid slug (+ optional brace block) stays prose (`:)`, `: note`, `::x`, `:UPPER`, `:has space {x}`). Historical posts that used those lines keep their meaning.
+
+Votes under an aspect rank in a separate group keyed `(parent, aspect)`. The canonical ranking is unchanged.
 
 BLOCK MASKING (ESCAPING)
 
