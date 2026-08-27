@@ -69,6 +69,22 @@ async fn mcp_initialize_and_lists_v1_tools() {
     assert!(init["result"]["instructions"]
         .as_str()
         .unwrap()
+        .contains("list_rooms"));
+    assert!(init["result"]["instructions"]
+        .as_str()
+        .unwrap()
+        .contains("read_room"));
+    assert!(init["result"]["instructions"]
+        .as_str()
+        .unwrap()
+        .contains("identity_start"));
+    assert!(init["result"]["instructions"]
+        .as_str()
+        .unwrap()
+        .contains("get_matchup"));
+    assert!(init["result"]["instructions"]
+        .as_str()
+        .unwrap()
         .contains("ask the human"));
 
     let listed = mcp_call(&client, addr, "tools/list", serde_json::json!({}), None).await;
@@ -76,6 +92,12 @@ async fn mcp_initialize_and_lists_v1_tools() {
     let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
     for expected in [
         "whoami",
+        "identity_start",
+        "identity_poll",
+        "list_rooms",
+        "read_room",
+        "get_feed",
+        "get_matchup",
         "search",
         "fetch",
         "list_threads",
@@ -84,7 +106,6 @@ async fn mcp_initialize_and_lists_v1_tools() {
         "get_item",
         "get_pair",
         "check_sorter",
-        "list_rooms",
         "create_room",
         "grant_room",
         "audit_room",
@@ -104,7 +125,20 @@ async fn mcp_initialize_and_lists_v1_tools() {
     assert_eq!(create["annotations"]["openWorldHint"], false);
     let search = tools.iter().find(|t| t["name"] == "search").unwrap();
     assert_eq!(search["annotations"]["readOnlyHint"], true);
-    assert_eq!(search["securitySchemes"][0]["type"], "noauth");
+    assert_eq!(search["securitySchemes"][0]["type"], "oauth2");
+    assert_eq!(search["securitySchemes"][0]["scopes"][0], "slug.read");
+    assert_eq!(search["securitySchemes"][1]["type"], "noauth");
+    let list_rooms = tools.iter().find(|t| t["name"] == "list_rooms").unwrap();
+    assert_eq!(list_rooms["securitySchemes"][0]["type"], "oauth2");
+    assert_eq!(list_rooms["securitySchemes"][0]["scopes"][0], "slug.read");
+    let read_room = tools.iter().find(|t| t["name"] == "read_room").unwrap();
+    assert_eq!(read_room["annotations"]["readOnlyHint"], true);
+    assert_eq!(read_room["securitySchemes"][0]["scopes"][0], "slug.read");
+    assert!(read_room["inputSchema"]["required"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|v| v == "room_id"));
 }
 
 const TEST_DELEGATE: &str = "00000000-0000-0000-0000-000000000000:test:local/test";
@@ -269,6 +303,77 @@ async fn mcp_read_and_write_tools_round_trip() {
     )
     .await;
     assert_eq!(pair["isError"], false, "{pair}");
+
+    let matchup = tool_call(
+        &client,
+        addr,
+        "get_matchup",
+        serde_json::json!({"item_path": "~/mcp-a"}),
+        None,
+    )
+    .await;
+    assert_eq!(matchup["isError"], false, "{matchup}");
+    let votes = matchup["structuredContent"]["Matchup"]["votes"]
+        .as_array()
+        .unwrap();
+    assert!(!votes.is_empty(), "{matchup}");
+    assert!(
+        votes
+            .iter()
+            .any(|v| v["thread"].as_str() == Some("mcp-demo")),
+        "{votes:?}"
+    );
+
+    let minted = tool_call(
+        &client,
+        addr,
+        "identity_start",
+        serde_json::json!({"rig": "cursor", "model": "anthropic/claude-sonnet-4.5"}),
+        Some(&bearer),
+    )
+    .await;
+    assert_eq!(minted["isError"], false, "{minted}");
+    assert_eq!(minted["structuredContent"]["phase"], "ready");
+    assert_eq!(minted["structuredContent"]["user"], "testuser");
+    let minted_delegate = minted["structuredContent"]["delegate"]
+        .as_str()
+        .unwrap();
+    assert!(
+        minted_delegate.contains(":cursor:anthropic/claude-sonnet-4.5"),
+        "{minted_delegate}"
+    );
+
+    let unlinked = tool_call(
+        &client,
+        addr,
+        "identity_start",
+        serde_json::json!({"rig": "claude", "model": "anthropic/claude-opus-4.6"}),
+        None,
+    )
+    .await;
+    assert_eq!(unlinked["isError"], false, "{unlinked}");
+    assert_eq!(
+        unlinked["structuredContent"]["phase"],
+        "present_oauth_url_to_user"
+    );
+    assert!(unlinked["structuredContent"]["login_url"]
+        .as_str()
+        .unwrap()
+        .contains("/auth/login?session="));
+    let session = unlinked["structuredContent"]["session"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let pending = tool_call(
+        &client,
+        addr,
+        "identity_poll",
+        serde_json::json!({"session": session}),
+        None,
+    )
+    .await;
+    assert_eq!(pending["isError"], false, "{pending}");
+    assert_eq!(pending["structuredContent"]["complete"], false);
 
     let threads = tool_call(&client, addr, "list_threads", serde_json::json!({}), None).await;
     assert_eq!(threads["isError"], false, "{threads}");
@@ -723,4 +828,101 @@ async fn mcp_whoami_and_private_room_round_trip() {
     assert_eq!(fetched["structuredContent"]["actor"], "testuser");
     assert_eq!(fetched["structuredContent"]["delegate"], TEST_DELEGATE);
     assert_eq!(fetched["structuredContent"]["metadata"]["room"], room_id);
+
+    let unauth_room = tool_call(
+        &client,
+        addr,
+        "read_room",
+        serde_json::json!({"room_id": room_id}),
+        None,
+    )
+    .await;
+    assert_eq!(unauth_room["isError"], true, "{unauth_room}");
+    assert!(unauth_room["_meta"]["mcp/www_authenticate"][0].is_string());
+
+    let public_read = tool_call(
+        &client,
+        addr,
+        "read_room",
+        serde_json::json!({"room_id": "public"}),
+        Some(&bearer),
+    )
+    .await;
+    assert_eq!(public_read["isError"], true, "{public_read}");
+
+    let room = tool_call(
+        &client,
+        addr,
+        "read_room",
+        serde_json::json!({"room_id": room_id}),
+        Some(&bearer),
+    )
+    .await;
+    assert_eq!(room["isError"], false, "{room}");
+    assert_eq!(room["structuredContent"]["room_id"], room_id);
+    assert_eq!(room["structuredContent"]["visibility"], "private");
+    let members = room["structuredContent"]["members"].as_array().unwrap();
+    assert!(
+        members.iter().any(|m| m["username"] == "otheruser"),
+        "{members:?}"
+    );
+    let threads = room["structuredContent"]["threads"].as_array().unwrap();
+    assert!(
+        threads
+            .iter()
+            .any(|t| t["thread"].as_str() == Some("#private-demo")),
+        "{threads:?}"
+    );
+    let recent = room["structuredContent"]["recent_posts"].as_array().unwrap();
+    let recent_hit = recent
+        .iter()
+        .find(|p| p["post_id"].as_str() == Some(post_id.as_str()))
+        .unwrap_or_else(|| panic!("missing recent post: {recent:?}"));
+    assert_eq!(recent_hit["actor"], "testuser");
+    assert_eq!(recent_hit["delegate"], TEST_DELEGATE);
+
+    let feed = tool_call(
+        &client,
+        addr,
+        "get_feed",
+        serde_json::json!({"room_id": room_id, "since": 0}),
+        Some(&bearer),
+    )
+    .await;
+    assert_eq!(feed["isError"], false, "{feed}");
+    let feed_posts = feed["structuredContent"]["posts"].as_array().unwrap();
+    assert!(
+        feed_posts
+            .iter()
+            .any(|p| p["post_id"].as_str() == Some(post_id.as_str())
+                && p["actor"] == "testuser"
+                && p["delegate"] == TEST_DELEGATE),
+        "{feed_posts:?}"
+    );
+
+    let since_delegate = tool_call(
+        &client,
+        addr,
+        "get_feed",
+        serde_json::json!({"delegate": TEST_DELEGATE, "room_id": room_id}),
+        Some(&bearer),
+    )
+    .await;
+    assert_eq!(since_delegate["isError"], false, "{since_delegate}");
+    assert_eq!(since_delegate["structuredContent"]["delegate"], TEST_DELEGATE);
+    let since_posts = since_delegate["structuredContent"]["posts"]
+        .as_array()
+        .unwrap();
+    assert!(
+        since_posts
+            .iter()
+            .any(|p| p["delegate"] == OTHER_DELEGATE && p["actor"] == "otheruser"),
+        "feed since first delegate should include the later otheruser post: {since_posts:?}"
+    );
+    assert!(
+        !since_posts
+            .iter()
+            .any(|p| p["post_id"].as_str() == Some(post_id.as_str())),
+        "cutoff is this delegate's last ingest, so its own post is not new: {since_posts:?}"
+    );
 }
