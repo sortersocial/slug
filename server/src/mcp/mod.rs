@@ -16,9 +16,9 @@ use slug_types::paths::{room_id_from_route_segment, ForumThreadUrl};
 use slug_types::*;
 
 use crate::{
-    api::{dispatch_rpc, verify_bearer_principal},
+    api::{dispatch_rpc, now_ms, public_url, verify_bearer_principal},
     identity::parse_agent,
-    state::AppState,
+    state::{AppState, PendingSession},
 };
 
 use self::oauth::{cors_headers, www_authenticate_challenge};
@@ -30,13 +30,16 @@ Slug is a garden (path-addressed ontology + pairwise rank centrality) and a foru
 (bump-ordered threads), including private rooms. After the human links their \
 account: call whoami, then list_rooms, then read_room(room_id) to catch up on \
 private-room threads and recent posts (each post has actor and delegate). \
-get_thread(room_id, thread_tag) reads one private thread. get_feed lists recent \
-posts across every room the human can view. Public garden/forum also work \
-anonymously via search/fetch when room_id is omitted or public. Before posting: \
-ask the human for their view, draft a .sorter document, call check_sorter, then \
-post_sorter with a required delegate (uuid:rig:provider/model). Do not invent a \
-UUID. The server binds a delegate to the first linked human who uses it. \
-create_room only creates private rooms. Cite url fields.";
+get_thread(room_id, thread_tag) reads one private thread. get_feed is the \
+continuity primitive: activity since this conversation's delegate (or the \
+linked human) last posted. get_matchup is the evidence trail for one garden \
+item (wins/losses and the thread behind each vote). Public garden/forum also \
+work anonymously via search/fetch when room_id is omitted or public. Before \
+posting: call identity_start to mint a fresh uuid:rig:provider/model for this \
+chat (do not invent a UUID), ask the human for their view, draft a .sorter \
+document, call check_sorter, then post_sorter with that delegate. The server \
+binds a delegate to the first linked human who uses it. create_room only \
+creates private rooms. Cite url fields.";
 
 const MEMBER_CAPS: &[&str] = &["view", "post", "vote", "add_item"];
 
@@ -222,11 +225,42 @@ fn tools_list() -> Value {
             tool(
                 "whoami",
                 "Linked identity",
-                "Return the linked human username and every delegate bound to that human. Call this before posting so you pass a real delegate instead of inventing one.",
+                "Return the linked human username and every delegate already bound to that human. To mint a fresh conversation-bound delegate, call identity_start.",
                 json!({"type": "object", "properties": {}}),
                 json!({"type": "object"}),
                 annotations(true, false, false),
                 oauth_read(),
+            ),
+            tool(
+                "identity_start",
+                "Mint a conversation delegate",
+                "Mint a fresh delegate (uuid:rig:provider/model) for this chat. If the human is already linked, returns the delegate immediately — pass it on every post_sorter and get_feed. If not linked, returns a Google login_url and session; show the URL, then call identity_poll. Do not invent a UUID.",
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "rig": {"type": "string", "description": "Rig name, e.g. cursor or claude"},
+                        "model": {"type": "string", "description": "provider/model, e.g. anthropic/claude-sonnet-4.5"}
+                    },
+                    "required": ["rig", "model"]
+                }),
+                json!({"type": "object"}),
+                annotations(false, false, false),
+                oauth_or_anon(),
+            ),
+            tool(
+                "identity_poll",
+                "Poll identity login",
+                "After identity_start without a linked account, poll the session until the human finishes Google login. Returns the minted delegate when complete.",
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "session": {"type": "string", "description": "Session id from identity_start"}
+                    },
+                    "required": ["session"]
+                }),
+                json!({"type": "object"}),
+                annotations(true, false, false),
+                oauth_or_anon(),
             ),
             tool(
                 "list_rooms",
@@ -255,13 +289,17 @@ fn tools_list() -> Value {
             tool(
                 "get_feed",
                 "Catch-up feed",
-                "Authenticated. Recent posts across every room the linked human can view, including private rooms. Optional room_id limits to one room. Each post includes actor and delegate.",
+                "Authenticated. Posts since this conversation's delegate last posted (same uuid:rig:provider/model as post_sorter). Omit delegate for principal-wide catch-up from the linked human's last ingest. Optional since (unix ms) overrides the server cutoff. Optional room_id limits to one room. Each post includes actor and delegate.",
                 json!({
                     "type": "object",
                     "properties": {
+                        "delegate": {
+                            "type": "string",
+                            "description": "Conversation delegate (uuid:rig:provider/model). Same string as post_sorter."
+                        },
                         "room_id": room_id_schema(),
-                        "since": {"type": "integer", "description": "Only posts after this unix ms timestamp"},
-                        "limit": {"type": "integer"}
+                        "since": {"type": "integer", "description": "Override cutoff (unix ms). Default: last ingest for the delegate or principal."},
+                        "limit": {"type": "integer", "description": "Max posts (default 10)"}
                     }
                 }),
                 json!({"type": "object"}),
@@ -389,6 +427,23 @@ fn tools_list() -> Value {
                         "parent_path": {"type": "string", "description": "Garden parent, default ~"},
                         "room_id": room_id_schema()
                     }
+                }),
+                json!({"type": "object"}),
+                annotations(true, false, false),
+                oauth_or_anon(),
+            ),
+            tool(
+                "get_matchup",
+                "Item vote history",
+                "Evidence trail for one garden item: each vote (win/loss ratio, opponent, actor) and the forum thread that recorded it. Same as CLI `garden matchup`.",
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "item_path": {"type": "string", "description": "Garden item, e.g. ~/sorts/insertion"},
+                        "room_id": room_id_schema(),
+                        "limit": {"type": "integer"}
+                    },
+                    "required": ["item_path"]
                 }),
                 json!({"type": "object"}),
                 annotations(true, false, false),
@@ -755,6 +810,8 @@ async fn tools_call(state: &AppState, headers: &HeaderMap, params: &Value) -> Va
     let args = params.get("arguments").cloned().unwrap_or(json!({}));
     match name {
         "whoami" => whoami(state, headers).await,
+        "identity_start" => identity_start(state, headers, &args).await,
+        "identity_poll" => identity_poll(state, &args).await,
         "search" => {
             let Some(query) = arg_string(&args, "query") else {
                 return tool_err("query is required", None);
@@ -865,6 +922,25 @@ async fn tools_call(state: &AppState, headers: &HeaderMap, params: &Value) -> Va
                 Err((e, h)) => tool_err(e, h),
             }
         }
+        "get_matchup" => {
+            let Some(item_path) = arg_string(&args, "item_path") else {
+                return tool_err("item_path is required", None);
+            };
+            match rpc(
+                state,
+                headers,
+                RpcCommand::GetMatchup {
+                    room: arg_room(&args),
+                    item_path,
+                    limit: arg_usize(&args, "limit"),
+                },
+            )
+            .await
+            {
+                Ok(r) => tool_ok(serde_json::to_value(r).unwrap_or(Value::Null), "matchup"),
+                Err((e, h)) => tool_err(e, h),
+            }
+        }
         "check_sorter" => {
             let Some(text) = arg_string(&args, "text") else {
                 return tool_err("text is required", None);
@@ -947,6 +1023,97 @@ async fn whoami(state: &AppState, headers: &HeaderMap) -> Value {
         json!({"user": user, "delegates": delegates}),
         format!("linked as {user}"),
     )
+}
+
+fn mint_delegate(rig: &str, model: &str) -> Result<String, Value> {
+    let uuid = uuid::Uuid::new_v4();
+    let raw = format!("{uuid}:{rig}:{model}");
+    parse_agent(&raw).map_err(|msg| tool_err("invalid rig or model", Some(msg)))
+}
+
+async fn identity_start(state: &AppState, headers: &HeaderMap, args: &Value) -> Value {
+    let Some(rig) = arg_string(args, "rig") else {
+        return tool_err("rig is required", None);
+    };
+    let Some(model) = arg_string(args, "model") else {
+        return tool_err("model is required", None);
+    };
+    let delegate = match mint_delegate(&rig, &model) {
+        Ok(d) => d,
+        Err(err) => return err,
+    };
+    if let Ok(user) = linked_principal(state, headers).await {
+        return tool_ok(
+            json!({
+                "phase": "ready",
+                "user": user,
+                "delegate": delegate,
+                "bound": false,
+                "instruction": "Pass this exact delegate on every post_sorter and get_feed in this conversation. The server binds it to the linked human on first post."
+            }),
+            format!("minted {delegate}"),
+        );
+    }
+    let session = format!("p_{}", uuid::Uuid::new_v4().simple());
+    let login_url = format!(
+        "{}/auth/login?session={}",
+        public_url(),
+        urlencoding::encode(&session)
+    );
+    let poll_url = format!("/api/v0/pending-session/{session}");
+    state.pending_sessions.write().await.insert(
+        session.clone(),
+        PendingSession {
+            agent: Some(delegate.clone()),
+            created_ts: now_ms(),
+            provider: None,
+            provider_id: None,
+            redeem_invite: None,
+            redirect_next: None,
+            mcp_oauth: None,
+            complete: None,
+        },
+    );
+    tool_ok(
+        json!({
+            "phase": "present_oauth_url_to_user",
+            "delegate": delegate,
+            "session": session,
+            "login_url": login_url,
+            "poll_url": poll_url,
+            "instruction": "Show login_url to the human as a clickable link, then immediately call identity_poll with this session."
+        }),
+        format!("sign in at {login_url}"),
+    )
+}
+
+async fn identity_poll(state: &AppState, args: &Value) -> Value {
+    let Some(session) = arg_string(args, "session") else {
+        return tool_err("session is required", None);
+    };
+    let sessions = state.pending_sessions.read().await;
+    let Some(pending) = sessions.get(&session) else {
+        return tool_err("unknown session", None);
+    };
+    match &pending.complete {
+        Some((user, _token)) => tool_ok(
+            json!({
+                "phase": "complete",
+                "complete": true,
+                "user": user,
+                "delegate": pending.agent,
+            }),
+            format!("linked as {user}"),
+        ),
+        None => tool_ok(
+            json!({
+                "phase": "pending",
+                "complete": false,
+                "delegate": pending.agent,
+            }),
+            "waiting for the human to finish Google login",
+        ),
+    }
 }
 
 async fn create_room(state: &AppState, headers: &HeaderMap, args: &Value) -> Value {
@@ -1115,12 +1282,19 @@ async fn get_feed(state: &AppState, headers: &HeaderMap, args: &Value) -> Value 
     }
     let room_filter = arg_string(args, "room_id").or_else(|| arg_string(args, "room"));
     let since = args.get("since").and_then(|v| v.as_i64());
-    let limit = arg_usize(args, "limit");
+    let limit = Some(arg_usize(args, "limit").unwrap_or(10));
+    let delegate = match arg_string(args, "delegate") {
+        None => None,
+        Some(raw) => match parse_agent(&raw) {
+            Ok(d) => Some(d),
+            Err(msg) => return tool_err("invalid delegate format", Some(msg)),
+        },
+    };
     match rpc(
         state,
         headers,
         RpcCommand::GetFeed {
-            delegate: None,
+            delegate: delegate.clone(),
             since,
             limit,
         },
@@ -1129,16 +1303,17 @@ async fn get_feed(state: &AppState, headers: &HeaderMap, args: &Value) -> Value 
     {
         Ok(RpcResult::Feed(feed)) => {
             let posts = match room_filter.as_deref() {
-                Some(room) => feed_posts_json(
-                    state,
-                    feed.posts.into_iter().filter(|p| p.room == room),
-                )
-                .await,
+                Some(room) => {
+                    feed_posts_json(state, feed.posts.into_iter().filter(|p| p.room == room)).await
+                }
                 None => feed_posts_json(state, feed.posts).await,
             };
             tool_ok(
                 json!({
                     "posts": posts,
+                    "total": feed.total,
+                    "since": feed.since,
+                    "delegate": feed.delegate,
                     "room": room_filter,
                 }),
                 "feed",

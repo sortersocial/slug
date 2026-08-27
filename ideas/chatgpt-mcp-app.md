@@ -320,7 +320,9 @@ Do **not** expose raw `RpcCommand` as one mega-tool. OpenAI wants one tool per u
 | `check_sorter` | Dry-run a `.sorter` doc | noauth + oauth | read-only | `Check` |
 | `list_rooms` | Private rooms the human can access | oauth2 `slug.read` | read-only | `RoomList` |
 | `read_room` | Open one private room (members, threads, recent posts) | oauth2 `slug.read` | read-only | `RoomAudit` + `ListForumThreads` + `GetFeed` |
-| `get_feed` | Catch-up across rooms the human can view | oauth2 `slug.read` | read-only | `GetFeed` |
+| `get_feed` | Activity since this delegate (or principal) last posted | oauth2 `slug.read` | read-only | `GetFeed` |
+| `get_matchup` | Per-item win/loss history + thread behind each vote | noauth + oauth | read-only | `GetMatchup` |
+| `identity_start` / `identity_poll` | Mint a conversation-bound delegate (`uuid:rig:provider/model`) | noauth + oauth | write (session) | pending-session / in-process mint |
 | `create_room` | Create a private room + optional members | oauth2 | write, not open-world | `RoomCreate` + `RoomGrant` |
 | `grant_room` | Add a member | oauth2 | write, not open-world | `RoomGrant` |
 | `audit_room` | List room members | oauth2 | read-only | `RoomAudit` |
