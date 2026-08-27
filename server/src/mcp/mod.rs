@@ -27,15 +27,16 @@ const SERVER_NAME: &str = "slug-social";
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 const INSTRUCTIONS: &str = "\
 Slug is a garden (path-addressed ontology + pairwise rank centrality) and a forum \
-(bump-ordered threads). Public reads work anonymously. Private rooms require the \
-linked human account. Before posting: call whoami, get_pair or get_item, ask the \
-human for their view, draft a .sorter document, call check_sorter, then post_sorter. \
-post_sorter requires delegate as uuid:rig:provider/model. Do not invent a UUID; \
-ask the human for the exact delegate string and pass it on every post. The server \
-binds a delegate to the first linked human who uses it and rejects other humans. \
-create_room only creates private rooms. Cite the url fields returned by tools. \
-Every post and fetch of a post exposes actor (human username) and delegate \
-(agent id or null). Writes require the user to link their slug.social account.";
+(bump-ordered threads), including private rooms. After the human links their \
+account: call whoami, then list_rooms, then read_room(room_id) to catch up on \
+private-room threads and recent posts (each post has actor and delegate). \
+get_thread(room_id, thread_tag) reads one private thread. get_feed lists recent \
+posts across every room the human can view. Public garden/forum also work \
+anonymously via search/fetch when room_id is omitted or public. Before posting: \
+ask the human for their view, draft a .sorter document, call check_sorter, then \
+post_sorter with a required delegate (uuid:rig:provider/model). Do not invent a \
+UUID. The server binds a delegate to the first linked human who uses it. \
+create_room only creates private rooms. Cite url fields.";
 
 const MEMBER_CAPS: &[&str] = &["view", "post", "vote", "add_item"];
 
@@ -151,9 +152,13 @@ fn annotations(read_only: bool, open_world: bool, destructive: bool) -> Value {
 
 fn oauth_or_anon() -> Value {
     json!([
-        {"type": "noauth"},
-        {"type": "oauth2", "scopes": ["slug.write"]}
+        {"type": "oauth2", "scopes": ["slug.read"]},
+        {"type": "noauth"}
     ])
+}
+
+fn oauth_read() -> Value {
+    json!([{"type": "oauth2", "scopes": ["slug.read"]}])
 }
 
 fn oauth_write() -> Value {
@@ -221,12 +226,52 @@ fn tools_list() -> Value {
                 json!({"type": "object", "properties": {}}),
                 json!({"type": "object"}),
                 annotations(true, false, false),
-                oauth_write(),
+                oauth_read(),
+            ),
+            tool(
+                "list_rooms",
+                "List private rooms",
+                "Authenticated. List every private room the linked human can access. Then call read_room with a room_id to open it.",
+                json!({"type": "object", "properties": {}}),
+                json!({"type": "object"}),
+                annotations(true, false, false),
+                oauth_read(),
+            ),
+            tool(
+                "read_room",
+                "Read a private room",
+                "Authenticated. Open one private room: members, bump-ordered threads, and recent posts with actor/delegate provenance. Use room_id from list_rooms.",
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "room_id": {"type": "string", "description": "Private room id (shortid/slug) from list_rooms"}
+                    },
+                    "required": ["room_id"]
+                }),
+                json!({"type": "object"}),
+                annotations(true, false, false),
+                oauth_read(),
+            ),
+            tool(
+                "get_feed",
+                "Catch-up feed",
+                "Authenticated. Recent posts across every room the linked human can view, including private rooms. Optional room_id limits to one room. Each post includes actor and delegate.",
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "room_id": room_id_schema(),
+                        "since": {"type": "integer", "description": "Only posts after this unix ms timestamp"},
+                        "limit": {"type": "integer"}
+                    }
+                }),
+                json!({"type": "object"}),
+                annotations(true, false, false),
+                oauth_read(),
             ),
             tool(
                 "search",
                 "Search slug",
-                "Search garden items, forum threads, and posts. Omit room_id for public items/threads plus every post the linked human can view. Set room_id to search one private room.",
+                "Search garden items, forum threads, and posts. With a linked account, omit room_id to include every post the human can view (including private rooms). Set room_id to search one private room. Anonymous calls only see public.",
                 json!({
                     "type": "object",
                     "properties": {
@@ -242,7 +287,7 @@ fn tools_list() -> Value {
             tool(
                 "fetch",
                 "Fetch slug document",
-                "Open one search hit by id (item:, thread:, or post:). Returns full text, a citation URL, and actor/delegate provenance when the document is a post.",
+                "Open one search hit by id (item:, thread:, or post:). For private-room hits pass room_id and a linked account. Returns full text, a citation URL, and actor/delegate provenance when the document is a post.",
                 json!({
                     "type": "object",
                     "properties": {
@@ -270,7 +315,7 @@ fn tools_list() -> Value {
             tool(
                 "list_threads",
                 "List forum threads",
-                "List recently active forum threads (bump-ordered) in a room.",
+                "List recently active forum threads (bump-ordered). Pass room_id from list_rooms to list a private room (linked account required). Omit room_id or use public for the public forum.",
                 json!({
                     "type": "object",
                     "properties": { "room_id": room_id_schema() }
@@ -282,7 +327,7 @@ fn tools_list() -> Value {
             tool(
                 "get_thread",
                 "Read a forum thread",
-                "Read a forum thread page. Use the tag without #. Each post includes actor and delegate.",
+                "Read a forum thread page. For a private room pass room_id from list_rooms (linked account required). Use the tag without #. Each post includes actor and delegate.",
                 json!({
                     "type": "object",
                     "properties": {
@@ -366,15 +411,6 @@ fn tools_list() -> Value {
                 oauth_or_anon(),
             ),
             tool(
-                "list_rooms",
-                "List rooms",
-                "List private rooms the linked human can access.",
-                json!({"type": "object", "properties": {}}),
-                json!({"type": "object"}),
-                annotations(true, false, false),
-                oauth_write(),
-            ),
-            tool(
                 "create_room",
                 "Create a private room",
                 "Create a private room owned by the linked human. visibility must be \"private\". Optional members are extra usernames granted view/post/vote/add_item (not manage).",
@@ -429,7 +465,7 @@ fn tools_list() -> Value {
                 }),
                 json!({"type": "object"}),
                 annotations(true, false, false),
-                oauth_write(),
+                oauth_read(),
             ),
             tool(
                 "post_sorter",
@@ -856,6 +892,8 @@ async fn tools_call(state: &AppState, headers: &HeaderMap, params: &Value) -> Va
                 Err((e, h)) => write_rpc_err(e, h),
             }
         }
+        "read_room" => read_room(state, headers, &args).await,
+        "get_feed" => get_feed(state, headers, &args).await,
         "create_room" => create_room(state, headers, &args).await,
         "grant_room" => grant_room(state, headers, &args).await,
         "audit_room" => {
@@ -999,6 +1037,147 @@ async fn grant_room(state: &AppState, headers: &HeaderMap, args: &Value) -> Valu
         Ok(r) => tool_ok(serde_json::to_value(r).unwrap_or(Value::Null), "granted"),
         Err((e, h)) => write_rpc_err(e, h),
     }
+}
+
+async fn read_room(state: &AppState, headers: &HeaderMap, args: &Value) -> Value {
+    if let Some(err) = require_bearer(headers) {
+        return err;
+    }
+    let Some(room_id) = arg_string(args, "room_id").or_else(|| arg_string(args, "room")) else {
+        return tool_err("room_id is required", None);
+    };
+    if room_id == "public" {
+        return tool_err(
+            "read_room is for private rooms",
+            Some("use list_threads / get_thread without room_id for the public forum".into()),
+        );
+    }
+    let members = match rpc(
+        state,
+        headers,
+        RpcCommand::RoomAudit {
+            room: room_id.clone(),
+        },
+    )
+    .await
+    {
+        Ok(RpcResult::RoomAudit(audit)) => serde_json::to_value(audit.grants).unwrap_or(json!([])),
+        Ok(_) => json!([]),
+        Err((e, h)) => return write_rpc_err(e, h),
+    };
+    let threads = match rpc(
+        state,
+        headers,
+        RpcCommand::ListForumThreads {
+            room: room_id.clone(),
+        },
+    )
+    .await
+    {
+        Ok(RpcResult::ForumThreads(resp)) => {
+            serde_json::to_value(resp.threads).unwrap_or(json!([]))
+        }
+        Ok(_) => json!([]),
+        Err((e, h)) => return write_rpc_err(e, h),
+    };
+    let recent_posts = match rpc(
+        state,
+        headers,
+        RpcCommand::GetFeed {
+            delegate: None,
+            since: Some(0),
+            limit: Some(40),
+        },
+    )
+    .await
+    {
+        Ok(RpcResult::Feed(feed)) => {
+            feed_posts_json(state, feed.posts.into_iter().filter(|p| p.room == room_id)).await
+        }
+        Ok(_) => json!([]),
+        Err((e, h)) => return write_rpc_err(e, h),
+    };
+    tool_ok(
+        json!({
+            "room_id": room_id,
+            "visibility": "private",
+            "members": members,
+            "threads": threads,
+            "recent_posts": recent_posts
+        }),
+        format!("private room {room_id}"),
+    )
+}
+
+async fn get_feed(state: &AppState, headers: &HeaderMap, args: &Value) -> Value {
+    if let Some(err) = require_bearer(headers) {
+        return err;
+    }
+    let room_filter = arg_string(args, "room_id").or_else(|| arg_string(args, "room"));
+    let since = args.get("since").and_then(|v| v.as_i64());
+    let limit = arg_usize(args, "limit");
+    match rpc(
+        state,
+        headers,
+        RpcCommand::GetFeed {
+            delegate: None,
+            since,
+            limit,
+        },
+    )
+    .await
+    {
+        Ok(RpcResult::Feed(feed)) => {
+            let posts = match room_filter.as_deref() {
+                Some(room) => feed_posts_json(
+                    state,
+                    feed.posts.into_iter().filter(|p| p.room == room),
+                )
+                .await,
+                None => feed_posts_json(state, feed.posts).await,
+            };
+            tool_ok(
+                json!({
+                    "posts": posts,
+                    "room": room_filter,
+                }),
+                "feed",
+            )
+        }
+        Ok(_) => tool_err("unexpected feed result", None),
+        Err((e, h)) => write_rpc_err(e, h),
+    }
+}
+
+async fn feed_posts_json(
+    state: &AppState,
+    posts: impl IntoIterator<Item = FeedPost>,
+) -> Value {
+    let reduced = state.reduced.read().await;
+    let items: Vec<Value> = posts
+        .into_iter()
+        .map(|post| {
+            let (actor, delegate) = reduced
+                .ingests_by_id
+                .get(&post.id)
+                .map(|ing| (Some(ing.principal.as_str()), ing.delegate.as_deref()))
+                .unwrap_or((None, None));
+            let tag = post.thread.as_deref().unwrap_or("");
+            let url = thread_url(&post.room, tag);
+            json!({
+                "id": format!("post:{}", post.id),
+                "post_id": post.id,
+                "room": post.room,
+                "thread": tag,
+                "ts": post.ts,
+                "url": url,
+                "text": post.body,
+                "actor": actor,
+                "delegate": delegate
+            })
+        })
+        .collect();
+    Value::Array(items)
 }
 
 async fn post_sorter(state: &AppState, headers: &HeaderMap, args: &Value) -> Value {

@@ -69,6 +69,14 @@ async fn mcp_initialize_and_lists_v1_tools() {
     assert!(init["result"]["instructions"]
         .as_str()
         .unwrap()
+        .contains("list_rooms"));
+    assert!(init["result"]["instructions"]
+        .as_str()
+        .unwrap()
+        .contains("read_room"));
+    assert!(init["result"]["instructions"]
+        .as_str()
+        .unwrap()
         .contains("ask the human"));
 
     let listed = mcp_call(&client, addr, "tools/list", serde_json::json!({}), None).await;
@@ -76,6 +84,9 @@ async fn mcp_initialize_and_lists_v1_tools() {
     let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
     for expected in [
         "whoami",
+        "list_rooms",
+        "read_room",
+        "get_feed",
         "search",
         "fetch",
         "list_threads",
@@ -84,7 +95,6 @@ async fn mcp_initialize_and_lists_v1_tools() {
         "get_item",
         "get_pair",
         "check_sorter",
-        "list_rooms",
         "create_room",
         "grant_room",
         "audit_room",
@@ -104,7 +114,20 @@ async fn mcp_initialize_and_lists_v1_tools() {
     assert_eq!(create["annotations"]["openWorldHint"], false);
     let search = tools.iter().find(|t| t["name"] == "search").unwrap();
     assert_eq!(search["annotations"]["readOnlyHint"], true);
-    assert_eq!(search["securitySchemes"][0]["type"], "noauth");
+    assert_eq!(search["securitySchemes"][0]["type"], "oauth2");
+    assert_eq!(search["securitySchemes"][0]["scopes"][0], "slug.read");
+    assert_eq!(search["securitySchemes"][1]["type"], "noauth");
+    let list_rooms = tools.iter().find(|t| t["name"] == "list_rooms").unwrap();
+    assert_eq!(list_rooms["securitySchemes"][0]["type"], "oauth2");
+    assert_eq!(list_rooms["securitySchemes"][0]["scopes"][0], "slug.read");
+    let read_room = tools.iter().find(|t| t["name"] == "read_room").unwrap();
+    assert_eq!(read_room["annotations"]["readOnlyHint"], true);
+    assert_eq!(read_room["securitySchemes"][0]["scopes"][0], "slug.read");
+    assert!(read_room["inputSchema"]["required"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|v| v == "room_id"));
 }
 
 const TEST_DELEGATE: &str = "00000000-0000-0000-0000-000000000000:test:local/test";
@@ -723,4 +746,75 @@ async fn mcp_whoami_and_private_room_round_trip() {
     assert_eq!(fetched["structuredContent"]["actor"], "testuser");
     assert_eq!(fetched["structuredContent"]["delegate"], TEST_DELEGATE);
     assert_eq!(fetched["structuredContent"]["metadata"]["room"], room_id);
+
+    let unauth_room = tool_call(
+        &client,
+        addr,
+        "read_room",
+        serde_json::json!({"room_id": room_id}),
+        None,
+    )
+    .await;
+    assert_eq!(unauth_room["isError"], true, "{unauth_room}");
+    assert!(unauth_room["_meta"]["mcp/www_authenticate"][0].is_string());
+
+    let public_read = tool_call(
+        &client,
+        addr,
+        "read_room",
+        serde_json::json!({"room_id": "public"}),
+        Some(&bearer),
+    )
+    .await;
+    assert_eq!(public_read["isError"], true, "{public_read}");
+
+    let room = tool_call(
+        &client,
+        addr,
+        "read_room",
+        serde_json::json!({"room_id": room_id}),
+        Some(&bearer),
+    )
+    .await;
+    assert_eq!(room["isError"], false, "{room}");
+    assert_eq!(room["structuredContent"]["room_id"], room_id);
+    assert_eq!(room["structuredContent"]["visibility"], "private");
+    let members = room["structuredContent"]["members"].as_array().unwrap();
+    assert!(
+        members.iter().any(|m| m["username"] == "otheruser"),
+        "{members:?}"
+    );
+    let threads = room["structuredContent"]["threads"].as_array().unwrap();
+    assert!(
+        threads
+            .iter()
+            .any(|t| t["thread"].as_str() == Some("#private-demo")),
+        "{threads:?}"
+    );
+    let recent = room["structuredContent"]["recent_posts"].as_array().unwrap();
+    let recent_hit = recent
+        .iter()
+        .find(|p| p["post_id"].as_str() == Some(post_id.as_str()))
+        .unwrap_or_else(|| panic!("missing recent post: {recent:?}"));
+    assert_eq!(recent_hit["actor"], "testuser");
+    assert_eq!(recent_hit["delegate"], TEST_DELEGATE);
+
+    let feed = tool_call(
+        &client,
+        addr,
+        "get_feed",
+        serde_json::json!({"room_id": room_id, "since": 0}),
+        Some(&bearer),
+    )
+    .await;
+    assert_eq!(feed["isError"], false, "{feed}");
+    let feed_posts = feed["structuredContent"]["posts"].as_array().unwrap();
+    assert!(
+        feed_posts
+            .iter()
+            .any(|p| p["post_id"].as_str() == Some(post_id.as_str())
+                && p["actor"] == "testuser"
+                && p["delegate"] == TEST_DELEGATE),
+        "{feed_posts:?}"
+    );
 }
