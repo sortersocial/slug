@@ -304,8 +304,8 @@ pub(crate) async fn thread_latest_page_region(
     (latest_offset, markup)
 }
 
-/// Home: private rooms (signed-in), then public bump-ordered threads.
-pub async fn home(
+/// Public thread index (`GET /t`): private rooms (signed-in), then public bump-ordered threads.
+pub async fn thread_index(
     State(state): State<AppState>,
     headers: HeaderMap,
     jar: CookieJar,

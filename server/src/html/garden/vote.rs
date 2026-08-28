@@ -31,9 +31,11 @@ use super::{
         user_can_view_room,
     },
     item::{item_display_path, login_href_with_next},
+    question_body::{question_rankings, question_standings_region},
 };
 
 /// Prompt shown as the `/q/` headline (scope body, or restrained fallback copy).
+#[derive(Debug, Clone)]
 pub(super) enum QuestionHeadline {
     Body(String),
     Fallback(String),
@@ -49,9 +51,94 @@ pub(super) struct QuestionCtx {
     pub title: String,
 }
 
+/// Unique element ids for a compare panel. Empty suffix is the `/q/` and `/vote` page.
+#[derive(Debug, Clone, Default)]
+pub(super) struct VoteCompareDomIds {
+    pub suffix: Option<String>,
+}
+
+impl VoteCompareDomIds {
+    pub(super) fn page() -> Self {
+        Self { suffix: None }
+    }
+
+    pub(super) fn with_suffix(suffix: impl Into<String>) -> Self {
+        let s = suffix.into();
+        Self {
+            suffix: (!s.is_empty()).then_some(s),
+        }
+    }
+
+    fn suffixed(&self, base: &str) -> String {
+        match &self.suffix {
+            Some(s) if !s.is_empty() => format!("{base}-{s}"),
+            _ => base.to_string(),
+        }
+    }
+
+    pub(super) fn form_id(&self) -> String {
+        self.suffixed("vote-compare-form")
+    }
+
+    pub(super) fn history_id(&self) -> String {
+        self.suffixed("vote-edge-history-region")
+    }
+
+    pub(super) fn nav_id(&self) -> String {
+        self.suffixed("vote-compare-nav")
+    }
+
+    pub(super) fn slider_id(&self) -> String {
+        self.suffixed("vote-preference-slider")
+    }
+
+    pub(super) fn ratio_left_id(&self) -> String {
+        self.suffixed("vote-ratio-left")
+    }
+
+    pub(super) fn ratio_right_id(&self) -> String {
+        self.suffixed("vote-ratio-right")
+    }
+
+    pub(super) fn readout_id(&self) -> String {
+        self.suffixed("vote-ratio-readout")
+    }
+
+    pub(super) fn errors_id(&self) -> String {
+        self.suffixed("vote-compare-errors")
+    }
+
+    pub(super) fn thread_select_id(&self) -> String {
+        self.suffixed("vote-thread-select")
+    }
+
+    pub(super) fn slider_left_label_id(&self) -> String {
+        self.suffixed("vote-slider-left-label")
+    }
+
+    pub(super) fn slider_right_label_id(&self) -> String {
+        self.suffixed("vote-slider-right-label")
+    }
+
+    pub(super) fn explain_id(&self) -> String {
+        self.suffixed("vote-explain")
+    }
+}
+
 fn is_question_href(path: &str) -> bool {
     let path = path.split(['?', '#']).next().unwrap_or(path);
     path.starts_with("/q/") || path.contains("/q/")
+}
+
+/// `/q/:leaf` → `None`; `/q/:leaf/:aspect` and room-prefixed twins → `Some(aspect)`.
+fn aspect_from_question_path(next: &str) -> Option<String> {
+    let path = next.split(['?', '#']).next().unwrap_or(next);
+    let parts: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    let q = parts.iter().position(|p| *p == "q")?;
+    parts
+        .get(q + 2)
+        .filter(|s| !s.is_empty())
+        .map(|s| (*s).to_string())
 }
 
 fn question_header_markup(
@@ -261,20 +348,32 @@ pub(crate) async fn vote_compare_post_success_js(
     _post_id: &str,
     _post_idx: Option<usize>,
     next: &str,
+    dom_suffix: Option<&str>,
 ) -> String {
+    let ids = VoteCompareDomIds::with_suffix(dom_suffix.unwrap_or("").to_string());
     let reduced = state.reduced.read().await;
     let content = content_for_garden_view(&reduced, &nav.scope());
     let edge_history = vote_edge_history_markup(content, left, right);
     let next_pair = suggest_next_vote_pair(content, left, right, pool);
     let next_override = is_question_href(next).then_some(next);
-    let nav_markup = vote_compare_nav_markup(nav, next_pair.as_ref(), pool, next_override);
+    let nav_markup =
+        vote_compare_nav_markup(nav, next_pair.as_ref(), pool, next_override, &ids.nav_id());
+    let standings = if is_question_href(next) {
+        pool.map(|p| {
+            let aspect = aspect_from_question_path(next);
+            question_standings_region(&question_rankings(content, p, aspect.as_deref()), nav)
+        })
+    } else {
+        None
+    };
     drop(reduced);
-    JsBuilder::new()
-        .morph_inner_selector("#vote-edge-history-region", edge_history)
-        .morph_selector(".vote-compare-nav", nav_markup)
-        .qs("#vote-compare-form")
-        .reset()
-        .build()
+    let mut js = JsBuilder::new()
+        .morph_inner_selector(&format!("#{}", ids.history_id()), edge_history)
+        .morph_selector(&format!("#{}", ids.nav_id()), nav_markup);
+    if let Some(standings) = standings {
+        js = js.morph_selector("#question-standings-region", standings);
+    }
+    js.qs(&format!("#{}", ids.form_id())).reset().build()
 }
 
 pub(super) fn vote_compare_href(
@@ -320,6 +419,7 @@ fn vote_compare_nav_markup(
     next_pair: Option<&(ItemId, ItemId)>,
     pool: Option<&ItemId>,
     next_pair_href_override: Option<&str>,
+    nav_id: &str,
 ) -> maud::Markup {
     let next_pair_href = if let Some(over) = next_pair_href_override.filter(|s| !s.is_empty()) {
         next_pair.and(Some(over.to_string()))
@@ -327,7 +427,7 @@ fn vote_compare_nav_markup(
         next_pair.map(|(nl, nr)| vote_compare_href(nav, nl, nr, None, pool))
     };
     html! {
-        div class="vote-compare-nav" {
+        div id=(nav_id) class="vote-compare-nav" {
             @if let Some(href) = &next_pair_href {
                 a class="vote-compare-next" data-testid="vote-next-pair" href=(href) { "next pair" }
             } @else {
@@ -393,6 +493,213 @@ pub(super) fn vote_compare_item_card(
         }
     }
 }
+pub(super) struct VoteComparePanel<'a> {
+    pub nav: &'a ThreadNav,
+    pub left: &'a ItemId,
+    pub right: &'a ItemId,
+    pub left_body: Option<&'a String>,
+    pub right_body: Option<&'a String>,
+    pub item_bodies: Option<&'a HashMap<ItemId, String>>,
+    pub pool: Option<&'a ItemId>,
+    pub auto_thread: &'a str,
+    pub thread_tags: &'a [String],
+    pub edge_history: maud::Markup,
+    pub next_pair: Option<&'a (ItemId, ItemId)>,
+    pub next_path: &'a str,
+    pub next_pair_override: Option<&'a str>,
+    pub aspect_slug: Option<&'a str>,
+    pub logged_in: bool,
+    pub show_vote_form: bool,
+    pub question: Option<&'a QuestionCtx>,
+    pub include_heading: bool,
+    pub ids: &'a VoteCompareDomIds,
+}
+
+/// Pair cards + nav + history + vote form. Shared by `/q/` and `/vote`.
+pub(super) fn vote_compare_panel_markup(p: VoteComparePanel<'_>) -> maud::Markup {
+    let mut rpc_val = json!({
+        "action": "vote_compare_post",
+        "room": p.nav.room_wire,
+        "thread_tag": {"$form": "thread_tag"},
+        "left_item": p.left.as_str(),
+        "right_item": p.right.as_str(),
+        "ratio_left": {"$form": "ratio_left"},
+        "ratio_right": {"$form": "ratio_right"},
+        "explanation": {"$form": "explanation"},
+        "next": p.next_path,
+        "pool": p.pool.map(|q| q.as_str()),
+        "form_action": "/ui",
+    });
+    if p.aspect_slug.is_some() {
+        rpc_val["aspect"] = json!({"$form": "aspect"});
+    }
+    if let Some(suffix) = p.ids.suffix.as_deref().filter(|s| !s.is_empty()) {
+        rpc_val["dom_suffix"] = json!(suffix);
+    }
+    let rpc_json = template_json_compact(&rpc_val).expect("vote compare rpc json");
+    let form_id = p.ids.form_id();
+    let history_id = p.ids.history_id();
+    let nav_id = p.ids.nav_id();
+    let slider_id = p.ids.slider_id();
+    let ratio_left_id = p.ids.ratio_left_id();
+    let ratio_right_id = p.ids.ratio_right_id();
+    let readout_id = p.ids.readout_id();
+    let errors_id = p.ids.errors_id();
+    let thread_select_id = p.ids.thread_select_id();
+    let slider_left_id = p.ids.slider_left_label_id();
+    let slider_right_id = p.ids.slider_right_label_id();
+    let explain_id = p.ids.explain_id();
+    html! {
+        section class="vote-compare-shell" {
+            @if p.include_heading {
+                @if let Some(qctx) = p.question {
+                    (question_header_markup(qctx, p.nav.garden_root_url(), p.item_bodies))
+                } @else {
+                    h2 { "compare" }
+                }
+            }
+            div class="vote-compare-pair" {
+                (vote_compare_item_card(
+                    p.nav,
+                    p.left,
+                    p.left_body,
+                    "vote-compare-left",
+                    p.item_bodies,
+                ))
+                span class="vote-compare-vs" { "vs" }
+                (vote_compare_item_card(
+                    p.nav,
+                    p.right,
+                    p.right_body,
+                    "vote-compare-right",
+                    p.item_bodies,
+                ))
+            }
+            (vote_compare_nav_markup(
+                p.nav,
+                p.next_pair,
+                p.pool,
+                p.next_pair_override,
+                &nav_id,
+            ))
+            div id=(history_id) {
+                (p.edge_history)
+            }
+            @if p.show_vote_form && p.logged_in {
+                form id=(form_id) class="vote-compare-form" method="POST" action="/ui" data-draft-key=(format!("vote:{}/{}/{}", p.nav.room_wire, p.left.as_str(), p.right.as_str())) {
+                    input type="hidden" name=(UI_RPC_FIELD) value=(rpc_json);
+                    @if let Some(aspect) = p.aspect_slug {
+                        input type="hidden" name="aspect" value=(aspect);
+                    }
+                    div class="vote-thread-picker" {
+                        label class="vote-thread-picker-label" { "thread" }
+                        select id=(thread_select_id) name="thread_tag" aria-label="Thread to post vote into" {
+                            @if p.thread_tags.is_empty() {
+                                option value="vote" selected { "#vote" }
+                            }
+                            @for t in p.thread_tags {
+                                @if t == p.auto_thread {
+                                    option value=(t) selected { "#" (t) }
+                                } @else {
+                                    option value=(t) { "#" (t) }
+                                }
+                            }
+                        }
+                    }
+                    input type="hidden" name="ratio_left" id=(ratio_left_id) value="1";
+                    input type="hidden" name="ratio_right" id=(ratio_right_id) value="1";
+                    p class="vote-ratio-readout-wrap" {
+                        span class="vote-ratio-readout-label muted" { "ratio" }
+                        " "
+                        span id=(readout_id) class="vote-ratio-readout" aria-live="polite" { "1:1" }
+                    }
+                    label class="vote-compare-slider-label" {
+                        span id=(slider_left_id) { (item_display_path(p.left.as_str())) }
+                        input type="range" id=(slider_id) class="vote-preference-slider" min="0" max="100" value="50"
+                            aria-valuemin="0" aria-valuemax="100" aria-valuetext="1:1";
+                        span id=(slider_right_id) { (item_display_path(p.right.as_str())) }
+                    }
+                    label class="vote-explain-label" { "reason (required)" }
+                    textarea name="explanation" id=(explain_id) rows="5" placeholder="why this split?" required {}
+                    div id=(errors_id) {}
+                    p { button type="submit" { "post vote" } }
+                }
+            } @else if p.show_vote_form {
+                // Guest CTA is outside any form so click is a normal navigation to login.
+                div id=(form_id) class="vote-compare-form vote-compare-guest" {
+                    p {
+                        a class="vote-compare-login-cta" href=(login_href_with_next(p.next_path)) { "post vote" }
+                    }
+                    p class="muted" { "you’ll log in, then return to this pair to cast your vote." }
+                }
+            } @else {
+                p class="muted" { "you need post access in this room to vote on this pair." }
+            }
+        }
+    }
+}
+
+/// Build the compare panel for a garden scope (and optional aspect), or empty markup if no pair.
+pub(super) fn question_vote_panel(
+    content: &ContentState,
+    nav: &ThreadNav,
+    collection: &ItemId,
+    aspect: Option<&str>,
+    logged_in: bool,
+    can_post: bool,
+    next_path: &str,
+    next_pair_override: Option<&str>,
+    question: Option<&QuestionCtx>,
+    include_heading: bool,
+    ids: &VoteCompareDomIds,
+) -> maud::Markup {
+    let members = comparable_items(content, content.members_of(collection));
+    if members.len() < 2 {
+        return html! {
+            p class="muted vote-question-empty" {
+                "nothing to compare yet — this scope needs at least two items with bodies."
+            }
+        };
+    }
+    let Some((left, right)) = suggest_next_pair_in_pool(&content.ranking_group, &members, None)
+    else {
+        return html! {
+            p class="muted vote-question-empty" { "no pairs available in this scope." }
+        };
+    };
+    let auto_thread = canonicalize_tag(&collection.last_segment());
+    let mut thread_tags = vote_thread_tags_for_pair(content, &left, &right);
+    if !auto_thread.is_empty() && !thread_tags.iter().any(|t| t == &auto_thread) {
+        thread_tags.insert(0, auto_thread.clone());
+    }
+    let edge_history = vote_edge_history_markup(content, &left, &right);
+    let left_body = content.item_bodies.get(&left);
+    let right_body = content.item_bodies.get(&right);
+    let next_pair = suggest_next_vote_pair(content, &left, &right, Some(collection));
+    let show_vote_form = can_post || !logged_in;
+    vote_compare_panel_markup(VoteComparePanel {
+        nav,
+        left: &left,
+        right: &right,
+        left_body,
+        right_body,
+        item_bodies: Some(&content.item_bodies),
+        pool: Some(collection),
+        auto_thread: &auto_thread,
+        thread_tags: &thread_tags,
+        edge_history,
+        next_pair: next_pair.as_ref(),
+        next_path,
+        next_pair_override,
+        aspect_slug: aspect.filter(|s| !s.is_empty()),
+        logged_in,
+        show_vote_form,
+        question,
+        include_heading,
+        ids,
+    })
+}
+
 #[derive(Debug, Deserialize)]
 pub struct VoteCompareQuery {
     #[serde(default)]
@@ -561,110 +868,34 @@ pub(super) async fn vote_compare_inner(
         .as_ref()
         .and_then(|q| q.aspect.clone())
         .filter(|s| !s.is_empty());
-    let mut rpc_val = json!({
-        "action": "vote_compare_post",
-        "room": nav.room_wire,
-        "thread_tag": {"$form": "thread_tag"},
-        "left_item": left.as_str(),
-        "right_item": right.as_str(),
-        "ratio_left": {"$form": "ratio_left"},
-        "ratio_right": {"$form": "ratio_right"},
-        "explanation": {"$form": "explanation"},
-        "next": next_path,
-        "pool": pool_id.as_ref().map(|p| p.as_str()),
-        "form_action": "/ui",
-    });
-    if aspect_slug.is_some() {
-        rpc_val["aspect"] = json!({"$form": "aspect"});
-    }
-    let rpc_json = template_json_compact(&rpc_val).expect("vote compare rpc json");
-    let next_pair_override = question.as_ref().map(|q| q.question_path.as_str());
+    let next_pair_override = question.as_ref().map(|q| q.question_path.clone());
     let view_class = if question.is_some() {
         "view-ontology view-ontology-light view-vote-compare view-vote-compare-fullscreen view-vote-question"
     } else {
         "view-ontology view-ontology-light view-vote-compare view-vote-compare-fullscreen"
     };
 
-    let body = html! {
-    section class="vote-compare-shell" {
-        @if let Some(qctx) = &question {
-            (question_header_markup(qctx, nav.garden_root_url(), Some(&item_bodies_for_cards)))
-        } @else {
-            h2 { "compare" }
-        }
-        div class="vote-compare-pair" {
-            (vote_compare_item_card(
-                &nav,
-                &left,
-                left_body.as_ref(),
-                "vote-compare-left",
-                Some(&item_bodies_for_cards),
-            ))
-            span class="vote-compare-vs" { "vs" }
-            (vote_compare_item_card(
-                &nav,
-                &right,
-                right_body.as_ref(),
-                "vote-compare-right",
-                Some(&item_bodies_for_cards),
-            ))
-        }
-        (vote_compare_nav_markup(&nav, next_pair.as_ref(), pool_id.as_ref(), next_pair_override))
-        div id="vote-edge-history-region" {
-            (edge_history)
-        }
-        @if show_vote_form && logged_in {
-            form id="vote-compare-form" method="POST" action="/ui" data-draft-key=(format!("vote:{}/{}/{}", nav.room_wire, left.as_str(), right.as_str())) {
-                input type="hidden" name=(UI_RPC_FIELD) value=(rpc_json);
-                @if let Some(aspect) = &aspect_slug {
-                    input type="hidden" name="aspect" value=(aspect);
-                }
-                div class="vote-thread-picker" {
-                    label class="vote-thread-picker-label" { "thread" }
-                    select id="vote-thread-select" name="thread_tag" aria-label="Thread to post vote into" {
-                        @if thread_tags.is_empty() {
-                            option value="vote" selected { "#vote" }
-                        }
-                        @for t in &thread_tags {
-                            @if *t == auto_thread {
-                                option value=(t) selected { "#" (t) }
-                            } @else {
-                                option value=(t) { "#" (t) }
-                            }
-                        }
-                    }
-                }
-                input type="hidden" name="ratio_left" id="vote-ratio-left" value="1";
-                input type="hidden" name="ratio_right" id="vote-ratio-right" value="1";
-                p class="vote-ratio-readout-wrap" {
-                    span class="vote-ratio-readout-label muted" { "ratio" }
-                    " "
-                    span id="vote-ratio-readout" class="vote-ratio-readout" aria-live="polite" { "1:1" }
-                }
-                label class="vote-compare-slider-label" {
-                    span id="vote-slider-left-label" { (item_display_path(left.as_str())) }
-                    input type="range" id="vote-preference-slider" min="0" max="100" value="50"
-                        aria-valuemin="0" aria-valuemax="100" aria-valuetext="1:1";
-                    span id="vote-slider-right-label" { (item_display_path(right.as_str())) }
-                }
-                label class="vote-explain-label" { "reason (required)" }
-                textarea name="explanation" id="vote-explain" rows="5" placeholder="why this split?" required {}
-                div id="vote-compare-errors" {}
-                p { button type="submit" { "post vote" } }
-            }
-        } @else if show_vote_form {
-            // Guest CTA is outside any form so click is a normal navigation to login.
-            div id="vote-compare-form" class="vote-compare-guest" {
-                p {
-                    a class="vote-compare-login-cta" href=(login_href_with_next(&next_path)) { "post vote" }
-                }
-                p class="muted" { "you’ll log in, then return to this pair to cast your vote." }
-            }
-        } @else {
-            p class="muted" { "you need post access in this room to vote on this pair." }
-        }
-    }
-    };
+    let body = vote_compare_panel_markup(VoteComparePanel {
+        nav: &nav,
+        left: &left,
+        right: &right,
+        left_body: left_body.as_ref(),
+        right_body: right_body.as_ref(),
+        item_bodies: Some(&item_bodies_for_cards),
+        pool: pool_id.as_ref(),
+        auto_thread: &auto_thread,
+        thread_tags: &thread_tags,
+        edge_history,
+        next_pair: next_pair.as_ref(),
+        next_path: &next_path,
+        next_pair_override: next_pair_override.as_deref(),
+        aspect_slug: aspect_slug.as_deref(),
+        logged_in,
+        show_vote_form,
+        question: question.as_ref(),
+        include_heading: true,
+        ids: &VoteCompareDomIds::page(),
+    });
 
     let url_key = canonical_view_url(&uri);
     let view_count = state.views.get_views(&url_key);

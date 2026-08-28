@@ -57,6 +57,9 @@ pub enum HtmlUiAction {
         /// Empty / omitted → canonical ranking (same as `/vote`).
         #[serde(default)]
         aspect: Option<String>,
+        /// Distinguishes home-index rows from the `/q/` page (`vote-compare-form-{suffix}`).
+        #[serde(default)]
+        dom_suffix: Option<String>,
         #[serde(default = "default_ui_form_action")]
         form_action: String,
     },
@@ -92,7 +95,7 @@ pub enum HtmlUiAction {
     },
     /// Delete the private room (Manage only); redirects to `/` on success.
     DeleteRoom { room: String },
-    /// Morph `#new-thread-ui-slot` inner — compose open or collapsed (`room_wire: "public"` for home).
+    /// Morph `#new-thread-ui-slot` inner — compose open or collapsed (`room_wire: "public"` for `/t`).
     SetNewThreadComposeExpanded {
         room_wire: String,
         #[serde(default)]
@@ -357,6 +360,7 @@ mod tests {
                 next: "/q/psalms/beauty".into(),
                 pool: None,
                 aspect: Some("beauty".into()),
+                dom_suffix: None,
                 form_action: "/ui".into(),
             }
         );

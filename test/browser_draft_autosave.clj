@@ -109,8 +109,8 @@
                  (is (nil? cleared) "draft removed from localStorage after successful post"))
 
                ;; New thread compose: tag + body persist across reload when expanded
-               (page/navigate pg base-url)
-               (is (wait-for-text pg "#new-thread-ui-slot" "+" 15000) "new thread slot on home")
+               (page/navigate pg (str base-url "/t"))
+               (is (wait-for-text pg "#new-thread-ui-slot" "+" 15000) "new thread slot on /t")
                (locator/click (page/locator pg "#new-thread-ui-slot button.form-toggle"))
                (is (wait-for-text pg "#new-thread-compose" "create thread" 15000) "new thread compose expanded")
                (locator/fill (page/locator pg "#new-thread-tag") "draft-tag-slug")

@@ -96,7 +96,7 @@ async fn broadcast_web_refresh(
     .await;
 
     // Two SSE payloads: the bump-list morph must not ship private HTML to subscribers who only
-    // matched `/` (public) or lack room access — see [`crate::api::stream::get_html_stream`].
+    // matched `/t` (public thread index) or lack room access — see [`crate::api::stream::get_html_stream`].
     let feed_builder = JsBuilder::new().morph_selector(&format!("#{feed_id}"), feed_markup);
     let feed_builder = feed_builder.qs("#new-thread-compose form").reset();
     let feed_js = feed_builder.build();
@@ -122,11 +122,11 @@ async fn broadcast_web_refresh(
     };
 
     let feed_prefixes = if room_key == "public" {
-        vec!["/".to_string(), thread_url.clone()]
+        vec!["/t".to_string(), thread_url.clone()]
     } else if let Some(seg) = room_route_segment(room_key) {
         vec![format!("/r/{seg}"), thread_url.clone()]
     } else {
-        vec!["/".to_string(), thread_url.clone()]
+        vec!["/t".to_string(), thread_url.clone()]
     };
 
     let _ = state.js_tx.send(crate::state::JsSnippet {

@@ -56,7 +56,7 @@ impl OntologyPath {
         self.segments.is_empty()
     }
 
-    /// At ontology root, allow mode toggle to forum (`/`).
+    /// At ontology root, allow mode toggle to home (`/`).
     /// In deeper ontology views, keep root breadcrumb within garden (`/~`).
     pub(super) fn slug_root_href(&self) -> &'static str {
         if self.is_root() {

@@ -2,6 +2,7 @@ use super::{
     access::content_for_garden_view,
     browse::scoped_bc_containment,
     external::{external_frame_allowed, external_resolver_status_markup, external_source_href},
+    home::collect_question_entries,
     item_page::{
         build_item_page_view_model, containment_crumb_chain, item_relations_markup,
         sibling_nav_markup,
@@ -814,4 +815,40 @@ fn containment_breadcrumb_emits_leaf_hrefs() {
         "missing luke crumb: {html}"
     );
     assert!(!html.contains("/~/x/"));
+}
+
+#[test]
+fn collect_question_entries_lists_scope_and_aspect_prompt() {
+    let mut reduced = ReducerState::default();
+    apply_ingest(
+        &mut reduced,
+        1,
+        "~/psalms {Which psalm is greater?}\n\
+         ~/psalms/a {alpha}\n\
+         ~/psalms/b {beta}\n\
+         :beauty {more beautiful}\n\
+         ~/lonely {Nothing to judge yet}\n",
+    );
+    let content = content_for_garden_view(&reduced, &ScopeId::Public);
+    let entries = collect_question_entries(&reduced, content, &ThreadNav::public());
+    assert!(
+        entries
+            .iter()
+            .any(|e| e.leaf == "psalms" && e.aspect.is_none()),
+        "canonical psalms missing: {:?}",
+        entries
+            .iter()
+            .map(|e| (e.leaf.clone(), e.aspect.clone()))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        entries
+            .iter()
+            .any(|e| e.leaf == "psalms" && e.aspect.as_deref() == Some("beauty")),
+        "aspect beauty missing"
+    );
+    assert!(
+        entries.iter().all(|e| e.leaf != "lonely"),
+        "lonely has no members and must not appear"
+    );
 }

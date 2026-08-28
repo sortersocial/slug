@@ -5,7 +5,7 @@ use serde_json::json;
 
 use super::nav::ThreadNav;
 
-/// Stable ids shared by public home and private room “new thread” UI (`#new-thread-ui-slot`).
+/// Stable ids shared by the public thread index (`/t`) and private room “new thread” UI (`#new-thread-ui-slot`).
 const COMPOSE_SECTION_ID: &str = "new-thread-compose";
 const ERRORS_ID: &str = "new-thread-errors";
 const FORM_ID: &str = "new-thread-form";

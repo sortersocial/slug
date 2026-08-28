@@ -1284,6 +1284,58 @@ body.view-vote-compare-fullscreen .vote-compare-shell > h2 {
 .vote-question-empty {
   padding: 0 16px 16px;
 }
+body.view-vote-question.view-vote-compare-fullscreen .vote-compare-shell {
+  min-height: 0;
+}
+.vote-question-page {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 0 0 32px;
+}
+.question-aspects,
+.question-standings,
+.question-members {
+  padding: 8px 16px 16px;
+}
+.question-aspects h2,
+.question-standings h2,
+.question-members h2 {
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--meta);
+  margin: 16px 0 8px;
+}
+.question-standings-list {
+  margin: 0;
+  padding-left: 1.5em;
+}
+.question-judge-this {
+  font-weight: 600;
+}
+.home-intro {
+  margin: 0 0 1.25rem;
+}
+.home-lede {
+  margin: 0.35rem 0;
+}
+.home-nav-links {
+  margin: 0.25rem 0 0;
+}
+.question-index-entry {
+  margin: 0 0 1rem;
+}
+.question-row-summary {
+  cursor: pointer;
+}
+.question-preview {
+  margin: 0.6rem 0 0 0.4rem;
+}
+.question-index-aspects {
+  margin: 0.35rem 0 0 1.2rem;
+  padding: 0;
+  list-style: disc;
+}
 
 .vote-edge-history-title {
   font-size: 12px;
@@ -1889,4 +1941,51 @@ ul.import-card__meta {
   max-width: 100%;
   max-height: 360px;
   border-radius: 4px;
+}
+
+/* Home question index */
+.home-intro {
+  margin: 16px 0 12px;
+}
+.home-intro h1 {
+  margin: 0 0 4px;
+  font-size: 22px;
+}
+.home-lede {
+  margin: 0 0 8px;
+  color: var(--prose);
+}
+.home-nav-links a { color: var(--link); }
+.question-index {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 12px 0 24px;
+}
+details.question-row {
+  background: var(--g2);
+  border: var(--bv) solid;
+  border-color: var(--hi) var(--lo) var(--lo) var(--hi);
+  padding: 0;
+}
+details.question-row > summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 8px 12px;
+  color: var(--signal);
+}
+details.question-row > summary::-webkit-details-marker { display: none; }
+details.question-row > summary::before {
+  content: "▸ ";
+  color: var(--ui);
+}
+details.question-row[open] > summary::before { content: "▾ "; }
+.question-row-title { font-weight: 600; }
+.question-row-links {
+  margin: 0 12px 8px;
+  font-size: 13px;
+}
+details.question-row .vote-compare-shell {
+  margin: 0 8px 10px;
+  max-width: none;
 }

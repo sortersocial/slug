@@ -26,8 +26,8 @@ pub use auth::{
 };
 pub use editor::{editor_check, editor_page};
 pub use forum::{
-    home, room_page, room_thread_post_view, room_thread_view, thread_feed_html,
-    thread_feed_html_for_room, thread_post_view, thread_view, ThreadNav,
+    room_page, room_thread_post_view, room_thread_view, thread_feed_html,
+    thread_feed_html_for_room, thread_index, thread_post_view, thread_view, ThreadNav,
 };
 pub(crate) use forum::{
     thread_latest_page_region, thread_region_page_morphs, ThreadRegionPageMorphs,
@@ -45,7 +45,7 @@ pub(crate) use garden::{
     vote_compare_post_success_js, GARDEN_PIN_COOKIE,
 };
 pub use garden::{
-    external_garden_index, external_ontology_path, garden_index, ontology_path,
+    external_garden_index, external_ontology_path, garden_index, home, ontology_path,
     question_aspect_page, question_page, redirect_strip_trailing_slash, room_external_garden_index,
     room_external_ontology_path, room_garden_index, room_ontology_path, room_question_aspect_page,
     room_question_page, room_vote_compare_page, vote_compare_page,
@@ -608,20 +608,15 @@ fn bc_path(path: &OntologyPath) -> Markup {
     }
 }
 
-/// Render the thread path breadcrumb: `slug.social / #tag` or `… / #tag / post #N` on a single post.
-/// Root link toggles to `/~` only at thread-root (`/`).
-/// When focusing a post, `#tag` links to the thread page that contains it (`?offset=` + `#post-N`).
+/// Render the thread path breadcrumb: `slug.social / threads` on `/t`, or `… / #tag` / `… / post #N`.
+/// Brand always points at home (`/`). When focusing a post, `#tag` links to the thread page
+/// that contains it (`?offset=` + `#post-N`).
 pub(super) fn bc_threads(thread_tag: Option<&str>, focused_post: Option<usize>) -> Markup {
-    let root_href = if thread_tag.is_some() { "/" } else { "/~" };
-    let root_is_current = thread_tag.is_none();
     let nav = ThreadNav::public();
     html! {
-        @if root_is_current {
-            a href=(root_href) class="bc-current" { "slug.social" }
-        } @else {
-            a href=(root_href) { "slug.social" }
-        }
+        a href="/" { "slug.social" }
         @if let Some(tag) = thread_tag {
+            (bc_segment("threads", "/t", false))
             @if let Some(idx) = focused_post {
                 (bc_segment(
                     &format!("#{tag}"),
@@ -632,6 +627,8 @@ pub(super) fn bc_threads(thread_tag: Option<&str>, focused_post: Option<usize>) 
             } @else {
                 (bc_segment(&format!("#{tag}"), &nav.thread_url(tag), true))
             }
+        } @else {
+            (bc_segment("threads", "/t", true))
         }
     }
 }

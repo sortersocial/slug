@@ -212,6 +212,7 @@ async fn dispatch_ui_action(
             next,
             pool,
             aspect,
+            dom_suffix,
             form_action,
         } => {
             if form_action != "/ui" {
@@ -224,7 +225,10 @@ async fn dispatch_ui_action(
             let Some(session) = session else {
                 return js_redirect(&login_redirect_for(&next)).into_response();
             };
-            let err_tgt = Some("vote-compare-errors".to_string());
+            let err_tgt = Some(match dom_suffix.as_deref().filter(|s| !s.is_empty()) {
+                Some(s) => format!("vote-compare-errors-{s}"),
+                None => "vote-compare-errors".to_string(),
+            });
             let room = room.trim().to_string();
             let thread_tag = match validate_thread_tag(&thread_tag) {
                 Ok(t) => t,
@@ -359,6 +363,7 @@ async fn dispatch_ui_action(
                         pid.as_str(),
                         post_index,
                         &next,
+                        dom_suffix.as_deref(),
                     )
                     .await;
                     Response::builder()

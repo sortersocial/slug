@@ -61,6 +61,29 @@ async fn test_home_header_shows_post_stats() {
         home.chars().take(800).collect::<String>()
     );
     assert!(home.contains("view-meta"));
+    assert!(
+        home.contains("home-intro") || home.contains("question-index"),
+        "GET / should be the question index, snippet={}",
+        home.chars().take(800).collect::<String>()
+    );
+
+    let threads = client
+        .get(format!("http://{addr}/t"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        threads.contains("3 human posts, 1 ai post"),
+        "thread index should keep post stats, snippet={}",
+        threads.chars().take(800).collect::<String>()
+    );
+    assert!(
+        threads.contains("thread-feed"),
+        "GET /t should serve the thread list"
+    );
 }
 
 #[tokio::test]

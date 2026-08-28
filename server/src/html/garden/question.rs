@@ -16,11 +16,11 @@ use crate::{
     dsl::is_valid_aspect_slug,
     html::{
         forum::ThreadNav, layout_full_bleed_chromeless, render_item_body_in_scope, theme_from_jar,
-        theme_next_from_uri,
+        theme_next_from_uri, user_can_post_room,
     },
     middleware::canonical_view_url,
     path_types::ItemId,
-    reducer::ContentState,
+    reducer::{ContentState, ScopeId},
     scope_rank::comparable_items,
     state::AppState,
 };
@@ -30,7 +30,8 @@ use super::{
         content_for_garden_view, room_not_found_page, room_scope_has_garden_content,
         user_can_view_room,
     },
-    vote::{vote_compare_inner, QuestionCtx, QuestionHeadline, VoteCompareQuery},
+    question_body::question_context_sections,
+    vote::{question_vote_panel, QuestionCtx, QuestionHeadline, VoteCompareDomIds},
 };
 
 /// `psalms` → leaf item `~psalms`. Rejects root and multi-segment tails.
@@ -83,7 +84,7 @@ pub(super) fn question_headline(
     QuestionHeadline::Fallback(format!("Which is greater: {}?", collection.last_segment()))
 }
 
-fn question_title(headline: &QuestionHeadline) -> String {
+pub(super) fn question_title(headline: &QuestionHeadline) -> String {
     match headline {
         QuestionHeadline::Fallback(s) => s.clone(),
         QuestionHeadline::Body(b) => {
@@ -107,7 +108,7 @@ fn ranking_href(nav: &ThreadNav, collection: &ItemId, aspect: Option<&str>) -> S
     }
 }
 
-fn build_question_ctx(
+pub(super) fn build_question_ctx(
     nav: &ThreadNav,
     collection: &ItemId,
     aspect: Option<&str>,
@@ -124,41 +125,43 @@ fn build_question_ctx(
     }
 }
 
-fn question_empty_page(
+fn question_header_markup(
+    ctx: &QuestionCtx,
+    garden_root: &str,
+    item_bodies: Option<&std::collections::HashMap<ItemId, String>>,
+) -> maud::Markup {
+    html! {
+        header class="vote-question" {
+            @match &ctx.headline {
+                QuestionHeadline::Body(text) => {
+                    div class="vote-question-headline" {
+                        (render_item_body_in_scope(text, garden_root, item_bodies))
+                    }
+                }
+                QuestionHeadline::Fallback(text) => {
+                    h1 class="vote-question-headline" { (text) }
+                }
+            }
+            nav class="vote-question-links muted" {
+                a data-testid="question-ranking-link" href=(ctx.garden_href) { "ranking" }
+                " · "
+                a data-testid="question-thread-link" href=(ctx.thread_href) { "thread" }
+            }
+        }
+    }
+}
+
+fn question_page_shell(
     state: &AppState,
-    nav: &ThreadNav,
     uri: &Uri,
     jar: &CookieJar,
-    ctx: QuestionCtx,
+    title: &str,
+    body: maud::Markup,
 ) -> axum::response::Response {
     let url_key = canonical_view_url(uri);
     let view_count = state.views.get_views(&url_key);
-    let body = html! {
-        section class="vote-compare-shell" {
-            header class="vote-question" {
-                @match &ctx.headline {
-                    QuestionHeadline::Body(text) => {
-                        div class="vote-question-headline" {
-                            (render_item_body_in_scope(text, nav.garden_root_url(), None))
-                        }
-                    }
-                    QuestionHeadline::Fallback(text) => {
-                        h1 class="vote-question-headline" { (text) }
-                    }
-                }
-                nav class="vote-question-links muted" {
-                    a data-testid="question-ranking-link" href=(ctx.garden_href) { "ranking" }
-                    " · "
-                    a data-testid="question-thread-link" href=(ctx.thread_href) { "thread" }
-                }
-            }
-            p class="muted vote-question-empty" {
-                "nothing to compare yet — this scope needs at least two items with bodies."
-            }
-        }
-    };
     let page = layout_full_bleed_chromeless(
-        &ctx.title,
+        title,
         "view-ontology view-ontology-light view-vote-compare view-vote-compare-fullscreen view-vote-question",
         body,
         Some(view_count),
@@ -193,23 +196,56 @@ async fn question_inner(
         return room_not_found_page(&jar, &uri).into_response();
     }
     let headline = question_headline(content, &collection_id, aspect.as_deref());
-    let members = comparable_items(content, content.members_of(&collection_id));
     let ctx = build_question_ctx(&nav, &collection_id, aspect.as_deref(), headline);
-    let leaf = collection_id.last_segment().to_string();
-    let pool_display = collection_id.display_path();
+    let extras = question_context_sections(content, &nav, &collection_id, aspect.as_deref());
+    let members = comparable_items(content, content.members_of(&collection_id));
+    let viewer = optional_principal(&headers, &jar, &reduced);
+    let logged_in = viewer.is_some();
+    let can_post = match &nav.scope() {
+        ScopeId::Public => logged_in,
+        ScopeId::Room(rid) => viewer
+            .as_ref()
+            .map(|u| user_can_post_room(&reduced, rid, u))
+            .unwrap_or(false),
+    };
+    let next_path = uri
+        .path_and_query()
+        .map(|pq| pq.as_str().to_string())
+        .unwrap_or_else(|| ctx.question_path.clone());
+    let pair = if members.len() < 2 {
+        let item_bodies = content.item_bodies.clone();
+        html! {
+            section class="vote-compare-shell" {
+                (question_header_markup(&ctx, nav.garden_root_url(), Some(&item_bodies)))
+                p class="muted vote-question-empty" {
+                    "nothing to compare yet — this scope needs at least two items with bodies."
+                }
+            }
+        }
+    } else {
+        question_vote_panel(
+            content,
+            &nav,
+            &collection_id,
+            aspect.as_deref(),
+            logged_in,
+            can_post,
+            &next_path,
+            Some(ctx.question_path.as_str()),
+            Some(&ctx),
+            true,
+            &VoteCompareDomIds::page(),
+        )
+    };
     drop(reduced);
 
-    if members.len() < 2 {
-        return question_empty_page(&state, &nav, &uri, &jar, ctx);
-    }
-
-    let q = VoteCompareQuery {
-        left: None,
-        right: None,
-        thread: Some(leaf),
-        pool: Some(pool_display),
+    let body = html! {
+        div class="vote-question-page" {
+            (pair)
+            (extras)
+        }
     };
-    vote_compare_inner(state, q, nav, headers, jar, uri, Some(ctx)).await
+    question_page_shell(&state, &uri, &jar, &ctx.title, body)
 }
 
 /// `GET /q/:collection`

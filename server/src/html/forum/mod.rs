@@ -1,4 +1,4 @@
-//! Forum / thread HTML: public home, room index, thread views, profile, and UI morph helpers.
+//! Forum / thread HTML: public thread index (`/t`), room index, thread views, profile, and UI morph helpers.
 
 mod access;
 mod copy;
@@ -15,11 +15,12 @@ mod room_members;
 mod thread_morph;
 mod views;
 
-pub use feed::{home, thread_feed_html, thread_feed_html_for_room};
+pub use feed::{thread_feed_html, thread_feed_html_for_room, thread_index};
 pub(crate) use feed::{
     thread_latest_page_region, thread_region_page_morphs, ThreadRegionPageMorphs,
 };
 pub use nav::ThreadNav;
+pub(crate) use page::auth_strip;
 pub(crate) use paginator::PAGE_SIZE as THREAD_PAGE_SIZE;
 pub use post_single::{room_thread_post_view, thread_post_view};
 pub use profile::user_profile_page;

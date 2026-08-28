@@ -938,6 +938,42 @@ body.view-ontology.view-vote-compare-fullscreen .vote-compare-shell > h2 {
 .vote-question-empty {
   padding: 0 1rem 1rem;
 }
+body.view-vote-question.view-vote-compare-fullscreen .vote-compare-shell {
+  min-height: 0;
+}
+.vote-question-page {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 0 0 2rem;
+}
+.question-aspects,
+.question-standings,
+.question-members {
+  padding: 0.5rem 1rem 1rem;
+}
+.question-aspects h2,
+.question-standings h2,
+.question-members h2 {
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin: 1rem 0 0.5rem;
+}
+.question-judge-this {
+  font-weight: 600;
+}
+.home-intro {
+  margin: 0 0 1.25rem;
+}
+.question-index-entry {
+  margin: 0 0 1rem;
+}
+.question-preview {
+  margin: 0.6rem 0 0 0.4rem;
+}
+.question-index-aspects {
+  margin: 0.35rem 0 0 1.2rem;
+}
 body.view-ontology .vote-compare-pair {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
@@ -1246,3 +1282,11 @@ body.view-ontology .vote-compare-preview-wrap h3 {
 body.view-ontology #vote-compare-preview {
   min-height: 2.5rem;
 }
+
+.home-intro { margin: 1rem 0; }
+details.question-row {
+  border: 1px solid #c4b89a;
+  margin: 0.4rem 0;
+  padding: 0.2rem 0.5rem;
+}
+details.question-row > summary { cursor: pointer; }

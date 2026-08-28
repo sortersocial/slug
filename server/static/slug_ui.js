@@ -31,7 +31,7 @@
         if (el.type === 'checkbox' && !el.checked) return;
         data[el.name] = el.value;
       });
-      var slider = container.querySelector('#vote-preference-slider');
+      var slider = container.querySelector('.vote-preference-slider');
       if (slider) data.__slider = slider.value;
       return data;
     }
@@ -71,7 +71,7 @@
   }
 
   function syncVoteSliderFromDraft(form, data) {
-    var slider = form.querySelector('#vote-preference-slider');
+    var slider = form.querySelector('.vote-preference-slider');
     if (!slider) return;
     if (data.__slider != null && String(data.__slider).trim() !== '') {
       slider.value = data.__slider;
@@ -368,28 +368,31 @@
     }
     refreshPinHud();
 
-    // Vote compare: map slider 0–100 to reduced integer ratio weights
-    var voteSlider = document.getElementById('vote-preference-slider');
-    if (voteSlider) {
-      var rl = document.getElementById('vote-ratio-left');
-      var rr = document.getElementById('vote-ratio-right');
-      var readout = document.getElementById('vote-ratio-readout');
-      function gcd(a, b) {
-        a = Math.abs(a | 0);
-        b = Math.abs(b | 0);
-        while (b) {
-          var t = b;
-          b = a % b;
-          a = t;
-        }
-        return a || 1;
+    // Vote compare: map slider 0–100 to reduced integer ratio weights.
+    // Home index can render several forms; bind each slider inside its form.
+    function gcd(a, b) {
+      a = Math.abs(a | 0);
+      b = Math.abs(b | 0);
+      while (b) {
+        var t = b;
+        b = a % b;
+        a = t;
       }
-      function reduceRatio(left, right) {
-        var L = Math.max(1, left | 0);
-        var R = Math.max(1, right | 0);
-        var g = gcd(L, R);
-        return [L / g, R / g];
-      }
+      return a || 1;
+    }
+    function reduceRatio(left, right) {
+      var L = Math.max(1, left | 0);
+      var R = Math.max(1, right | 0);
+      var g = gcd(L, R);
+      return [L / g, R / g];
+    }
+    function bindVoteSlider(voteSlider) {
+      if (!voteSlider || voteSlider.getAttribute('data-slug-bound')) return;
+      voteSlider.setAttribute('data-slug-bound', '1');
+      var root = voteSlider.closest('form') || voteSlider.closest('.vote-compare-shell');
+      var rl = root ? root.querySelector('input[name="ratio_left"]') : null;
+      var rr = root ? root.querySelector('input[name="ratio_right"]') : null;
+      var readout = root ? root.querySelector('.vote-ratio-readout') : null;
       function syncVoteRatio() {
         var p = parseInt(voteSlider.value, 10);
         if (isNaN(p)) p = 50;
@@ -407,6 +410,7 @@
       voteSlider.addEventListener('input', syncVoteRatio);
       syncVoteRatio();
     }
+    document.querySelectorAll('input.vote-preference-slider').forEach(bindVoteSlider);
 
     // SSE: server-pushed JS
     function connectSSE() {
