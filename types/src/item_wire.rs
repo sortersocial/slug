@@ -119,6 +119,20 @@ pub fn canonicalize_item(input: &str) -> String {
         });
     }
 
+    // Bare tilde token `~name` (no slash): same ontology item as `~/name`.
+    // Bare `~` is the ontology root (same as `~/`).
+    if s.starts_with('~') && !s.starts_with("~/") {
+        let token = s[1..].trim();
+        if token.is_empty() {
+            return SLUG_TILDE_ONTOLOGY_ROOT.to_string();
+        }
+        if token.contains('/') {
+            return String::new();
+        }
+        let tail = token.to_lowercase();
+        return format!("https://slug.social/~/{tail}");
+    }
+
     let is_tilde = s.starts_with("~/");
     let rest = s.strip_prefix("~/").or_else(|| s.strip_prefix("/")).unwrap_or(&s);
 

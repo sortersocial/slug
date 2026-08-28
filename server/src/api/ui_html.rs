@@ -396,7 +396,7 @@ async fn dispatch_ui_action(
             let Some(item) = ItemId::parse(&raw) else {
                 return (StatusCode::BAD_REQUEST, "bad item").into_response();
             };
-            let item = item.normalized_storage();
+            let item = item.ontology_leaf().normalized_storage();
             let val = encode_pin_cookie_value(&room, item.as_str());
             let cookie =
                 format!("{GARDEN_PIN_COOKIE}={val}; Path=/; SameSite=Lax; Max-Age=7776000");

@@ -321,13 +321,15 @@ pub async fn writer_actor(mut rx: mpsc::Receiver<WriteCmd>, state: AppState) {
                         required.insert(ThreadCapability::View);
                         for stmt in &v.doc.statements {
                             match stmt {
-                                dsl::Stmt::Vote { .. } => {
+                                dsl::Stmt::Vote { .. } | dsl::Stmt::Containment { sugar: false, .. } => {
                                     required.insert(ThreadCapability::Vote);
                                 }
                                 dsl::Stmt::Item { .. } => {
                                     required.insert(ThreadCapability::AddItem);
                                 }
-                                dsl::Stmt::Prose { .. } | dsl::Stmt::Aspect { .. } => {
+                                dsl::Stmt::Prose { .. }
+                                | dsl::Stmt::Aspect { .. }
+                                | dsl::Stmt::Containment { sugar: true, .. } => {
                                     required.insert(ThreadCapability::Post);
                                 }
                             }
@@ -369,12 +371,25 @@ pub async fn writer_actor(mut rx: mpsc::Receiver<WriteCmd>, state: AppState) {
                             } = s
                             {
                                 if let (Ok(a), Ok(b)) = (resolve_item(item1), resolve_item(item2)) {
-                                    if let Some(p) = a.parent() {
+                                    let a = a.ontology_leaf();
+                                    let b = b.ontology_leaf();
+                                    let content = content_for_room(&reduced, &room_key);
+                                    for p in content.shared_scopes(&a, &b) {
                                         parents.insert(p);
                                     }
-                                    if let Some(p) = b.parent() {
-                                        parents.insert(p);
-                                    }
+                                }
+                            }
+                        }
+                        for s in &v.doc.statements {
+                            if let dsl::Stmt::Containment {
+                                parent,
+                                sugar: true,
+                                border: false,
+                                ..
+                            } = s
+                            {
+                                if let Ok(p) = resolve_item(parent) {
+                                    parents.insert(p.ontology_leaf());
                                 }
                             }
                         }

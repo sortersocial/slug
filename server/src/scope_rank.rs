@@ -20,18 +20,13 @@ pub struct ChildrenRankings {
     pub unranked_items: Vec<ItemId>,
 }
 
-/// Resolve one scope spec (literal path) to direct children of that parent. No wildcards.
+/// Resolve one scope spec (literal path) to active members of that scope item.
+/// Tilde parent paths collapse to the leaf token (`~/x/luke` → `~luke`).
 fn resolve_one_scope(content: &ContentState, spec: &str) -> HashSet<ItemId> {
-    let Some(parent) = ItemId::parse(spec.trim()) else {
+    let Some(parent) = ItemId::parse(spec.trim()).map(|id| id.ontology_leaf()) else {
         return HashSet::new();
     };
-    content
-        .item_children
-        .get(&parent)
-        .cloned()
-        .unwrap_or_default()
-        .into_iter()
-        .collect()
+    content.members_of(&parent).into_iter().collect()
 }
 
 /// Resolve multiple scope specs (literal paths) to a single merged, deduplicated list of item paths.
@@ -77,16 +72,17 @@ pub fn resolve_scope_recursive(
         return vec![];
     }
     let mut visited: HashSet<ItemId> = HashSet::new();
-    let mut frontier: Vec<ItemId> = specs.iter().filter_map(|s| ItemId::parse(s)).collect();
+    let mut frontier: Vec<ItemId> = specs
+        .iter()
+        .filter_map(|s| ItemId::parse(s).map(|id| id.ontology_leaf()))
+        .collect();
 
     for _level in 0..depth {
         let mut next_frontier: Vec<ItemId> = Vec::new();
         for parent in &frontier {
-            if let Some(children) = content.item_children.get(parent) {
-                for child in children {
-                    if visited.insert(child.clone()) {
-                        next_frontier.push(child.clone());
-                    }
+            for child in content.members_of(parent) {
+                if visited.insert(child.clone()) {
+                    next_frontier.push(child);
                 }
             }
         }
@@ -198,12 +194,8 @@ pub fn build_rankings_for_group_and_items(
 /// Build connected-component rankings for direct children of parent_scope.
 /// Matches the HTML garden view: multiple components, isolates, no-vote items.
 pub fn build_children_rankings(content: &ContentState, parent: &ItemId) -> ChildrenRankings {
-    let parent = parent.clone().normalized_storage();
-    let items: Vec<ItemId> = content
-        .item_children
-        .get(&parent)
-        .map(|s| s.iter().cloned().collect())
-        .unwrap_or_default();
+    let parent = parent.clone().normalized_storage().ontology_leaf();
+    let items = content.members_of(&parent);
     build_rankings_for_item_set(content, &items)
 }
 
@@ -212,12 +204,8 @@ pub fn build_children_rankings_in_group(
     parent: &ItemId,
     group: &GroupState,
 ) -> ChildrenRankings {
-    let parent = parent.clone().normalized_storage();
-    let items: Vec<ItemId> = content
-        .item_children
-        .get(&parent)
-        .map(|s| s.iter().cloned().collect())
-        .unwrap_or_default();
+    let parent = parent.clone().normalized_storage().ontology_leaf();
+    let items = content.members_of(&parent);
     build_rankings_for_group_and_items(group, &items)
 }
 

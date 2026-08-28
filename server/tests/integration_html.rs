@@ -13,6 +13,34 @@ async fn test_ontology_item_page_shows_body_children_and_collapsible_votes() {
     // HTML routes are offline during the auth-v3 refactor.
 }
 
+#[tokio::test]
+async fn test_nested_tilde_url_permanently_redirects_to_leaf() {
+    let (addr, _tmp, _log, _state, _handle) = create_test_server_with_state().await;
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    let nested = client
+        .get(format!("http://{addr}/~/x/luke?depth=2"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(nested.status(), reqwest::StatusCode::PERMANENT_REDIRECT);
+    let loc = nested
+        .headers()
+        .get(reqwest::header::LOCATION)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert_eq!(loc, "/~/luke?depth=2");
+
+    let leaf = client
+        .get(format!("http://{addr}/~/luke"))
+        .send()
+        .await
+        .unwrap();
+    assert!(leaf.status().is_success(), "leaf page should render: {}", leaf.status());
+}
+
 /// Thread connective tissue: item_threads and VoteData.thread_tag are exposed by item, pair, and matchup RPC.
 #[tokio::test]
 async fn test_search_page_and_results() {

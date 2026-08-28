@@ -140,6 +140,47 @@ impl GroupState {
     }
 }
 
+/// Weights on one directed containment pair `(child, parent)`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ContainmentWeights {
+    /// Accumulating explicit `<:` claims.
+    pub explicit: u32,
+    /// At most one from path desugaring (idempotent across ingests).
+    pub sugar: bool,
+}
+
+impl ContainmentWeights {
+    pub fn containment_weight(&self) -> u32 {
+        self.explicit.saturating_add(u32::from(self.sugar))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MembershipStatus {
+    Active,
+    Suspended,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BorderPairState {
+    pub child: ItemId,
+    pub parent: ItemId,
+    pub containment_weight: u32,
+    pub border_weight: u32,
+    pub status: MembershipStatus,
+}
+
+/// Derived fallen-border journal entry (rebuilt on replay; never persisted).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FallenBorderEntry {
+    pub ts: i64,
+    pub child: ItemId,
+    pub parent: ItemId,
+    pub containment_weight: u32,
+    pub border_weight: u32,
+    pub ingest_id: String,
+}
+
 /// Compact rank-history entry stored per item in the ledger.
 /// `caused_by` is resolved lazily at query time from `ingests_by_id`.
 #[derive(Debug, Clone)]
@@ -217,6 +258,7 @@ pub(crate) struct RankPositionCache {
     generation: u64,
     /// 1-indexed global rank and component-local Rank Centrality score.
     global: HashMap<ItemId, (usize, f64)>,
+    /// Scope item → 1-indexed rank among that scope's active members.
     by_parent: HashMap<ItemId, HashMap<ItemId, usize>>,
     #[cfg(test)]
     recomputations: usize,
@@ -228,7 +270,21 @@ pub struct ContentState {
     pub items: HashSet<ItemId>,
     pub item_bodies: HashMap<ItemId, String>,
     /// Parent [`ItemId`] -> direct children.
+    ///
+    /// Tilde-ontology keys are active containment members (synced from
+    /// [`Self::members_by_scope`]). URL / external keys keep path-hierarchy
+    /// children from [`ReducerState::add_child_edge`], plus any containment members.
     pub item_children: HashMap<ItemId, HashSet<ItemId>>,
+    /// `(child, parent)` → containment weights (explicit accumulates; sugar is idempotent).
+    pub containment: HashMap<(ItemId, ItemId), ContainmentWeights>,
+    /// `(child, parent)` → `!<:` border weight (accumulates).
+    pub borders: HashMap<(ItemId, ItemId), u32>,
+    /// Parent → currently **active** members (`containment_weight > border_weight`).
+    pub members_by_scope: HashMap<ItemId, HashSet<ItemId>>,
+    /// Child → scopes in which membership is active.
+    pub scopes_by_member: HashMap<ItemId, HashSet<ItemId>>,
+    /// Fallen-border journal, chronological. Derived; rebuilt on replay.
+    pub fallen_border_journal: Vec<FallenBorderEntry>,
     /// Per-item vote history (most recent first).
     pub item_votes: HashMap<ItemId, VecDeque<VoteData>>,
     /// Per-item ingest references (most recent first).
@@ -237,8 +293,9 @@ pub struct ContentState {
     pub item_threads: HashMap<ItemId, HashSet<String>>,
     /// Per-item rank history, oldest first.
     pub rank_history: HashMap<ItemId, Vec<RankHistoryEntry>>,
-    /// Aspect ranking groups keyed by (parent item, aspect slug).
-    /// Canonical votes stay in `ranking_group`.
+    /// Aspect ranking groups keyed by (scope item, aspect slug).
+    /// Canonical votes stay in `ranking_group`. Membership follows the
+    /// scope item's active-member electorate.
     pub aspect_groups: HashMap<(ItemId, String), GroupState>,
     /// Prompt text per aspect slug in this room; last non-empty write wins.
     pub aspect_prompts: HashMap<String, String>,
@@ -255,11 +312,177 @@ pub struct ContentState {
 
 impl ContentState {
     pub fn aspect_group(&self, parent: &ItemId, aspect: &str) -> Option<&GroupState> {
-        self.aspect_groups.get(&(parent.clone(), aspect.to_string()))
+        self.aspect_groups.get(&(parent.ontology_leaf(), aspect.to_string()))
     }
 
     pub fn aspect_prompt(&self, aspect: &str) -> Option<&str> {
         self.aspect_prompts.get(aspect).map(String::as_str)
+    }
+
+    /// Active members of `item` (the electorate when `item` is used as a scope).
+    pub fn members_of(&self, item: &ItemId) -> Vec<ItemId> {
+        let key = item.ontology_leaf();
+        let mut out: Vec<ItemId> = self
+            .members_by_scope
+            .get(&key)
+            .map(|s| s.iter().cloned().collect())
+            .unwrap_or_default();
+        if key.tilde_tail().is_none() {
+            if let Some(ch) = self.item_children.get(&key) {
+                out.extend(ch.iter().cloned());
+            }
+            if let Some(ch) = self.item_children.get(item) {
+                out.extend(ch.iter().cloned());
+            }
+        }
+        out.sort();
+        out.dedup();
+        out
+    }
+
+    /// Scopes in which `item` is an active member.
+    pub fn scopes_of(&self, item: &ItemId) -> Vec<ItemId> {
+        let key = item.ontology_leaf();
+        let mut out: Vec<ItemId> = self
+            .scopes_by_member
+            .get(&key)
+            .map(|s| s.iter().cloned().collect())
+            .unwrap_or_default();
+        out.sort();
+        out
+    }
+
+    /// Shared scopes: items in which both `a` and `b` are active members.
+    pub fn shared_scopes(&self, a: &ItemId, b: &ItemId) -> Vec<ItemId> {
+        let sa: HashSet<ItemId> = self.scopes_of(a).into_iter().collect();
+        let mut out: Vec<ItemId> = self
+            .scopes_of(b)
+            .into_iter()
+            .filter(|s| sa.contains(s))
+            .collect();
+        out.sort();
+        out
+    }
+
+    pub fn border_state(&self, child: &ItemId, parent: &ItemId) -> Option<BorderPairState> {
+        let child = child.ontology_leaf();
+        let parent = parent.ontology_leaf();
+        let pair = (child.clone(), parent.clone());
+        let c_w = self
+            .containment
+            .get(&pair)
+            .map(ContainmentWeights::containment_weight)
+            .unwrap_or(0);
+        let b_w = self.borders.get(&pair).copied().unwrap_or(0);
+        if c_w == 0 && b_w == 0 {
+            return None;
+        }
+        let status = if c_w > b_w {
+            MembershipStatus::Active
+        } else {
+            MembershipStatus::Suspended
+        };
+        Some(BorderPairState {
+            child,
+            parent,
+            containment_weight: c_w,
+            border_weight: b_w,
+            status,
+        })
+    }
+
+    pub fn fallen_borders(&self) -> &[FallenBorderEntry] {
+        &self.fallen_border_journal
+    }
+
+    fn apply_containment_claim(
+        &mut self,
+        child: ItemId,
+        parent: ItemId,
+        border: bool,
+        sugar: bool,
+        ts: i64,
+        ingest_id: &str,
+    ) {
+        let child = child.ontology_leaf();
+        let parent = parent.ontology_leaf();
+        if child == parent {
+            return;
+        }
+        let pair = (child.clone(), parent.clone());
+        let old_c = self
+            .containment
+            .get(&pair)
+            .map(ContainmentWeights::containment_weight)
+            .unwrap_or(0);
+        let old_b = self.borders.get(&pair).copied().unwrap_or(0);
+        let prev_holding = old_b > 0 && old_c <= old_b;
+
+        if border {
+            *self.borders.entry(pair.clone()).or_insert(0) += 1;
+        } else if sugar {
+            let w = self.containment.entry(pair.clone()).or_default();
+            w.sugar = true;
+        } else {
+            self.containment.entry(pair.clone()).or_default().explicit += 1;
+        }
+
+        let new_c = self
+            .containment
+            .get(&pair)
+            .map(ContainmentWeights::containment_weight)
+            .unwrap_or(0);
+        let new_b = self.borders.get(&pair).copied().unwrap_or(0);
+        let now_active = new_c > new_b;
+
+        if prev_holding && now_active {
+            self.fallen_border_journal.push(FallenBorderEntry {
+                ts,
+                child: child.clone(),
+                parent: parent.clone(),
+                containment_weight: new_c,
+                border_weight: new_b,
+                ingest_id: ingest_id.to_string(),
+            });
+        }
+
+        if now_active {
+            self.members_by_scope
+                .entry(parent.clone())
+                .or_default()
+                .insert(child.clone());
+            self.scopes_by_member
+                .entry(child.clone())
+                .or_default()
+                .insert(parent.clone());
+            self.item_children
+                .entry(parent)
+                .or_default()
+                .insert(child);
+        } else {
+            if let Some(set) = self.members_by_scope.get_mut(&parent) {
+                set.remove(&child);
+                if set.is_empty() {
+                    self.members_by_scope.remove(&parent);
+                }
+            }
+            if let Some(set) = self.scopes_by_member.get_mut(&child) {
+                set.remove(&parent);
+                if set.is_empty() {
+                    self.scopes_by_member.remove(&child);
+                }
+            }
+            // Tilde scopes are membership-only; drop the child when suspended.
+            // URL scopes keep path-hierarchy children from add_child_edge.
+            if parent.tilde_tail().is_some() || parent == ItemId::ontology_root() {
+                if let Some(set) = self.item_children.get_mut(&parent) {
+                    set.remove(&child);
+                    if set.is_empty() {
+                        self.item_children.remove(&parent);
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -438,11 +661,13 @@ impl ReducerState {
         self.content.get(&ScopeId::Public).expect("public scope missing")
     }
 
-    /// Register parent→child edges for the full ancestor chain.
-    /// For `a/b/c/d` this creates: `a/b/c→d`, `a/b→a/b/c`, `a→a/b`, `""→a`.
-    /// Stops early when an intermediate is already registered (its ancestors must be too).
+    /// Register parent→child edges for the full ancestor chain of **URL / external**
+    /// items. Tilde-ontology hierarchy is containment (path sugar), not path identity.
     /// @e2bdefa9-a6fa-4725-b0a2-c0b09d95bb20:claudecode:anthropic/claude-opus-4
     fn add_child_edge(content: &mut ContentState, item: &ItemId) {
+        if item.tilde_tail().is_some() {
+            return;
+        }
         let mut child = item.clone();
         loop {
             let Some(parent) = child.parent() else { break };
@@ -456,21 +681,21 @@ impl ReducerState {
         }
     }
 
-    /// Resolve an item path as a first-class [`ItemId`].
+    /// Resolve a DSL item ref. Tilde paths collapse to the leaf token.
     fn normalize_item(item: &str) -> Option<ItemId> {
-        ItemId::parse(item)
+        ItemId::parse(item).map(|id| id.ontology_leaf())
     }
 
-    /// 1-indexed rank within its own connected component, for every child of
+    /// 1-indexed rank within its own connected component, for every active member of
     /// `scope`. Items with no votes connecting them to a sibling are absent.
     fn scope_positions(
         group: &GroupState,
-        scope: &ItemId,
-        item_children: &HashMap<ItemId, HashSet<ItemId>>,
+        members: &HashSet<ItemId>,
     ) -> HashMap<ItemId, usize> {
-        let Some(children) = item_children.get(scope) else {
+        if members.is_empty() {
             return HashMap::new();
-        };
+        }
+        let children = members;
         let sibling_idxs: Vec<usize> = children
             .iter()
             .filter_map(|c| group.item_to_idx.get(c).copied())
@@ -563,44 +788,48 @@ impl ReducerState {
             });
         }
 
-        let parents: HashSet<ItemId> = items.iter().filter_map(ItemId::parent).collect();
-        let missing_parents: Vec<ItemId> = parents
+        let scopes: HashSet<ItemId> = items
+            .iter()
+            .flat_map(|item| content.scopes_of(item))
+            .collect();
+        let missing_scopes: Vec<ItemId> = scopes
             .into_iter()
-            .filter(|parent| {
+            .filter(|scope| {
                 !content
                     .rank_position_cache
                     .as_ref()
                     .expect("cache initialized")
                     .by_parent
-                    .contains_key(parent)
+                    .contains_key(scope)
             })
             .collect();
-        for parent in missing_parents {
-            let positions = Self::scope_positions(
-                &content.ranking_group,
-                &parent,
-                &content.item_children,
-            );
+        for scope in missing_scopes {
+            let members: HashSet<ItemId> = content.members_of(&scope).into_iter().collect();
+            let positions = Self::scope_positions(&content.ranking_group, &members);
             content
                 .rank_position_cache
                 .as_mut()
                 .expect("cache initialized")
                 .by_parent
-                .insert(parent, positions);
+                .insert(scope, positions);
         }
 
+        let item_scopes: Vec<(ItemId, Vec<ItemId>)> = items
+            .iter()
+            .map(|item| (item.clone(), content.scopes_of(item)))
+            .collect();
         let cache = content
             .rank_position_cache
             .as_ref()
             .expect("cache initialized");
         let mut content_positions = HashMap::with_capacity(items.len());
-        for item in items {
-            let scope = item
-                .parent()
-                .and_then(|parent| {
+        for (item, scopes) in &item_scopes {
+            let scope = scopes
+                .iter()
+                .find_map(|scope| {
                     cache
                         .by_parent
-                        .get(&parent)
+                        .get(scope)
                         .and_then(|positions| positions.get(item).copied())
                 })
                 .unwrap_or(0);
@@ -664,6 +893,30 @@ impl ReducerState {
                         }
                     }
                 }
+                dsl::Stmt::Containment {
+                    child,
+                    parent,
+                    border,
+                    sugar,
+                    ..
+                } => {
+                    let Some(child_id) = Self::normalize_item(&child) else {
+                        continue;
+                    };
+                    let Some(parent_id) = Self::normalize_item(&parent) else {
+                        continue;
+                    };
+                    ingest_items.insert(child_id.clone());
+                    ingest_items.insert(parent_id.clone());
+                    content.apply_containment_claim(
+                        child_id,
+                        parent_id,
+                        border,
+                        sugar,
+                        ing.ts,
+                        &ing.id,
+                    );
+                }
                 dsl::Stmt::Aspect { slug, prompt } => {
                     if let (Some(s), Some(p)) = (slug, prompt) {
                         if !p.trim().is_empty() {
@@ -707,14 +960,13 @@ impl ReducerState {
                     Self::add_child_edge(content, &item_b);
 
                     if let Some(asp) = aspect {
-                        if let (Some(pa), Some(pb)) = (item_a.parent(), item_b.parent()) {
-                            if pa == pb {
-                                content
-                                    .aspect_groups
-                                    .entry((pa, asp))
-                                    .or_default()
-                                    .apply_vote(vote);
-                            }
+                        let shared = content.shared_scopes(&item_a, &item_b);
+                        for scope in shared {
+                            content
+                                .aspect_groups
+                                .entry((scope, asp.clone()))
+                                .or_default()
+                                .apply_vote(vote.clone());
                         }
                     } else {
                         content.ranking_group.apply_vote(vote.clone());
@@ -759,10 +1011,10 @@ impl ReducerState {
                 } else {
                     after_global as i32 - before_global as i32
                 };
-                let scope_total = item
-                    .parent()
-                    .and_then(|p| content.item_children.get(&p))
-                    .map(|s| s.len())
+                let scope_total = content
+                    .scopes_of(item)
+                    .first()
+                    .map(|s| content.members_of(s).len())
                     .unwrap_or(0);
                 let global_total = content.ranking_group.idx_to_item.len();
                 content.rank_history.entry(item.clone()).or_default().push(RankHistoryEntry {
@@ -1103,7 +1355,7 @@ mod rank_position_cache_tests {
             cache.recomputations, 3,
             "the second ingest must reuse its before positions and recompute only after voting"
         );
-        assert_eq!(content.rank_history[&ItemId::parse("~/memo/b").unwrap()].len(), 2);
+        assert_eq!(content.rank_history[&ItemId::parse("~b").unwrap()].len(), 2);
     }
 }
 
@@ -1281,5 +1533,227 @@ mod aspect_tests {
             priv_content.aspect_prompt("beauty"),
             pub_content.aspect_prompt("beauty")
         );
+    }
+}
+
+#[cfg(test)]
+mod containment_tests {
+    use super::*;
+    use crate::events::PostRedacted;
+
+    fn ingest_at(id: &str, ts: i64, raw: &str) -> Ingest {
+        Ingest {
+            ts,
+            id: id.to_string(),
+            raw: raw.to_string(),
+            principal: "tester".to_string(),
+            delegate: None,
+            room_id: "public".to_string(),
+            thread_tag: "contain".to_string(),
+        }
+    }
+
+    fn item(s: &str) -> ItemId {
+        ItemId::parse(s).unwrap().ontology_leaf()
+    }
+
+    #[test]
+    fn activation_when_containment_beats_border() {
+        let mut state = ReducerState::default();
+        state.apply_event(Event::Ingest(ingest_at(
+            "in",
+            1,
+            "~luke { l }\n~jedi { j }\n{ in }\n~luke <: ~jedi",
+        )));
+        let c = state.public();
+        assert_eq!(c.members_of(&item("~jedi")), vec![item("~luke")]);
+        assert_eq!(c.scopes_of(&item("~luke")), vec![item("~jedi")]);
+        let st = c.border_state(&item("~luke"), &item("~jedi")).unwrap();
+        assert_eq!(st.status, MembershipStatus::Active);
+        assert_eq!(st.containment_weight, 1);
+        assert_eq!(st.border_weight, 0);
+    }
+
+    #[test]
+    fn suspension_at_equality() {
+        let mut state = ReducerState::default();
+        state.apply_event(Event::Ingest(ingest_at(
+            "in",
+            1,
+            "~luke { l }\n~jedi { j }\n{ in }\n~luke <: ~jedi",
+        )));
+        state.apply_event(Event::Ingest(ingest_at(
+            "out",
+            2,
+            "{ out }\n~luke !<: ~jedi",
+        )));
+        let c = state.public();
+        assert!(c.members_of(&item("~jedi")).is_empty());
+        let st = c.border_state(&item("~luke"), &item("~jedi")).unwrap();
+        assert_eq!(st.status, MembershipStatus::Suspended);
+        assert_eq!(st.containment_weight, 1);
+        assert_eq!(st.border_weight, 1);
+        assert!(c.fallen_borders().is_empty());
+    }
+
+    #[test]
+    fn breach_journals_when_containment_overtakes_holding_border() {
+        let mut state = ReducerState::default();
+        state.apply_event(Event::Ingest(ingest_at(
+            "in",
+            1,
+            "~luke { l }\n~jedi { j }\n{ in }\n~luke <: ~jedi",
+        )));
+        state.apply_event(Event::Ingest(ingest_at(
+            "out",
+            2,
+            "{ out }\n~luke !<: ~jedi",
+        )));
+        state.apply_event(Event::Ingest(ingest_at(
+            "in2",
+            3,
+            "{ still in }\n~luke <: ~jedi",
+        )));
+        let c = state.public();
+        let st = c.border_state(&item("~luke"), &item("~jedi")).unwrap();
+        assert_eq!(st.status, MembershipStatus::Active);
+        assert_eq!(st.containment_weight, 2);
+        assert_eq!(st.border_weight, 1);
+        assert_eq!(c.members_of(&item("~jedi")), vec![item("~luke")]);
+        assert_eq!(c.fallen_borders().len(), 1);
+        let j = &c.fallen_borders()[0];
+        assert_eq!(j.ts, 3);
+        assert_eq!(j.ingest_id, "in2");
+        assert_eq!(j.containment_weight, 2);
+        assert_eq!(j.border_weight, 1);
+        assert_eq!(j.child, item("~luke"));
+        assert_eq!(j.parent, item("~jedi"));
+    }
+
+    #[test]
+    fn sugar_weights_are_idempotent() {
+        let mut state = ReducerState::default();
+        state.apply_event(Event::Ingest(ingest_at(
+            "one",
+            1,
+            "~/jedi/luke { l }",
+        )));
+        state.apply_event(Event::Ingest(ingest_at(
+            "two",
+            2,
+            "~/jedi/luke { l again }",
+        )));
+        let c = state.public();
+        let st = c.border_state(&item("~luke"), &item("~jedi")).unwrap();
+        assert_eq!(st.containment_weight, 1);
+        assert_eq!(st.status, MembershipStatus::Active);
+        assert_eq!(c.item_bodies.get(&item("~luke")).map(String::as_str), Some("l again"));
+    }
+
+    #[test]
+    fn explicit_weights_accumulate() {
+        let mut state = ReducerState::default();
+        state.apply_event(Event::Ingest(ingest_at(
+            "a",
+            1,
+            "~luke { l }\n~jedi { j }\n{ in }\n~luke <: ~jedi",
+        )));
+        state.apply_event(Event::Ingest(ingest_at(
+            "b",
+            2,
+            "{ still }\n~luke <: ~jedi",
+        )));
+        let st = state
+            .public()
+            .border_state(&item("~luke"), &item("~jedi"))
+            .unwrap();
+        assert_eq!(st.containment_weight, 2);
+    }
+
+    #[test]
+    fn leaf_collision_merges_two_old_paths() {
+        let mut state = ReducerState::default();
+        state.apply_event(Event::Ingest(ingest_at(
+            "x",
+            1,
+            "~/x/luke { from x }",
+        )));
+        state.apply_event(Event::Ingest(ingest_at(
+            "y",
+            2,
+            "~/y/luke { from y }",
+        )));
+        let c = state.public();
+        assert!(c.items.contains(&item("~luke")));
+        assert!(!c.items.contains(&ItemId::parse("~/x/luke").unwrap()));
+        assert_eq!(c.item_bodies.get(&item("~luke")).map(String::as_str), Some("from y"));
+        assert_eq!(c.members_of(&item("~x")), vec![item("~luke")]);
+        assert_eq!(c.members_of(&item("~y")), vec![item("~luke")]);
+        let mut scopes = c.scopes_of(&item("~luke"));
+        scopes.sort();
+        assert_eq!(scopes, vec![item("~x"), item("~y")]);
+    }
+
+    #[test]
+    fn replay_determinism_containment_and_journal() {
+        let events = [
+            Event::Ingest(ingest_at(
+                "in",
+                1,
+                "~luke { l }\n~jedi { j }\n{ in }\n~luke <: ~jedi",
+            )),
+            Event::Ingest(ingest_at("out", 2, "{ out }\n~luke !<: ~jedi")),
+            Event::Ingest(ingest_at("in2", 3, "{ still }\n~luke <: ~jedi")),
+            Event::Ingest(ingest_at("path", 4, "~/jedi/obiwan { o }")),
+        ];
+        let mut a = ReducerState::default();
+        let mut b = ReducerState::default();
+        for ev in &events {
+            a.apply_event(ev.clone());
+            b.apply_event(ev.clone());
+        }
+        let ca = a.public();
+        let cb = b.public();
+        assert_eq!(ca.containment, cb.containment);
+        assert_eq!(ca.borders, cb.borders);
+        assert_eq!(ca.members_by_scope, cb.members_by_scope);
+        assert_eq!(ca.fallen_border_journal, cb.fallen_border_journal);
+        assert_eq!(ca.members_of(&item("~jedi")), cb.members_of(&item("~jedi")));
+    }
+
+    #[test]
+    fn redaction_rebuilds_containment() {
+        let mut state = ReducerState::default();
+        state.apply_event(Event::Ingest(ingest_at(
+            "keep",
+            1,
+            "~luke { l }\n~jedi { j }\n{ in }\n~luke <: ~jedi",
+        )));
+        state.apply_event(Event::Ingest(ingest_at(
+            "drop",
+            2,
+            "{ out }\n~luke !<: ~jedi",
+        )));
+        assert_eq!(
+            state
+                .public()
+                .border_state(&item("~luke"), &item("~jedi"))
+                .unwrap()
+                .status,
+            MembershipStatus::Suspended
+        );
+        state.apply_event(Event::PostRedacted(PostRedacted {
+            ts: 3,
+            post_id: "drop".to_string(),
+            principal: "tester".to_string(),
+        }));
+        let c = state.public();
+        assert_eq!(
+            c.border_state(&item("~luke"), &item("~jedi"))
+                .unwrap()
+                .status,
+            MembershipStatus::Active
+        );
+        assert!(c.fallen_borders().is_empty());
     }
 }

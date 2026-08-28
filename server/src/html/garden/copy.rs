@@ -68,7 +68,7 @@ fn rankings_for_copy(
         let hosts = external_root_host_items(state_content);
         return build_rankings_for_item_set(state_content, &hosts);
     }
-    let parent = ItemId::parse(parent_path.trim())
+    let parent = ItemId::parse(parent_path.trim()).map(|id| id.ontology_leaf())
         .unwrap_or_else(|| ItemId::ontology_root())
         .normalized_storage();
     let depth = depth.max(1);

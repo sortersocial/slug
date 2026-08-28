@@ -1,7 +1,11 @@
 use super::{
     access::content_for_garden_view,
     external::{external_frame_allowed, external_resolver_status_markup, external_source_href},
-    item_page::{build_item_page_view_model, sibling_nav_markup},
+    browse::scoped_bc_containment,
+    item_page::{
+        build_item_page_view_model, containment_crumb_chain, item_relations_markup,
+        sibling_nav_markup,
+    },
     render::aspect_ranking_sections_markup,
     pin::ont_pin_vote_controls,
     vote::{
@@ -14,7 +18,7 @@ use crate::{
     events::{Event, Ingest},
     html::forum::ThreadNav,
     path_types::ItemId,
-    reducer::{ReducerState, ScopeId},
+    reducer::{MembershipStatus, ReducerState, ScopeId},
 };
 
 fn apply_ingest(state: &mut ReducerState, ts: i64, raw: &str) {
@@ -55,8 +59,8 @@ fn vote_edge_compare_sorts_rows_by_strength_for_page_left() {
          {strong for a}\n             ~/topic/a 8:2 ~/topic/b\n",
     );
     let content = content_for_garden_view(&reduced, &ScopeId::Public);
-    let page_left = ItemId::parse("~/topic/a").unwrap().normalized_storage();
-    let page_right = ItemId::parse("~/topic/b").unwrap().normalized_storage();
+    let page_left = ItemId::parse("~/topic/a").unwrap().ontology_leaf();
+    let page_right = ItemId::parse("~/topic/b").unwrap().ontology_leaf();
     let raw = edge_vote_entries_for_pair(content, &page_left, &page_right);
     assert_eq!(raw.len(), 2);
     let sorted = sort_votes_for_compare_display(raw, &page_left, &page_right);
@@ -83,8 +87,8 @@ fn edge_vote_count_for_pair_matches_votes_for_edge_len() {
          ~/topic/b 2:3 ~/topic/a\n",
     );
     let content = content_for_garden_view(&reduced, &ScopeId::Public);
-    let a = ItemId::parse("~/topic/a").unwrap().normalized_storage();
-    let b = ItemId::parse("~/topic/b").unwrap().normalized_storage();
+    let a = ItemId::parse("~/topic/a").unwrap().ontology_leaf();
+    let b = ItemId::parse("~/topic/b").unwrap().ontology_leaf();
     assert_eq!(
         edge_vote_count_for_pair(content, &a, &b),
         edge_vote_entries_for_pair(content, &a, &b).len()
@@ -106,8 +110,8 @@ fn suggest_next_vote_pair_prefers_unvoted_sibling_pair() {
          {a beats b}\n             ~/topic/a 2:1 ~/topic/b\n",
     );
     let content = content_for_garden_view(&reduced, &ScopeId::Public);
-    let a = ItemId::parse("~/topic/a").unwrap().normalized_storage();
-    let b = ItemId::parse("~/topic/b").unwrap().normalized_storage();
+    let a = ItemId::parse("~/topic/a").unwrap().ontology_leaf();
+    let b = ItemId::parse("~/topic/b").unwrap().ontology_leaf();
     let next = suggest_next_vote_pair(content, &a, &b, None).expect("next sibling pair");
     assert_ne!(
         canonical_edge_items(&next.0, &next.1),
@@ -242,7 +246,7 @@ fn sibling_nav_markup_includes_rank_and_winner_percentile() {
     let winner = build_item_page_view_model(&reduced, &ScopeId::Public, "~/topic/a", 1);
     let winner_nav = winner.sibling_nav.expect("sibling nav");
     let nav = ThreadNav::public();
-    let html = sibling_nav_markup(&nav, &winner_nav, "~/topic/a").into_string();
+    let html = sibling_nav_markup(&nav, &winner_nav, &winner.item).into_string();
     assert!(html.contains("rank: 1/3"), "missing rank in {html}");
     assert!(
         html.contains("top 66th percentile"),
@@ -251,7 +255,7 @@ fn sibling_nav_markup_includes_rank_and_winner_percentile() {
 
     let mid = build_item_page_view_model(&reduced, &ScopeId::Public, "~/topic/b", 1);
     let mid_nav = mid.sibling_nav.expect("sibling nav");
-    let mid_html = sibling_nav_markup(&nav, &mid_nav, "~/topic/b").into_string();
+    let mid_html = sibling_nav_markup(&nav, &mid_nav, &mid.item).into_string();
     assert!(mid_html.contains("rank: 2/3"), "missing mid rank in {mid_html}");
     assert!(
         !mid_html.contains("percentile"),
@@ -313,8 +317,8 @@ fn item_page_renders_aspect_section_below_canonical() {
     let aspect_top = model.aspect_rankings[0].rankings.component_rankings[0].ranked[0]
         .item
         .as_str();
-    assert!(canon_top.contains("topic/a"));
-    assert!(aspect_top.contains("topic/b"));
+    assert!(canon_top.ends_with("/a"), "canonical winner {canon_top}");
+    assert!(aspect_top.ends_with("/b"), "aspect winner {aspect_top}");
 
     let content = content_for_garden_view(&reduced, &ScopeId::Public);
     let html = aspect_ranking_sections_markup(
@@ -379,8 +383,8 @@ fn item_page_model_builds_ranked_child_components() {
     assert_eq!(
         names,
         vec![
-            "https://slug.social/~/topic/a",
-            "https://slug.social/~/topic/b"
+            "https://slug.social/~/a",
+            "https://slug.social/~/b"
         ]
     );
     use crate::path_types::ItemId;
@@ -388,11 +392,11 @@ fn item_page_model_builds_ranked_child_components() {
         model
             .child_rankings
             .unranked_items
-            .contains(&ItemId::parse("https://slug.social/~/topic/kid1").unwrap())
+            .contains(&ItemId::parse("https://slug.social/~/kid1").unwrap())
             || model
                 .child_rankings
                 .unranked_items
-                .contains(&ItemId::parse("https://slug.social/~/topic/kid2").unwrap())
+                .contains(&ItemId::parse("https://slug.social/~/kid2").unwrap())
     );
 }
 
@@ -496,9 +500,9 @@ fn item_page_model_depth_includes_descendants() {
         .iter()
         .map(|u| u.as_str())
         .collect();
-    assert!(items.contains("https://slug.social/~/topic/a"));
-    assert!(items.contains("https://slug.social/~/topic/a/leaf"));
-    assert!(items.contains("https://slug.social/~/topic/b"));
+    assert!(items.contains("https://slug.social/~/a"));
+    assert!(items.contains("https://slug.social/~/leaf"));
+    assert!(items.contains("https://slug.social/~/b"));
 }
 
 #[test]
@@ -528,8 +532,8 @@ fn item_page_model_depth_all_includes_deep_descendants() {
         .iter()
         .map(|u| u.as_str())
         .collect();
-    assert!(items.contains("https://slug.social/~/topic/a/mid/leaf"));
-    assert!(items.contains("https://slug.social/~/topic/b"));
+    assert!(items.contains("https://slug.social/~/leaf"));
+    assert!(items.contains("https://slug.social/~/b"));
 }
 
 #[test]
@@ -626,4 +630,110 @@ fn external_frame_allowed_skips_known_blocked_hosts() {
         "https://github.com/sortersocial/slug"
     ));
     assert!(external_frame_allowed("https://example.com/path"));
+}
+
+#[test]
+fn item_page_scope_labels_prompt_and_lists_memberships() {
+    let mut reduced = ReducerState::default();
+    apply_ingest(
+        &mut reduced,
+        1,
+        "~jedi { who is a jedi }\n~luke { farm boy }\n{ in }\n~luke <: ~jedi\n",
+    );
+    let jedi = build_item_page_view_model(&reduced, &ScopeId::Public, "~/jedi", 1);
+    assert!(jedi.is_scope, "jedi has an active member");
+    assert_eq!(jedi.body.as_deref(), Some("who is a jedi"));
+    assert!(jedi.memberships.is_empty());
+
+    let luke = build_item_page_view_model(&reduced, &ScopeId::Public, "~/x/luke", 1);
+    assert!(!luke.is_scope);
+    assert_eq!(luke.body.as_deref(), Some("farm boy"));
+    assert_eq!(luke.memberships.len(), 1);
+    assert_eq!(luke.memberships[0].status, MembershipStatus::Active);
+    assert!(luke.memberships[0].parent.as_str().ends_with("/jedi"));
+    assert_eq!(luke.memberships[0].containment_weight, 1);
+    let crumbs: Vec<String> = luke
+        .crumb_chain
+        .iter()
+        .map(|id| id.last_segment().to_string())
+        .collect();
+    assert_eq!(crumbs, vec!["jedi", "luke"]);
+}
+
+#[test]
+fn item_page_crumb_picks_strongest_parent_lists_alternates() {
+    let mut reduced = ReducerState::default();
+    apply_ingest(
+        &mut reduced,
+        1,
+        "~jedi { j }\n~sith { s }\n~luke { l }\n{ j1 }\n~luke <: ~jedi\n{ s1 }\n~luke <: ~sith\n{ j2 }\n~luke <: ~jedi\n",
+    );
+    let content = content_for_garden_view(&reduced, &ScopeId::Public);
+    let luke = ItemId::parse("~luke").unwrap().ontology_leaf();
+    let chain = containment_crumb_chain(content, &luke);
+    assert_eq!(
+        chain.last().map(|id| id.last_segment()),
+        Some("luke")
+    );
+    assert_eq!(chain[0].last_segment(), "jedi", "stronger jedi parent first");
+
+    let model = build_item_page_view_model(&reduced, &ScopeId::Public, "~luke", 1);
+    assert_eq!(model.alternate_scopes.len(), 1);
+    assert_eq!(model.alternate_scopes[0].last_segment(), "sith");
+}
+
+#[test]
+fn item_page_renders_memberships_suspended_borders_and_journal() {
+    let mut reduced = ReducerState::default();
+    apply_ingest(&mut reduced, 1, "~jedi { j }\n~luke { l }\n{ in }\n~luke <: ~jedi\n");
+    apply_ingest(&mut reduced, 2, "{ out }\n~luke !<: ~jedi\n");
+    let suspended = build_item_page_view_model(&reduced, &ScopeId::Public, "~luke", 1);
+    assert!(suspended.memberships.is_empty());
+    assert_eq!(suspended.suspended_borders.len(), 1);
+    assert_eq!(
+        suspended.suspended_borders[0].status,
+        MembershipStatus::Suspended
+    );
+    let html_sus = item_relations_markup(&suspended, &ThreadNav::public(), 10_000).into_string();
+    assert!(
+        html_sus.contains("ont-tab-panel-borders"),
+        "missing suspended section: {html_sus}"
+    );
+    assert!(html_sus.contains("suspended borders"));
+    assert!(html_sus.contains("ont-border-suspended"));
+
+    apply_ingest(&mut reduced, 3, "{ still in }\n~luke <: ~jedi\n");
+    let breached = build_item_page_view_model(&reduced, &ScopeId::Public, "~luke", 1);
+    assert_eq!(breached.memberships.len(), 1);
+    assert_eq!(breached.fallen_journal.len(), 1);
+    let html = item_relations_markup(&breached, &ThreadNav::public(), 10_000).into_string();
+    assert!(html.contains("ont-tab-panel-memberships"), "missing memberships: {html}");
+    assert!(html.contains("memberships"));
+    assert!(html.contains("containment 2"));
+    assert!(html.contains("ont-fallen-borders"), "missing journal: {html}");
+    assert!(html.contains("fallen borders"));
+}
+
+#[test]
+fn item_page_scope_body_is_labeled_prompt_in_relations_model() {
+    let mut reduced = ReducerState::default();
+    apply_ingest(
+        &mut reduced,
+        1,
+        "~/topic {the prompt}\n~/topic/a {alpha}\n~/topic/b {beta}\n",
+    );
+    let model = build_item_page_view_model(&reduced, &ScopeId::Public, "~/topic", 1);
+    assert!(model.is_scope);
+    assert_eq!(model.body.as_deref(), Some("the prompt"));
+}
+
+#[test]
+fn containment_breadcrumb_emits_leaf_hrefs() {
+    let jedi = ItemId::parse("~jedi").unwrap().ontology_leaf();
+    let luke = ItemId::parse("~luke").unwrap().ontology_leaf();
+    let path = crate::html::breadcrumb_path::OntologyPath::from_item(luke.clone());
+    let html = scoped_bc_containment(&path, &[jedi, luke], &ThreadNav::public()).into_string();
+    assert!(html.contains("href=\"/~/jedi\""), "missing jedi crumb: {html}");
+    assert!(html.contains("href=\"/~/luke\""), "missing luke crumb: {html}");
+    assert!(!html.contains("/~/x/"));
 }

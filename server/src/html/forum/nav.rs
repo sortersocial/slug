@@ -67,7 +67,9 @@ impl ThreadNav {
     }
 
     /// Relative href for a structured [`crate::path_types::ItemId`] in this scope’s garden.
+    /// Tilde items use the leaf (`~/x/luke` → `/~/luke`).
     pub(crate) fn garden_item_href(&self, c: &crate::path_types::ItemId) -> String {
+        let c = c.ontology_leaf();
         if let Some(tail) = c.tilde_tail().map(str::to_owned) {
             format!("{}/{}", self.garden_path_prefix, tail)
         } else if c.as_str().starts_with("http://") || c.as_str().starts_with("https://") {

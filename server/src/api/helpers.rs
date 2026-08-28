@@ -5,7 +5,11 @@ use slug_types::ItemId;
 use slug_types::*;
 use std::collections::HashMap;
 
-use crate::{canonical_path::canonicalize_item, ranking::connected_components_from_voted_pairs};
+use crate::{
+    canonical_path::canonicalize_item,
+    ranking::connected_components_from_voted_pairs,
+    reducer::ContentState,
+};
 
 pub fn api_error(
     status: StatusCode,
@@ -81,10 +85,12 @@ pub fn validate_garden_parent_scope_paths(
         return Ok(());
     }
     let none_exist = specs.iter().all(|spec| {
-        let Some(canon) = ItemId::parse(spec) else {
+        let Some(canon) = ItemId::parse(spec).map(|id| id.ontology_leaf()) else {
             return true;
         };
-        !content.items.contains(&canon) && !content.item_children.contains_key(&canon)
+        !content.items.contains(&canon)
+            && content.members_of(&canon).is_empty()
+            && !content.item_children.contains_key(&canon)
     });
     if none_exist {
         return Err((
@@ -226,7 +232,23 @@ pub fn compute_connectivity_stats(
     }
 }
 
-pub fn vote_touches_path(a: &str, b: &str, parent_canon: &str) -> bool {
-    let under = |item: &str| item == parent_canon || item.starts_with(&format!("{parent_canon}/"));
-    under(a) || under(b)
+/// Whether a pairwise vote involves `parent` as a scope: either side *is* the
+/// parent, or is an active member of it (containment for tilde items; path
+/// children for URL / external items). Prefix matching is wrong under leaf identity
+/// (`~/rust` is not under `https://slug.social/~/languages/`).
+pub fn vote_touches_path(content: &ContentState, a: &str, b: &str, parent_canon: &str) -> bool {
+    let Some(parent) = ItemId::parse(parent_canon).map(|id| id.ontology_leaf()) else {
+        return false;
+    };
+    let Some(a) = ItemId::parse(a).map(|id| id.ontology_leaf()) else {
+        return false;
+    };
+    let Some(b) = ItemId::parse(b).map(|id| id.ontology_leaf()) else {
+        return false;
+    };
+    if a == parent || b == parent {
+        return true;
+    }
+    let members = content.members_of(&parent);
+    members.iter().any(|m| *m == a || *m == b)
 }

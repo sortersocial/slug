@@ -26,6 +26,18 @@ pub enum Stmt {
         slug: Option<String>,
         prompt: Option<String>,
     },
+    /// Weighted containment (`<:`) or border (`!<:`) claim.
+    ///
+    /// Explicit claims carry a required explanation (like rank votes). Path-desugared
+    /// sugar edges set `sugar: true` and `explanation: None`.
+    Containment {
+        child: String,
+        parent: String,
+        /// `true` for `!<:` (non-membership border).
+        border: bool,
+        explanation: Option<String>,
+        sugar: bool,
+    },
     Prose {
         text: String,
     },
@@ -262,6 +274,25 @@ fn is_external_item_path_rest(name: &str) -> bool {
     })
 }
 
+fn is_path_segment(seg: &str) -> bool {
+    if seg.is_empty() {
+        return false;
+    }
+    let mut parts = seg.split('-');
+    let Some(first) = parts.next() else {
+        return false;
+    };
+    if first.is_empty() || !first.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        return false;
+    }
+    for p in parts {
+        if p.is_empty() || !p.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+            return false;
+        }
+    }
+    true
+}
+
 fn is_item_name(s: &str) -> bool {
     let mut name = s.trim();
     if let Some(rest) = name.strip_prefix("-/") {
@@ -269,30 +300,63 @@ fn is_item_name(s: &str) -> bool {
     }
     if let Some(rest) = name.strip_prefix("~/") {
         name = rest;
+    } else if let Some(rest) = name.strip_prefix('~') {
+        return !rest.is_empty() && !rest.contains('/') && is_path_segment(rest);
     } else if let Some(rest) = name.strip_prefix('/') {
         name = rest;
     }
     if name.is_empty() {
         return false;
     }
-    for seg in name.split('/') {
-        if seg.is_empty() {
-            return false;
-        }
-        let mut parts = seg.split('-');
-        let Some(first) = parts.next() else {
-            return false;
-        };
-        if first.is_empty() || !first.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-            return false;
-        }
-        for p in parts {
-            if p.is_empty() || !p.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-                return false;
-            }
-        }
+    name.split('/').all(is_path_segment)
+}
+
+/// Compile-time path sugar: `~/a/b/c` → leaf `~c` plus idempotent edges
+/// `c <: b`, `b <: a`, `a <: ~` (root). URL / `-/` refs stay atomic.
+/// Bare `~name` is already a leaf and yields no edges.
+pub fn desugar_item_ref(raw: &str) -> (String, Vec<(String, String)>) {
+    let raw = raw.trim();
+    if raw.starts_with("http://") || raw.starts_with("https://") || raw.starts_with("-/") {
+        return (raw.to_string(), vec![]);
     }
-    true
+    if raw == "~/" || raw == "~" {
+        return ("~/".to_string(), vec![]);
+    }
+    if let Some(rest) = raw.strip_prefix("~/") {
+        let segs: Vec<&str> = rest.split('/').filter(|s| !s.is_empty()).collect();
+        if segs.is_empty() {
+            return ("~/".to_string(), vec![]);
+        }
+        let leaf = format!("~{}", segs[segs.len() - 1]);
+        let mut edges = Vec::new();
+        let mut child = leaf.clone();
+        for i in (0..segs.len() - 1).rev() {
+            let parent = format!("~{}", segs[i]);
+            edges.push((child, parent.clone()));
+            child = parent;
+        }
+        edges.push((child, "~/".to_string()));
+        return (leaf, edges);
+    }
+    if raw.starts_with('~') && !raw[1..].contains('/') {
+        return (raw.to_string(), vec![]);
+    }
+    (raw.to_string(), vec![])
+}
+
+fn sugar_containments(raw: &str) -> (String, Vec<Stmt>) {
+    let (leaf, edges) = desugar_item_ref(raw);
+    let stmts = edges
+        .into_iter()
+        .map(|(child, parent)| Stmt::Containment {
+            child,
+            parent,
+            border: false,
+            explanation: None,
+            sugar: true,
+        })
+        .collect();
+    (leaf, stmts)
 }
 
 pub fn is_valid_aspect_slug(s: &str) -> bool {
@@ -478,24 +542,44 @@ fn parse_item_name_at_with_mode(
         return Some((raw.to_string(), j));
     }
 
-    // ITEM_REF: "~/" ITEM_NAME  OR  https?:// URL
-    // Leading `/path` alone is not valid — use `~/path` for ontology items.
+    // ITEM_REF: "~/" ITEM_NAME, bare "~" TOKEN, or https?:// URL
+    // Leading `/path` alone is not valid — use `~/path` or `~name` for ontology items.
     let mut j = i;
     if bytes[j] != b'~' {
         return None;
     }
     j += 1;
-    if j >= bytes.len() || bytes[j] != b'/' {
-        return None;
+    if j < bytes.len() && bytes[j] == b'/' {
+        j += 1;
+        let start = j;
+        while j < bytes.len() {
+            if bytes[j..].starts_with(b"__BLOCK_") {
+                break;
+            }
+            let c = bytes[j] as char;
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '/' {
+                j += 1;
+                continue;
+            }
+            break;
+        }
+        if j <= start {
+            return None;
+        }
+        let name = &s[start..j];
+        if !is_item_name(name) {
+            return None;
+        }
+        return Some((format!("~/{name}"), j));
     }
-    j += 1;
+    // Bare tilde token: `~name` (one path segment, no slash).
     let start = j;
     while j < bytes.len() {
         if bytes[j..].starts_with(b"__BLOCK_") {
             break;
         }
         let c = bytes[j] as char;
-        if c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '/' {
+        if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
             j += 1;
             continue;
         }
@@ -505,10 +589,10 @@ fn parse_item_name_at_with_mode(
         return None;
     }
     let name = &s[start..j];
-    if !is_item_name(name) {
+    if !is_path_segment(name) {
         return None;
     }
-    Some((format!("~/{name}"), j))
+    Some((format!("~{name}"), j))
 }
 
 fn parse_item_name_at(s: &str, i: usize) -> Option<(String, usize)> {
@@ -572,6 +656,18 @@ fn parse_block_token_at(s: &str, i: usize) -> Option<(String, usize)> {
     }
 }
 
+/// `<:` (membership) or `!<:` (border). Must be checked before rank-vote `<`.
+fn parse_containment_op_at(s: &str, i: usize) -> Option<(bool, usize)> {
+    let rest = s.get(i..)?;
+    if rest.starts_with("!<:") {
+        return Some((true, i + 3));
+    }
+    if rest.starts_with("<:") {
+        return Some((false, i + 2));
+    }
+    None
+}
+
 fn parse_comparison_at(s: &str, i: usize) -> Option<((i32, i32), usize)> {
     let bytes = s.as_bytes();
     if i >= bytes.len() {
@@ -580,7 +676,8 @@ fn parse_comparison_at(s: &str, i: usize) -> Option<((i32, i32), usize)> {
     if bytes[i] == b'>' {
         return Some(((2, 1), i + 1));
     }
-    if bytes[i] == b'<' {
+    // Digraph `<:` is containment, not the rank-vote shorthand `<`.
+    if bytes[i] == b'<' && bytes.get(i + 1) != Some(&b':') {
         return Some(((1, 2), i + 1));
     }
     if bytes[i] == b'=' {
@@ -615,14 +712,14 @@ fn parse_block_prefixed_statement(
     block_token: &str,
     tail: &str,
     masker: &BlockMasker,
-) -> Result<Stmt, DslError> {
+) -> Result<Vec<Stmt>, DslError> {
     if masker.block_kind(block_token) == Some(BlockKind::CodeFence) {
         return Err(DslError::Parse(
             "vote explanations must use `{ ... }`; code fences belong inside body blocks"
                 .to_string(),
         ));
     }
-    // vote: block item_ref comparison item_ref
+    // vote / containment: block item_ref (comparison | <: | !<:) item_ref
     let s = tail.trim_start();
     if s.is_empty() {
         return Err(DslError::Parse(
@@ -630,7 +727,7 @@ fn parse_block_prefixed_statement(
         ));
     }
 
-    let (item1, j) =
+    let (item1_raw, j) =
         parse_item_name_at(s, 0).ok_or_else(|| DslError::Parse("invalid item name".to_string()))?;
     let explanation = masker.extract_body(block_token);
     let mut i = skip_ws(s, j);
@@ -640,6 +737,32 @@ fn parse_block_prefixed_statement(
             "leading `{ ... }` blocks are vote explanations; item bodies belong after item paths"
                 .to_string(),
         ));
+    }
+
+    if explanation.trim().is_empty() {
+        return Err(DslError::Parse("empty vote explanation".to_string()));
+    }
+
+    if let Some((border, k)) = parse_containment_op_at(s, i) {
+        i = skip_ws(s, k);
+        let Some((item2_raw, m)) = parse_item_name_at(s, i) else {
+            return Err(DslError::Parse("not a DSL line".to_string()));
+        };
+        i = skip_ws(s, m);
+        if !s[i..].trim().is_empty() {
+            return Err(DslError::Parse("not a DSL line".to_string()));
+        }
+        let (child, mut stmts) = sugar_containments(&item1_raw);
+        let (parent, parent_sugar) = sugar_containments(&item2_raw);
+        stmts.extend(parent_sugar);
+        stmts.push(Stmt::Containment {
+            child,
+            parent,
+            border,
+            explanation: Some(explanation),
+            sugar: false,
+        });
+        return Ok(stmts);
     }
 
     let ((ratio_left, ratio_right), k) = parse_comparison_at(s, i)
@@ -656,37 +779,58 @@ fn parse_block_prefixed_statement(
     }
     let (ratio_left, ratio_right) = reduce_ratio(ratio_left, ratio_right);
     i = skip_ws(s, k);
-    let (item2, m) = parse_item_name_at(s, i)
+    let (item2_raw, m) = parse_item_name_at(s, i)
         .ok_or_else(|| DslError::Parse("invalid rhs item name".to_string()))?;
     i = skip_ws(s, m);
-    if explanation.trim().is_empty() {
-        return Err(DslError::Parse("empty vote explanation".to_string()));
-    }
-    let tail = s[i..].trim();
-    if !tail.is_empty() {
+    let extra = s[i..].trim();
+    if !extra.is_empty() {
         return Err(DslError::Parse("extra tokens after vote".to_string()));
     }
 
-    Ok(Stmt::Vote {
+    let (item1, mut stmts) = sugar_containments(&item1_raw);
+    let (item2, rhs_sugar) = sugar_containments(&item2_raw);
+    stmts.extend(rhs_sugar);
+    stmts.push(Stmt::Vote {
         item1,
         item2,
         ratio_left,
         ratio_right,
         explanation,
         aspect: None,
-    })
+    });
+    Ok(stmts)
 }
 
-fn parse_item_definition_statement(stripped: &str, masker: &BlockMasker) -> Result<Stmt, DslError> {
-    let (item1, j) = parse_item_name_at(stripped, 0)
+fn parse_item_definition_statement(stripped: &str, masker: &BlockMasker) -> Result<Vec<Stmt>, DslError> {
+    let (item1_raw, j) = parse_item_name_at(stripped, 0)
         .ok_or_else(|| DslError::Parse("invalid item name".to_string()))?;
     let i = skip_ws(stripped, j);
 
     if i >= stripped.len() {
-        return Ok(Stmt::Item {
-            title: item1,
+        let (title, mut stmts) = sugar_containments(&item1_raw);
+        stmts.push(Stmt::Item {
+            title,
             body: None,
         });
+        return Ok(stmts);
+    }
+
+    if parse_containment_op_at(stripped, i).is_some() {
+        // Complete `~a <: ~b` without explanation is an error (like a rank vote).
+        // Incomplete / extra-token forms fall back to prose.
+        let (_, k) = parse_containment_op_at(stripped, i).unwrap();
+        let after = skip_ws(stripped, k);
+        match parse_item_name_at(stripped, after) {
+            None => return Err(DslError::Parse("not a DSL line".to_string())),
+            Some((_, m)) if !stripped[skip_ws(stripped, m)..].trim().is_empty() => {
+                return Err(DslError::Parse("not a DSL line".to_string()));
+            }
+            Some(_) => {
+                return Err(DslError::Parse(
+                    "containment claims require a leading `{ ... }` explanation block".to_string(),
+                ));
+            }
+        }
     }
 
     if let Some((tok, end)) = parse_block_token_at(stripped, i) {
@@ -700,10 +844,12 @@ fn parse_item_definition_statement(stripped: &str, masker: &BlockMasker) -> Resu
         if !tail.is_empty() {
             return Err(DslError::Parse("extra tokens after item".to_string()));
         }
-        return Ok(Stmt::Item {
-            title: item1,
+        let (title, mut stmts) = sugar_containments(&item1_raw);
+        stmts.push(Stmt::Item {
+            title,
             body: Some(body),
         });
+        return Ok(stmts);
     }
 
     Err(DslError::Parse(
@@ -727,22 +873,22 @@ fn parse_line(masked_line: &str, masker: &BlockMasker) -> Result<Vec<Stmt>, DslE
             let Some((tok, end)) = parse_block_token_at(stripped, 0) else {
                 return Err(DslError::Parse("not a DSL line".to_string()));
             };
-            parse_block_prefixed_statement(&tok, &stripped[end..], masker).map(|stmt| vec![stmt])
+            parse_block_prefixed_statement(&tok, &stripped[end..], masker)
         }
         '/' => Err(DslError::Parse(
             "item paths must use `~/` (e.g. `~/languages/python`), not a leading `/`".to_string(),
         )),
-        '~' => Ok(vec![parse_item_definition_statement(stripped, masker)?]),
+        '~' => parse_item_definition_statement(stripped, masker),
         'h' => {
             if stripped.starts_with("https://") || stripped.starts_with("http://") {
-                Ok(vec![parse_item_definition_statement(stripped, masker)?])
+                parse_item_definition_statement(stripped, masker)
             } else {
                 Err(DslError::Parse("not a DSL line".to_string()))
             }
         }
         '-' => {
             if stripped.starts_with("-/") {
-                Ok(vec![parse_item_definition_statement(stripped, masker)?])
+                parse_item_definition_statement(stripped, masker)
             } else {
                 Err(DslError::Parse("not a DSL line".to_string()))
             }
@@ -781,17 +927,29 @@ pub fn parse_full(text: &str) -> Result<Document, DslError> {
                 continue;
             }
             if stripped.starts_with("-/")
-                || stripped.starts_with("~/")
+                || stripped.starts_with('~')
                 || stripped.starts_with("https://")
                 || stripped.starts_with("http://")
             {
-                let mut stmt = parse_block_prefixed_statement(tok, stripped, &masker)?;
-                if let Stmt::Vote { aspect, .. } = &mut stmt {
-                    *aspect = current_aspect.clone();
+                let start = statements.len();
+                match parse_block_prefixed_statement(tok, stripped, &masker) {
+                    Ok(stmts) => {
+                        statements.extend(stmts);
+                        for stmt in &mut statements[start..] {
+                            if let Stmt::Vote { aspect, .. } = stmt {
+                                *aspect = current_aspect.clone();
+                            }
+                        }
+                        pending_block = None;
+                        continue;
+                    }
+                    Err(DslError::Parse(msg)) if msg == "not a DSL line" => {
+                        return Err(DslError::Parse(
+                            "expected vote statement after leading explanation block".to_string(),
+                        ));
+                    }
+                    Err(e) => return Err(e),
                 }
-                statements.push(stmt);
-                pending_block = None;
-                continue;
             }
             return Err(DslError::Parse(
                 "expected vote statement after leading explanation block".to_string(),
@@ -830,13 +988,23 @@ pub fn parse_full(text: &str) -> Result<Document, DslError> {
                 }
             }
 
-            // Parse DSL line; DSL statements are not prose, so errors should propagate.
+            // Parse DSL line; DSL statements are not prose, so errors should propagate
+            // except malformed containment forms (`~a <:`, `~a <: ~b extra`) which fall
+            // back to prose — they were never a successful historical parse.
             let start = statements.len();
-            statements.extend(parse_line(line, &masker)?);
-            for stmt in &mut statements[start..] {
-                if let Stmt::Vote { aspect, .. } = stmt {
-                    *aspect = current_aspect.clone();
+            match parse_line(line, &masker) {
+                Ok(stmts) => {
+                    statements.extend(stmts);
+                    for stmt in &mut statements[start..] {
+                        if let Stmt::Vote { aspect, .. } = stmt {
+                            *aspect = current_aspect.clone();
+                        }
+                    }
                 }
+                Err(DslError::Parse(msg)) if msg == "not a DSL line" => {
+                    prose_buffer.push(line);
+                }
+                Err(e) => return Err(e),
             }
         } else {
             prose_buffer.push(line);
@@ -858,6 +1026,27 @@ pub fn parse_full(text: &str) -> Result<Document, DslError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn items(doc: &Document) -> Vec<&Stmt> {
+        doc.statements
+            .iter()
+            .filter(|s| matches!(s, Stmt::Item { .. }))
+            .collect()
+    }
+
+    fn votes(doc: &Document) -> Vec<&Stmt> {
+        doc.statements
+            .iter()
+            .filter(|s| matches!(s, Stmt::Vote { .. }))
+            .collect()
+    }
+
+    fn containments(doc: &Document) -> Vec<&Stmt> {
+        doc.statements
+            .iter()
+            .filter(|s| matches!(s, Stmt::Containment { .. }))
+            .collect()
+    }
 
     #[test]
     fn blockmasker_masks_and_unmasks_nested_braces() {
@@ -947,12 +1136,22 @@ mod tests {
         let input = "~/rust { Systems language }";
         let doc = parse_full(input).unwrap();
         assert_eq!(
-            doc.statements,
-            vec![Stmt::Item {
-                title: "~/rust".to_string(),
+            items(&doc),
+            vec![&Stmt::Item {
+                title: "~rust".to_string(),
                 body: Some("Systems language".to_string()),
             }]
         );
+        assert!(containments(&doc).iter().any(|s| matches!(
+            s,
+            Stmt::Containment {
+                child,
+                parent,
+                sugar: true,
+                border: false,
+                ..
+            } if child == "~rust" && parent == "~/"
+        )));
     }
 
     #[test]
@@ -960,9 +1159,9 @@ mod tests {
         let input = "~/item/in/url {\n```json\n{\"test\": true}\n```\n}";
         let doc = parse_full(input).unwrap();
         assert_eq!(
-            doc.statements,
-            vec![Stmt::Item {
-                title: "~/item/in/url".to_string(),
+            items(&doc),
+            vec![&Stmt::Item {
+                title: "~url".to_string(),
                 body: Some("```json\n{\"test\": true}\n```".to_string()),
             }]
         );
@@ -1017,10 +1216,10 @@ mod tests {
     fn parse_vote_ratio_and_symbols() {
         let d1 = parse_full("{because}\n~/a 3:1 ~/b").unwrap();
         assert_eq!(
-            d1.statements,
-            vec![Stmt::Vote {
-                item1: "~/a".to_string(),
-                item2: "~/b".to_string(),
+            votes(&d1),
+            vec![&Stmt::Vote {
+                item1: "~a".to_string(),
+                item2: "~b".to_string(),
                 ratio_left: 3,
                 ratio_right: 1,
                 explanation: "because".to_string(),
@@ -1030,10 +1229,10 @@ mod tests {
 
         let d2 = parse_full("{because}\n~/a > ~/b").unwrap();
         assert_eq!(
-            d2.statements,
-            vec![Stmt::Vote {
-                item1: "~/a".to_string(),
-                item2: "~/b".to_string(),
+            votes(&d2),
+            vec![&Stmt::Vote {
+                item1: "~a".to_string(),
+                item2: "~b".to_string(),
                 ratio_left: 2,
                 ratio_right: 1,
                 explanation: "because".to_string(),
@@ -1043,10 +1242,10 @@ mod tests {
 
         let d3 = parse_full("{because}\n~/a = ~/b").unwrap();
         assert_eq!(
-            d3.statements,
-            vec![Stmt::Vote {
-                item1: "~/a".to_string(),
-                item2: "~/b".to_string(),
+            votes(&d3),
+            vec![&Stmt::Vote {
+                item1: "~a".to_string(),
+                item2: "~b".to_string(),
                 ratio_left: 1,
                 ratio_right: 1,
                 explanation: "because".to_string(),
@@ -1153,9 +1352,9 @@ mod tests {
         let input = "~/arrived{I had arrived.}";
         let doc = parse_full(input).unwrap();
         assert_eq!(
-            doc.statements,
-            vec![Stmt::Item {
-                title: "~/arrived".to_string(),
+            items(&doc),
+            vec![&Stmt::Item {
+                title: "~arrived".to_string(),
                 body: Some("I had arrived.".to_string()),
             }]
         );
@@ -1166,10 +1365,10 @@ mod tests {
         let input = "{because}~/a 2:1 ~/b";
         let doc = parse_full(input).unwrap();
         assert_eq!(
-            doc.statements,
-            vec![Stmt::Vote {
-                item1: "~/a".to_string(),
-                item2: "~/b".to_string(),
+            votes(&doc),
+            vec![&Stmt::Vote {
+                item1: "~a".to_string(),
+                item2: "~b".to_string(),
                 ratio_left: 2,
                 ratio_right: 1,
                 explanation: "because".to_string(),
@@ -1183,12 +1382,26 @@ mod tests {
         let input = "~/whitepaper/architectural-choices { Body }";
         let doc = parse_full(input).unwrap();
         assert_eq!(
-            doc.statements,
-            vec![Stmt::Item {
-                title: "~/whitepaper/architectural-choices".to_string(),
+            items(&doc),
+            vec![&Stmt::Item {
+                title: "~architectural-choices".to_string(),
                 body: Some("Body".to_string()),
             }]
         );
+        let sugars: Vec<(&str, &str)> = containments(&doc)
+            .iter()
+            .filter_map(|s| match s {
+                Stmt::Containment {
+                    child,
+                    parent,
+                    sugar: true,
+                    ..
+                } => Some((child.as_str(), parent.as_str())),
+                _ => None,
+            })
+            .collect();
+        assert!(sugars.contains(&("~architectural-choices", "~whitepaper")));
+        assert!(sugars.contains(&("~whitepaper", "~/")));
     }
 
     #[test]
@@ -1196,10 +1409,10 @@ mod tests {
         let input = "{ because }\n~/whitepaper/a 3:1 ~/whitepaper/b";
         let doc = parse_full(input).unwrap();
         assert_eq!(
-            doc.statements,
-            vec![Stmt::Vote {
-                item1: "~/whitepaper/a".to_string(),
-                item2: "~/whitepaper/b".to_string(),
+            votes(&doc),
+            vec![&Stmt::Vote {
+                item1: "~a".to_string(),
+                item2: "~b".to_string(),
                 ratio_left: 3,
                 ratio_right: 1,
                 explanation: "because".to_string(),
@@ -1382,18 +1595,19 @@ mod tests {
     fn parse_aspect_does_not_affect_item_definitions() {
         let input = ":beauty\n~/t/x {defined after aspect}";
         let doc = parse_full(input).unwrap();
+        assert!(matches!(
+            doc.statements.first(),
+            Some(Stmt::Aspect {
+                slug: Some(s),
+                prompt: None,
+            }) if s == "beauty"
+        ));
         assert_eq!(
-            doc.statements,
-            vec![
-                Stmt::Aspect {
-                    slug: Some("beauty".to_string()),
-                    prompt: None,
-                },
-                Stmt::Item {
-                    title: "~/t/x".to_string(),
-                    body: Some("defined after aspect".to_string()),
-                },
-            ]
+            items(&doc),
+            vec![&Stmt::Item {
+                title: "~x".to_string(),
+                body: Some("defined after aspect".to_string()),
+            }]
         );
     }
 
@@ -1475,8 +1689,8 @@ mod tests {
         let input = "{ because }\nhttps://slug.social/~/music/a 3:1 https://slug.social/~/music/b";
         let doc = parse_full(input).unwrap();
         assert_eq!(
-            doc.statements,
-            vec![Stmt::Vote {
+            votes(&doc),
+            vec![&Stmt::Vote {
                 item1: "https://slug.social/~/music/a".to_string(),
                 item2: "https://slug.social/~/music/b".to_string(),
                 ratio_left: 3,
@@ -1485,5 +1699,230 @@ mod tests {
                 aspect: None,
             }]
         );
+        assert!(containments(&doc).is_empty(), "URL items are never desugared");
+    }
+
+    #[test]
+    fn parse_bare_tilde_token_item() {
+        let doc = parse_full("~luke { a jedi }").unwrap();
+        assert_eq!(
+            items(&doc),
+            vec![&Stmt::Item {
+                title: "~luke".to_string(),
+                body: Some("a jedi".to_string()),
+            }]
+        );
+        assert!(
+            containments(&doc).is_empty(),
+            "bare ~name is already a leaf; no path sugar"
+        );
+    }
+
+    #[test]
+    fn parse_bare_tilde_token_in_vote() {
+        let doc = parse_full("{ because }\n~luke 2:1 ~vader").unwrap();
+        assert_eq!(
+            votes(&doc),
+            vec![&Stmt::Vote {
+                item1: "~luke".to_string(),
+                item2: "~vader".to_string(),
+                ratio_left: 2,
+                ratio_right: 1,
+                explanation: "because".to_string(),
+                aspect: None,
+            }]
+        );
+    }
+
+    #[test]
+    fn parse_explicit_containment_requires_explanation() {
+        let err = parse_full("~a <: ~b").unwrap_err().to_string();
+        assert!(
+            err.contains("containment claims require"),
+            "unexpected error: {err}"
+        );
+        let doc = parse_full("{ luke is a jedi }\n~luke <: ~jedi").unwrap();
+        assert_eq!(
+            containments(&doc)
+                .iter()
+                .filter(|s| matches!(s, Stmt::Containment { sugar: false, .. }))
+                .count(),
+            1
+        );
+        assert!(matches!(
+            containments(&doc).iter().find(|s| matches!(s, Stmt::Containment { sugar: false, .. })),
+            Some(Stmt::Containment {
+                child,
+                parent,
+                border: false,
+                explanation: Some(e),
+                sugar: false,
+            }) if child == "~luke" && parent == "~jedi" && e == "luke is a jedi"
+        ));
+    }
+
+    #[test]
+    fn parse_explicit_border_claim() {
+        let doc = parse_full("{ not a jedi }\n~ahsoka !<: ~jedi").unwrap();
+        assert!(matches!(
+            containments(&doc).iter().find(|s| matches!(s, Stmt::Containment { sugar: false, .. })),
+            Some(Stmt::Containment {
+                child,
+                parent,
+                border: true,
+                explanation: Some(e),
+                sugar: false,
+            }) if child == "~ahsoka" && parent == "~jedi" && e == "not a jedi"
+        ));
+    }
+
+    #[test]
+    fn parse_containment_desugars_path_sides() {
+        let doc = parse_full("{ in }\n~/x/luke <: ~/y/jedi").unwrap();
+        let claims = containments(&doc);
+        let explicit = claims
+            .iter()
+            .find(|s| matches!(s, Stmt::Containment { sugar: false, .. }))
+            .unwrap();
+        assert!(matches!(
+            explicit,
+            Stmt::Containment {
+                child,
+                parent,
+                border: false,
+                sugar: false,
+                ..
+            } if child == "~luke" && parent == "~jedi"
+        ));
+        let sugars: Vec<(&str, &str)> = claims
+            .iter()
+            .filter_map(|s| match s {
+                Stmt::Containment {
+                    child,
+                    parent,
+                    sugar: true,
+                    ..
+                } => Some((child.as_str(), parent.as_str())),
+                _ => None,
+            })
+            .collect();
+        assert!(sugars.contains(&("~luke", "~x")));
+        assert!(sugars.contains(&("~jedi", "~y")));
+    }
+
+    #[test]
+    fn parse_containment_url_side_stays_atomic() {
+        let doc = parse_full("{ src }\nhttps://example.com/a/b <: ~sources").unwrap();
+        assert!(matches!(
+            containments(&doc).iter().find(|s| matches!(s, Stmt::Containment { sugar: false, .. })),
+            Some(Stmt::Containment {
+                child,
+                parent,
+                ..
+            }) if child == "https://example.com/a/b" && parent == "~sources"
+        ));
+    }
+
+    #[test]
+    fn parse_bare_less_than_is_still_rank_vote() {
+        let doc = parse_full("{ prefer b }\n~a < ~b").unwrap();
+        assert_eq!(
+            votes(&doc),
+            vec![&Stmt::Vote {
+                item1: "~a".to_string(),
+                item2: "~b".to_string(),
+                ratio_left: 1,
+                ratio_right: 2,
+                explanation: "prefer b".to_string(),
+                aspect: None,
+            }]
+        );
+    }
+
+    #[test]
+    fn parse_equality_operator_is_not_implemented() {
+        // `=` remains the rank-tie shorthand. `==` is extra tokens after that shorthand.
+        let err = parse_full("{ same }\n~a == ~b").unwrap_err().to_string();
+        assert!(
+            err.contains("extra tokens after vote") || err.contains("invalid rhs item name"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn parse_containment_mid_prose_stays_prose() {
+        let input = "the relation a <: b is discussed here";
+        let doc = parse_full(input).unwrap();
+        assert_eq!(
+            doc.statements,
+            vec![Stmt::Prose {
+                text: input.to_string()
+            }]
+        );
+    }
+
+    #[test]
+    fn parse_malformed_containment_falls_back_to_prose() {
+        let incomplete = parse_full("~a <:").unwrap();
+        assert_eq!(
+            incomplete.statements,
+            vec![Stmt::Prose {
+                text: "~a <:".to_string()
+            }]
+        );
+        let extra = parse_full("~a <: ~b extra").unwrap();
+        assert_eq!(
+            extra.statements,
+            vec![Stmt::Prose {
+                text: "~a <: ~b extra".to_string()
+            }]
+        );
+    }
+
+    #[test]
+    fn parse_containment_inside_code_fence_stays_prose() {
+        let input = "```\n~a <: ~b\n```";
+        let doc = parse_full(input).unwrap();
+        assert_eq!(
+            doc.statements,
+            vec![Stmt::Prose {
+                text: input.to_string()
+            }]
+        );
+    }
+
+    #[test]
+    fn prose_tokenizer_finds_bare_tilde_tokens() {
+        let tokens = tokenize_prose_item_refs("see ~luke and ~/x/y.");
+        assert_eq!(
+            tokens,
+            vec![
+                ProseToken::Text("see ".to_string()),
+                ProseToken::ItemRef("~luke".to_string()),
+                ProseToken::Text(" and ".to_string()),
+                ProseToken::ItemRef("~/x/y".to_string()),
+                ProseToken::Text(".".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn desugar_path_emits_idempotent_chain_including_root() {
+        let (leaf, edges) = desugar_item_ref("~/a/b/c");
+        assert_eq!(leaf, "~c");
+        assert_eq!(
+            edges,
+            vec![
+                ("~c".to_string(), "~b".to_string()),
+                ("~b".to_string(), "~a".to_string()),
+                ("~a".to_string(), "~/".to_string()),
+            ]
+        );
+        let (leaf, edges) = desugar_item_ref("~luke");
+        assert_eq!(leaf, "~luke");
+        assert!(edges.is_empty());
+        let (leaf, edges) = desugar_item_ref("https://example.com/a/b");
+        assert_eq!(leaf, "https://example.com/a/b");
+        assert!(edges.is_empty());
     }
 }

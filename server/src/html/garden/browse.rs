@@ -4,8 +4,9 @@ use crate::{
     html::{
         breadcrumb_path::{ExternalOntologyPath, OntologyPath},
         forum::ThreadNav,
-        bc_path, bc_path_external, bc_segment,
+        bc_path_external, bc_segment,
     },
+    path_types::ItemId,
     reducer::ScopeId,
 };
 
@@ -53,27 +54,49 @@ impl GardenBrowsePath {
     }
 }
 
-pub(super) fn scoped_bc_path_for(path: &GardenBrowsePath, nav: &ThreadNav) -> maud::Markup {
+pub(super) fn scoped_bc_path_for(
+    path: &GardenBrowsePath,
+    nav: &ThreadNav,
+    crumbs: &[ItemId],
+) -> maud::Markup {
     match path {
-        GardenBrowsePath::Tilde(p) => scoped_bc_path(p, nav),
+        GardenBrowsePath::Tilde(p) => scoped_bc_containment(p, crumbs, nav),
         GardenBrowsePath::External(p) => scoped_bc_path_external(p, nav),
     }
 }
 
-pub(super) fn scoped_bc_path(path: &OntologyPath, nav: &ThreadNav) -> maud::Markup {
+/// Primary crumb trail from containment (strongest-parent walk), leaf hrefs.
+pub(super) fn scoped_bc_containment(
+    path: &OntologyPath,
+    crumbs: &[ItemId],
+    nav: &ThreadNav,
+) -> maud::Markup {
+    let garden = nav.garden_root_url();
+    let segments = html! {
+        @for (i, id) in crumbs.iter().enumerate() {
+            @let leaf = id.ontology_leaf();
+            @let href = match leaf.tilde_tail() {
+                Some("") => garden.to_string(),
+                Some(tail) => format!("{garden}/{tail}"),
+                None => format!("{garden}/{}", leaf.last_segment()),
+            };
+            @let is_last = i + 1 == crumbs.len();
+            (bc_segment(leaf.last_segment(), &href, is_last))
+        }
+    };
     match nav.scope() {
-        ScopeId::Public => bc_path(path),
+        ScopeId::Public => html! {
+            a href=(path.slug_root_href()) { "slug.social" }
+            (bc_segment("~", "/~", path.is_root()))
+            (segments)
+        },
         ScopeId::Room(rid) => {
             let slug = rid.split_once('/').map(|(_, s)| s).unwrap_or(rid.as_str());
             html! {
                 a href="/" { "slug.social" }
                 (bc_segment(&format!("room:{slug}"), nav.room_url(), false))
                 (bc_segment("~", nav.garden_root_url(), path.is_root()))
-                @for (i, seg) in path.segments().iter().enumerate() {
-                    @let href = format!("{}/{}", nav.garden_root_url(), path.segments()[..=i].join("/"));
-                    @let is_last = i == path.segments().len() - 1;
-                    (bc_segment(seg, &href, is_last))
-                }
+                (segments)
             }
         }
     }

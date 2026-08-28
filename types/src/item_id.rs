@@ -87,6 +87,19 @@ impl ItemId {
         s.rsplit('/').find(|x| !x.is_empty()).unwrap_or(s)
     }
 
+    /// Leaf identity for tilde-ontology items: `~/x/luke` and `~luke` are `~/luke`.
+    /// URL / external items are unchanged (never desugared).
+    pub fn ontology_leaf(&self) -> Self {
+        match self.tilde_tail() {
+            Some("") => Self::Root,
+            Some(tail) => {
+                let leaf = tail.rsplit('/').find(|s| !s.is_empty()).unwrap_or(tail);
+                Self::parse(&format!("~{leaf}")).unwrap_or_else(|| self.clone())
+            }
+            None => self.clone(),
+        }
+    }
+
     pub fn parent(&self) -> Option<Self> {
         match self {
             ItemId::Root => None,

@@ -319,7 +319,7 @@ async fn test_garden_item_pair_matchup_include_threads() {
     )
     .await;
     let item = &item_body["results"][0]["result"]["GardenItem"];
-    assert_eq!(item["item"], "https://slug.social/~/sorts/insertion");
+    assert_eq!(item["item"], "https://slug.social/~/insertion");
     assert!(item["body"].as_str().unwrap().contains("O(n^2)"));
     let threads: Vec<&str> = item["threads"]
         .as_array()
@@ -371,7 +371,7 @@ async fn test_garden_item_pair_matchup_include_threads() {
     )
     .await;
     let matchup = &matchup_body["results"][0]["result"]["Matchup"];
-    assert_eq!(matchup["item"], "https://slug.social/~/sorts/insertion");
+    assert_eq!(matchup["item"], "https://slug.social/~/insertion");
     let votes = matchup["votes"].as_array().unwrap();
     assert!(!votes.is_empty(), "matchup should have at least one vote");
     let first_thread = votes[0]["thread"].as_str().unwrap();
@@ -505,7 +505,7 @@ async fn test_rank_history() {
     )
     .await;
     let resp = &hist_rust["results"][0]["result"]["RankHistory"];
-    assert_eq!(resp["item"], "https://slug.social/~/hist/rust");
+    assert_eq!(resp["item"], "https://slug.social/~/rust");
     let history = resp["history"].as_array().unwrap();
     assert_eq!(history.len(), 1, "one ingest → one history entry");
     let entry = &history[0];

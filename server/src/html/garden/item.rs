@@ -12,7 +12,7 @@ pub(super) const GARDEN_DEPTH_ALL: usize = usize::MAX;
 
 pub(super) fn item_display_path(item: &str) -> String {
     ItemId::parse(item)
-        .map(|c| c.display_path())
+        .map(|c| c.ontology_leaf().display_path())
         .unwrap_or_else(|| canonicalize_item(item))
 }
 
@@ -168,6 +168,13 @@ mod tests {
         assert_eq!(child_depth_from_uri(&d2), 2);
         let dall: Uri = "/~?depth=all".parse().unwrap();
         assert_eq!(child_depth_from_uri(&dall), GARDEN_DEPTH_ALL);
+    }
+
+    #[test]
+    fn item_display_path_emits_leaf_form() {
+        assert_eq!(item_display_path("~/x/luke"), "~/luke");
+        assert_eq!(item_display_path("~/luke"), "~/luke");
+        assert_eq!(item_display_path("https://slug.social/~/x/luke"), "~/luke");
     }
 
     #[test]

@@ -350,6 +350,33 @@ mod tests {
     use super::*;
 
     #[test]
+    fn canonicalize_bare_tilde_token() {
+        assert_eq!(canonicalize_item("~luke"), "https://slug.social/~/luke");
+        assert_eq!(canonicalize_item("~Luke"), "https://slug.social/~/luke");
+        assert_eq!(canonicalize_item("~"), SLUG_TILDE_ONTOLOGY_ROOT);
+        assert_eq!(canonicalize_item("~luke"), canonicalize_item("~/luke"));
+        assert!(canonicalize_item("~a/b").is_empty());
+    }
+
+    #[test]
+    fn ontology_leaf_collapses_tilde_path() {
+        assert_eq!(
+            ItemId::parse("~/x/luke").unwrap().ontology_leaf().as_str(),
+            "https://slug.social/~/luke"
+        );
+        assert_eq!(
+            ItemId::parse("~luke").unwrap().ontology_leaf(),
+            ItemId::parse("~/y/luke").unwrap().ontology_leaf()
+        );
+        assert_eq!(
+            ItemId::parse("~/").unwrap().ontology_leaf(),
+            ItemId::ontology_root()
+        );
+        let url = ItemId::parse("https://example.com/a/b").unwrap();
+        assert_eq!(url.ontology_leaf(), url);
+    }
+
+    #[test]
     fn item_parent_deep() {
         let c = ItemId::parse("~/a/b/c").unwrap();
         assert_eq!(c.parent().unwrap().as_str(), "https://slug.social/~/a/b");

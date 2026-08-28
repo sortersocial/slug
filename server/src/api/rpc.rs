@@ -248,7 +248,9 @@ fn build_rank_response_for_content(
         let parent_id = if is_global || specs.is_empty() {
             ItemId::ontology_root()
         } else {
-            ItemId::parse(&specs[0]).unwrap_or_else(|| ItemId::opaque(specs[0].clone()))
+            ItemId::parse(&specs[0])
+                .map(|id| id.ontology_leaf())
+                .unwrap_or_else(|| ItemId::opaque(specs[0].clone()))
         };
         let empty = crate::reducer::GroupState::new();
         let group = content
@@ -443,13 +445,15 @@ async fn rpc_check(
         required.insert(ThreadCapability::View);
         for stmt in &v.doc.statements {
             match stmt {
-                dsl::Stmt::Vote { .. } => {
+                dsl::Stmt::Vote { .. } | dsl::Stmt::Containment { sugar: false, .. } => {
                     required.insert(ThreadCapability::Vote);
                 }
                 dsl::Stmt::Item { .. } => {
                     required.insert(ThreadCapability::AddItem);
                 }
-                dsl::Stmt::Prose { .. } | dsl::Stmt::Aspect { .. } => {
+                dsl::Stmt::Prose { .. }
+                | dsl::Stmt::Aspect { .. }
+                | dsl::Stmt::Containment { sugar: true, .. } => {
                     required.insert(ThreadCapability::Post);
                 }
             }
@@ -1060,8 +1064,10 @@ pub async fn dispatch_rpc(state: &AppState, headers: &HeaderMap, cmd: RpcCommand
             } else {
                 let content = content_for_room(&reduced, &room);
                 let item_str = canonicalize_item(&item_path);
-                let item =
-                    ItemId::parse(&item_str).unwrap_or_else(|| ItemId::opaque(item_str.clone()));
+                let item = ItemId::parse(&item_str)
+                    .map(|id| id.ontology_leaf())
+                    .unwrap_or_else(|| ItemId::opaque(item_str.clone()));
+                let item_str = item.as_str().to_string();
                 if !content.items.contains(&item) {
                     line_err(
                         "item not found",
@@ -1472,8 +1478,10 @@ pub async fn dispatch_rpc(state: &AppState, headers: &HeaderMap, cmd: RpcCommand
             } else {
                 let content = content_for_room(&reduced, &room);
                 let item_str = canonicalize_item(&item_path);
-                let item =
-                    ItemId::parse(&item_str).unwrap_or_else(|| ItemId::opaque(item_str.clone()));
+                let item = ItemId::parse(&item_str)
+                    .map(|id| id.ontology_leaf())
+                    .unwrap_or_else(|| ItemId::opaque(item_str.clone()));
+                let item_str = item.as_str().to_string();
                 let limit = limit.unwrap_or(50).clamp(1, 200);
                 if !content.items.contains(&item) {
                     line_err(
@@ -1521,8 +1529,10 @@ pub async fn dispatch_rpc(state: &AppState, headers: &HeaderMap, cmd: RpcCommand
                 let content = content_for_room(&reduced, &room);
                 let scope = scope_from_room_wire(&room);
                 let item_str = canonicalize_item(&item_path);
-                let item =
-                    ItemId::parse(&item_str).unwrap_or_else(|| ItemId::opaque(item_str.clone()));
+                let item = ItemId::parse(&item_str)
+                    .map(|id| id.ontology_leaf())
+                    .unwrap_or_else(|| ItemId::opaque(item_str.clone()));
+                let item_str = item.as_str().to_string();
                 let entries = content.rank_history.get(&item).cloned().unwrap_or_default();
                 let history: Vec<RankHistoryRow> = entries
                     .iter()
@@ -1668,7 +1678,7 @@ pub async fn dispatch_rpc(state: &AppState, headers: &HeaderMap, cmd: RpcCommand
                 let iter: Box<dyn Iterator<Item = _>> = if let Some(p) = &parent {
                     let parent_can = canonicalize_item(p);
                     Box::new(iter.filter(move |v| {
-                        vote_touches_path(v.a.as_str(), v.b.as_str(), &parent_can)
+                        vote_touches_path(content, v.a.as_str(), v.b.as_str(), &parent_can)
                     }))
                 } else {
                     Box::new(iter)

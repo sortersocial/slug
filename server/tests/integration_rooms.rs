@@ -821,11 +821,12 @@ async fn test_private_room_post_links_use_private_garden_routes() {
         .unwrap();
     assert!(thread_page.status().is_success());
     let body = thread_page.text().await.unwrap();
-    assert!(body.contains(&format!("/r/{room_seg}/~/secret/item")));
+    assert!(body.contains(&format!("/r/{room_seg}/~/item")));
+    assert!(!body.contains("href=\"/~/item\""));
     assert!(!body.contains("href=\"/~/secret/item\""));
 
     let garden_page = client
-        .get(format!("http://{addr}/r/{room_seg}/~/secret/item"))
+        .get(format!("http://{addr}/r/{room_seg}/~/item"))
         .header("Authorization", format!("Bearer {bearer}"))
         .send()
         .await
@@ -834,6 +835,24 @@ async fn test_private_room_post_links_use_private_garden_routes() {
     let garden_body = garden_page.text().await.unwrap();
     assert!(garden_body.contains("classified"));
     assert!(garden_body.contains(&format!("/r/{room_seg}/t/garden-thread")));
+
+    let no_follow = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    let nested = no_follow
+        .get(format!("http://{addr}/r/{room_seg}/~/secret/item"))
+        .header("Authorization", format!("Bearer {bearer}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(nested.status(), reqwest::StatusCode::PERMANENT_REDIRECT);
+    let loc = nested
+        .headers()
+        .get(reqwest::header::LOCATION)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert_eq!(loc, format!("/r/{room_seg}/~/item"));
 }
 
 #[tokio::test]

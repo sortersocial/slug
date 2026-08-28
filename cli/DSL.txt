@@ -6,8 +6,8 @@ Identity and routing are **not** in the document body: the human principal comes
 
 CLI vs .sorter file (important)
 -------------------------------
-- **.sorter documents** (files, or stdin/heredoc where the shell does not expand `~`): write ontology items as `~/languages/python`. The `~/` prefix is part of the DSL.
-- **`npx slugsocial public garden …` path arguments**: pass **no** tilde — use `languages/python`, not `~/languages/python`. In the shell, `~` expands to your home directory (`$HOME`), which breaks paths. The CLI strips sigils and the server maps these paths into the `~/` ontology namespace.
+- **.sorter documents** (files, or stdin/heredoc where the shell does not expand `~`): write ontology items as `~luke` or `~/luke`. Nested `~/languages/python` is path sugar (see rule 4). The `~` prefix is part of the DSL.
+- **`npx slugsocial public garden …` path arguments**: pass **no** tilde — use the leaf name `python`, or a legacy nested path `languages/python`. In the shell, `~` expands to your home directory (`$HOME`), which breaks paths. The CLI strips sigils, collapses nested paths to the leaf, and the server maps these into the `~/` ontology namespace.
 
 ```sorter
 #review { My Review Thread }
@@ -15,23 +15,28 @@ CLI vs .sorter file (important)
 prose blocks which are the body of the OP post...
 Blank lines are preserved to maintain paragraph structure.
 
-~/item/a {itembody}
-~/python { A high-level scripting language }
+~a {itembody}
+~python { A high-level scripting language }
 
 {
 Item A is better because of X.
 }
-~/item/a > ~/python
+~a > ~python
 
 {
 Python's ecosystem is much richer than Go's.
 }
-~/python 3:1 ~/go
+~python 3:1 ~go
 
 {
 They are equally good in this context.
 }
-https://example.com/lang = ~/go
+https://example.com/lang = ~go
+
+{
+luke is a jedi
+}
+~luke <: ~jedi
 ```
 
 SYNTAX RULES
@@ -42,19 +47,70 @@ SYNTAX RULES
 ```
 Starts a thread. Tag allows alphanumeric, `-`, `_`, and `/`. Subtitle max 100 chars, in `{ ... }`.
 
+---
+
+Rule 1 — tilde tokens (leaf identity)
+-------------------------------------
 ```sorter
-~/<local-item-path> { description }
+~<name> { description }
+~<name>
 ```
-Defines an ontology item (garden layer). Paths can be nested (e.g. `~/languages/python`).
-A leading `/` alone is **not** allowed in the DSL — use `~/` only. Descriptions (bodies) are wrapped in `{}` and follow the item path.
+An ontology item is a **flat** tilde token. Charset is a path segment (`[a-z0-9_-]`). `~luke` and `~/luke` name the same item. The shareable page is `GET /~/luke`. Nested URLs such as `/~/x/luke` permanently redirect to the leaf.
+
+`~/x/luke` and `~/y/luke` are the **same item** `~luke`. Last write wins on the body.
+
+Bare `~` is the ontology root (the root electorate). A leading `/` alone is **not** allowed — use `~name` or `~/name`.
 
 ```sorter
 https://example.com/item { description }
 ```
-
-URLs can be used directly as items in definitions or votes.
+URLs can be used directly as items in definitions or votes. URL / `/-/` items are never desugared into tilde tokens.
 Canonicalization rules for URLs:
-- `~/` and `https://slug.social/~/` map to the same local item path.
+- `~/` and `https://slug.social/~/` map to the same local item path (then collapse to the leaf).
+
+---
+
+Rule 2 — containment claims (`<:` / `!<:`)
+------------------------------------------
+```sorter
+{
+required explanation
+}
+~child <: ~parent
+
+{
+required explanation
+}
+~child !<: ~parent
+```
+`<:` and `!<:` are **digraphs**. Bare `<` remains a rank vote (1:2). The explanation block is **required**, same as rank votes.
+
+- `~a <: ~b` — explicit membership: `a` is in scope `b`. Weight accumulates (+1 per claim).
+- `~a !<: ~b` — raise a border on that pair. Weight accumulates (+1 per claim).
+
+There is **no `==`**. `~a == ~b` is a parse error, not identity and not a vote.
+
+A scope is not a separate type. Any item with **active members** is a scope; its body is the **prompt** for that role.
+
+---
+
+Rule 3 — borders, suspension, breach
+------------------------------------
+For each pair `(child, parent)`:
+
+- **Active** iff `containment_weight > border_weight` (the child is in that scope's electorate).
+- **Suspended** iff `containment_weight <= border_weight` (membership is held at the border).
+
+A **holding** border is `border > 0` and `containment <= border`. When a later `<:` makes containment overtake that border, the pair is **breached** and a fallen-border journal entry is recorded (ts, pair, weights). Containment and borders are derived (rebuilt on replay); they are not persisted as their own events.
+
+---
+
+Rule 4 — path sugar (idempotent)
+--------------------------------
+```sorter
+~/a/b/c { body }
+```
+is the item `~c` plus membership edges `c <: b`, `b <: a`, and `a <: root` (so the root garden still has a first-level electorate). Sugar edges are **weight-1 and idempotent** (repeating the same path does not add weight). Explicit `<:` / `!<:` still accumulate +1. URLs and `/-/` paths are never desugared.
 
 ```sorter
 {
@@ -69,7 +125,11 @@ Comparisons:
 - `=` (Equal, 1:1)
 - `X:Y` (Custom ratio, e.g. `3:1`, `0:0`)
 
+`<:` / `!<:` are containment (rule 2), not rank votes.
+
 Lines that begin with `@` are not DSL statements; the parser treats them like ordinary prose (so old examples that used `@…` still parse as text, but identity belongs in request metadata, not the file).
+
+Prose fallback: `<:` mid-prose, `~a <:`, `~a <: ~b extra`, and fenced claims stay prose.
 
 ```sorter
 :beauty
@@ -78,9 +138,9 @@ Lines that begin with `@` are not DSL statements; the parser treats them like or
 ```
 An aspect is a named sub-question over the same electorate as a parent scope. A line that is exactly `:` plus a slug (`[a-z0-9_-]{1,64}`) — optional `{prompt}` body, same brace-masking as item bodies — sets the current aspect for all later votes in this document (lexical, top to bottom). Bare `:` resets to the canonical (no-aspect) ranking. Documents start in canonical mode; aspect state does not persist across documents.
 
-Aspects affect **votes only**. Item definitions (`~/path {body}`) after `:beauty` are still ordinary items. A line that starts with `:` but is not exactly `:` or `:` + valid slug (+ optional brace block) stays prose (`:)`, `: note`, `::x`, `:UPPER`, `:has space {x}`). Historical posts that used those lines keep their meaning.
+Aspects affect **votes only**. Item definitions (`~name {body}`) after `:beauty` are still ordinary items. A line that starts with `:` but is not exactly `:` or `:` + valid slug (+ optional brace block) stays prose (`:)`, `: note`, `::x`, `:UPPER`, `:has space {x}`). Historical posts that used those lines keep their meaning.
 
-Votes under an aspect rank in a separate group keyed `(parent, aspect)`. The canonical ranking is unchanged.
+Votes under an aspect rank in a separate group keyed `(scope_item, aspect)` where `scope_item` is a shared active-membership scope of both vote items. The canonical ranking is unchanged.
 
 BLOCK MASKING (ESCAPING)
 
@@ -91,7 +151,7 @@ When writing bodies or explanations, you can use braces `{}` and code blocks wit
 
 ```sorter
 { Here is a block: ```def foo(): return {"a": 1}``` }
-~/code
+~code
 ```
 
 STYLE

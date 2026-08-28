@@ -109,30 +109,31 @@
                (page/navigate pg (str base-url "/~/depth-demo"))
                (is (wait-for-text pg "#garden-depth-select" "1" 10000)
                    "depth select present at default depth 1")
-               (is (wait-for-text pg "body" "~/depth-demo/child-a" 10000)
+               ;; Leaf identity: children display as ~/child-a and ~/leaf.
+               (is (wait-for-text pg "body" "~/child-a" 10000)
                    "depth 1 shows direct child")
                (is (not (str/includes? (or (locator/text-content (page/locator pg "body")) "")
-                                       "~/depth-demo/child-a/leaf"))
+                                       "~/leaf"))
                    "depth 1 does not list nested leaf")
 
                (is (select-depth-navigates! pg "2")
                    "selecting depth 2 navigates to ?depth=2")
                (is (wait-for-text pg "#garden-depth-select option[selected]" "2" 10000)
                    "depth 2 remains selected after navigation")
-               (is (wait-for-text pg "body" "~/depth-demo/child-a/leaf" 10000)
+               (is (wait-for-text pg "body" "~/leaf" 10000)
                    "depth 2 lists nested leaf")
 
                (is (select-depth-navigates! pg "all")
                    "selecting ∞ navigates to ?depth=all")
-               (is (wait-for-text pg "body" "~/depth-demo/child-a/leaf" 10000)
+               (is (wait-for-text pg "body" "~/leaf" 10000)
                    "depth=all still shows nested leaf")
 
                (is (select-depth-navigates! pg "1")
                    "selecting depth 1 navigates to ?depth=1")
-               (is (wait-for-text pg "body" "~/depth-demo/child-a" 10000)
+               (is (wait-for-text pg "body" "~/child-a" 10000)
                    "depth 1 again shows direct child")
                (is (not (str/includes? (or (locator/text-content (page/locator pg "body")) "")
-                                       "~/depth-demo/child-a/leaf"))
+                                       "~/leaf"))
                    "depth 1 again hides nested leaf"))))))
 
      (finally

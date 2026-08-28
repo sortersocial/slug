@@ -33,7 +33,10 @@ use super::{
         child_depth_from_uri, garden_depth_select_markup, item_code_label, item_display_path,
         item_href,
     },
-    item_page::{build_item_page_view_model, sibling_nav_markup, AspectRankingView},
+    item_page::{
+        build_item_page_view_model, item_relations_markup, sibling_nav_markup, strongest_parent,
+        AspectRankingView,
+    },
     pin::{child_row_pin_or_vote, ont_pin_vote_controls, pinned_item_from_jar},
     vote::vote_pool_href,
 };
@@ -142,7 +145,7 @@ pub(super) async fn render_scope_view(
         &item_display_path(&model.item),
         "view-ontology view-ontology-light",
         html! {
-            nav class="breadcrumb" { (scoped_bc_path_for(&browse, &nav)) }
+            nav class="breadcrumb" { (scoped_bc_path_for(&browse, &nav, &model.crumb_chain)) }
             @if let Some(ref bar) = model.sibling_nav {
                 (sibling_nav_markup(&nav, bar, &model.item))
             }
@@ -153,9 +156,10 @@ pub(super) async fn render_scope_view(
                         span class="muted ont-item-unranked-note" { "unranked among siblings" }
                     }
                     @let vote_item_href = model.sibling_nav.as_ref().and_then(|_| {
-                        ItemId::parse(&model.item)
-                            .and_then(|i| i.parent())
-                            .map(|p| vote_pool_href(&nav, p.as_str()))
+                        ItemId::parse(&model.item).and_then(|i| {
+                            strongest_parent(scope_content, &i)
+                                .map(|p| vote_pool_href(&nav, p.as_str()))
+                        })
                     });
                     (ont_pin_vote_controls(
                         &nav,
@@ -167,6 +171,9 @@ pub(super) async fn render_scope_view(
                 }
                 @if let Some(body) = &model.body {
                     div class="ont-item-content" {
+                        @if model.is_scope {
+                            p class="muted ont-aspect-prompt" { "prompt" }
+                        }
                         (render_item_body_in_scope(
                             body,
                             nav.garden_root_url(),
@@ -293,6 +300,8 @@ pub(super) async fn render_scope_view(
                     }
                 }
             }
+
+            (item_relations_markup(&model, &nav, now_ms()))
 
             section class="ont-tab-panel ont-tab-panel-children" {
                 @let total_children = model.child_rankings.component_rankings

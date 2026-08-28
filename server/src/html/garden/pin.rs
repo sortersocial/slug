@@ -25,8 +25,8 @@ pub(super) fn pinned_item_from_jar(jar: &CookieJar) -> Option<(String, ItemId)> 
         v.to_string()
     };
     let (room, rest) = raw.split_once(PIN_COOKIE_SEP)?;
-    let item = ItemId::parse(rest.trim())?;
-    Some((room.trim().to_string(), item.normalized_storage()))
+    let item = ItemId::parse(rest.trim())?.ontology_leaf().normalized_storage();
+    Some((room.trim().to_string(), item))
 }
 
 pub(crate) fn encode_pin_cookie_value(room: &str, item_storage: &str) -> String {

@@ -18,7 +18,7 @@ fn parses_tutorial_fixture_with_prose() {
             dsl::Stmt::Item { .. } => items += 1,
             dsl::Stmt::Vote { .. } => votes += 1,
             dsl::Stmt::Prose { .. } => prose += 1,
-            dsl::Stmt::Aspect { .. } => {}
+            dsl::Stmt::Aspect { .. } | dsl::Stmt::Containment { .. } => {}
         }
     }
 

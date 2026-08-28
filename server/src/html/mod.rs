@@ -767,7 +767,7 @@ fn garden_href_for_item_ref(
     garden_prefix: &str,
 ) -> Option<(crate::path_types::ItemId, String)> {
     let key = slug_types::canonicalize_item(raw_ref);
-    let id = crate::path_types::ItemId::parse(&key)?;
+    let id = crate::path_types::ItemId::parse(&key)?.ontology_leaf();
     let href = if let Some(tail) = id.tilde_tail() {
         if tail.is_empty() {
             garden_prefix.trim_end_matches('/').to_string()
@@ -808,7 +808,12 @@ fn push_item_ref_anchor(
         }
     }
     out.push('>');
-    out.push_str(&escape_html(raw_ref));
+    let label = if id.tilde_tail().is_some() {
+        id.display_path()
+    } else {
+        raw_ref.to_string()
+    };
+    out.push_str(&escape_html(&label));
     out.push_str("</a>");
     true
 }
@@ -1146,11 +1151,14 @@ mod linkify_title_tests {
     #[test]
     fn tilde_link_gets_title_from_item_bodies() {
         let mut bodies = HashMap::new();
-        let key = ItemId::parse(&slug_types::canonicalize_item("~/foo/bar")).unwrap();
+        let key = ItemId::parse(&slug_types::canonicalize_item("~/foo/bar"))
+            .unwrap()
+            .ontology_leaf();
         bodies.insert(key, "Hello  world\nline".to_string());
         let html = linkify_slugs_with_prefix("see ~/foo/bar ok", "/r/x/~", Some(&bodies));
         assert!(html.contains("title=\"Hello world line\""));
-        assert!(html.contains("href=\"/r/x/~/foo/bar\""));
+        assert!(html.contains("href=\"/r/x/~/bar\""));
+        assert!(html.contains(">~/bar<"), "leaf display text, got {html}");
     }
 
     #[test]

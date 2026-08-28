@@ -28,6 +28,20 @@ impl OntologyPath {
         Self { item, segments }
     }
 
+    /// Nested `x/luke` → canonical leaf path `/~/luke`. `luke` (already a leaf) → `None`.
+    ///
+    /// Mirrors [`ExternalOntologyPath::legacy_redirect_target`]: callers issue a permanent
+    /// redirect and preserve the query string.
+    pub(super) fn nested_redirect_target(request_path: &str) -> Option<String> {
+        let item = tilde_http_path_to_item_id(request_path);
+        let leaf = item.ontology_leaf();
+        if leaf.as_str() == item.as_str() {
+            return None;
+        }
+        let disp = leaf.display_path();
+        Some(format!("/{}", disp.trim_start_matches('/')))
+    }
+
     pub(super) fn root() -> Self {
         Self::from_item(ItemId::ontology_root())
     }
@@ -207,5 +221,19 @@ mod tests {
         );
         let repaired = ExternalOntologyPath::from_input("https:/github.com/org/repo");
         assert_eq!(repaired.as_str(), "https://github.com/org/repo");
+    }
+
+    #[test]
+    fn nested_tilde_path_redirects_to_leaf() {
+        assert_eq!(
+            OntologyPath::nested_redirect_target("x/luke").as_deref(),
+            Some("/~/luke")
+        );
+        assert_eq!(
+            OntologyPath::nested_redirect_target("a/b/c").as_deref(),
+            Some("/~/c")
+        );
+        assert_eq!(OntologyPath::nested_redirect_target("luke"), None);
+        assert_eq!(OntologyPath::nested_redirect_target(""), None);
     }
 }

@@ -148,6 +148,13 @@ pub async fn ontology_path(
     jar: CookieJar,
     uri: Uri,
 ) -> impl IntoResponse {
+    if let Some(canonical) = OntologyPath::nested_redirect_target(&path) {
+        let loc = match uri.query() {
+            Some(q) if !q.is_empty() => format!("{canonical}?{q}"),
+            _ => canonical,
+        };
+        return axum::response::Redirect::permanent(&loc).into_response();
+    }
     let path = OntologyPath::from_input(&path);
     render_scope_view(
         state,
@@ -157,6 +164,7 @@ pub async fn ontology_path(
         uri,
     )
     .await
+    .into_response()
 }
 
 /// External ontology index (`/-/`).
@@ -446,7 +454,21 @@ pub async fn room_ontology_path(
         return room_not_found_page(&jar, &uri).into_response();
     }
     drop(reduced);
+    if let Some(canonical) = OntologyPath::nested_redirect_target(&path) {
+        let loc = if let Some(rest) = canonical.strip_prefix("/~") {
+            format!("{}{rest}", nav.garden_root_url())
+        } else {
+            canonical
+        };
+        let loc = match uri.query() {
+            Some(q) if !q.is_empty() => format!("{loc}?{q}"),
+            _ => loc,
+        };
+        return axum::response::Redirect::permanent(&loc).into_response();
+    }
     let path = OntologyPath::from_input(&path);
-    render_scope_view(state, GardenBrowsePath::Tilde(path), nav, jar, uri).await
+    render_scope_view(state, GardenBrowsePath::Tilde(path), nav, jar, uri)
+        .await
+        .into_response()
 }
 

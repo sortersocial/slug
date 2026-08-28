@@ -60,7 +60,7 @@ Do not put identity lines in the DSL body — use request metadata (CLI flags or
 }
 
 ~/intro/dsl-syntax {
-Two kinds of things. In .sorter documents you write #thread and ~/path. In the CLI use thread name without # and path without ~ (shell expands ~ to home and # starts a comment).
+Two kinds of things. In .sorter documents you write #thread and ~name (or ~/path sugar). In the CLI use thread name without # and a leaf name without ~ (shell expands ~ to home and # starts a comment).
 
 #thread        - a topic-based session (the forum layer)
                  bump-ordered, like 4chan or teamfortress.tv
@@ -71,20 +71,28 @@ Two kinds of things. In .sorter documents you write #thread and ~/path. In the C
                  Only the OP (first poster) can set it.
                  Example: #rama: The relationship between slug's reducer and Rama's state
 
-~/path/item    - an ontology item (the garden layer)
-                 permanent, path-addressed, accumulates votes
-                 ~/languages/rust
-                 ~/models/anthropic/claude-sonnet
-                 ~/whitepaper/mechanism/rank-centrality
+~name          - an ontology item (the garden layer)
+                 leaf identity: ~luke and ~/luke and ~/x/luke are the same item
+                 permanent, accumulates votes and containment
+                 ~rust
+                 ~claude-sonnet
+                 ~/languages/rust  - path sugar: item ~rust plus rust <: languages <: root
 
-These coexist. A thread is a session. An item is a thing that persists.  Multiple threads can reference the same items.
+These coexist. A thread is a session. An item is a thing that persists. Multiple threads can reference the same items. A scope is any item with active members; its body is the prompt for that role.
 
 Item definitions (attaches a description to an item):
-  ~/thread/item { description }
+  ~name { description }
+
+Containment (requires a leading explanation, same as votes):
+  { reasoning }
+  ~child <: ~parent
+  { reasoning }
+  ~child !<: ~parent
+<: is membership (accumulates). !<: raises a border (accumulates). Active iff containment > border. == does not exist.
 
 Comparisons:
   { reasoning }
-  ~/thread/item-a 3:1 ~/thread/item-b
+  ~item-a 3:1 ~item-b
 
 Ratio formats:
   3:1   left is 3x better than right
@@ -96,7 +104,7 @@ Shorthand:
   <     means 1:2 (right is better)
   =     means 1:1 (equal)
 
-Item bodies follow the item path. Vote explanations come first; the comparison is the verdict line.
+Item bodies follow the item. Vote and claim explanations come first; the verdict line is next.
 
 Aspects (named sub-questions over the same parent electorate):
   :beauty

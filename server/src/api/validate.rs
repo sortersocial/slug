@@ -58,7 +58,7 @@ pub fn validate_ingest_document(
         match s {
             dsl::Stmt::Item { title, body } => {
                 let item = match resolve_item(title) {
-                    Ok(v) => v,
+                    Ok(v) => v.ontology_leaf(),
                     Err(msg) => {
                         return Err((StatusCode::BAD_REQUEST, "invalid item path".to_string(), Some(msg)));
                     }
@@ -79,9 +79,48 @@ pub fn validate_ingest_document(
                 }
                 defined_in_doc.insert(item);
             }
+            dsl::Stmt::Containment {
+                child,
+                parent,
+                sugar: false,
+                ..
+            } => {
+                for raw in [child, parent] {
+                    let it = match resolve_item(raw) {
+                        Ok(v) => v.ontology_leaf(),
+                        Err(msg) => {
+                            return Err((
+                                StatusCode::BAD_REQUEST,
+                                "invalid containment item path".to_string(),
+                                Some(msg),
+                            ));
+                        }
+                    };
+                    if !defined_in_doc.contains(&it) && !item_exists(&it) {
+                        return Err((
+                            StatusCode::BAD_REQUEST,
+                            "containment references undefined item(s)".to_string(),
+                            Some(format!(
+                                "define items with bodies before claiming membership. missing: {}",
+                                GardenItemUrl::from_stored(&it, room_wire)
+                            )),
+                        ));
+                    }
+                    if !defined_in_doc.contains(&it) && !body_exists(&it) {
+                        return Err((
+                            StatusCode::BAD_REQUEST,
+                            "containment references item(s) without bodies".to_string(),
+                            Some(format!(
+                                "missing bodies: {}",
+                                GardenItemUrl::from_stored(&it, room_wire)
+                            )),
+                        ));
+                    }
+                }
+            }
             dsl::Stmt::Vote { item1, item2, .. } => {
                 let a = match resolve_item(item1) {
-                    Ok(v) => v,
+                    Ok(v) => v.ontology_leaf(),
                     Err(msg) => {
                         return Err((
                             StatusCode::BAD_REQUEST,
@@ -91,7 +130,7 @@ pub fn validate_ingest_document(
                     }
                 };
                 let b = match resolve_item(item2) {
-                    Ok(v) => v,
+                    Ok(v) => v.ontology_leaf(),
                     Err(msg) => {
                         return Err((
                             StatusCode::BAD_REQUEST,

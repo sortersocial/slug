@@ -90,7 +90,9 @@
             :slug room-slug
             :url (str base-url "/r/" room-short room-slug)
             :thread_url (str base-url "/r/" room-short room-slug "/t/walkthrough-thread")
-            :garden_url (str base-url "/r/" room-short room-slug "/~/secret/item")}}))
+            ;; Leaf page is canonical; nested /~/secret/item 308s here.
+            :garden_url (str base-url "/r/" room-short room-slug "/~/item")
+            :garden_url_nested (str base-url "/r/" room-short room-slug "/~/secret/item")}}))
 
 (defn- rebase-fixture-summary [saved current-base-url current-google-url current-data-dir]
   (let [inner (:summary saved)
@@ -105,7 +107,8 @@
                            :room (assoc room
                                          :url (str current-base-url "/r/" rs lg)
                                          :thread_url (str current-base-url "/r/" rs lg "/t/walkthrough-thread")
-                                         :garden_url (str current-base-url "/r/" rs lg "/~/secret/item"))))))
+                                         :garden_url (str current-base-url "/r/" rs lg "/~/item")
+                                         :garden_url_nested (str current-base-url "/r/" rs lg "/~/secret/item"))))))
 
 (defn- fixture-log-present? [data-dir]
   (let [p (fs/path data-dir "events.jsonl")]
@@ -161,6 +164,8 @@
         (println (str "  room page:     " (get-in summary [:summary :room :url])))
         (println (str "  thread page:   " (get-in summary [:summary :room :thread_url])))
         (println (str "  garden page:   " (get-in summary [:summary :room :garden_url])))
+        (println (str "  garden nested: " (get-in summary [:summary :room :garden_url_nested])
+                      "  (308 → leaf /~/item)"))
         (println (str "  data dir:      " data-dir))
         (println (str "  summary json:  " summary-path))
         (println "")

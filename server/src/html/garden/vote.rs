@@ -291,26 +291,17 @@ pub(super) fn suggest_next_vote_pair(
     pool_parent: Option<&ItemId>,
 ) -> Option<(ItemId, ItemId)> {
     let pool: Vec<ItemId> = if let Some(parent) = pool_parent {
-        content
-            .item_children
-            .get(parent)
-            .map(|s| s.iter().cloned().collect())
-            .unwrap_or_default()
-    } else if current_left.parent().as_ref().map(|p| p.as_str())
-        == current_right.parent().as_ref().map(|p| p.as_str())
-    {
-        current_left
-            .parent()
-            .and_then(|parent| {
-                content
-                    .item_children
-                    .get(&parent.normalized_storage())
-                    .cloned()
-            })
-            .map(|children| children.into_iter().collect())
-            .unwrap_or_default()
+        content.members_of(&parent.ontology_leaf())
     } else {
-        Vec::new()
+        content
+            .shared_scopes(
+                &current_left.ontology_leaf(),
+                &current_right.ontology_leaf(),
+            )
+            .into_iter()
+            .next()
+            .map(|scope| content.members_of(&scope))
+            .unwrap_or_default()
     };
     let pool = comparable_items(content, pool);
     if pool.len() < 2 {
@@ -411,7 +402,7 @@ async fn vote_compare_inner(
 ) -> axum::response::Response {
     let pool_id: Option<ItemId> = match q.pool.as_deref() {
         Some(p) => match ItemId::parse(p.trim()) {
-            Some(i) => Some(i.normalized_storage()),
+            Some(i) => Some(i.normalized_storage().ontology_leaf()),
             None => return (StatusCode::BAD_REQUEST, "bad pool item").into_response(),
         },
         None => None,
@@ -420,11 +411,11 @@ async fn vote_compare_inner(
     let (left, right) = match (q.left.as_deref(), q.right.as_deref()) {
         (Some(l), Some(r)) => {
             let left = match ItemId::parse(l.trim()) {
-                Some(i) => i.normalized_storage(),
+                Some(i) => i.normalized_storage().ontology_leaf(),
                 None => return (StatusCode::NOT_FOUND, "bad left item").into_response(),
             };
             let right = match ItemId::parse(r.trim()) {
-                Some(i) => i.normalized_storage(),
+                Some(i) => i.normalized_storage().ontology_leaf(),
                 None => return (StatusCode::NOT_FOUND, "bad right item").into_response(),
             };
             if left == right {
@@ -438,11 +429,7 @@ async fn vote_compare_inner(
             };
             let reduced = state.reduced.read().await;
             let content = content_for_garden_view(&reduced, &nav.scope());
-            let children: Vec<ItemId> = content
-                .item_children
-                .get(pool)
-                .map(|s| s.iter().cloned().collect())
-                .unwrap_or_default();
+            let children: Vec<ItemId> = content.members_of(&pool.ontology_leaf());
             let children = comparable_items(content, children);
             if children.len() < 2 {
                 drop(reduced);

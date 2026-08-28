@@ -272,7 +272,7 @@ enum IdentityCmd {
 
 #[derive(Subcommand, Debug)]
 enum GardenCmd {
-    /// List every leaf item in the garden (full paths). Does not scale; full list.
+    /// List every leaf item in the garden (leaf URLs). Does not scale; full list.
     Tree {
         /// Output as JSON for agent parsing
         #[arg(long)]
@@ -284,7 +284,7 @@ enum GardenCmd {
     /// Bodies longer than 100,000 characters are truncated by default.
     /// Use --full to retrieve the complete body.
     Body {
-        /// Ontology path without shell `~` (e.g. `languages/python`). The CLI sends `~/…` to the API.
+        /// Leaf name or legacy nested path, no shell `~` (e.g. `python` or `languages/python`). The CLI sends the leaf to the API.
         #[arg(value_name = "PATH", allow_hyphen_values = true)]
         path: String,
         /// Output as JSON for agent parsing
@@ -310,7 +310,7 @@ enum GardenCmd {
         /// Output as JSON for agent parsing
         #[arg(long)]
         json: bool,
-        /// Path(s); no ~ prefix. Multiple PATH merge scopes. Use `-/host/...` for external items.
+        /// Leaf name(s) or legacy nested path(s); no ~ prefix. Multiple PATH merge scopes. Use `-/host/...` for external items.
         /// After optional flags, pass `--` then paths (required so values starting with `-` parse correctly).
         #[arg(value_name = "PATH", num_args = 1.., allow_hyphen_values = true)]
         paths: Vec<String>,
@@ -318,7 +318,7 @@ enum GardenCmd {
 
     /// Suggest a comparison pair under a path + relevant threads where it's discussed.
     Pair {
-        /// Parent path without shell `~` (e.g. `conn` or `models/ai`). The CLI sends `~/…` to the API.
+        /// Leaf name or legacy nested path, no shell `~` (e.g. `conn` or `models/ai`). The CLI sends the leaf to the API.
         #[arg(value_name = "PATH", allow_hyphen_values = true)]
         path: String,
         /// Output as JSON for agent parsing
@@ -328,7 +328,7 @@ enum GardenCmd {
 
     /// Vote history for an item (wins/losses) with thread per vote.
     Matchup {
-        /// Item path without shell `~` (e.g. `sorts/insertion`). The CLI sends `~/…` to the API.
+        /// Leaf name or legacy nested path, no shell `~` (e.g. `insertion` or `sorts/insertion`). The CLI sends the leaf to the API.
         #[arg(value_name = "PATH", allow_hyphen_values = true)]
         path: String,
         /// Output as JSON for agent parsing
@@ -363,7 +363,7 @@ enum GardenCmd {
 
     /// Rank history for an item — how its position changed over time and why.
     History {
-        /// Item path without shell `~` (e.g. `hist/rust`). The CLI sends `~/…` to the API.
+        /// Leaf name or legacy nested path, no shell `~` (e.g. `rust` or `hist/rust`). The CLI sends the leaf to the API.
         #[arg(value_name = "PATH", allow_hyphen_values = true)]
         path: String,
         /// Output as JSON for agent parsing
@@ -754,10 +754,12 @@ fn rpc_line_ok_scoped_read<'a>(line: &'a RpcLine, room_wire: &str) -> Result<&'a
     })
 }
 
-/// Normalize ontology path for API. Accepts path with or without ~/ (shell expands ~ to $HOME).
-/// Returns a bare slug path (e.g. `languages/python`) with no leading `/` or `~/`.
-/// Call `ontology_path_for_api_query` before sending `item=` / `parent=` params so the server
-/// gets `~/…` and canonicalizes to `https://slug.social/~/…`.
+/// Normalize ontology path for API. Accepts a leaf name, `~leaf`, `~/leaf`, or a legacy
+/// nested path (`x/luke` / `~/x/luke`). Shell expands `~` to `$HOME`.
+///
+/// Returns a **leaf** slug (e.g. `luke`) with no leading `/` or `~/`. External `-/…` and
+/// `http(s)://…` are left unchanged. Call `ontology_path_for_api_query` before sending so
+/// the server gets `~/luke`.
 fn normalize_ontology_path_input(path: &str) -> Result<String, String> {
     let p = path.trim();
     if p.contains('*') {
@@ -769,6 +771,9 @@ fn normalize_ontology_path_input(path: &str) -> Result<String, String> {
 
     let without_sigils = if p.starts_with("~/") {
         p.strip_prefix("~/").unwrap_or(p).trim_start_matches('/')
+    } else if p.starts_with('~') && !p.starts_with("-/") {
+        // DSL token `~luke` (no slash).
+        p.trim_start_matches('~').trim_start_matches('/')
     } else if p.starts_with("-/") {
         p
     } else if p.starts_with('/') {
@@ -788,9 +793,19 @@ fn normalize_ontology_path_input(path: &str) -> Result<String, String> {
     };
 
     if without_sigils.is_empty() {
-        return Err("path must be non-empty (e.g. languages or languages/python)".to_string());
+        return Err("path must be non-empty (e.g. luke or languages/python)".to_string());
     }
-    Ok(without_sigils.to_string())
+    if without_sigils.starts_with("-/")
+        || without_sigils.starts_with("http://")
+        || without_sigils.starts_with("https://")
+    {
+        return Ok(without_sigils.to_string());
+    }
+    let leaf = without_sigils
+        .rsplit('/')
+        .find(|s| !s.is_empty())
+        .unwrap_or(without_sigils);
+    Ok(leaf.to_string())
 }
 
 /// Query-string form for ontology items: `~/` + normalized path, `-/` + external tail, or full URL unchanged.
@@ -906,6 +921,19 @@ mod tests {
     }
 
     #[test]
+    fn garden_path_accepts_leaf_and_legacy_nested() {
+        assert_eq!(normalize_ontology_path_input("luke").unwrap(), "luke");
+        assert_eq!(normalize_ontology_path_input("~luke").unwrap(), "luke");
+        assert_eq!(normalize_ontology_path_input("~/luke").unwrap(), "luke");
+        assert_eq!(normalize_ontology_path_input("x/luke").unwrap(), "luke");
+        assert_eq!(normalize_ontology_path_input("~/x/luke").unwrap(), "luke");
+        assert_eq!(
+            normalize_ontology_path_input("-/https://example.com/a/b").unwrap(),
+            "-/https://example.com/a/b"
+        );
+    }
+
+    #[test]
     fn feed_without_since_uses_logged_in_delegate_from_env() {
         let key = "SLUG_DELEGATE";
         let previous = std::env::var_os(key);
@@ -952,7 +980,7 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
                         } else {
                             for p in &resp.paths {
                                 let display = ItemId::parse(p.as_str())
-                                    .map(|item| item.display_path())
+                                    .map(|item| item.ontology_leaf().display_path())
                                     .unwrap_or_else(|| p.to_string());
                                 println!("{display}");
                             }

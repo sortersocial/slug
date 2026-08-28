@@ -99,10 +99,11 @@
                  (when (< votes-cast total-pairs)
                    (let [left-text  (element-text pg ".vote-compare-left code")
                          right-text (element-text pg ".vote-compare-right code")]
-                     (is (str/includes? left-text "~/pool/")
-                         (str "vote " votes-cast ": left is in pool: " left-text))
-                     (is (str/includes? right-text "~/pool/")
-                         (str "vote " votes-cast ": right is in pool: " right-text))
+                     ;; Leaf identity: pool items display as ~/a … ~/j, not ~/pool/a.
+                     (is (contains? (set letters) (leaf left-text))
+                         (str "vote " votes-cast ": left is a pool leaf: " left-text))
+                     (is (contains? (set letters) (leaf right-text))
+                         (str "vote " votes-cast ": right is a pool leaf: " right-text))
                      (set-ratio! pg left-text right-text)
                      (let [winner (if (neg? (compare (leaf left-text) (leaf right-text)))
                                     (leaf left-text) (leaf right-text))]

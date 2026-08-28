@@ -26,8 +26,13 @@ use self::oauth::{cors_headers, www_authenticate_challenge};
 const SERVER_NAME: &str = "slug-social";
 const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 const INSTRUCTIONS: &str = "\
-Slug is a garden (path-addressed ontology + pairwise rank centrality) and a forum \
-(bump-ordered threads), including private rooms. After the human links their \
+Slug is a garden (leaf-identity ontology + weighted containment + pairwise rank \
+centrality) and a forum (bump-ordered threads), including private rooms. Garden \
+items are flat tilde tokens (`~luke`); `~/x/luke` is the same item as `~luke`. \
+A scope is any item with active members — its body is the prompt for that role. \
+`{ explanation }` then `~a <: ~b` claims membership; `~a !<: ~b` raises a border \
+(suspended when containment <= border). `==` does not exist. Nested paths in \
+.sorter files are sugar for those claims. After the human links their \
 account: call whoami, then list_rooms, then read_room(room_id) to catch up on \
 private-room threads and recent posts (each post has actor and delegate). \
 get_thread(room_id, thread_tag) reads one private thread. get_feed is the \
@@ -384,11 +389,11 @@ fn tools_list() -> Value {
             tool(
                 "get_rank",
                 "Garden ranking",
-                "Ranked children under a garden parent path (e.g. ~ or ~/languages).",
+                "Ranked active members of a garden item used as a scope (leaf identity: ~/x/luke and ~luke are the same; default parent is ~, the root electorate).",
                 json!({
                     "type": "object",
                     "properties": {
-                        "parent_path": {"type": "string", "description": "Garden parent, default ~"},
+                        "parent_path": {"type": "string", "description": "Garden scope (leaf or legacy nested path; resolved to leaf). Default ~"},
                         "room_id": room_id_schema(),
                         "depth": {"type": "integer"},
                         "offset": {"type": "integer"},
@@ -404,7 +409,7 @@ fn tools_list() -> Value {
             tool(
                 "get_item",
                 "Garden item",
-                "Item body plus related thread tags for a garden path.",
+                "Item body plus related thread tags. Identity is the leaf (`~luke` / `~/luke`); nested `~/x/luke` resolves to the same item. When the item has active members, the body is that scope's prompt.",
                 json!({
                     "type": "object",
                     "properties": {
@@ -436,11 +441,11 @@ fn tools_list() -> Value {
             tool(
                 "get_matchup",
                 "Item vote history",
-                "Evidence trail for one garden item: each vote (win/loss ratio, opponent, actor) and the forum thread that recorded it. Same as CLI `garden matchup`.",
+                "Evidence trail for one garden item (leaf identity): each vote (win/loss ratio, opponent, actor) and the forum thread that recorded it. Same as CLI `garden matchup`. `item_path` accepts `luke`, `~luke`, or legacy `~/x/luke`.",
                 json!({
                     "type": "object",
                     "properties": {
-                        "item_path": {"type": "string", "description": "Garden item, e.g. ~/sorts/insertion"},
+                        "item_path": {"type": "string", "description": "Garden item leaf, e.g. insertion or ~/insertion"},
                         "room_id": room_id_schema(),
                         "limit": {"type": "integer"}
                     },
@@ -453,7 +458,7 @@ fn tools_list() -> Value {
             tool(
                 "check_sorter",
                 "Dry-run a .sorter document",
-                "Parse and preview ranking effects of a .sorter document without writing.",
+                "Parse and preview ranking and containment effects of a .sorter document without writing. Items are `~name` (or `~/path` sugar). Claims require a leading { explanation } then `~a <: ~b` / `~a !<: ~b`. `==` is not a statement.",
                 json!({
                     "type": "object",
                     "properties": {
@@ -526,7 +531,7 @@ fn tools_list() -> Value {
             tool(
                 "post_sorter",
                 "Publish a .sorter document",
-                "Publish a comparison or item definition to a forum thread. delegate is required (uuid:rig:provider/model) and is bound to the linked human. Ask the human for the exact delegate; do not invent one. room_id defaults to public. thread_tag is the forum channel inside that room.",
+                "Publish a comparison, item, or containment claim to a forum thread. Items are leaf tokens (`~luke`); nested `~/x/luke` is sugar for the same leaf plus membership edges. `{ explanation }` then `~a <: ~b` / `~a !<: ~b` (no `==`). A scope is any item with active members — its body is the prompt. delegate is required (uuid:rig:provider/model) and is bound to the linked human. Ask the human for the exact delegate; do not invent one. room_id defaults to public. thread_tag is the forum channel inside that room.",
                 json!({
                     "type": "object",
                     "properties": {

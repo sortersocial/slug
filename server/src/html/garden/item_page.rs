@@ -1,13 +1,18 @@
+use std::collections::HashSet;
+
 use maud::html;
 
 use crate::{
     html::forum::ThreadNav,
     path_types::ItemId,
-    reducer::{ContentState, ScopeId},
+    reducer::{
+        BorderPairState, ContentState, FallenBorderEntry, MembershipStatus, ScopeId,
+    },
     scope_rank::{
         build_children_rankings, build_children_rankings_in_group, build_rankings_for_item_set,
         resolve_scope_recursive, ChildrenRankings,
     },
+    timeago,
 };
 
 use super::{
@@ -85,12 +90,95 @@ pub(super) struct ItemPageViewModel {
     pub(super) sibling_nav: Option<SiblingNavBar>,
     /// False at the tilde ontology root (`~/`): sibling-rank footnote does not apply.
     pub(super) item_has_parent: bool,
+    /// True when this item has active members (it is used as a scope / role).
+    pub(super) is_scope: bool,
+    /// Strongest-parent walk, root-adjacent first, including the current item. Empty at root.
+    pub(super) crumb_chain: Vec<ItemId>,
+    /// Active scopes other than the primary (strongest) parent.
+    pub(super) alternate_scopes: Vec<ItemId>,
+    /// Active memberships (this item as child) with weights.
+    pub(super) memberships: Vec<BorderPairState>,
+    /// Suspended borders (`containment_weight <= border_weight`) where this item is the child.
+    pub(super) suspended_borders: Vec<BorderPairState>,
+    /// Fallen-border journal entries that name this item as child or parent.
+    pub(super) fallen_journal: Vec<FallenBorderEntry>,
     pub(super) child_rankings: ChildrenRankings,
     pub(super) aspect_rankings: Vec<AspectRankingView>,
     pub(super) child_depth: usize,
     pub(super) rank_history: Vec<RankHistoryEntryView>,
     /// Forum threads that mention or vote on this item.
     pub(super) threads: Vec<String>,
+}
+
+/// Strongest active parent: highest containment weight, then lex-smaller parent id.
+pub(super) fn strongest_parent(content: &ContentState, item: &ItemId) -> Option<ItemId> {
+    let item = item.ontology_leaf();
+    let mut best: Option<(u32, ItemId)> = None;
+    for parent in content.scopes_of(&item) {
+        let w = content
+            .border_state(&item, &parent)
+            .map(|s| s.containment_weight)
+            .unwrap_or(0);
+        let take = match &best {
+            None => true,
+            Some((bw, bp)) => w > *bw || (w == *bw && parent.as_str() < bp.as_str()),
+        };
+        if take {
+            best = Some((w, parent));
+        }
+    }
+    best.map(|(_, p)| p)
+}
+
+/// Ancestors (strongest parent walk) then the item itself. Empty at the ontology root.
+pub(super) fn containment_crumb_chain(content: &ContentState, item: &ItemId) -> Vec<ItemId> {
+    let item = item.clone().ontology_leaf().normalized_storage();
+    if item.tilde_tail() == Some("") || item == ItemId::ontology_root() {
+        return vec![];
+    }
+    let mut ancestors = Vec::new();
+    let mut seen = HashSet::new();
+    seen.insert(item.clone());
+    let mut cur = item.clone();
+    while let Some(parent) = strongest_parent(content, &cur) {
+        let parent = parent.ontology_leaf().normalized_storage();
+        if parent.tilde_tail() == Some("") || parent == ItemId::ontology_root() {
+            break;
+        }
+        if !seen.insert(parent.clone()) {
+            break;
+        }
+        ancestors.push(parent.clone());
+        cur = parent;
+    }
+    ancestors.reverse();
+    ancestors.push(item);
+    ancestors
+}
+
+fn child_border_pairs(content: &ContentState, item: &ItemId) -> Vec<BorderPairState> {
+    let item = item.ontology_leaf();
+    let mut parents = HashSet::new();
+    for (c, p) in content.containment.keys() {
+        if c == &item {
+            parents.insert(p.clone());
+        }
+    }
+    for (c, p) in content.borders.keys() {
+        if c == &item {
+            parents.insert(p.clone());
+        }
+    }
+    let mut out: Vec<BorderPairState> = parents
+        .into_iter()
+        .filter_map(|p| content.border_state(&item, &p))
+        .collect();
+    out.sort_by(|a, b| {
+        b.containment_weight
+            .cmp(&a.containment_weight)
+            .then_with(|| a.parent.as_str().cmp(b.parent.as_str()))
+    });
+    out
 }
 
 pub(super) fn aspect_rankings_for_parent(
@@ -131,9 +219,9 @@ fn build_sibling_nav(
     scope: &ScopeId,
     current: &ItemId,
 ) -> Option<SiblingNavBar> {
-    let current = current.clone().normalized_storage();
-    let parent = current.parent()?.normalized_storage();
+    let current = current.clone().normalized_storage().ontology_leaf();
     let content = content_for_garden_view(reduced, scope);
+    let parent = strongest_parent(content, &current)?.normalized_storage();
     let rankings = build_children_rankings(content, &parent);
     let mut groups: Vec<SiblingNavGroup> = Vec::new();
     for comp in &rankings.component_rankings {
@@ -233,13 +321,106 @@ pub(super) fn sibling_nav_markup(nav: &ThreadNav, bar: &SiblingNavBar, current_i
     }
 }
 
+fn pair_weight_label(pair: &BorderPairState) -> String {
+    format!(
+        "containment {} · border {}",
+        pair.containment_weight, pair.border_weight
+    )
+}
+
+pub(super) fn item_relations_markup(
+    model: &ItemPageViewModel,
+    nav: &ThreadNav,
+    now: i64,
+) -> maud::Markup {
+    html! {
+        @if !model.alternate_scopes.is_empty() {
+            p class="muted ont-alt-scopes" {
+                "also in "
+                @for (i, scope) in model.alternate_scopes.iter().enumerate() {
+                    @if i > 0 { span class="muted" { " · " } }
+                    a href=(item_href(scope.as_str(), nav)) { (item_display_path(scope.as_str())) }
+                }
+            }
+        }
+        @if !model.memberships.is_empty() {
+            section class="ont-tab-panel ont-tab-panel-memberships" {
+                h3 { "memberships" }
+                ul class="ont-group-list" {
+                    @for pair in &model.memberships {
+                        li {
+                            a href=(item_href(pair.parent.as_str(), nav)) {
+                                (item_display_path(pair.parent.as_str()))
+                            }
+                            " "
+                            span class="muted" { (pair_weight_label(pair)) }
+                        }
+                    }
+                }
+            }
+        }
+        @if !model.suspended_borders.is_empty() {
+            section class="ont-tab-panel ont-tab-panel-borders" {
+                h3 { "suspended borders" }
+                ul class="ont-group-list" {
+                    @for pair in &model.suspended_borders {
+                        li class="muted ont-border-suspended" {
+                            (item_display_path(pair.child.as_str()))
+                            " <: "
+                            a href=(item_href(pair.parent.as_str(), nav)) {
+                                (item_display_path(pair.parent.as_str()))
+                            }
+                            " "
+                            span { (pair_weight_label(pair)) }
+                        }
+                    }
+                }
+            }
+        }
+        @if !model.fallen_journal.is_empty() {
+            details class="ont-rank-history ont-fallen-borders" {
+                summary {
+                    "fallen borders "
+                    span class="muted" { (format!("({} events)", model.fallen_journal.len())) }
+                }
+                @for e in &model.fallen_journal {
+                    @let hover = timeago::rfc3339_utc(e.ts);
+                    @let ago = timeago::timeago(now, e.ts);
+                    div class="rank-history-entry" {
+                        div class="rank-history-meta" title=(hover) {
+                            span class="ts-recency" { (ago) }
+                            " · "
+                            a href=(item_href(e.child.as_str(), nav)) {
+                                (item_display_path(e.child.as_str()))
+                            }
+                            " <: "
+                            a href=(item_href(e.parent.as_str(), nav)) {
+                                (item_display_path(e.parent.as_str()))
+                            }
+                            " · "
+                            span class="muted" {
+                                (format!(
+                                    "containment {} · border {}",
+                                    e.containment_weight, e.border_weight
+                                ))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 fn build_rank_history(
     reduced: &crate::reducer::ReducerState,
     scope: &ScopeId,
     item: &str,
 ) -> Vec<RankHistoryEntryView> {
     let content = content_for_garden_view(reduced, scope);
-    let item_key = ItemId::parse(item).unwrap_or_else(|| ItemId::opaque(item.to_string()));
+    let item_key = ItemId::parse(item)
+        .map(|id| id.ontology_leaf())
+        .unwrap_or_else(|| ItemId::opaque(item.to_string()));
     let entries = match content.rank_history.get(&item_key) {
         None => return vec![],
         Some(e) => e,
@@ -350,9 +531,35 @@ pub(super) fn build_item_page_view_model(
 ) -> ItemPageViewModel {
     let content = content_for_garden_view(reduced, scope);
     let item_key = ItemId::parse(item)
+        .map(|id| id.ontology_leaf())
         .unwrap_or_else(|| ItemId::parse("~/").unwrap())
         .normalized_storage();
-    let item_has_parent = item_key.parent().is_some();
+    let item_has_parent = !content.scopes_of(&item_key).is_empty();
+    let is_scope = !content.members_of(&item_key).is_empty();
+    let crumb_chain = containment_crumb_chain(content, &item_key);
+    let primary_parent = strongest_parent(content, &item_key);
+    let alternate_scopes: Vec<ItemId> = content
+        .scopes_of(&item_key)
+        .into_iter()
+        .filter(|s| Some(s) != primary_parent.as_ref())
+        .collect();
+    let pairs = child_border_pairs(content, &item_key);
+    let memberships: Vec<BorderPairState> = pairs
+        .iter()
+        .filter(|p| p.status == MembershipStatus::Active)
+        .cloned()
+        .collect();
+    let suspended_borders: Vec<BorderPairState> = pairs
+        .iter()
+        .filter(|p| p.status == MembershipStatus::Suspended)
+        .cloned()
+        .collect();
+    let fallen_journal: Vec<FallenBorderEntry> = content
+        .fallen_borders()
+        .iter()
+        .filter(|e| e.child == item_key || e.parent == item_key)
+        .cloned()
+        .collect();
     let child_depth = child_depth.max(1);
     let child_rankings = if child_depth > 1 {
         let items = resolve_scope_recursive(content, &[item_key.as_str().to_string()], child_depth);
@@ -380,6 +587,12 @@ pub(super) fn build_item_page_view_model(
             .or_else(|| reduced.public().item_bodies.get(&item_key).cloned()),
         sibling_nav,
         item_has_parent,
+        is_scope,
+        crumb_chain,
+        alternate_scopes,
+        memberships,
+        suspended_borders,
+        fallen_journal,
         child_rankings,
         aspect_rankings: aspect_rankings_for_parent(content, &item_key),
         child_depth,

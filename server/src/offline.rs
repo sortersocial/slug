@@ -106,7 +106,7 @@ fn document_stats(doc: &dsl::Document) -> CompileStats {
             dsl::Stmt::Item { .. } => items += 1,
             dsl::Stmt::Vote { .. } => votes += 1,
             dsl::Stmt::Prose { .. } => prose_blocks += 1,
-            dsl::Stmt::Aspect { .. } => {}
+            dsl::Stmt::Aspect { .. } | dsl::Stmt::Containment { .. } => {}
         }
     }
     CompileStats {
@@ -139,7 +139,10 @@ fn threads_in_document(text: &str) -> Vec<String> {
     tags
 }
 
-fn voted_ranking_keys(doc: &dsl::Document) -> Vec<(ItemId, Option<String>)> {
+fn voted_ranking_keys(
+    content: &crate::reducer::ContentState,
+    doc: &dsl::Document,
+) -> Vec<(ItemId, Option<String>)> {
     let mut keys = HashSet::new();
     for stmt in &doc.statements {
         if let dsl::Stmt::Vote {
@@ -150,10 +153,9 @@ fn voted_ranking_keys(doc: &dsl::Document) -> Vec<(ItemId, Option<String>)> {
         } = stmt
         {
             if let (Ok(a), Ok(b)) = (resolve_item(item1), resolve_item(item2)) {
-                if let Some(p) = a.parent() {
-                    keys.insert((p, aspect.clone()));
-                }
-                if let Some(p) = b.parent() {
+                let a = a.ontology_leaf();
+                let b = b.ontology_leaf();
+                for p in content.shared_scopes(&a, &b) {
                     keys.insert((p, aspect.clone()));
                 }
             }
@@ -172,25 +174,18 @@ pub fn rankings_for_document(
 ) -> Vec<CheckScopeRanking> {
     use crate::scope_rank::build_rankings_for_group_and_items;
 
-    voted_ranking_keys(doc)
+    let scoped_content = simulated
+        .content_for_scope(scope)
+        .unwrap_or_else(|| simulated.public());
+    voted_ranking_keys(scoped_content, doc)
         .into_iter()
         .map(|(parent, aspect)| {
-            let scoped_content = simulated
-                .content_for_scope(scope)
-                .unwrap_or_else(|| simulated.public());
             let empty = crate::reducer::GroupState::new();
             let scoped = if let Some(ref slug) = aspect {
                 let group = scoped_content
                     .aspect_group(&parent, slug)
                     .unwrap_or(&empty);
-                build_rankings_for_group_and_items(
-                    group,
-                    &scoped_content
-                        .item_children
-                        .get(&parent)
-                        .map(|s| s.iter().cloned().collect::<Vec<_>>())
-                        .unwrap_or_default(),
-                )
+                build_rankings_for_group_and_items(group, &scoped_content.members_of(&parent))
             } else {
                 build_children_rankings(scoped_content, &parent)
             };
@@ -444,15 +439,15 @@ mod tests {
         assert!(result.rankings[0].components[0].ranking[0]
             .item
             .as_str()
-            .contains("songs/a"));
+            .ends_with("/a"));
         assert!(result.rankings[1].components[0].ranking[0]
             .item
             .as_str()
-            .contains("songs/a"));
+            .ends_with("/a"));
         assert!(result.rankings[2].components[0].ranking[0]
             .item
             .as_str()
-            .contains("songs/a"));
+            .ends_with("/a"));
     }
 
     #[test]

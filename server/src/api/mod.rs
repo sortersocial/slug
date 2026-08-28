@@ -101,4 +101,25 @@ mod tests {
         assert_eq!(err.0, StatusCode::BAD_REQUEST);
         assert!(err.1.contains("missing body"));
     }
+
+    #[test]
+    fn recent_votes_parent_filter_uses_containment_not_path_prefix() {
+        let mut reduced = ReducerState::default();
+        apply_ingest(
+            &mut reduced,
+            1,
+            "~/languages/rust {r}\n~/languages/python {p}\n{why}\n~/languages/rust 2:1 ~/languages/python\n",
+        );
+        let content = reduced.public();
+        let rust = "https://slug.social/~/rust";
+        let python = "https://slug.social/~/python";
+        assert!(
+            vote_touches_path(content, rust, python, "https://slug.social/~/languages"),
+            "leaf members must count as touching their scope"
+        );
+        assert!(
+            !vote_touches_path(content, rust, python, "https://slug.social/~/unrelated"),
+            "a vote must not touch a scope neither side belongs to"
+        );
+    }
 }
