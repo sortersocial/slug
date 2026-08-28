@@ -152,7 +152,15 @@
                (is (wait-for-http-text (str base-url "/-/https://www.are.na/channel/my-chan")
                                        "-/https://www.are.na/block/1"
                                        15000)
-                   "still-connected block kept after refresh")))))
+                   "still-connected block kept after refresh")
+
+               ;; Legacy /:user/:channel URLs resolve onto the canonical channel item.
+               (page/navigate pg (str base-url "/-/https://www.are.na/some-user/my-chan"))
+               (is (wait-for-text pg "#external-resolver-panel" "Are.na resolver" 15000)
+                   "legacy channel URL shows are.na resolver panel")
+               (locator/click (page/locator pg "[data-testid=\"arena-resolve-children\"]"))
+               (is (wait-for-text pg "body" "-/https://www.are.na/block/1" 15000)
+                   "legacy URL import lands on canonical channel page with children")))))
 
        (is (some #{"/v3/channels/my-chan/contents"} @(:paths @!arena))
            "mock are.na saw channel contents request")

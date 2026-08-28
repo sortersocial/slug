@@ -54,6 +54,19 @@ pub(super) fn external_resolver_controls(
         "www.are.na" | "are.na" => ("Are.na", "arena"),
         _ => return None,
     };
+    // Legacy are.na `/:user/:channel` URLs name the same channel as the
+    // canonical `/channel/:slug` form; resolve and land on the canonical item.
+    let canonical = crate::resolvers::arena::canonical_arena_item(&item_id)
+        .filter(|c| c.as_str() != item_id.as_str());
+    let item_id = canonical.clone().unwrap_or(item_id);
+    let next_owned;
+    let next = match &canonical {
+        Some(c) => {
+            next_owned = super::item::item_href(c.as_str(), nav);
+            next_owned.as_str()
+        }
+        None => next,
+    };
     // are.na block URLs are not path-children of their channel, so sibling
     // resolution is meaningless there; only GitHub items get a siblings button.
     let siblings_allowed = host == "github.com";
@@ -164,5 +177,39 @@ fn resolve_status_text(stats: crate::resolvers::ResolveStats, source: &str) -> S
         format!("Updated {source} items.")
     } else {
         parts.join(" ")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_arena_channel_url_resolves_onto_canonical_item() {
+        let nav = ThreadNav::public();
+        let markup = external_resolver_controls(
+            "https://www.are.na/jake-chvatal/item-industrial",
+            &nav,
+            "/-/https://www.are.na/jake-chvatal/item-industrial",
+        )
+        .expect("are.na panel renders");
+        let html = markup.into_string();
+        // Payload targets the canonical channel item and lands on its page.
+        assert!(html.contains("https://www.are.na/channel/item-industrial"));
+        assert!(html.contains("/-/https://www.are.na/channel/item-industrial"));
+        assert!(!html.contains("jake-chvatal"));
+    }
+
+    #[test]
+    fn canonical_arena_channel_url_keeps_page_as_next() {
+        let nav = ThreadNav::public();
+        let markup = external_resolver_controls(
+            "https://www.are.na/channel/arena-influences",
+            &nav,
+            "/-/https://www.are.na/channel/arena-influences",
+        )
+        .expect("are.na panel renders");
+        let html = markup.into_string();
+        assert!(html.contains("https://www.are.na/channel/arena-influences"));
     }
 }

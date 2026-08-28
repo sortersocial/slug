@@ -1,9 +1,11 @@
-//! Are.na resolver: imports channel contents (blocks + nested channels) as garden items.
+//! Are.na resolver: imports channel contents (blocks + nested channels) and user
+//! profiles (their channels) as garden items.
 //!
 //! Unlike GitHub issues, are.na block URLs (`/block/:id`) are not path-children of the
 //! channel URL, so membership is emitted as an explicit containment claim
 //! (`block <: channel`) alongside the card body. Blocks keep cross-channel identity:
 //! the same block connected in two imported channels is one item with two scopes.
+//! Legacy `/:user/:channel` URLs resolve onto the canonical `/channel/:slug` item.
 
 use async_trait::async_trait;
 use maud::html;
@@ -34,6 +36,7 @@ fn arena_cooldown_ms() -> i64 {
 #[serde(rename_all = "snake_case")]
 pub enum ArenaImportKind {
     Channel,
+    User,
     Text,
     Image,
     Link,
@@ -108,13 +111,14 @@ impl ArenaResolver {
     }
 
     pub fn can_resolve_children(&self, item: &ItemId) -> bool {
-        arena_channel_slug(item).is_some()
+        arena_target(item).is_some()
     }
 
     pub async fn list_children(&self, item: &ItemId) -> Result<Vec<ArenaChild>, String> {
-        let slug =
-            arena_channel_slug(item).ok_or_else(|| "not an are.na channel URL".to_string())?;
-        self.list_channel_contents(&slug).await
+        match arena_target(item).ok_or_else(|| "not an are.na channel or user URL".to_string())? {
+            ArenaTarget::Channel(slug) => self.list_channel_contents(&slug).await,
+            ArenaTarget::User(user) => self.list_user_channels(&user).await,
+        }
     }
 
     async fn get_json(&self, path: &str) -> Result<Value, String> {
@@ -140,16 +144,34 @@ impl ArenaResolver {
     }
 
     async fn list_channel_contents(&self, slug: &str) -> Result<Vec<ArenaChild>, String> {
+        self.collect_paged(&format!("/v3/channels/{slug}/contents"), false)
+            .await
+    }
+
+    /// A user's channels via `/v3/users/:id/contents` (non-channel entries skipped).
+    async fn list_user_channels(&self, user: &str) -> Result<Vec<ArenaChild>, String> {
+        self.collect_paged(&format!("/v3/users/{user}/contents"), true)
+            .await
+    }
+
+    async fn collect_paged(
+        &self,
+        path: &str,
+        channels_only: bool,
+    ) -> Result<Vec<ArenaChild>, String> {
         let mut out = Vec::new();
         for page in 1..=ARENA_MAX_PAGES {
             let value = self
-                .get_json(&format!("/v3/channels/{slug}/contents?per=100&page={page}"))
+                .get_json(&format!("{path}?per=100&page={page}"))
                 .await?;
             let arr = value
                 .get("data")
                 .and_then(|d| d.as_array())
                 .ok_or_else(|| "are.na response missing data array".to_string())?;
             for entry in arr {
+                if channels_only && entry.get("type").and_then(|v| v.as_str()) != Some("Channel") {
+                    continue;
+                }
                 if let Some(child) = arena_child_from_entry(entry) {
                     out.push(child);
                 }
@@ -193,19 +215,74 @@ fn arena_segments(item: &ItemId) -> Option<Vec<String>> {
     }
 }
 
-fn arena_channel_slug(item: &ItemId) -> Option<String> {
+/// Are.na site sections that must not be mistaken for a user slug in
+/// `/:user/...` URLs.
+const ARENA_RESERVED_SEGMENTS: &[&str] = &[
+    "about",
+    "api",
+    "blog",
+    "block",
+    "channel",
+    "developers",
+    "explore",
+    "gift",
+    "getting-started",
+    "log-in",
+    "login",
+    "premium",
+    "search",
+    "settings",
+    "sign-up",
+    "signup",
+    "tools",
+];
+
+/// What a pasted are.na URL points at. Channel slugs are globally unique, so
+/// the legacy `/:user/:channel` form names the same channel as
+/// `/channel/:slug` (are.na itself redirects the legacy form).
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ArenaTarget {
+    Channel(String),
+    User(String),
+}
+
+fn arena_target(item: &ItemId) -> Option<ArenaTarget> {
     let segs = arena_segments(item)?;
     match segs.as_slice() {
-        [channel, slug] if channel == "channel" && !slug.is_empty() => Some(slug.clone()),
+        [first, slug] if first == "channel" && !slug.is_empty() => {
+            Some(ArenaTarget::Channel(slug.clone()))
+        }
+        [user, slug] if !slug.is_empty() && !ARENA_RESERVED_SEGMENTS.contains(&user.as_str()) => {
+            Some(ArenaTarget::Channel(slug.clone()))
+        }
+        [user] if !ARENA_RESERVED_SEGMENTS.contains(&user.as_str()) => {
+            Some(ArenaTarget::User(user.clone()))
+        }
         _ => None,
     }
 }
 
-/// Stable import thread for an are.na URL: one thread per channel.
+fn canonical_channel_item(slug: &str) -> ItemId {
+    ItemId::parse(&format!("https://www.are.na/channel/{slug}"))
+        .expect("channel slug came from a parsed URL")
+        .normalized_storage()
+}
+
+/// Item the resolver attaches children to: collapses legacy `/:user/:channel`
+/// URLs onto the canonical `/channel/:slug` item so one channel is one item
+/// no matter which URL form was pasted.
+pub fn canonical_arena_item(item: &ItemId) -> Option<ItemId> {
+    match arena_target(item)? {
+        ArenaTarget::Channel(slug) => Some(canonical_channel_item(&slug)),
+        ArenaTarget::User(_) => Some(item.clone().normalized_storage()),
+    }
+}
+
+/// Stable import thread for an are.na URL: one thread per channel or per user.
 fn resolver_thread_tag(item: &ItemId) -> String {
-    let path = match arena_channel_slug(item) {
-        Some(slug) => format!("https://www.are.na/channel/{slug}"),
-        None => item.display_path().trim_start_matches("-/").to_string(),
+    let path = match arena_target(item) {
+        Some(ArenaTarget::Channel(slug)) => format!("https://www.are.na/channel/{slug}"),
+        _ => item.display_path().trim_start_matches("-/").to_string(),
     };
     let tail = path.replace(['/', '?'], ":");
     format!("import:{tail}")
@@ -382,30 +459,33 @@ fn sanitize_explanation_text(raw: &str) -> String {
         .replace(['\n', '\r'], " ")
 }
 
-fn child_to_dsl(channel: &ItemId, child: &ArenaChild) -> String {
+fn child_to_dsl(parent: &ItemId, child: &ArenaChild) -> String {
     let payload = card_payload_for_dsl_fence(&child.card);
     let inner = format!("```slug-arena-card\n{payload}\n```");
-    let channel_url = channel.clone().normalized_storage();
-    let label = sanitize_explanation_text(channel_url.as_str());
+    let parent_url = parent.clone().normalized_storage();
+    let label = sanitize_explanation_text(parent_url.as_str());
     // Item body first: validation requires containment sides to be defined
-    // (here or previously) before the claim. The channel side is guaranteed by
-    // `ensure_channel_body`, not by re-declaring it here — re-declaring would
-    // clobber a user-written channel body on every block import.
+    // (here or previously) before the claim. The parent side is guaranteed by
+    // `ensure_scope_body`, not by re-declaring it here — re-declaring would
+    // clobber a user-written parent body on every child import.
     format!(
-        "{child_url} {{\n{inner}\n}}\n\n{{ Connected in are.na channel {label}. }}\n{child_url} <: {channel_url}\n",
+        "{child_url} {{\n{inner}\n}}\n\n{{ Connected in are.na {label}. }}\n{child_url} <: {parent_url}\n",
         child_url = child.url,
-        channel_url = channel_url.as_str(),
+        parent_url = parent_url.as_str(),
     )
 }
 
-/// Channel items are usually created (with a body) when the user pastes the URL.
-/// When the channel only exists as a ghost path-parent, define it once so the
-/// containment claims validate — and so the channel page renders a rich card.
-async fn ensure_channel_body(
+/// Parent items (channel or user profile) are usually created (with a body)
+/// when the user pastes the URL. When the parent only exists as a ghost,
+/// define it once so the containment claims validate — and so the parent page
+/// renders a rich card.
+async fn ensure_scope_body(
     state: &AppState,
     room: &str,
     thread_tag: &str,
-    channel: &ItemId,
+    parent: &ItemId,
+    kind: ArenaImportKind,
+    headline: String,
 ) -> Result<(), String> {
     use crate::reducer::scope_from_room_wire;
 
@@ -414,30 +494,29 @@ async fn ensure_channel_body(
         let scope = scope_from_room_wire(room);
         let in_room = reduced
             .content_for_scope(&scope)
-            .map(|c| c.item_bodies.contains_key(channel))
+            .map(|c| c.item_bodies.contains_key(parent))
             .unwrap_or(false);
-        let in_public = reduced.public().item_bodies.contains_key(channel);
+        let in_public = reduced.public().item_bodies.contains_key(parent);
         !in_room && !in_public
     };
     if !needs_body {
         return Ok(());
     }
-    let slug = arena_channel_slug(channel).unwrap_or_else(|| channel.last_segment().to_string());
-    let card = ArenaImportCard::new(ArenaImportKind::Channel, channel.as_str().to_string(), slug);
+    let card = ArenaImportCard::new(kind, parent.as_str().to_string(), headline);
     let payload = card_payload_for_dsl_fence(&card);
     let text = format!(
         "{url} {{\n```slug-arena-card\n{payload}\n```\n}}\n",
-        url = channel.as_str()
+        url = parent.as_str()
     );
     system_ingest(state, room, thread_tag, text, ARENA_SYSTEM_PRINCIPAL).await
 }
 
-/// Child URLs declared via containment claims into `channel` within one ingest body.
-fn arena_urls_declared_in_ingest(raw: &str, channel: &ItemId) -> Vec<String> {
+/// Child URLs declared via containment claims into `parent` within one ingest body.
+fn arena_urls_declared_in_ingest(raw: &str, parent: &ItemId) -> Vec<String> {
     let Ok(doc) = crate::dsl::parse_full(raw) else {
         return Vec::new();
     };
-    let parent = channel.clone().normalized_storage();
+    let parent = parent.clone().normalized_storage();
     let mut out = Vec::new();
     for stmt in doc.statements {
         let crate::dsl::Stmt::Containment {
@@ -467,12 +546,12 @@ fn arena_urls_declared_in_ingest(raw: &str, channel: &ItemId) -> Vec<String> {
     out
 }
 
-/// One post per channel entry; redact posts for entries removed from the channel
+/// One post per entry; redact posts for entries removed from the parent scope
 /// (and legacy multi-entry bulk posts).
-async fn resolve_arena_channel_contents(
+async fn resolve_arena_scope_contents(
     state: &AppState,
     room: &str,
-    channel: &ItemId,
+    parent: &ItemId,
     children: Vec<ArenaChild>,
 ) -> Result<ResolveStats, String> {
     use crate::canonical_path::canonicalize_tag;
@@ -484,7 +563,7 @@ async fn resolve_arena_channel_contents(
         .filter_map(|c| super::normalized_child_url(&c.url))
         .collect();
 
-    let thread_tag = resolver_thread_tag(channel);
+    let thread_tag = resolver_thread_tag(parent);
     let scope = scope_from_room_wire(room);
     let tag = canonicalize_tag(&thread_tag);
 
@@ -507,7 +586,7 @@ async fn resolve_arena_channel_contents(
             if ing.principal != ARENA_SYSTEM_PRINCIPAL {
                 continue;
             }
-            let declared = arena_urls_declared_in_ingest(&ing.raw, channel);
+            let declared = arena_urls_declared_in_ingest(&ing.raw, parent);
             if declared.is_empty() {
                 continue;
             }
@@ -541,7 +620,7 @@ async fn resolve_arena_channel_contents(
             state,
             room,
             &thread_tag,
-            child_to_dsl(channel, child),
+            child_to_dsl(parent, child),
             ARENA_SYSTEM_PRINCIPAL,
         )
         .await?;
@@ -560,11 +639,12 @@ pub async fn resolve_arena_children(
     room: &str,
     item: &ItemId,
 ) -> Result<ResolveStats, String> {
-    if !state.arena_resolver.can_resolve_children(item) {
+    let Some(target) = arena_target(item) else {
         return Err(
-            "are.na resolver handles channel URLs (https://www.are.na/channel/…) only".to_string(),
+            "are.na resolver handles channel URLs (https://www.are.na/channel/…) and user profiles (https://www.are.na/:user) only"
+                .to_string(),
         );
-    }
+    };
 
     let key = format!("arena:{}:{}", room.trim(), item.as_str());
     let now = now_ms();
@@ -582,11 +662,15 @@ pub async fn resolve_arena_children(
         runs.insert(key, now);
     }
 
-    let channel = item.clone().normalized_storage();
-    let children = state.arena_resolver.list_children(&channel).await?;
-    let thread_tag = resolver_thread_tag(&channel);
-    ensure_channel_body(state, room, &thread_tag, &channel).await?;
-    resolve_arena_channel_contents(state, room, &channel, children).await
+    let parent = canonical_arena_item(item).expect("arena_target matched");
+    let children = state.arena_resolver.list_children(item).await?;
+    let thread_tag = resolver_thread_tag(&parent);
+    let (kind, headline) = match &target {
+        ArenaTarget::Channel(slug) => (ArenaImportKind::Channel, slug.clone()),
+        ArenaTarget::User(user) => (ArenaImportKind::User, user.clone()),
+    };
+    ensure_scope_body(state, room, &thread_tag, &parent, kind, headline).await?;
+    resolve_arena_scope_contents(state, room, &parent, children).await
 }
 
 fn parse_arena_import_from_body(body: &str) -> Option<ArenaImportCard> {
@@ -598,6 +682,7 @@ fn parse_arena_import_from_body(body: &str) -> Option<ArenaImportCard> {
 fn kind_badge(kind: &ArenaImportKind) -> &'static str {
     match kind {
         ArenaImportKind::Channel => "Are.na · channel",
+        ArenaImportKind::User => "Are.na · user",
         ArenaImportKind::Text => "Are.na · text",
         ArenaImportKind::Image => "Are.na · image",
         ArenaImportKind::Link => "Are.na · link",
@@ -696,19 +781,61 @@ mod tests {
     }
 
     #[test]
-    fn arena_segments_parse_channel_urls() {
+    fn arena_target_parses_channel_urls() {
         let item = ItemId::parse("https://www.are.na/channel/arena-influences").unwrap();
         assert_eq!(
             arena_segments(&item),
             Some(vec!["channel".to_string(), "arena-influences".to_string()])
         );
+        assert_eq!(
+            arena_target(&item),
+            Some(ArenaTarget::Channel("arena-influences".to_string()))
+        );
         let bare = ItemId::parse("https://are.na/channel/arena-influences").unwrap();
         assert_eq!(
-            arena_channel_slug(&bare),
-            Some("arena-influences".to_string())
+            arena_target(&bare),
+            Some(ArenaTarget::Channel("arena-influences".to_string()))
         );
         let block = ItemId::parse("https://www.are.na/block/123").unwrap();
-        assert_eq!(arena_channel_slug(&block), None);
+        assert_eq!(arena_target(&block), None);
+    }
+
+    #[test]
+    fn arena_target_parses_legacy_user_channel_urls() {
+        let legacy = ItemId::parse("https://www.are.na/jake-chvatal/item-industrial").unwrap();
+        assert_eq!(
+            arena_target(&legacy),
+            Some(ArenaTarget::Channel("item-industrial".to_string()))
+        );
+        // Legacy URLs collapse onto the canonical channel item.
+        let canonical = canonical_arena_item(&legacy).expect("legacy channel URL");
+        assert_eq!(
+            canonical.as_str(),
+            "https://www.are.na/channel/item-industrial"
+        );
+        // Same thread as the canonical form.
+        assert_eq!(
+            resolver_thread_tag(&legacy),
+            "import:https:::www.are.na:channel:item-industrial"
+        );
+        // Reserved site sections are not user slugs.
+        let blog = ItemId::parse("https://www.are.na/blog/some-post").unwrap();
+        assert_eq!(arena_target(&blog), None);
+    }
+
+    #[test]
+    fn arena_target_parses_user_profile_urls() {
+        let user = ItemId::parse("https://www.are.na/jake-chvatal").unwrap();
+        assert_eq!(
+            arena_target(&user),
+            Some(ArenaTarget::User("jake-chvatal".to_string()))
+        );
+        assert_eq!(
+            resolver_thread_tag(&user),
+            "import:https:::www.are.na:jake-chvatal"
+        );
+        let reserved = ItemId::parse("https://www.are.na/explore").unwrap();
+        assert_eq!(arena_target(&reserved), None);
     }
 
     #[test]
@@ -835,7 +962,7 @@ mod tests {
         });
         let child = arena_child_from_entry(&entry).expect("text entry");
         // Containment sides must be defined with bodies: in production the channel
-        // is defined by `ensure_channel_body` (or the user's original paste); here
+        // is defined by `ensure_scope_body` (or the user's original paste); here
         // we prepend an equivalent channel definition to the same document.
         let text = format!(
             "{channel} {{are.na channel}}\n\n{child_dsl}",
@@ -917,6 +1044,55 @@ mod tests {
             .iter()
             .any(|k| k.url == "https://www.are.na/channel/nested-chan"));
         assert!(kids.iter().any(|k| k.url == "https://www.are.na/block/3"));
+        let _ = tx.send(());
+        let _ = server.await;
+    }
+
+    #[tokio::test]
+    async fn list_user_channels_keeps_channels_skips_blocks() {
+        use axum::{routing::get, Json, Router};
+        use tokio::sync::oneshot;
+
+        let (tx, rx) = oneshot::channel::<()>();
+        let app = Router::new().route(
+            "/v3/users/jake-chvatal/contents",
+            get(|| async move {
+                Json(serde_json::json!({
+                    "meta": {"current_page": 1, "has_more_pages": false},
+                    "data": [
+                        {"id": 11, "type": "Channel", "title": "item/industrial", "slug": "item-industrial", "counts": {"contents": 1900}},
+                        {"id": 12, "type": "Text", "content": {"markdown": "loose block"}},
+                        {"id": 13, "type": "Channel", "title": "notes", "slug": "notes-abc"}
+                    ],
+                }))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .with_graceful_shutdown(async {
+                    let _ = rx.await;
+                })
+                .await
+                .unwrap();
+        });
+        let resolver = ArenaResolver {
+            client: reqwest::Client::new(),
+            api_base_url: format!("http://{addr}"),
+            token: None,
+        };
+        let user = ItemId::parse("https://www.are.na/jake-chvatal").unwrap();
+        assert!(resolver.can_resolve_children(&user));
+        let kids = resolver.list_children(&user).await.unwrap();
+        assert_eq!(kids.len(), 2);
+        assert!(kids
+            .iter()
+            .any(|k| k.url == "https://www.are.na/channel/item-industrial"));
+        assert!(kids
+            .iter()
+            .any(|k| k.url == "https://www.are.na/channel/notes-abc"));
+        assert!(!kids.iter().any(|k| k.url.contains("/block/")));
         let _ = tx.send(());
         let _ = server.await;
     }
