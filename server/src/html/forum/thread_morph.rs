@@ -8,7 +8,7 @@ use crate::state::AppState;
 use super::access::user_can_view_room;
 use super::ingest::{ingest_entry_markup, post_header_row, redacted_header_row};
 use super::nav::{post_fragment_id, ThreadNav};
-use crate::html::{render_linkified_with_embeds_in_scope, JsBuilder, now_ms};
+use crate::html::{now_ms, render_linkified_with_embeds_in_scope, JsBuilder};
 
 pub(crate) async fn thread_ui_expand_post_full(
     state: &AppState,

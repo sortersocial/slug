@@ -29,9 +29,7 @@ impl ViewStore {
             while flush_rx.recv().await.is_some() {
                 while flush_rx.try_recv().is_ok() {}
 
-                let snapshot: HashMap<String, u64> = {
-                    counts_for_writer.lock().unwrap().clone()
-                };
+                let snapshot: HashMap<String, u64> = { counts_for_writer.lock().unwrap().clone() };
 
                 let path = path.clone();
                 let _ = tokio::task::spawn_blocking(move || {

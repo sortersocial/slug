@@ -5,13 +5,13 @@
 
 use std::time::Instant;
 
+use slugsocial_server::events::{Event, Ingest};
+use slugsocial_server::path_types::ItemId;
 use slugsocial_server::ranking::{
     compute_group_ranking, connected_components_from_voted_pairs, ranked_items_subset,
 };
 use slugsocial_server::reducer::{GroupState, ReducerState, VoteData};
 use slugsocial_server::scope_rank::build_rankings_for_item_set;
-use slugsocial_server::path_types::ItemId;
-use slugsocial_server::events::{Event, Ingest};
 
 fn item_name(i: usize) -> String {
     format!("~/bench/i{i:06}")
@@ -187,7 +187,10 @@ fn main() {
     // If time keeps growing all the way to 10_000, the cap is binding and the
     // returned scores are NOT converged.
     println!("\n== where does power iteration actually stop? (time vs max_iters cap) ==");
-    println!("{:<28} {:>9} {:>9} {:>9} {:>9} {:>9}", "graph", "k=10", "k=100", "k=1000", "k=10000", "verdict");
+    println!(
+        "{:<28} {:>9} {:>9} {:>9} {:>9} {:>9}",
+        "graph", "k=10", "k=100", "k=1000", "k=10000", "verdict"
+    );
     for (label, g) in [
         ("chain n=256", chain_group(256)),
         ("chain n=1024", chain_group(1024)),
@@ -227,7 +230,11 @@ fn main() {
             times[1],
             times[2],
             times[3],
-            if saturated { "CAP BINDS (not converged)" } else { "converged early" }
+            if saturated {
+                "CAP BINDS (not converged)"
+            } else {
+                "converged early"
+            }
         );
     }
 
@@ -287,7 +294,12 @@ fn main() {
             g.voted_pairs.iter().copied(),
         );
         let ms = t.elapsed().as_secs_f64() * 1000.0;
-        println!("n={n:7} P={:8}  cc: {ms:9.3} ms  ({} comps, {} isolates)", g.voted_pairs.len(), c.len(), i.len());
+        println!(
+            "n={n:7} P={:8}  cc: {ms:9.3} ms  ({} comps, {} isolates)",
+            g.voted_pairs.len(),
+            c.len(),
+            i.len()
+        );
     }
 
     // Attribute the per-post cost: replay the same 135 posts with the vote lines
@@ -347,8 +359,14 @@ fn main() {
         let graph_s = t.elapsed().as_secs_f64();
 
         println!("full replay                     : {full_s:8.3} s");
-        println!("  DSL parse + item bookkeeping  : {parse_s:8.3} s  ({:5.1}%)", parse_s / full_s * 100.0);
-        println!("  raw vote-graph construction   : {graph_s:8.3} s  ({:5.1}%)", graph_s / full_s * 100.0);
+        println!(
+            "  DSL parse + item bookkeeping  : {parse_s:8.3} s  ({:5.1}%)",
+            parse_s / full_s * 100.0
+        );
+        println!(
+            "  raw vote-graph construction   : {graph_s:8.3} s  ({:5.1}%)",
+            graph_s / full_s * 100.0
+        );
         println!(
             "  ranking + rank-history        : {:8.3} s  ({:5.1}%)",
             full_s - parse_s - graph_s,

@@ -2,9 +2,12 @@ use async_trait::async_trait;
 use maud::html;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tokio::sync::oneshot;
 
-use crate::{path_types::ItemId, state::AppState, write_cmd::WriteCmd};
+use super::{
+    child_urls_declared_in_ingest, extract_fence, normalized_child_url, now_ms,
+    resolver_cooldown_ms, system_ingest, system_redact, ResolveStats,
+};
+use crate::{path_types::ItemId, state::AppState};
 
 pub const SLUG_GITHUB_SCHEMA: &str = "slug_github_import";
 
@@ -15,20 +18,11 @@ const GITHUB_MAX_PAGES: usize = 3;
 /// Safety valve while paging open issues (`per_page=100` → up to 100k issues).
 const GITHUB_MAX_ISSUE_PAGES: usize = 1000;
 
-fn resolver_cooldown_ms() -> i64 {
-    std::env::var("SLUG_GITHUB_RESOLVER_COOLDOWN_MS")
-        .ok()
-        .and_then(|s| s.parse::<i64>().ok())
-        .filter(|&n| n >= 0)
-        .unwrap_or(GITHUB_RESOLVER_COOLDOWN_MS_DEFAULT)
-}
-
-fn now_ms() -> i64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as i64
+fn github_cooldown_ms() -> i64 {
+    resolver_cooldown_ms(
+        "SLUG_GITHUB_RESOLVER_COOLDOWN_MS",
+        GITHUB_RESOLVER_COOLDOWN_MS_DEFAULT,
+    )
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -391,10 +385,7 @@ fn resolver_thread_tag(item: &ItemId) -> String {
     let path = match github_segments(item).as_deref() {
         Some([owner, repo, ..]) => format!("https://github.com/{owner}/{repo}"),
         Some([owner]) => format!("https://github.com/{owner}"),
-        _ => item
-            .display_path()
-            .trim_start_matches("-/")
-            .to_string(),
+        _ => item.display_path().trim_start_matches("-/").to_string(),
     };
     let tail = path.replace(['/', '?'], ":");
     format!("import:{tail}")
@@ -436,103 +427,20 @@ fn children_to_dsl(children: &[ResolvedChild]) -> String {
     out
 }
 
-fn normalized_issue_url(url: &str) -> Option<String> {
-    ItemId::parse(url).map(|id| id.normalized_storage().as_str().to_string())
-}
-
-fn issue_urls_declared_in_ingest(raw: &str, issues_parent: &ItemId) -> Vec<String> {
-    let Ok(doc) = crate::dsl::parse_full(raw) else {
-        return Vec::new();
-    };
-    let parent = issues_parent.clone().normalized_storage();
-    let mut out = Vec::new();
-    for stmt in doc.statements {
-        let crate::dsl::Stmt::Item { title, .. } = stmt else {
-            continue;
-        };
-        let Some(item) = ItemId::parse(&title).map(|i| i.normalized_storage()) else {
-            continue;
-        };
-        let Some(p) = item.parent() else {
-            continue;
-        };
-        if p.normalized_storage() == parent {
-            out.push(item.as_str().to_string());
-        }
-    }
-    out.sort();
-    out.dedup();
-    out
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct GithubResolveStats {
-    pub imported: usize,
-    pub deleted: usize,
-    pub kept: usize,
-}
-
-impl GithubResolveStats {
-    pub fn total_touched(&self) -> usize {
-        self.imported + self.deleted + self.kept
-    }
-}
-
-async fn system_ingest(
-    state: &AppState,
-    room: &str,
-    thread_tag: &str,
-    text: String,
-) -> Result<(), String> {
-    let (tx, rx) = oneshot::channel();
-    state
-        .write_tx
-        .send(WriteCmd::SystemIngest {
-            room: room.to_string(),
-            thread_tag: thread_tag.to_string(),
-            text,
-            principal: GITHUB_SYSTEM_PRINCIPAL.to_string(),
-            reply: tx,
-        })
-        .await
-        .map_err(|_| "writer unavailable".to_string())?;
-    rx.await
-        .map_err(|_| "writer dropped".to_string())?
-        .map_err(|(msg, hint)| hint.map_or(msg.clone(), |h| format!("{msg}: {h}")))?;
-    Ok(())
-}
-
-async fn system_redact(state: &AppState, post_id: &str) -> Result<(), String> {
-    let (tx, rx) = oneshot::channel();
-    state
-        .write_tx
-        .send(WriteCmd::SystemRedact {
-            post_id: post_id.to_string(),
-            principal: GITHUB_SYSTEM_PRINCIPAL.to_string(),
-            reply: tx,
-        })
-        .await
-        .map_err(|_| "writer unavailable".to_string())?;
-    rx.await
-        .map_err(|_| "writer dropped".to_string())?
-        .map_err(|(msg, hint)| hint.map_or(msg.clone(), |h| format!("{msg}: {h}")))?;
-    Ok(())
-}
-
 /// One post per open issue; redact posts for closed/missing issues (and bulk posts).
 async fn resolve_github_issues(
     state: &AppState,
     room: &str,
     issues_parent: &ItemId,
     open_children: Vec<ResolvedChild>,
-) -> Result<GithubResolveStats, String> {
+) -> Result<ResolveStats, String> {
     use crate::canonical_path::canonicalize_tag;
     use crate::reducer::scope_from_room_wire;
     use std::collections::HashSet;
 
     let open_urls: HashSet<String> = open_children
         .iter()
-        .filter_map(|c| normalized_issue_url(&c.url))
+        .filter_map(|c| normalized_child_url(&c.url))
         .collect();
 
     let thread_tag = resolver_thread_tag(issues_parent);
@@ -558,7 +466,7 @@ async fn resolve_github_issues(
             if ing.principal != GITHUB_SYSTEM_PRINCIPAL {
                 continue;
             }
-            let declared = issue_urls_declared_in_ingest(&ing.raw, issues_parent);
+            let declared = child_urls_declared_in_ingest(&ing.raw, issues_parent);
             if declared.is_empty() {
                 continue;
             }
@@ -574,25 +482,32 @@ async fn resolve_github_issues(
 
     let mut deleted = 0usize;
     for post_id in &to_redact {
-        system_redact(state, post_id).await?;
+        system_redact(state, post_id, GITHUB_SYSTEM_PRINCIPAL).await?;
         deleted += 1;
     }
 
     let mut imported = 0usize;
     let mut kept = 0usize;
     for child in &open_children {
-        let Some(url) = normalized_issue_url(&child.url) else {
+        let Some(url) = normalized_child_url(&child.url) else {
             continue;
         };
         if covered.contains(&url) {
             kept += 1;
             continue;
         }
-        system_ingest(state, room, &thread_tag, child_to_dsl(child)).await?;
+        system_ingest(
+            state,
+            room,
+            &thread_tag,
+            child_to_dsl(child),
+            GITHUB_SYSTEM_PRINCIPAL,
+        )
+        .await?;
         imported += 1;
     }
 
-    Ok(GithubResolveStats {
+    Ok(ResolveStats {
         imported,
         deleted,
         kept,
@@ -603,7 +518,7 @@ pub async fn resolve_github_children(
     state: &AppState,
     room: &str,
     item: &ItemId,
-) -> Result<GithubResolveStats, String> {
+) -> Result<ResolveStats, String> {
     if !state.github_resolver.can_resolve_children(item) {
         return Err("no GitHub resolver for this item".to_string());
     }
@@ -613,7 +528,7 @@ pub async fn resolve_github_children(
     {
         let mut runs = state.resolver_runs.write().await;
         if let Some(last) = runs.get(&key) {
-            let remaining = resolver_cooldown_ms() - (now - *last);
+            let remaining = github_cooldown_ms() - (now - *last);
             if remaining > 0 {
                 return Err(format!(
                     "GitHub resolver cooldown: try again in {}s",
@@ -634,12 +549,12 @@ pub async fn resolve_github_children(
 
     let children = state.github_resolver.list_children(item).await?;
     if children.is_empty() {
-        return Ok(GithubResolveStats::default());
+        return Ok(ResolveStats::default());
     }
     let text = children_to_dsl(&children);
     let thread_tag = resolver_thread_tag(item);
-    system_ingest(state, room, &thread_tag, text).await?;
-    Ok(GithubResolveStats {
+    system_ingest(state, room, &thread_tag, text, GITHUB_SYSTEM_PRINCIPAL).await?;
+    Ok(ResolveStats {
         imported: children.len(),
         deleted: 0,
         kept: 0,
@@ -692,8 +607,7 @@ fn card_for_issue(v: &Value, url: &str, kind: GithubImportKind) -> GithubImportC
     }
     let labels = github_labels(v);
     if !labels.is_empty() {
-        card.sublines
-            .push(format!("Labels: {}", labels.join(", ")));
+        card.sublines.push(format!("Labels: {}", labels.join(", ")));
     }
     card.excerpt = excerpt_from_github_body(github_string(v, "body"));
     card
@@ -786,18 +700,6 @@ fn github_labels(value: &Value) -> Vec<String> {
         .collect()
 }
 
-fn extract_fence<'a>(body: &'a str, lang: &str) -> Option<&'a str> {
-    let b = body.trim();
-    let prefix = format!("```{lang}");
-    let rest = b.strip_prefix(prefix.as_str())?;
-    let rest = rest
-        .strip_prefix('\n')
-        .or_else(|| rest.strip_prefix('\r'))
-        .unwrap_or(rest);
-    let end = rest.find("\n```")?;
-    Some(rest[..end].trim())
-}
-
 fn parse_github_import_from_body(body: &str) -> Option<GithubImportCard> {
     let payload = extract_fence(body.trim(), "slug-github-card")?;
     let c = decode_github_card_payload(payload)?;
@@ -817,20 +719,20 @@ fn kind_badge(kind: &GithubImportKind) -> &'static str {
 
 fn render_github_card(card: &GithubImportCard) -> maud::Markup {
     html! {
-        article.github-import-card {
-            header.github-import-card__hdr {
-                span class="github-import-card__badge" { (kind_badge(&card.kind)) }
-                h3.github-import-card__title { (card.headline.as_str()) }
+        article.import-card {
+            header.import-card__hdr {
+                span class="import-card__badge" { (kind_badge(&card.kind)) }
+                h3.import-card__title { (card.headline.as_str()) }
             }
             @if !card.sublines.is_empty() {
-                ul.github-import-card__meta {
+                ul.import-card__meta {
                     @for line in &card.sublines {
                         li { (line.as_str()) }
                     }
                 }
             }
             @if let Some(ex) = &card.excerpt {
-                div.github-import-card__excerpt {
+                div.import-card__excerpt {
                     @for block in ex.split("\n\n") {
                         @if !block.trim().is_empty() {
                             p { (block) }
@@ -838,7 +740,7 @@ fn render_github_card(card: &GithubImportCard) -> maud::Markup {
                     }
                 }
             }
-            p.github-import-card__link {
+            p.import-card__link {
                 a href=(card.url.as_str()) rel="noopener noreferrer" target="_blank" {
                     "Open on GitHub"
                 }
@@ -947,7 +849,7 @@ mod tests {
     }
 
     #[test]
-    fn issue_urls_declared_reads_single_and_bulk_posts() {
+    fn child_urls_declared_reads_single_and_bulk_posts() {
         let parent = ItemId::parse("https://github.com/o/r/issues").unwrap();
         let single = child_to_dsl(&ResolvedChild {
             url: "https://github.com/o/r/issues/1".into(),
@@ -959,13 +861,13 @@ mod tests {
             ),
         });
         assert_eq!(
-            issue_urls_declared_in_ingest(&single, &parent),
+            child_urls_declared_in_ingest(&single, &parent),
             vec!["https://github.com/o/r/issues/1".to_string()]
         );
 
         let bulk = "https://github.com/o/r/issues/1 {a}\nhttps://github.com/o/r/issues/2 {b}\n";
         assert_eq!(
-            issue_urls_declared_in_ingest(bulk, &parent),
+            child_urls_declared_in_ingest(bulk, &parent),
             vec![
                 "https://github.com/o/r/issues/1".to_string(),
                 "https://github.com/o/r/issues/2".to_string()
@@ -1068,16 +970,13 @@ mod tests {
         };
         let text = child_to_dsl(&child);
         let reduced = crate::reducer::ReducerState::default();
-        let validated = crate::api::validate_ingest_document(
-            &reduced,
-            &text,
-            &crate::reducer::ScopeId::Public,
-        )
-        .unwrap_or_else(|(code, msg, hint)| {
-            panic!(
+        let validated =
+            crate::api::validate_ingest_document(&reduced, &text, &crate::reducer::ScopeId::Public)
+                .unwrap_or_else(|(code, msg, hint)| {
+                    panic!(
                 "github import DSL should validate; got {code} {msg} hint={hint:?}\nDSL:\n{text}"
             )
-        });
+                });
         let item_body = validated
             .doc
             .statements
@@ -1091,7 +990,11 @@ mod tests {
             panic!("body should round-trip as github card; body was:\n{item_body}\nDSL:\n{text}")
         });
         assert!(
-            child.card.excerpt.as_ref().is_some_and(|e| e.contains("```")),
+            child
+                .card
+                .excerpt
+                .as_ref()
+                .is_some_and(|e| e.contains("```")),
             "precondition: card excerpt contains markdown fences"
         );
         assert_eq!(
@@ -1177,7 +1080,6 @@ mod tests {
                 )
             });
     }
-
 
     #[tokio::test]
     async fn list_issues_pages_until_exhausted() {

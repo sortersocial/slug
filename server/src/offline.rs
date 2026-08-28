@@ -4,14 +4,14 @@ use std::collections::HashSet;
 use std::path::Path;
 
 use serde::Serialize;
-use slug_types::{CheckScopeRanking, RankComponent, RankRow, paths::GardenItemUrl};
+use slug_types::{paths::GardenItemUrl, CheckScopeRanking, RankComponent, RankRow};
 
 use crate::{
     api::{resolve_item, validate_ingest_document},
     dsl,
     events::{Event, Ingest},
     path_types::ItemId,
-    reducer::{ReducerState, ScopeId, scope_from_room_wire},
+    reducer::{scope_from_room_wire, ReducerState, ScopeId},
     scope_rank::build_children_rankings,
 };
 
@@ -182,9 +182,7 @@ pub fn rankings_for_document(
         .map(|(parent, aspect)| {
             let empty = crate::reducer::GroupState::new();
             let scoped = if let Some(ref slug) = aspect {
-                let group = scoped_content
-                    .aspect_group(&parent, slug)
-                    .unwrap_or(&empty);
+                let group = scoped_content.aspect_group(&parent, slug).unwrap_or(&empty);
                 build_rankings_for_group_and_items(group, &scoped_content.members_of(&parent))
             } else {
                 build_children_rankings(scoped_content, &parent)
@@ -228,15 +226,16 @@ fn compile_document_inner(
 ) -> Result<CompileResult, CompileError> {
     let room_key = room.trim();
     let scope = scope_from_room_wire(room_key);
-    let validated = validate_ingest_document(base, text, &scope).map_err(|(_, message, hint)| {
-        let parse_error = dsl::parse_full(text).err().map(|e| e.to_string());
-        CompileError {
-            ok: false,
-            error: message,
-            hint,
-            parse_error,
-        }
-    })?;
+    let validated =
+        validate_ingest_document(base, text, &scope).map_err(|(_, message, hint)| {
+            let parse_error = dsl::parse_full(text).err().map(|e| e.to_string());
+            CompileError {
+                ok: false,
+                error: message,
+                hint,
+                parse_error,
+            }
+        })?;
 
     let event = Event::Ingest(Ingest {
         ts: validated.ts,
@@ -307,14 +306,20 @@ fn replay_events(events: &[(usize, Event)]) -> ReducerState {
 }
 
 /// Replay a JSONL event log into reducer state (same rules as server boot).
-pub fn load_reducer_from_jsonl(path: &Path) -> Result<(ReducerState, Vec<BadJsonLine>), std::io::Error> {
+pub fn load_reducer_from_jsonl(
+    path: &Path,
+) -> Result<(ReducerState, Vec<BadJsonLine>), std::io::Error> {
     let (_total_lines, events, bad_json_lines) = load_events_from_jsonl(path)?;
     Ok((replay_events(&events), bad_json_lines))
 }
 
 /// Find one ingest in a log and compile it against all prior events as base state.
-pub fn compile_ingest_from_log(path: &Path, ingest_id: &str) -> Result<CompileResult, CompileIngestError> {
-    let (_total_lines, events, bad_json_lines) = load_events_from_jsonl(path).map_err(CompileIngestError::Io)?;
+pub fn compile_ingest_from_log(
+    path: &Path,
+    ingest_id: &str,
+) -> Result<CompileResult, CompileIngestError> {
+    let (_total_lines, events, bad_json_lines) =
+        load_events_from_jsonl(path).map_err(CompileIngestError::Io)?;
     if !bad_json_lines.is_empty() {
         return Err(CompileIngestError::Compile(CompileError {
             ok: false,
@@ -340,8 +345,14 @@ pub fn compile_ingest_from_log(path: &Path, ingest_id: &str) -> Result<CompileRe
 
     let (line_no, ing) = found.ok_or_else(|| CompileIngestError::NotFound(needle.to_string()))?;
     let base = replay_events(&prior);
-    compile_document_inner(&base, &ing.room_id, &ing.raw, Some(ing.id.clone()), Some(line_no))
-        .map_err(CompileIngestError::Compile)
+    compile_document_inner(
+        &base,
+        &ing.room_id,
+        &ing.raw,
+        Some(ing.id.clone()),
+        Some(line_no),
+    )
+    .map_err(CompileIngestError::Compile)
 }
 
 /// Scan an events.jsonl for corrupt JSON lines and ingests whose DSL fails to parse.
@@ -488,6 +499,8 @@ mod tests {
         assert!(!report.ok);
         assert_eq!(report.malformed_ingests.len(), 1);
         assert_eq!(report.malformed_ingests[0].id, "bad-ingest-id");
-        assert!(report.malformed_ingests[0].parse_error.contains("parse error"));
+        assert!(report.malformed_ingests[0]
+            .parse_error
+            .contains("parse error"));
     }
 }

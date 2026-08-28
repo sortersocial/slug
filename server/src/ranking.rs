@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::path_types::ItemId;
 use crate::reducer::GroupState;
-use crate::stationary::{self, RankChain, SolveOptions, Solution};
+use crate::stationary::{self, RankChain, Solution, SolveOptions};
 
 #[derive(Debug, Clone)]
 pub struct RankedItem {
@@ -80,12 +80,8 @@ pub fn compute_group_ranking(group: &mut GroupState, max_iters: usize, tol: f64)
         return;
     }
 
-    let scores = compute_scores_from_edges(
-        n,
-        group.edges.iter().map(|(&k, &w)| (k, w)),
-        max_iters,
-        tol,
-    );
+    let scores =
+        compute_scores_from_edges(n, group.edges.iter().map(|(&k, &w)| (k, w)), max_iters, tol);
     group.cached_scores = scores;
     group.dirty = false;
 }
@@ -102,7 +98,11 @@ pub fn ranked_items(group: &mut GroupState, max_iters: usize, tol: f64) -> Vec<R
         })
         .collect();
 
-    items.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    items.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     items
 }
 
@@ -205,14 +205,24 @@ pub fn solve_scores_from_edges(
     solution
 }
 
-fn compute_scores_from_edges(n: usize, edges: impl Iterator<Item = ((usize, usize), f64)>, max_iters: usize, tol: f64) -> Vec<f64> {
+fn compute_scores_from_edges(
+    n: usize,
+    edges: impl Iterator<Item = ((usize, usize), f64)>,
+    max_iters: usize,
+    tol: f64,
+) -> Vec<f64> {
     solve_scores_from_edges(n, edges, max_iters, tol).pi
 }
 
 /// Rank-centrality within a subset of items (an induced subgraph), using the group's aggregated edges.
 ///
 /// `idxs` are indices into `group.idx_to_item`. The returned items use the original item names.
-pub fn ranked_items_subset(group: &GroupState, idxs: &[usize], max_iters: usize, tol: f64) -> Vec<RankedItem> {
+pub fn ranked_items_subset(
+    group: &GroupState,
+    idxs: &[usize],
+    max_iters: usize,
+    tol: f64,
+) -> Vec<RankedItem> {
     if idxs.is_empty() {
         return vec![];
     }
@@ -291,18 +301,14 @@ pub fn rank_partition(
         if gi == UNASSIGNED || gi != slot_group[dst] {
             continue;
         }
-        buckets[gi as usize].push((
-            (slot_local[src] as usize, slot_local[dst] as usize),
-            w,
-        ));
+        buckets[gi as usize].push(((slot_local[src] as usize, slot_local[dst] as usize), w));
     }
 
     groups
         .iter()
         .zip(buckets)
         .map(|(nodes, edges)| {
-            let solved =
-                solve_scores_from_edges(nodes.len(), edges.into_iter(), max_iters, tol);
+            let solved = solve_scores_from_edges(nodes.len(), edges.into_iter(), max_iters, tol);
             // Sort on log scores (same reason as `ranked_items_subset`): deep
             // preference chains underflow f64 mass while log-space still orders.
             let mut items: Vec<(RankedItem, f64)> = nodes
@@ -458,7 +464,11 @@ mod tests {
             }
             let solved = solve_scores_from_edges(n, edges.into_iter(), 10000, 1e-8);
             assert!(solved.converged, "chain n={n} reported non-convergence");
-            assert!(solved.residual < 1e-10, "chain n={n}: {:e}", solved.residual);
+            assert!(
+                solved.residual < 1e-10,
+                "chain n={n}: {:e}",
+                solved.residual
+            );
             assert_eq!(solved.pi.len(), n);
             assert_eq!(solved.log_pi.len(), n);
         }
@@ -509,8 +519,14 @@ mod tests {
             .iter()
             .map(|&i| g.idx_to_item[i].as_str())
             .collect::<Vec<_>>();
-        assert_eq!(comp0, vec!["https://slug.social/a", "https://slug.social/b"]);
-        assert_eq!(comp1, vec!["https://slug.social/c", "https://slug.social/d"]);
+        assert_eq!(
+            comp0,
+            vec!["https://slug.social/a", "https://slug.social/b"]
+        );
+        assert_eq!(
+            comp1,
+            vec!["https://slug.social/c", "https://slug.social/d"]
+        );
     }
 
     /// `rank_partition` exists purely to avoid the O(components x edges) cost of
@@ -576,8 +592,10 @@ mod tests {
         g.apply_vote(vote(1, "a", "b", 3, 1)); // a > b
         g.apply_vote(vote(2, "c", "d", 1, 4)); // d > c
 
-        let (comps, _) =
-            connected_components_from_voted_pairs(g.idx_to_item.len(), g.voted_pairs.iter().copied());
+        let (comps, _) = connected_components_from_voted_pairs(
+            g.idx_to_item.len(),
+            g.voted_pairs.iter().copied(),
+        );
         assert_eq!(comps.len(), 2);
 
         // Rank each component and ensure winner is first within that component.
@@ -593,5 +611,3 @@ mod tests {
         }
     }
 }
-
-

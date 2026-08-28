@@ -9,11 +9,8 @@ use maud::{html, Markup};
 use serde::Deserialize;
 
 use crate::{
-    api::validate_ingest_document,
-    html::JsBuilder,
-    middleware::canonical_view_url,
-    reducer::ScopeId,
-    state::AppState,
+    api::validate_ingest_document, html::JsBuilder, middleware::canonical_view_url,
+    reducer::ScopeId, state::AppState,
 };
 
 use super::{bc_segment, layout, theme_from_jar, theme_next_from_uri};
@@ -26,7 +23,11 @@ fn bc_try() -> Markup {
 }
 
 /// The interactive editor page — `/try`.
-pub async fn editor_page(State(state): State<AppState>, jar: CookieJar, uri: Uri) -> impl IntoResponse {
+pub async fn editor_page(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    uri: Uri,
+) -> impl IntoResponse {
     let url_key = canonical_view_url(&uri);
     let view_count = state.views.get_views(&url_key);
 
@@ -80,10 +81,7 @@ pub async fn editor_check(
             let results = html! {
                 div id="editor-results" {}
             };
-            (
-                html! { div id="editor-status" { (status) } },
-                results,
-            )
+            (html! { div id="editor-status" { (status) } }, results)
         }
         Ok(v) => {
             drop(reduced);
@@ -144,10 +142,7 @@ pub async fn editor_check(
                 }
             };
 
-            (
-                html! { div id="editor-status" { (status) } },
-                results,
-            )
+            (html! { div id="editor-status" { (status) } }, results)
         }
     };
 

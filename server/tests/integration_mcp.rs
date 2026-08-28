@@ -335,9 +335,7 @@ async fn mcp_read_and_write_tools_round_trip() {
     assert_eq!(minted["isError"], false, "{minted}");
     assert_eq!(minted["structuredContent"]["phase"], "ready");
     assert_eq!(minted["structuredContent"]["user"], "testuser");
-    let minted_delegate = minted["structuredContent"]["delegate"]
-        .as_str()
-        .unwrap();
+    let minted_delegate = minted["structuredContent"]["delegate"].as_str().unwrap();
     assert!(
         minted_delegate.contains(":cursor:anthropic/claude-sonnet-4.5"),
         "{minted_delegate}"
@@ -576,7 +574,10 @@ async fn mcp_oauth_accepts_claude_redirect() {
                 "https://claude.ai/oauth/mcp-oauth-client-metadata",
             ),
             ("redirect_uri", "https://claude.ai/api/mcp/auth_callback"),
-            ("code_challenge", "LGZJYPXoCfqeQ2pG8EKrCEHgLugRSKQ1j3qQQB8GYeU"),
+            (
+                "code_challenge",
+                "LGZJYPXoCfqeQ2pG8EKrCEHgLugRSKQ1j3qQQB8GYeU",
+            ),
             ("code_challenge_method", "S256"),
             ("state", "B9ix7zIQCbjJTQCfADcaXjg0VrzzLftlF61gz0nbDm0"),
             ("scope", "slug.read slug.write"),
@@ -873,7 +874,9 @@ async fn mcp_whoami_and_private_room_round_trip() {
             .any(|t| t["thread"].as_str() == Some("#private-demo")),
         "{threads:?}"
     );
-    let recent = room["structuredContent"]["recent_posts"].as_array().unwrap();
+    let recent = room["structuredContent"]["recent_posts"]
+        .as_array()
+        .unwrap();
     let recent_hit = recent
         .iter()
         .find(|p| p["post_id"].as_str() == Some(post_id.as_str()))
@@ -909,7 +912,10 @@ async fn mcp_whoami_and_private_room_round_trip() {
     )
     .await;
     assert_eq!(since_delegate["isError"], false, "{since_delegate}");
-    assert_eq!(since_delegate["structuredContent"]["delegate"], TEST_DELEGATE);
+    assert_eq!(
+        since_delegate["structuredContent"]["delegate"],
+        TEST_DELEGATE
+    );
     let since_posts = since_delegate["structuredContent"]["posts"]
         .as_array()
         .unwrap();

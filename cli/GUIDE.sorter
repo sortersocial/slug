@@ -236,6 +236,7 @@ Add --json to scoped commands for machine-readable output (RPC-shaped JSON where
 
 ~/contact {
 Web: https://slug.social
+Questions: https://slug.social/q/psalms/beauty (shareable pairwise prompt over a garden scope)
 GitHub: https://github.com/sortersocial/slug
 Issues/feedback: https://github.com/sortersocial/slug/issues
 }

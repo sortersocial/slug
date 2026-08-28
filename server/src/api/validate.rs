@@ -33,11 +33,15 @@ pub fn validate_ingest_document(
         _ => reduced.content_for_scope(scope),
     };
     let item_exists = |key: &ItemId| {
-        scoped_content.map(|c| c.items.contains(key)).unwrap_or(false)
+        scoped_content
+            .map(|c| c.items.contains(key))
+            .unwrap_or(false)
             || public_content.items.contains(key)
     };
     let body_exists = |key: &ItemId| {
-        scoped_content.map(|c| c.item_bodies.contains_key(key)).unwrap_or(false)
+        scoped_content
+            .map(|c| c.item_bodies.contains_key(key))
+            .unwrap_or(false)
             || public_content.item_bodies.contains_key(key)
     };
     let doc = match dsl::parse_full(text) {
@@ -60,20 +64,33 @@ pub fn validate_ingest_document(
                 let item = match resolve_item(title) {
                     Ok(v) => v.ontology_leaf(),
                     Err(msg) => {
-                        return Err((StatusCode::BAD_REQUEST, "invalid item path".to_string(), Some(msg)));
+                        return Err((
+                            StatusCode::BAD_REQUEST,
+                            "invalid item path".to_string(),
+                            Some(msg),
+                        ));
                     }
                 };
                 let Some(body_text) = body else {
                     return Err((
                         StatusCode::BAD_REQUEST,
-                        format!("item missing body: {}", GardenItemUrl::from_stored(&item, room_wire)),
-                        Some("items must be declared with bodies, e.g. `~/path/item { ... }`".to_string()),
+                        format!(
+                            "item missing body: {}",
+                            GardenItemUrl::from_stored(&item, room_wire)
+                        ),
+                        Some(
+                            "items must be declared with bodies, e.g. `~/path/item { ... }`"
+                                .to_string(),
+                        ),
                     ));
                 };
                 if body_text.trim().is_empty() {
                     return Err((
                         StatusCode::BAD_REQUEST,
-                        format!("item body is empty: {}", GardenItemUrl::from_stored(&item, room_wire)),
+                        format!(
+                            "item body is empty: {}",
+                            GardenItemUrl::from_stored(&item, room_wire)
+                        ),
                         Some("write at least one sentence inside `{ ... }`".to_string()),
                     ));
                 }
@@ -182,8 +199,5 @@ pub fn validate_ingest_document(
 }
 
 pub fn normalize_room_and_thread(room: &str, thread_tag: &str) -> Result<(String, String), String> {
-    Ok((
-        room.trim().to_string(),
-        validate_thread_tag(thread_tag)?,
-    ))
+    Ok((room.trim().to_string(), validate_thread_tag(thread_tag)?))
 }

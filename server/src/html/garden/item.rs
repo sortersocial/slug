@@ -1,11 +1,7 @@
 use axum::http::Uri;
 use maud::{html, Markup};
 
-use crate::{
-    canonical_path::canonicalize_item,
-    html::forum::ThreadNav,
-    path_types::ItemId,
-};
+use crate::{canonical_path::canonicalize_item, html::forum::ThreadNav, path_types::ItemId};
 
 /// Sentinel for "every descendant" ranking depth (`?depth=all`).
 pub(super) const GARDEN_DEPTH_ALL: usize = usize::MAX;
@@ -44,10 +40,7 @@ pub(super) fn parse_garden_depth(raw: &str) -> usize {
     // Percent-decoding for ∞ (%E2%88%9E) if a client encodes the glyph.
     let decoded = percent_decode_basic(s);
     let key = decoded.as_str();
-    if matches!(
-        key,
-        "all" | "∞" | "inf" | "infinity" | "*" | "unlimited"
-    ) {
+    if matches!(key, "all" | "∞" | "inf" | "infinity" | "*" | "unlimited") {
         return GARDEN_DEPTH_ALL;
     }
     key.parse::<usize>().unwrap_or(1).max(1)

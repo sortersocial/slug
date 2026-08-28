@@ -56,6 +56,7 @@ pub fn create_app_state(cfg: AppConfig) -> AppState {
         views,
         resolver_runs: Arc::new(RwLock::new(HashMap::new())),
         github_resolver: Arc::new(crate::resolvers::GitHubResolver::from_env()),
+        arena_resolver: Arc::new(crate::resolvers::ArenaResolver::from_env()),
     };
     tokio::spawn(crate::api::write_actor::writer_actor(
         write_rx,
@@ -90,15 +91,38 @@ pub fn create_app(state: AppState) -> Router {
             "/r/:room_key/vote",
             get(crate::html::room_vote_compare_page),
         )
+        .route("/q/:collection", get(crate::html::question_page))
+        .route(
+            "/q/:collection/:aspect",
+            get(crate::html::question_aspect_page),
+        )
+        .route(
+            "/r/:room_key/q/:collection",
+            get(crate::html::room_question_page),
+        )
+        .route(
+            "/r/:room_key/q/:collection/:aspect",
+            get(crate::html::room_question_aspect_page),
+        )
         .route("/~", get(crate::html::garden_index))
+        .route("/~/", get(crate::html::redirect_strip_trailing_slash))
         .route("/~/*path", get(crate::html::ontology_path))
         .route("/-", get(crate::html::external_garden_index))
+        .route("/-/", get(crate::html::redirect_strip_trailing_slash))
         .route("/-/*path", get(crate::html::external_ontology_path))
         .route("/r/:room_key/~", get(crate::html::room_garden_index))
+        .route(
+            "/r/:room_key/~/",
+            get(crate::html::redirect_strip_trailing_slash),
+        )
         .route("/r/:room_key/~/*path", get(crate::html::room_ontology_path))
         .route(
             "/r/:room_key/-",
             get(crate::html::room_external_garden_index),
+        )
+        .route(
+            "/r/:room_key/-/",
+            get(crate::html::redirect_strip_trailing_slash),
         )
         .route(
             "/r/:room_key/-/*path",

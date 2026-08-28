@@ -94,9 +94,9 @@ mod tests {
     #[test]
     fn post_empty_delegate_when_human() {
         let xml = format_post(0, "5s", "bob", None, "hi");
-        assert!(xml.starts_with(
-            "<post index=\"0\" timeago=\"5s\" principal=\"bob\" delegate=\"\">"
-        ));
+        assert!(
+            xml.starts_with("<post index=\"0\" timeago=\"5s\" principal=\"bob\" delegate=\"\">")
+        );
     }
 
     #[test]

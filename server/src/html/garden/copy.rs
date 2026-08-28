@@ -4,7 +4,7 @@ use crate::form_template::template_json_compact;
 use crate::html::forum::ThreadNav;
 use crate::html::js_string_literal;
 use crate::html::ui_action::HtmlUiAction;
-use crate::html::{JsBuilder, ui_js_warn};
+use crate::html::{ui_js_warn, JsBuilder};
 use crate::path_types::ItemId;
 use crate::reducer::scope_from_room_wire;
 use crate::scope_rank::{
@@ -68,7 +68,8 @@ fn rankings_for_copy(
         let hosts = external_root_host_items(state_content);
         return build_rankings_for_item_set(state_content, &hosts);
     }
-    let parent = ItemId::parse(parent_path.trim()).map(|id| id.ontology_leaf())
+    let parent = ItemId::parse(parent_path.trim())
+        .map(|id| id.ontology_leaf())
         .unwrap_or_else(|| ItemId::ontology_root())
         .normalized_storage();
     let depth = depth.max(1);

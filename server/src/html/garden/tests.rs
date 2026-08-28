@@ -1,17 +1,18 @@
 use super::{
     access::content_for_garden_view,
-    external::{external_frame_allowed, external_resolver_status_markup, external_source_href},
     browse::scoped_bc_containment,
+    external::{external_frame_allowed, external_resolver_status_markup, external_source_href},
     item_page::{
         build_item_page_view_model, containment_crumb_chain, item_relations_markup,
         sibling_nav_markup,
     },
-    render::aspect_ranking_sections_markup,
     pin::ont_pin_vote_controls,
+    question::{collection_is_known, parse_collection_leaf, question_headline},
+    render::aspect_ranking_sections_markup,
     vote::{
         canonical_edge_items, edge_vote_count_for_pair, edge_vote_entries_for_pair,
         ratios_for_compare_page, sort_votes_for_compare_display, suggest_next_vote_pair,
-        vote_compare_item_card, vote_pool_href,
+        vote_compare_item_card, vote_pool_href, QuestionHeadline,
     },
 };
 use crate::{
@@ -66,7 +67,11 @@ fn vote_edge_compare_sorts_rows_by_strength_for_page_left() {
     let sorted = sort_votes_for_compare_display(raw, &page_left, &page_right);
     // 8:2 is stored reduced as 4:1; still a stronger left share than 1:9.
     let (r0_l, r0_r) = ratios_for_compare_page(&sorted[0], &page_left, &page_right);
-    assert_eq!((r0_l, r0_r), (4, 1), "stronger left weight should sort first");
+    assert_eq!(
+        (r0_l, r0_r),
+        (4, 1),
+        "stronger left weight should sort first"
+    );
     let (r1_l, r1_r) = ratios_for_compare_page(&sorted[1], &page_left, &page_right);
     assert_eq!((r1_l, r1_r), (1, 9));
 }
@@ -125,29 +130,30 @@ fn suggest_next_vote_pair_prefers_unvoted_sibling_pair() {
 
 #[test]
 fn external_resolver_status_markup_reports_success_and_refresh() {
-    let stats = crate::resolvers::GithubResolveStats {
+    let stats = crate::resolvers::ResolveStats {
         imported: 2,
         deleted: 0,
         kept: 0,
     };
-    let html =
-        external_resolver_status_markup(Ok(stats), "/-/https://github.com/o/r").into_string();
+    let html = external_resolver_status_markup(Ok((stats, "GitHub")), "/-/https://github.com/o/r")
+        .into_string();
     assert!(html.contains("Imported 2 GitHub items."));
     assert!(html.contains("href=\"/-/https://github.com/o/r\""));
 }
 
 #[test]
 fn external_resolver_status_markup_reports_deletes() {
-    let stats = crate::resolvers::GithubResolveStats {
+    let stats = crate::resolvers::ResolveStats {
         imported: 1,
         deleted: 2,
         kept: 3,
     };
-    let html = external_resolver_status_markup(Ok(stats), "/-/https://github.com/o/r/issues")
-        .into_string();
+    let html =
+        external_resolver_status_markup(Ok((stats, "GitHub")), "/-/https://github.com/o/r/issues")
+            .into_string();
     assert!(html.contains("Imported 1 GitHub item."));
     assert!(html.contains("Removed 2 closed/stale items."));
-    assert!(html.contains("Kept 3 still-open."));
+    assert!(html.contains("Kept 3 current."));
 }
 
 #[test]
@@ -256,7 +262,10 @@ fn sibling_nav_markup_includes_rank_and_winner_percentile() {
     let mid = build_item_page_view_model(&reduced, &ScopeId::Public, "~/topic/b", 1);
     let mid_nav = mid.sibling_nav.expect("sibling nav");
     let mid_html = sibling_nav_markup(&nav, &mid_nav, &mid.item).into_string();
-    assert!(mid_html.contains("rank: 2/3"), "missing mid rank in {mid_html}");
+    assert!(
+        mid_html.contains("rank: 2/3"),
+        "missing mid rank in {mid_html}"
+    );
     assert!(
         !mid_html.contains("percentile"),
         "non-winner should omit percentile: {mid_html}"
@@ -310,7 +319,10 @@ fn item_page_renders_aspect_section_below_canonical() {
         model.aspect_rankings[0].prompt.as_deref(),
         Some("winner is more beautiful")
     );
-    assert_eq!(model.aspect_rankings[0].rankings.component_rankings.len(), 1);
+    assert_eq!(
+        model.aspect_rankings[0].rankings.component_rankings.len(),
+        1
+    );
     let canon_top = model.child_rankings.component_rankings[0].ranked[0]
         .item
         .as_str();
@@ -342,6 +354,61 @@ fn item_page_renders_aspect_section_below_canonical() {
         html.contains("ont-ranking-list"),
         "missing ranking list: {html}"
     );
+    assert!(
+        html.contains("id=\"aspect-beauty\""),
+        "missing aspect section anchor: {html}"
+    );
+}
+
+#[test]
+fn parse_collection_leaf_maps_bare_name_to_tilde_item() {
+    let id = parse_collection_leaf("psalms").expect("psalms");
+    assert_eq!(id, ItemId::parse("~psalms").unwrap().ontology_leaf());
+    assert_eq!(
+        parse_collection_leaf("~psalms"),
+        parse_collection_leaf("psalms")
+    );
+    assert!(parse_collection_leaf("").is_none());
+    assert!(parse_collection_leaf("~").is_none());
+    assert!(parse_collection_leaf("~/psalms").is_none());
+    assert!(parse_collection_leaf("foo/bar").is_none());
+}
+
+#[test]
+fn question_headline_uses_scope_body_then_fallback_and_aspect_prompt() {
+    let mut reduced = ReducerState::default();
+    apply_ingest(
+        &mut reduced,
+        1,
+        "~/psalms {Which psalm is greater?}\n\
+         ~/psalms/a {alpha}\n\
+         ~/lonely\n\
+         :beauty {more beautiful}\n",
+    );
+    let content = content_for_garden_view(&reduced, &ScopeId::Public);
+    let psalms = ItemId::parse("~psalms").unwrap().ontology_leaf();
+    let lonely = ItemId::parse("~lonely").unwrap().ontology_leaf();
+    match question_headline(content, &psalms, None) {
+        QuestionHeadline::Body(b) => assert_eq!(b, "Which psalm is greater?"),
+        QuestionHeadline::Fallback(s) => panic!("expected body headline, got {s}"),
+    }
+    match question_headline(content, &lonely, None) {
+        QuestionHeadline::Fallback(s) => assert_eq!(s, "Which is greater: lonely?"),
+        QuestionHeadline::Body(b) => panic!("expected fallback, got body {b}"),
+    }
+    match question_headline(content, &psalms, Some("beauty")) {
+        QuestionHeadline::Body(b) => assert_eq!(b, "more beautiful"),
+        QuestionHeadline::Fallback(s) => panic!("expected aspect prompt, got {s}"),
+    }
+    match question_headline(content, &psalms, Some("speed")) {
+        QuestionHeadline::Fallback(s) => assert_eq!(s, ":speed — which wins?"),
+        QuestionHeadline::Body(b) => panic!("expected aspect fallback, got {b}"),
+    }
+    assert!(collection_is_known(content, &psalms));
+    assert!(!collection_is_known(
+        content,
+        &ItemId::parse("~no-such-q").unwrap().ontology_leaf()
+    ));
 }
 
 #[test]
@@ -382,10 +449,7 @@ fn item_page_model_builds_ranked_child_components() {
         .collect();
     assert_eq!(
         names,
-        vec![
-            "https://slug.social/~/a",
-            "https://slug.social/~/b"
-        ]
+        vec!["https://slug.social/~/a", "https://slug.social/~/b"]
     );
     use crate::path_types::ItemId;
     assert!(
@@ -471,8 +535,7 @@ fn item_page_model_normalizes_legacy_tilde_root_storage_url() {
         1,
         "@00000000-0000-0000-0000-000000000000:test:local/test\n~/x {x}\n",
     );
-    let model =
-        build_item_page_view_model(&reduced, &ScopeId::Public, "https://slug.social/~/", 1);
+    let model = build_item_page_view_model(&reduced, &ScopeId::Public, "https://slug.social/~/", 1);
     assert_eq!(model.child_rankings.unranked_items.len(), 1);
     assert_eq!(
         model.child_rankings.unranked_items[0].as_str(),
@@ -551,16 +614,10 @@ fn vote_compare_item_card_renders_github_import_markup() {
     use base64::{engine::general_purpose::STANDARD, Engine as _};
     let payload = STANDARD.encode(json.to_string().as_bytes());
     let body = format!("```slug-github-card\n{payload}\n```");
-    let html = vote_compare_item_card(
-        &nav,
-        &item,
-        Some(&body),
-        "vote-compare-left",
-        None,
-    )
-    .into_string();
+    let html =
+        vote_compare_item_card(&nav, &item, Some(&body), "vote-compare-left", None).into_string();
     assert!(
-        html.contains("github-import-card"),
+        html.contains("import-card"),
         "expected rich GitHub card markup, got: {html}"
     );
     assert!(html.contains("item-body-rich"));
@@ -580,7 +637,10 @@ fn item_page_sibling_nav_implies_vote_on_item_pool_href() {
          ~/topic/b {beta}\n",
     );
     let model = build_item_page_view_model(&reduced, &ScopeId::Public, "~/topic/a", 1);
-    assert!(model.sibling_nav.is_some(), "expected sibling nav for ~/topic/a");
+    assert!(
+        model.sibling_nav.is_some(),
+        "expected sibling nav for ~/topic/a"
+    );
     let parent = ItemId::parse(&model.item)
         .and_then(|i| i.parent())
         .expect("item with siblings has a parent");
@@ -596,7 +656,8 @@ fn item_page_sibling_nav_implies_vote_on_item_pool_href() {
             || href.contains("%7E"),
         "pool should target parent path, got {href}"
     );
-    let markup = ont_pin_vote_controls(&nav, &model.item, None, "/~/topic/a", Some(&href)).into_string();
+    let markup =
+        ont_pin_vote_controls(&nav, &model.item, None, "/~/topic/a", Some(&href)).into_string();
     assert!(
         markup.contains("data-testid=\"vote-on-this-item\""),
         "expected vote-on-this-item CTA, got {markup}"
@@ -671,11 +732,12 @@ fn item_page_crumb_picks_strongest_parent_lists_alternates() {
     let content = content_for_garden_view(&reduced, &ScopeId::Public);
     let luke = ItemId::parse("~luke").unwrap().ontology_leaf();
     let chain = containment_crumb_chain(content, &luke);
+    assert_eq!(chain.last().map(|id| id.last_segment()), Some("luke"));
     assert_eq!(
-        chain.last().map(|id| id.last_segment()),
-        Some("luke")
+        chain[0].last_segment(),
+        "jedi",
+        "stronger jedi parent first"
     );
-    assert_eq!(chain[0].last_segment(), "jedi", "stronger jedi parent first");
 
     let model = build_item_page_view_model(&reduced, &ScopeId::Public, "~luke", 1);
     assert_eq!(model.alternate_scopes.len(), 1);
@@ -685,7 +747,11 @@ fn item_page_crumb_picks_strongest_parent_lists_alternates() {
 #[test]
 fn item_page_renders_memberships_suspended_borders_and_journal() {
     let mut reduced = ReducerState::default();
-    apply_ingest(&mut reduced, 1, "~jedi { j }\n~luke { l }\n{ in }\n~luke <: ~jedi\n");
+    apply_ingest(
+        &mut reduced,
+        1,
+        "~jedi { j }\n~luke { l }\n{ in }\n~luke <: ~jedi\n",
+    );
     apply_ingest(&mut reduced, 2, "{ out }\n~luke !<: ~jedi\n");
     let suspended = build_item_page_view_model(&reduced, &ScopeId::Public, "~luke", 1);
     assert!(suspended.memberships.is_empty());
@@ -707,10 +773,16 @@ fn item_page_renders_memberships_suspended_borders_and_journal() {
     assert_eq!(breached.memberships.len(), 1);
     assert_eq!(breached.fallen_journal.len(), 1);
     let html = item_relations_markup(&breached, &ThreadNav::public(), 10_000).into_string();
-    assert!(html.contains("ont-tab-panel-memberships"), "missing memberships: {html}");
+    assert!(
+        html.contains("ont-tab-panel-memberships"),
+        "missing memberships: {html}"
+    );
     assert!(html.contains("memberships"));
     assert!(html.contains("containment 2"));
-    assert!(html.contains("ont-fallen-borders"), "missing journal: {html}");
+    assert!(
+        html.contains("ont-fallen-borders"),
+        "missing journal: {html}"
+    );
     assert!(html.contains("fallen borders"));
 }
 
@@ -733,7 +805,13 @@ fn containment_breadcrumb_emits_leaf_hrefs() {
     let luke = ItemId::parse("~luke").unwrap().ontology_leaf();
     let path = crate::html::breadcrumb_path::OntologyPath::from_item(luke.clone());
     let html = scoped_bc_containment(&path, &[jedi, luke], &ThreadNav::public()).into_string();
-    assert!(html.contains("href=\"/~/jedi\""), "missing jedi crumb: {html}");
-    assert!(html.contains("href=\"/~/luke\""), "missing luke crumb: {html}");
+    assert!(
+        html.contains("href=\"/~/jedi\""),
+        "missing jedi crumb: {html}"
+    );
+    assert!(
+        html.contains("href=\"/~/luke\""),
+        "missing luke crumb: {html}"
+    );
     assert!(!html.contains("/~/x/"));
 }

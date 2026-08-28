@@ -1,11 +1,11 @@
 use serde::{Deserialize, Serialize};
 
-pub mod url_normalize;
-pub mod item_wire;
 pub mod item_id;
+pub mod item_wire;
 pub mod paths;
-pub mod timeago;
 pub mod thread_xml;
+pub mod timeago;
+pub mod url_normalize;
 
 pub use item_id::ItemId;
 pub use item_wire::{
@@ -13,9 +13,9 @@ pub use item_wire::{
     repair_collapsed_http_scheme, SLUG_TILDE_ONTOLOGY_ROOT,
 };
 pub use paths::{
-    canonicalize_tag, validate_thread_tag, ForumThreadUrl, GardenItemUrl, RelativePath,
-    room_id_from_route_segment, room_route_segment, ROOM_SHORT_ID_LEN,
-    TildeHttpPathTail, TildeOntologyPath, TildePath, tilde_http_path_to_item_id,
+    canonicalize_tag, room_id_from_route_segment, room_route_segment, tilde_http_path_to_item_id,
+    validate_thread_tag, ForumThreadUrl, GardenItemUrl, RelativePath, TildeHttpPathTail,
+    TildeOntologyPath, TildePath, ROOM_SHORT_ID_LEN,
 };
 pub use url_normalize::normalize_http_identity_url;
 
@@ -224,7 +224,9 @@ pub struct ItemResponse {
     pub threads: Vec<String>,
 }
 
-fn is_zero(n: &usize) -> bool { *n == 0 }
+fn is_zero(n: &usize) -> bool {
+    *n == 0
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RecentVotesResponse {

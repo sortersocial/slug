@@ -1331,10 +1331,7 @@ async fn get_feed(state: &AppState, headers: &HeaderMap, args: &Value) -> Value 
     }
 }
 
-async fn feed_posts_json(
-    state: &AppState,
-    posts: impl IntoIterator<Item = FeedPost>,
-) -> Value {
+async fn feed_posts_json(state: &AppState, posts: impl IntoIterator<Item = FeedPost>) -> Value {
     let reduced = state.reduced.read().await;
     let items: Vec<Value> = posts
         .into_iter()

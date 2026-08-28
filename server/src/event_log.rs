@@ -79,5 +79,3 @@ impl EventLog {
         Ok((events, bad_lines))
     }
 }
-
-

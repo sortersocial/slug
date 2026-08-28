@@ -134,7 +134,10 @@ pub fn canonicalize_item(input: &str) -> String {
     }
 
     let is_tilde = s.starts_with("~/");
-    let rest = s.strip_prefix("~/").or_else(|| s.strip_prefix("/")).unwrap_or(&s);
+    let rest = s
+        .strip_prefix("~/")
+        .or_else(|| s.strip_prefix("/"))
+        .unwrap_or(&s);
 
     let tail = rest
         .split('/')
@@ -170,13 +173,21 @@ pub fn item_path_segments(input: &str) -> Vec<String> {
     if let Some(rest) = canonical.strip_prefix("https://") {
         let (host, tail) = rest.split_once('/').map_or((rest, ""), |(h, t)| (h, t));
         let mut out = vec![format!("https://{}", host)];
-        out.extend(tail.split('/').filter(|s| !s.is_empty()).map(|s| s.to_string()));
+        out.extend(
+            tail.split('/')
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string()),
+        );
         return out;
     }
     if let Some(rest) = canonical.strip_prefix("http://") {
         let (host, tail) = rest.split_once('/').map_or((rest, ""), |(h, t)| (h, t));
         let mut out = vec![format!("http://{}", host)];
-        out.extend(tail.split('/').filter(|s| !s.is_empty()).map(|s| s.to_string()));
+        out.extend(
+            tail.split('/')
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string()),
+        );
         return out;
     }
 

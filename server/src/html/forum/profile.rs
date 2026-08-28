@@ -14,11 +14,11 @@ use crate::state::AppState;
 
 use super::ingest::{thread_nav_for_ingest, thread_post_index_in_scope};
 use super::page::auth_strip;
-use crate::timeago;
 use crate::html::{
     bc_segment, cli_panel, layout, now_ms, profile_href, recency_color_style, theme_from_jar,
     theme_next_from_uri,
 };
+use crate::timeago;
 
 struct ProfilePostRow {
     thread_tag: String,

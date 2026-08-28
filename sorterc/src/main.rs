@@ -59,8 +59,7 @@ fn read_input(path: &Path) -> Result<String> {
         std::io::stdin().read_to_string(&mut buf)?;
         Ok(buf)
     } else {
-        std::fs::read_to_string(path)
-            .with_context(|| format!("read {}", path.display()))
+        std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))
     }
 }
 
@@ -68,7 +67,10 @@ fn load_base_state(base: Option<&Path>) -> Result<ReducerState> {
     let Some(path) = base else {
         return Ok(ReducerState::default());
     };
-    eprintln!("sorterc: replaying {} for base state (may take a while on large logs)…", path.display());
+    eprintln!(
+        "sorterc: replaying {} for base state (may take a while on large logs)…",
+        path.display()
+    );
     let (state, bad_lines) = offline::load_reducer_from_jsonl(path)
         .with_context(|| format!("load base jsonl {}", path.display()))?;
     if !bad_lines.is_empty() {

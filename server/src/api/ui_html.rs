@@ -18,17 +18,17 @@ use crate::{
         rpc::{rpc_post_redact, rpc_post_with_bearer, rpc_room_delete, rpc_thread_graduate},
     },
     canonical_path::{canonicalize_tag, validate_thread_tag},
-    resolvers::resolve_github_children,
     html::vote_compare_post_success_js,
     html::{
-        external_resolver_status_markup, fragment_new_thread_slot, login_to_post_hint_markup,
-        parse_html_ui_from_form, room_members_section_markup, thread_feed_html,
-        thread_feed_html_for_room, thread_latest_page_region, thread_ui_collapse_redacted_post,
-        garden_ui_copy_rank, thread_ui_copy_thread, thread_ui_expand_post_full,
+        external_resolver_status_markup, fragment_new_thread_slot, garden_ui_copy_rank,
+        login_to_post_hint_markup, parse_html_ui_from_form, room_members_section_markup,
+        thread_feed_html, thread_feed_html_for_room, thread_latest_page_region,
+        thread_ui_collapse_redacted_post, thread_ui_copy_thread, thread_ui_expand_post_full,
         thread_ui_expand_redacted_post, ui_js_warn, user_can_post_room, user_can_view_room,
         HtmlUiAction, JsBuilder, ThreadNav,
     },
     reducer::{scope_from_room_wire, ScopeId},
+    resolvers::resolve_external_children,
     state::AppState,
 };
 
@@ -211,6 +211,7 @@ async fn dispatch_ui_action(
             explanation,
             next,
             pool,
+            aspect,
             form_action,
         } => {
             if form_action != "/ui" {
@@ -290,7 +291,19 @@ async fn dispatch_ui_action(
             }
             let (rl, rr) = crate::dsl::reduce_ratio(rl, rr);
 
-            let text = format!(
+            let aspect = aspect.as_deref().map(str::trim).filter(|s| !s.is_empty());
+            if let Some(slug) = aspect {
+                if !crate::dsl::is_valid_aspect_slug(slug) {
+                    return form_js_error(
+                        err_tgt.as_ref(),
+                        "invalid aspect",
+                        "Aspect slugs are [a-z0-9_-]{1,64}.",
+                    )
+                    .into_response();
+                }
+            }
+
+            let vote_line = format!(
                 "{{\n{}\n}}\n{} {}:{} {}\n",
                 exp,
                 left_id.as_str(),
@@ -298,6 +311,10 @@ async fn dispatch_ui_action(
                 rr,
                 right_id.as_str()
             );
+            let text = match aspect {
+                Some(slug) => format!(":{slug}\n{vote_line}"),
+                None => vote_line,
+            };
 
             match rpc_post_with_bearer(
                 state,
@@ -341,6 +358,7 @@ async fn dispatch_ui_action(
                         pool_id.as_ref(),
                         pid.as_str(),
                         post_index,
+                        &next,
                     )
                     .await;
                     Response::builder()
@@ -425,10 +443,11 @@ async fn dispatch_ui_action(
             }
             let reduced = state.reduced.read().await;
             if matches!(scope_from_room_wire(room), ScopeId::Room(_))
-                && !user_can_post_room(&reduced, room, &session.username) {
-                    drop(reduced);
-                    return ui_js_warn("forbidden").into_response();
-                }
+                && !user_can_post_room(&reduced, room, &session.username)
+            {
+                drop(reduced);
+                return ui_js_warn("forbidden").into_response();
+            }
             drop(reduced);
 
             let Some(item) = crate::path_types::ItemId::parse(item_storage.trim()) else {
@@ -442,11 +461,18 @@ async fn dispatch_ui_action(
             } else {
                 item.normalized_storage()
             };
-            match resolve_github_children(state, room, &target).await {
+            match resolve_external_children(state, room, &target).await {
                 Ok(stats) => JsBuilder::new()
                     .morph_inner_selector(
                         "#external-resolver-status",
-                        external_resolver_status_markup(Ok(stats), &sanitize_garden_pin_next(&next)),
+                        external_resolver_status_markup(
+                            Ok((
+                                stats,
+                                crate::resolvers::resolver_source_label(&target)
+                                    .unwrap_or("GitHub"),
+                            )),
+                            &sanitize_garden_pin_next(&next),
+                        ),
                     )
                     .redirect(&sanitize_garden_pin_next(&next))
                     .into_response(),

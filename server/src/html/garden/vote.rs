@@ -14,13 +14,9 @@ use crate::{
     canonical_path::canonicalize_tag,
     form_template::template_json_compact,
     html::{
-        forum::ThreadNav,
-        layout_full_bleed_chromeless,
-        format_ratio, ratio_pct, render_item_body_in_scope,
-        theme_from_jar, theme_next_from_uri,
-        user_can_post_room,
-        ui_action::UI_RPC_FIELD,
-        JsBuilder,
+        format_ratio, forum::ThreadNav, layout_full_bleed_chromeless, ratio_pct,
+        render_item_body_in_scope, theme_from_jar, theme_next_from_uri, ui_action::UI_RPC_FIELD,
+        user_can_post_room, JsBuilder,
     },
     middleware::canonical_view_url,
     path_types::ItemId,
@@ -30,9 +26,59 @@ use crate::{
 };
 
 use super::{
-    access::{content_for_garden_view, room_not_found_page, room_scope_has_garden_content, user_can_view_room},
+    access::{
+        content_for_garden_view, room_not_found_page, room_scope_has_garden_content,
+        user_can_view_room,
+    },
     item::{item_display_path, login_href_with_next},
 };
+
+/// Prompt shown as the `/q/` headline (scope body, or restrained fallback copy).
+pub(super) enum QuestionHeadline {
+    Body(String),
+    Fallback(String),
+}
+
+/// Shareable question page: compare machinery seeded by (scope, optional aspect).
+pub(super) struct QuestionCtx {
+    pub aspect: Option<String>,
+    pub question_path: String,
+    pub garden_href: String,
+    pub thread_href: String,
+    pub headline: QuestionHeadline,
+    pub title: String,
+}
+
+fn is_question_href(path: &str) -> bool {
+    let path = path.split(['?', '#']).next().unwrap_or(path);
+    path.starts_with("/q/") || path.contains("/q/")
+}
+
+fn question_header_markup(
+    question: &QuestionCtx,
+    garden_root: &str,
+    item_bodies: Option<&HashMap<ItemId, String>>,
+) -> maud::Markup {
+    html! {
+        header class="vote-question" {
+            @match &question.headline {
+                QuestionHeadline::Body(body) => {
+                    div class="vote-question-headline" {
+                        (render_item_body_in_scope(body, garden_root, item_bodies))
+                    }
+                }
+                QuestionHeadline::Fallback(text) => {
+                    h1 class="vote-question-headline" { (text) }
+                }
+            }
+            nav class="vote-question-links muted" {
+                a data-testid="question-ranking-link" href=(question.garden_href) { "ranking" }
+                " · "
+                a data-testid="question-thread-link" href=(question.thread_href) { "thread" }
+            }
+        }
+    }
+}
 
 fn pick_autothread_for_vote_pair(content: &ContentState, a: &ItemId, b: &ItemId) -> String {
     let cands: HashSet<String> = content
@@ -214,12 +260,14 @@ pub(crate) async fn vote_compare_post_success_js(
     pool: Option<&ItemId>,
     _post_id: &str,
     _post_idx: Option<usize>,
+    next: &str,
 ) -> String {
     let reduced = state.reduced.read().await;
     let content = content_for_garden_view(&reduced, &nav.scope());
     let edge_history = vote_edge_history_markup(content, left, right);
     let next_pair = suggest_next_vote_pair(content, left, right, pool);
-    let nav_markup = vote_compare_nav_markup(nav, next_pair.as_ref(), pool);
+    let next_override = is_question_href(next).then_some(next);
+    let nav_markup = vote_compare_nav_markup(nav, next_pair.as_ref(), pool, next_override);
     drop(reduced);
     JsBuilder::new()
         .morph_inner_selector("#vote-edge-history-region", edge_history)
@@ -271,8 +319,13 @@ fn vote_compare_nav_markup(
     nav: &ThreadNav,
     next_pair: Option<&(ItemId, ItemId)>,
     pool: Option<&ItemId>,
+    next_pair_href_override: Option<&str>,
 ) -> maud::Markup {
-    let next_pair_href = next_pair.map(|(nl, nr)| vote_compare_href(nav, nl, nr, None, pool));
+    let next_pair_href = if let Some(over) = next_pair_href_override.filter(|s| !s.is_empty()) {
+        next_pair.and(Some(over.to_string()))
+    } else {
+        next_pair.map(|(nl, nr)| vote_compare_href(nav, nl, nr, None, pool))
+    };
     html! {
         div class="vote-compare-nav" {
             @if let Some(href) = &next_pair_href {
@@ -361,7 +414,7 @@ pub async fn vote_compare_page(
     uri: Uri,
 ) -> impl IntoResponse {
     let nav = ThreadNav::public();
-    vote_compare_inner(state, q, nav, headers, jar, uri).await
+    vote_compare_inner(state, q, nav, headers, jar, uri, None).await
 }
 
 pub async fn room_vote_compare_page(
@@ -389,16 +442,17 @@ pub async fn room_vote_compare_page(
         return room_not_found_page(&jar, &uri).into_response();
     }
     drop(reduced);
-    vote_compare_inner(state, q, nav, headers, jar, uri).await
+    vote_compare_inner(state, q, nav, headers, jar, uri, None).await
 }
 
-async fn vote_compare_inner(
+pub(super) async fn vote_compare_inner(
     state: AppState,
     q: VoteCompareQuery,
     nav: ThreadNav,
     headers: HeaderMap,
     jar: CookieJar,
     uri: Uri,
+    question: Option<QuestionCtx>,
 ) -> axum::response::Response {
     let pool_id: Option<ItemId> = match q.pool.as_deref() {
         Some(p) => match ItemId::parse(p.trim()) {
@@ -443,10 +497,18 @@ async fn vote_compare_inner(
             drop(reduced);
             match pair {
                 Some(p) => p,
-                None => return (StatusCode::BAD_REQUEST, "no pairs available in pool").into_response(),
+                None => {
+                    return (StatusCode::BAD_REQUEST, "no pairs available in pool").into_response()
+                }
             }
         }
-        _ => return (StatusCode::BAD_REQUEST, "provide both left and right, or just pool").into_response(),
+        _ => {
+            return (
+                StatusCode::BAD_REQUEST,
+                "provide both left and right, or just pool",
+            )
+                .into_response()
+        }
     };
 
     let reduced = state.reduced.read().await;
@@ -469,7 +531,10 @@ async fn vote_compare_inner(
         .map(|t| canonicalize_tag(t))
         .filter(|t| !t.is_empty())
         .unwrap_or_else(|| pick_autothread_for_vote_pair(content, &left, &right));
-    let thread_tags = vote_thread_tags_for_pair(content, &left, &right);
+    let mut thread_tags = vote_thread_tags_for_pair(content, &left, &right);
+    if !auto_thread.is_empty() && !thread_tags.iter().any(|t| t == &auto_thread) {
+        thread_tags.insert(0, auto_thread.clone());
+    }
     let edge_history = vote_edge_history_markup(content, &left, &right);
     let left_body = content.item_bodies.get(&left).cloned();
     let right_body = content.item_bodies.get(&right).cloned();
@@ -477,17 +542,26 @@ async fn vote_compare_inner(
     let next_pair = suggest_next_vote_pair(content, &left, &right, pool_id.as_ref());
     drop(reduced);
 
-    let title = format!(
-        "vote — {} vs {}",
-        item_display_path(left.as_str()),
-        item_display_path(right.as_str())
-    );
+    let title = question
+        .as_ref()
+        .map(|q| q.title.clone())
+        .unwrap_or_else(|| {
+            format!(
+                "vote — {} vs {}",
+                item_display_path(left.as_str()),
+                item_display_path(right.as_str())
+            )
+        });
     let next_path = uri
         .path_and_query()
         .map(|pq| pq.as_str().to_string())
         .unwrap_or_else(|| "/vote".into());
 
-    let rpc_json = template_json_compact(&json!({
+    let aspect_slug = question
+        .as_ref()
+        .and_then(|q| q.aspect.clone())
+        .filter(|s| !s.is_empty());
+    let mut rpc_val = json!({
         "action": "vote_compare_post",
         "room": nav.room_wire,
         "thread_tag": {"$form": "thread_tag"},
@@ -499,12 +573,25 @@ async fn vote_compare_inner(
         "next": next_path,
         "pool": pool_id.as_ref().map(|p| p.as_str()),
         "form_action": "/ui",
-    }))
-    .expect("vote compare rpc json");
+    });
+    if aspect_slug.is_some() {
+        rpc_val["aspect"] = json!({"$form": "aspect"});
+    }
+    let rpc_json = template_json_compact(&rpc_val).expect("vote compare rpc json");
+    let next_pair_override = question.as_ref().map(|q| q.question_path.as_str());
+    let view_class = if question.is_some() {
+        "view-ontology view-ontology-light view-vote-compare view-vote-compare-fullscreen view-vote-question"
+    } else {
+        "view-ontology view-ontology-light view-vote-compare view-vote-compare-fullscreen"
+    };
 
     let body = html! {
     section class="vote-compare-shell" {
-        h2 { "compare" }
+        @if let Some(qctx) = &question {
+            (question_header_markup(qctx, nav.garden_root_url(), Some(&item_bodies_for_cards)))
+        } @else {
+            h2 { "compare" }
+        }
         div class="vote-compare-pair" {
             (vote_compare_item_card(
                 &nav,
@@ -522,13 +609,16 @@ async fn vote_compare_inner(
                 Some(&item_bodies_for_cards),
             ))
         }
-        (vote_compare_nav_markup(&nav, next_pair.as_ref(), pool_id.as_ref()))
+        (vote_compare_nav_markup(&nav, next_pair.as_ref(), pool_id.as_ref(), next_pair_override))
         div id="vote-edge-history-region" {
             (edge_history)
         }
         @if show_vote_form && logged_in {
             form id="vote-compare-form" method="POST" action="/ui" data-draft-key=(format!("vote:{}/{}/{}", nav.room_wire, left.as_str(), right.as_str())) {
                 input type="hidden" name=(UI_RPC_FIELD) value=(rpc_json);
+                @if let Some(aspect) = &aspect_slug {
+                    input type="hidden" name="aspect" value=(aspect);
+                }
                 div class="vote-thread-picker" {
                     label class="vote-thread-picker-label" { "thread" }
                     select id="vote-thread-select" name="thread_tag" aria-label="Thread to post vote into" {
@@ -581,7 +671,7 @@ async fn vote_compare_inner(
 
     let page = layout_full_bleed_chromeless(
         &title,
-        "view-ontology view-ontology-light view-vote-compare view-vote-compare-fullscreen",
+        view_class,
         body,
         Some(view_count),
         theme_from_jar(&jar),
@@ -589,4 +679,3 @@ async fn vote_compare_inner(
     );
     Html(page.into_string()).into_response()
 }
-

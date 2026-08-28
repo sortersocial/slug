@@ -469,7 +469,9 @@ mod tests {
         assert!(redirect_uri_allowed("http://127.0.0.1:9/cb"));
         assert!(redirect_uri_allowed("http://localhost:3118/callback"));
         assert!(!redirect_uri_allowed("https://evil.example/cb"));
-        assert!(!redirect_uri_allowed("https://notclaude.ai/api/mcp/auth_callback"));
+        assert!(!redirect_uri_allowed(
+            "https://notclaude.ai/api/mcp/auth_callback"
+        ));
         assert!(!redirect_uri_allowed("/local"));
     }
 }

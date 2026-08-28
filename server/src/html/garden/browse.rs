@@ -2,9 +2,9 @@ use maud::html;
 
 use crate::{
     html::{
+        bc_path_external, bc_segment,
         breadcrumb_path::{ExternalOntologyPath, OntologyPath},
         forum::ThreadNav,
-        bc_path_external, bc_segment,
     },
     path_types::ItemId,
     reducer::ScopeId,
@@ -14,7 +14,10 @@ pub(super) fn garden_layout_meta(nav: &ThreadNav) -> (String, String) {
     (nav.room_wire.clone(), nav.garden_root_url().to_string())
 }
 
-pub(super) fn scoped_bc_path_external(path: &ExternalOntologyPath, nav: &ThreadNav) -> maud::Markup {
+pub(super) fn scoped_bc_path_external(
+    path: &ExternalOntologyPath,
+    nav: &ThreadNav,
+) -> maud::Markup {
     match nav.scope() {
         ScopeId::Public => bc_path_external(path),
         ScopeId::Room(rid) => {

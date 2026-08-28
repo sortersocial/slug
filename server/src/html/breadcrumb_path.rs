@@ -29,14 +29,20 @@ impl OntologyPath {
     }
 
     /// Nested `x/luke` → canonical leaf path `/~/luke`. `luke` (already a leaf) → `None`.
+    /// A trailing slash on a leaf (`luke/`) or nested source (`x/luke/`) also redirects.
     ///
     /// Mirrors [`ExternalOntologyPath::legacy_redirect_target`]: callers issue a permanent
     /// redirect and preserve the query string.
     pub(super) fn nested_redirect_target(request_path: &str) -> Option<String> {
-        let item = tilde_http_path_to_item_id(request_path);
+        let trimmed = request_path.trim_matches('/');
+        let had_trailing_slash = request_path.ends_with('/');
+        let item = tilde_http_path_to_item_id(trimmed);
         let leaf = item.ontology_leaf();
-        if leaf.as_str() == item.as_str() {
+        if leaf.as_str() == item.as_str() && !had_trailing_slash {
             return None;
+        }
+        if leaf.tilde_tail() == Some("") {
+            return Some("/~".to_string());
         }
         let disp = leaf.display_path();
         Some(format!("/{}", disp.trim_start_matches('/')))
@@ -177,24 +183,15 @@ mod tests {
         let host = ExternalOntologyPath::from_input("example.com");
         assert!(!host.is_root());
         assert_eq!(host.breadcrumb_chain().len(), 1);
-        assert_eq!(
-            host.breadcrumb_chain()[0].as_str(),
-            "https://example.com"
-        );
+        assert_eq!(host.breadcrumb_chain()[0].as_str(), "https://example.com");
     }
 
     #[test]
     fn external_path_keeps_each_url_segment_for_breadcrumbs() {
         let path = ExternalOntologyPath::from_input("https://example.com/a/b");
         assert_eq!(path.breadcrumb_chain().len(), 3);
-        assert_eq!(
-            path.breadcrumb_chain()[0].as_str(),
-            "https://example.com"
-        );
-        assert_eq!(
-            path.breadcrumb_chain()[1].as_str(),
-            "https://example.com/a"
-        );
+        assert_eq!(path.breadcrumb_chain()[0].as_str(), "https://example.com");
+        assert_eq!(path.breadcrumb_chain()[1].as_str(), "https://example.com/a");
         assert_eq!(
             path.breadcrumb_chain()[2].as_str(),
             "https://example.com/a/b"
@@ -235,5 +232,13 @@ mod tests {
         );
         assert_eq!(OntologyPath::nested_redirect_target("luke"), None);
         assert_eq!(OntologyPath::nested_redirect_target(""), None);
+        assert_eq!(
+            OntologyPath::nested_redirect_target("luke/").as_deref(),
+            Some("/~/luke")
+        );
+        assert_eq!(
+            OntologyPath::nested_redirect_target("x/luke/").as_deref(),
+            Some("/~/luke")
+        );
     }
 }

@@ -4,8 +4,11 @@ use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc, RwLock};
 
 use crate::{
-    event_log::EventLog, events::ThreadCapability, reducer::ReducerState,
-    resolvers::GitHubResolver, write_cmd::WriteCmd,
+    event_log::EventLog,
+    events::ThreadCapability,
+    reducer::ReducerState,
+    resolvers::{ArenaResolver, GitHubResolver},
+    write_cmd::WriteCmd,
 };
 
 /// Ephemeral invite link (24h TTL, in-memory only; not written to the event log).
@@ -114,6 +117,7 @@ pub struct AppState {
     /// Ephemeral resolver cooldowns keyed by `room + item`: not persisted; durable results are JSONL ingests.
     pub resolver_runs: Arc<RwLock<HashMap<String, i64>>>,
     pub github_resolver: Arc<GitHubResolver>,
+    pub arena_resolver: Arc<ArenaResolver>,
 }
 
 impl AppState {
@@ -143,6 +147,7 @@ impl AppState {
             views,
             resolver_runs: Arc::new(RwLock::new(HashMap::new())),
             github_resolver: Arc::new(GitHubResolver::from_env()),
+            arena_resolver: Arc::new(ArenaResolver::from_env()),
         }
     }
 }

@@ -53,6 +53,10 @@ pub enum HtmlUiAction {
         /// Pool parent item path, if the vote was initiated from a pool URL.
         #[serde(default)]
         pool: Option<String>,
+        /// Aspect slug when the vote was cast from `/q/:collection/:aspect`.
+        /// Empty / omitted → canonical ranking (same as `/vote`).
+        #[serde(default)]
+        aspect: Option<String>,
         #[serde(default = "default_ui_form_action")]
         form_action: String,
     },
@@ -131,10 +135,7 @@ pub enum HtmlUiAction {
         external_hosts: bool,
     },
     /// Publish a private-room thread to the public forum (Manage only).
-    GraduateThread {
-        room: String,
-        thread_tag: String,
-    },
+    GraduateThread { room: String, thread_tag: String },
 }
 
 fn default_garden_rank_depth() -> usize {
@@ -312,6 +313,51 @@ mod tests {
                 depth: 2,
                 copy_btn_id: "garden-rank-copy".into(),
                 external_hosts: false,
+            }
+        );
+    }
+
+    #[test]
+    fn vote_compare_post_round_trip_with_aspect_form_hole() {
+        let template = serde_json::json!({
+            "action": "vote_compare_post",
+            "room": "public",
+            "thread_tag": {"$form": "thread_tag"},
+            "left_item": "~/a",
+            "right_item": "~/b",
+            "ratio_left": {"$form": "ratio_left"},
+            "ratio_right": {"$form": "ratio_right"},
+            "explanation": {"$form": "explanation"},
+            "next": "/q/psalms/beauty",
+            "aspect": {"$form": "aspect"},
+            "form_action": "/ui",
+        });
+        let mut form = HashMap::new();
+        form.insert(
+            UI_RPC_FIELD.to_string(),
+            serde_json::to_string(&template).unwrap(),
+        );
+        form.insert("thread_tag".into(), "psalms".into());
+        form.insert("ratio_left".into(), "2".into());
+        form.insert("ratio_right".into(), "1".into());
+        form.insert("explanation".into(), "prefer a".into());
+        form.insert("aspect".into(), "beauty".into());
+
+        let a = parse_html_ui_from_form(&form).unwrap();
+        assert_eq!(
+            a,
+            HtmlUiAction::VoteComparePost {
+                room: "public".into(),
+                thread_tag: "psalms".into(),
+                left_item: "~/a".into(),
+                right_item: "~/b".into(),
+                ratio_left: "2".into(),
+                ratio_right: "1".into(),
+                explanation: "prefer a".into(),
+                next: "/q/psalms/beauty".into(),
+                pool: None,
+                aspect: Some("beauty".into()),
+                form_action: "/ui".into(),
             }
         );
     }

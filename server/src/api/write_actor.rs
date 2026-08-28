@@ -7,7 +7,10 @@ use tokio::sync::mpsc;
 
 use crate::{
     dsl,
-    events::{AgentBound, Event, GrantAdded, Ingest, PostRedacted, RoomDeleted, ThreadGraduated, UserRegistered},
+    events::{
+        AgentBound, Event, GrantAdded, Ingest, PostRedacted, RoomDeleted, ThreadGraduated,
+        UserRegistered,
+    },
     html::JsBuilder,
     identity::parse_agent,
     path_types::ItemId,
@@ -83,9 +86,14 @@ async fn broadcast_web_refresh(
         crate::html::thread_feed_html_for_room(state, room_key).await
     };
 
-    let morphs: crate::html::ThreadRegionPageMorphs =
-        crate::html::thread_region_page_morphs(state, Some(room_key), thread_id, None, changed_post_index)
-            .await;
+    let morphs: crate::html::ThreadRegionPageMorphs = crate::html::thread_region_page_morphs(
+        state,
+        Some(room_key),
+        thread_id,
+        None,
+        changed_post_index,
+    )
+    .await;
 
     // Two SSE payloads: the bump-list morph must not ship private HTML to subscribers who only
     // matched `/` (public) or lack room access — see [`crate::api::stream::get_html_stream`].
@@ -528,7 +536,9 @@ pub async fn writer_actor(mut rx: mpsc::Receiver<WriteCmd>, state: AppState) {
             } => {
                 let out = async {
                     let (room_key, thread_id) = normalize_room_and_thread(&room, &thread_tag)
-                        .map_err(|msg| (msg, Some("system thread tags must not contain '/'".into())))?;
+                        .map_err(|msg| {
+                            (msg, Some("system thread tags must not contain '/'".into()))
+                        })?;
                     let scope = scope_from_room_wire(&room_key);
                     let is_private = !matches!(scope, ScopeId::Public);
                     let mut reduced = state.reduced.write().await;
@@ -852,12 +862,8 @@ pub async fn writer_actor(mut rx: mpsc::Receiver<WriteCmd>, state: AppState) {
                         let Some(source) = reduced.ingests_by_id.get(source_id).cloned() else {
                             continue;
                         };
-                        let v = validate_ingest_document(
-                            &reduced,
-                            &source.raw,
-                            &ScopeId::Public,
-                        )
-                        .map_err(|(_, m, h)| (m, h))?;
+                        let v = validate_ingest_document(&reduced, &source.raw, &ScopeId::Public)
+                            .map_err(|(_, m, h)| (m, h))?;
 
                         let new_post_id = uuid::Uuid::new_v4().to_string();
                         let ingest_event = Event::Ingest(Ingest {

@@ -30,7 +30,10 @@ pub(super) fn thread_nav_for_ingest(ing: &crate::events::Ingest) -> Option<Threa
     }
 }
 
-pub(super) fn thread_post_index_in_scope(reduced: &ReducerState, ing: &crate::events::Ingest) -> Option<usize> {
+pub(super) fn thread_post_index_in_scope(
+    reduced: &ReducerState,
+    ing: &crate::events::Ingest,
+) -> Option<usize> {
     let scope = scope_from_room_wire(&ing.room_id);
     reduced.try_thread_post_index_chronological(&scope, &ing.thread_tag, &ing.id)
 }
@@ -109,7 +112,16 @@ pub(super) fn redacted_header_row(
     now: i64,
     expanded: bool,
 ) -> Markup {
-    let meta = post_header_meta(nav, tag, post_idx, &ing.principal, &ing.delegate, ing.ts, now, None);
+    let meta = post_header_meta(
+        nav,
+        tag,
+        post_idx,
+        &ing.principal,
+        &ing.delegate,
+        ing.ts,
+        now,
+        None,
+    );
     let rpc_expand = template_json_compact(&json!({
         "action": "expand_redacted_post",
         "room": nav.room_wire,
@@ -184,7 +196,9 @@ pub(crate) fn ingest_entry_markup(
         } else {
             "ingest-entry"
         };
-        let item_bodies = reduced.content_for_scope(&nav.scope()).map(|c| &c.item_bodies);
+        let item_bodies = reduced
+            .content_for_scope(&nav.scope())
+            .map(|c| &c.item_bodies);
         html! {
             div class=(entry_class) id=(frag.as_str()) data-ingest-id=(ing.id) {
                 (post_header_row(nav, tag, post_idx, ing, viewer, now, show_delete))

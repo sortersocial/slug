@@ -227,8 +227,6 @@ impl<'de> Deserialize<'de> for ItemId {
         D: Deserializer<'de>,
     {
         let s = String::deserialize(deserializer)?;
-        ItemId::parse(&s).ok_or_else(|| {
-            serde::de::Error::custom(format!("invalid item id: {s:?}"))
-        })
+        ItemId::parse(&s).ok_or_else(|| serde::de::Error::custom(format!("invalid item id: {s:?}")))
     }
 }

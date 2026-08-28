@@ -603,7 +603,10 @@ async fn test_thread_view_offset_snaps_to_page_boundaries() {
         .text()
         .await
         .unwrap();
-    assert!(clamped.contains("11–11 / 11"), "huge offset clamps to latest");
+    assert!(
+        clamped.contains("11–11 / 11"),
+        "huge offset clamps to latest"
+    );
 }
 
 fn ui_vote_compare_post_rpc(
@@ -915,8 +918,7 @@ async fn test_vote_compare_post_rejects_over_max_ratio() {
     let client = reqwest::Client::new();
     let bearer = test_bearer();
 
-    let rpc =
-        ui_vote_compare_post_rpc("public", "test-vote", "~/a", "~/b", "101", "1", "prefer a");
+    let rpc = ui_vote_compare_post_rpc("public", "test-vote", "~/a", "~/b", "101", "1", "prefer a");
     let resp = client
         .post(format!("http://{addr}/ui"))
         .header("Authorization", format!("Bearer {bearer}"))
@@ -955,11 +957,7 @@ async fn test_copy_garden_rank_returns_clipboard_js_with_markdown() {
     .await;
     assert_eq!(seed["results"][0]["ok"], true, "seed: {:?}", seed);
 
-    let page = client
-        .get(format!("http://{addr}/~"))
-        .send()
-        .await
-        .unwrap();
+    let page = client.get(format!("http://{addr}/~")).send().await.unwrap();
     assert!(page.status().is_success());
     let html = page.text().await.unwrap();
     assert!(
@@ -998,6 +996,8 @@ async fn test_copy_garden_rank_returns_clipboard_js_with_markdown() {
         js.contains("1. ~/copy-a") && js.contains("2. ~/copy-b") && js.contains("- ~/copy-c"),
         "expected concise markdown ranking in clipboard payload, got: {js}"
     );
-    assert!(js.contains("\"copied\""), "expected button label flip to copied");
+    assert!(
+        js.contains("\"copied\""),
+        "expected button label flip to copied"
+    );
 }
-

@@ -1,11 +1,7 @@
 use axum::Router;
 use tracing_subscriber::EnvFilter;
 
-use slugsocial_server::{
-    create_app, create_app_state,
-    event_log::EventLog,
-    state::AppConfig,
-};
+use slugsocial_server::{create_app, create_app_state, event_log::EventLog, state::AppConfig};
 
 fn env_var(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|s| !s.trim().is_empty())
@@ -22,7 +18,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     let data_dir = env_var("SLUG_DATA_DIR").unwrap_or_else(|| "/data".to_string());
-    let event_log_path = env_var("SLUG_EVENT_LOG").unwrap_or_else(|| format!("{data_dir}/events.jsonl"));
+    let event_log_path =
+        env_var("SLUG_EVENT_LOG").unwrap_or_else(|| format!("{data_dir}/events.jsonl"));
 
     eprintln!("[boot] data_dir={data_dir} event_log_path={event_log_path}");
 
@@ -48,9 +45,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Single source of truth for routing lives in the library (`create_app`).
     let app: Router = create_app(state);
 
-    let port: u16 = env_var("PORT")
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(8080);
+    let port: u16 = env_var("PORT").and_then(|s| s.parse().ok()).unwrap_or(8080);
     let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
     tracing::info!(%addr, "listening");
     eprintln!("[boot] binding {addr}");
@@ -93,5 +88,3 @@ async fn shutdown_signal() {
         tracing::info!("shutdown");
     }
 }
-
-

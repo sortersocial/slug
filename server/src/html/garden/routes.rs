@@ -9,13 +9,11 @@ use maud::html;
 use crate::{
     api::optional_principal,
     html::{
-        breadcrumb_path::{ExternalOntologyPath, OntologyPath},
         bc_path, bc_path_external,
+        breadcrumb_path::{ExternalOntologyPath, OntologyPath},
         cli_panel,
         forum::ThreadNav,
-        layout,
-        theme_from_jar,
-        theme_next_from_uri,
+        layout, theme_from_jar, theme_next_from_uri,
     },
     middleware::canonical_view_url,
     path_types::ItemId,
@@ -27,13 +25,33 @@ use crate::{
 };
 
 use super::{
-    access::{content_for_garden_view, room_not_found_page, room_scope_has_garden_content, user_can_view_room},
-    browse::{GardenBrowsePath, scoped_bc_path_external},
+    access::{
+        content_for_garden_view, room_not_found_page, room_scope_has_garden_content,
+        user_can_view_room,
+    },
+    browse::{scoped_bc_path_external, GardenBrowsePath},
     copy::garden_rank_copy_button_markup,
     item::{child_depth_from_uri, garden_depth_select_markup, item_display_path, item_href},
     item_page::aspect_rankings_for_parent,
     render::render_scope_view,
 };
+
+/// 308 to `canonical`, keeping a non-empty query string.
+fn redirect_permanent_preserving_query(canonical: &str, uri: &Uri) -> axum::response::Redirect {
+    match uri.query() {
+        Some(q) if !q.is_empty() => {
+            axum::response::Redirect::permanent(&format!("{canonical}?{q}"))
+        }
+        _ => axum::response::Redirect::permanent(canonical),
+    }
+}
+
+/// `GET /~/` → `/~`, `GET /-/` → `/-`, and the room-scoped twins. Query is preserved.
+pub async fn redirect_strip_trailing_slash(uri: Uri) -> impl IntoResponse {
+    let path = uri.path().trim_end_matches('/');
+    let canonical = if path.is_empty() { "/" } else { path };
+    redirect_permanent_preserving_query(canonical, &uri)
+}
 
 pub async fn garden_index(
     State(state): State<AppState>,
@@ -47,8 +65,7 @@ pub async fn garden_index(
         let content = reduced.public();
         let root = ItemId::ontology_root();
         let child_rankings = if child_depth > 1 {
-            let items =
-                resolve_scope_recursive(content, &[root.as_str().to_string()], child_depth);
+            let items = resolve_scope_recursive(content, &[root.as_str().to_string()], child_depth);
             build_rankings_for_item_set(content, &items)
         } else {
             build_children_rankings(content, &root)
@@ -108,7 +125,7 @@ pub async fn garden_index(
                 }
             }
             @for aspect in &aspect_rankings {
-                section class="ont-tab-panel ont-tab-panel-aspect" {
+                section class="ont-tab-panel ont-tab-panel-aspect" id=(format!("aspect-{}", aspect.slug)) {
                     h4 class="ont-aspect-heading" { ":" (aspect.slug) }
                     @if let Some(prompt) = &aspect.prompt {
                         p class="muted ont-aspect-prompt" { (prompt) }
@@ -149,11 +166,7 @@ pub async fn ontology_path(
     uri: Uri,
 ) -> impl IntoResponse {
     if let Some(canonical) = OntologyPath::nested_redirect_target(&path) {
-        let loc = match uri.query() {
-            Some(q) if !q.is_empty() => format!("{canonical}?{q}"),
-            _ => canonical,
-        };
-        return axum::response::Redirect::permanent(&loc).into_response();
+        return redirect_permanent_preserving_query(&canonical, &uri).into_response();
     }
     let path = OntologyPath::from_input(&path);
     render_scope_view(
@@ -248,11 +261,7 @@ pub async fn external_ontology_path(
     uri: Uri,
 ) -> impl IntoResponse {
     if let Some(canonical) = ExternalOntologyPath::legacy_redirect_target(&path) {
-        let loc = match uri.query() {
-            Some(q) if !q.is_empty() => format!("{canonical}?{q}"),
-            _ => canonical,
-        };
-        return axum::response::Redirect::permanent(&loc).into_response();
+        return redirect_permanent_preserving_query(&canonical, &uri).into_response();
     }
     let path = ExternalOntologyPath::from_input(&path);
     render_scope_view(
@@ -418,11 +427,7 @@ pub async fn room_external_ontology_path(
             .strip_prefix("/-/")
             .unwrap_or(canonical_tail.trim_start_matches('/'));
         let base = format!("{}-/{tail}", nav.garden_root_url().trim_end_matches('~'));
-        let loc = match uri.query() {
-            Some(q) if !q.is_empty() => format!("{base}?{q}"),
-            _ => base,
-        };
-        return axum::response::Redirect::permanent(&loc).into_response();
+        return redirect_permanent_preserving_query(&base, &uri).into_response();
     }
     let path = ExternalOntologyPath::from_input(&path);
     render_scope_view(state, GardenBrowsePath::External(path), nav, jar, uri)
@@ -460,15 +465,10 @@ pub async fn room_ontology_path(
         } else {
             canonical
         };
-        let loc = match uri.query() {
-            Some(q) if !q.is_empty() => format!("{loc}?{q}"),
-            _ => loc,
-        };
-        return axum::response::Redirect::permanent(&loc).into_response();
+        return redirect_permanent_preserving_query(&loc, &uri).into_response();
     }
     let path = OntologyPath::from_input(&path);
     render_scope_view(state, GardenBrowsePath::Tilde(path), nav, jar, uri)
         .await
         .into_response()
 }
-

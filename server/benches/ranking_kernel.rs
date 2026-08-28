@@ -37,21 +37,17 @@ fn topology_convergence(c: &mut Criterion) {
         ] {
             let base = build_group(topo, n);
             g.throughput(Throughput::Elements(n as u64));
-            g.bench_with_input(
-                BenchmarkId::new(topo.label(), n),
-                &base,
-                |b, base| {
-                    b.iter_batched_ref(
-                        || base.clone(),
-                        |group| {
-                            group.dirty = true;
-                            compute_group_ranking(group, MAX_ITERS, TOL);
-                            black_box(group.cached_scores.len())
-                        },
-                        criterion::BatchSize::SmallInput,
-                    )
-                },
-            );
+            g.bench_with_input(BenchmarkId::new(topo.label(), n), &base, |b, base| {
+                b.iter_batched_ref(
+                    || base.clone(),
+                    |group| {
+                        group.dirty = true;
+                        compute_group_ranking(group, MAX_ITERS, TOL);
+                        black_box(group.cached_scores.len())
+                    },
+                    criterion::BatchSize::SmallInput,
+                )
+            });
         }
     }
     g.finish();

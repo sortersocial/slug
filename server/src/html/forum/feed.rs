@@ -17,9 +17,7 @@ use super::ingest::ingest_entry_markup;
 use super::nav::ThreadNav;
 use super::new_thread::{fragment_new_thread_slot, login_to_post_hint_markup};
 use super::page::auth_strip;
-use super::paginator::{
-    latest_page_offset, render_thread_paginator, snap_page_offset, PAGE_SIZE,
-};
+use super::paginator::{latest_page_offset, render_thread_paginator, snap_page_offset, PAGE_SIZE};
 use crate::html::{
     bc_threads, cli_panel, layout_with_post_stats, now_ms, recency_class, recency_color_style,
     theme_from_jar, theme_next_from_uri,
@@ -41,7 +39,11 @@ pub(super) struct RoomRow {
     pub(super) last_ts: i64,
 }
 
-pub(super) fn collect_thread_rows_for_scope(reduced: &ReducerState, scope: &ScopeId, now: i64) -> Vec<ThreadRow> {
+pub(super) fn collect_thread_rows_for_scope(
+    reduced: &ReducerState,
+    scope: &ScopeId,
+    now: i64,
+) -> Vec<ThreadRow> {
     let _ = now;
     reduced
         .forum_threads
@@ -80,7 +82,12 @@ pub(super) fn rooms_for_user(reduced: &ReducerState, username: &str) -> Vec<Room
 }
 
 /// `feed_id` is e.g. `thread-feed` (public bump list, SSE) or `room-thread-feed`.
-pub(super) fn render_thread_feed(nav: Option<&ThreadNav>, feed_id: &str, rows: &[ThreadRow], now: i64) -> Markup {
+pub(super) fn render_thread_feed(
+    nav: Option<&ThreadNav>,
+    feed_id: &str,
+    rows: &[ThreadRow],
+    now: i64,
+) -> Markup {
     html! {
         div id=(feed_id) {
             @if rows.is_empty() {

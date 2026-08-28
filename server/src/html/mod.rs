@@ -33,12 +33,12 @@ pub(crate) use forum::{
     thread_latest_page_region, thread_region_page_morphs, ThreadRegionPageMorphs,
 };
 
-pub use forum::user_profile_page;
 pub use forum::user_can_view_room;
+pub use forum::user_profile_page;
 pub(crate) use forum::{
     fragment_new_thread_slot, login_to_post_hint_markup, room_members_section_markup,
-    thread_ui_collapse_redacted_post, thread_ui_copy_thread, thread_ui_expand_post_full, thread_ui_expand_redacted_post,
-    user_can_post_room,
+    thread_ui_collapse_redacted_post, thread_ui_copy_thread, thread_ui_expand_post_full,
+    thread_ui_expand_redacted_post, user_can_post_room,
 };
 pub(crate) use garden::{
     encode_pin_cookie_value, external_resolver_status_markup, garden_ui_copy_rank,
@@ -46,8 +46,9 @@ pub(crate) use garden::{
 };
 pub use garden::{
     external_garden_index, external_ontology_path, garden_index, ontology_path,
-    room_external_garden_index, room_external_ontology_path, room_garden_index, room_ontology_path,
-    room_vote_compare_page, vote_compare_page,
+    question_aspect_page, question_page, redirect_strip_trailing_slash, room_external_garden_index,
+    room_external_ontology_path, room_garden_index, room_ontology_path, room_question_aspect_page,
+    room_question_page, room_vote_compare_page, vote_compare_page,
 };
 pub use routing::RouteContext;
 pub use search::{search_page, search_results_fragment};
@@ -1082,7 +1083,7 @@ mod authorship_tests {
         let now = 7 * 24 * 3600 * 1000;
         assert_eq!(recency_freshness_pct(now, now), 100);
         assert_eq!(recency_freshness_pct(now, now - 1000), 99); // ~1s old
-        // Mid-week ≈ 50%
+                                                                // Mid-week ≈ 50%
         assert_eq!(
             recency_freshness_pct(now, now - 3 * 24 * 3600 * 1000 - 12 * 3600 * 1000),
             50
@@ -1123,12 +1124,10 @@ mod authorship_tests {
             "7a3b9c2d-1234-5678-90ab-cdef12345678:claudecode:anthropic/claude-sonnet-4.5"
                 .to_string(),
         );
-        let d2 = Some(
-            "7a3b9c2d-1234-5678-90ab-cdef12345678:cursor:anthropic/claude-opus-4".to_string(),
-        );
-        let other = Some(
-            "aec1e31c-36db-4a58-a53e-43525337f6b4:cursor:anthropic/claude-opus-4".to_string(),
-        );
+        let d2 =
+            Some("7a3b9c2d-1234-5678-90ab-cdef12345678:cursor:anthropic/claude-opus-4".to_string());
+        let other =
+            Some("aec1e31c-36db-4a58-a53e-43525337f6b4:cursor:anthropic/claude-opus-4".to_string());
         let a1 = authorship_attr("alice", &d1);
         let a2 = authorship_attr("alice", &d2);
         let a3 = authorship_attr("bob", &other);

@@ -9,9 +9,7 @@ pub fn parse_username(input: &str) -> Result<String, String> {
         return Err("username must not be empty".to_string());
     }
     if s.contains('@') {
-        return Err(
-            "username must not contain '@' — use stored form (e.g. `tommy`)".to_string(),
-        );
+        return Err("username must not contain '@' — use stored form (e.g. `tommy`)".to_string());
     }
     let u = s.to_lowercase();
     validate_username_naked(&u)?;
@@ -38,9 +36,7 @@ pub fn parse_agent(input: &str) -> Result<String, String> {
         return Err("agent id must not be empty".to_string());
     }
     if s.contains('@') {
-        return Err(
-            "agent id must not contain '@' — use `uuid:rig:provider/model`".to_string(),
-        );
+        return Err("agent id must not contain '@' — use `uuid:rig:provider/model`".to_string());
     }
     let a = s.to_lowercase();
     validate_agent_naked(&a)?;

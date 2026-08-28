@@ -70,14 +70,22 @@ fn new_thread_slot_inner(nav: &ThreadNav, compose_expanded: bool) -> Markup {
     }
 }
 
-pub(crate) fn new_thread_slot_markup(nav: &ThreadNav, show: bool, compose_expanded: bool) -> Markup {
+pub(crate) fn new_thread_slot_markup(
+    nav: &ThreadNav,
+    show: bool,
+    compose_expanded: bool,
+) -> Markup {
     if !show {
         return html! {};
     }
     new_thread_slot_inner(nav, compose_expanded)
 }
 
-pub(crate) fn fragment_new_thread_slot(nav: &ThreadNav, show: bool, compose_expanded: bool) -> Markup {
+pub(crate) fn fragment_new_thread_slot(
+    nav: &ThreadNav,
+    show: bool,
+    compose_expanded: bool,
+) -> Markup {
     new_thread_slot_markup(nav, show, compose_expanded)
 }
 

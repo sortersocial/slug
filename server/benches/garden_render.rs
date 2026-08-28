@@ -37,7 +37,13 @@ fn single_component_scope(c: &mut Criterion) {
         let parent = bench_parent();
         g.throughput(Throughput::Elements(n as u64));
         g.bench_with_input(BenchmarkId::from_parameter(n), &content, |b, content| {
-            b.iter(|| black_box(build_children_rankings(content, &parent).component_rankings.len()))
+            b.iter(|| {
+                black_box(
+                    build_children_rankings(content, &parent)
+                        .component_rankings
+                        .len(),
+                )
+            })
         });
     }
     g.finish();
@@ -63,7 +69,11 @@ fn component_fanout(c: &mut Criterion) {
             &content,
             |b, content| {
                 b.iter(|| {
-                    black_box(build_children_rankings(content, &parent).component_rankings.len())
+                    black_box(
+                        build_children_rankings(content, &parent)
+                            .component_rankings
+                            .len(),
+                    )
                 })
             },
         );

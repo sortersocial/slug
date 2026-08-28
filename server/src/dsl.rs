@@ -801,17 +801,17 @@ fn parse_block_prefixed_statement(
     Ok(stmts)
 }
 
-fn parse_item_definition_statement(stripped: &str, masker: &BlockMasker) -> Result<Vec<Stmt>, DslError> {
+fn parse_item_definition_statement(
+    stripped: &str,
+    masker: &BlockMasker,
+) -> Result<Vec<Stmt>, DslError> {
     let (item1_raw, j) = parse_item_name_at(stripped, 0)
         .ok_or_else(|| DslError::Parse("invalid item name".to_string()))?;
     let i = skip_ws(stripped, j);
 
     if i >= stripped.len() {
         let (title, mut stmts) = sugar_containments(&item1_raw);
-        stmts.push(Stmt::Item {
-            title,
-            body: None,
-        });
+        stmts.push(Stmt::Item { title, body: None });
         return Ok(stmts);
     }
 
@@ -1299,7 +1299,11 @@ mod tests {
         let doc = parse_full("{prefer a}\n~/a 100:1 ~/b").unwrap();
         assert!(matches!(
             doc.statements.last(),
-            Some(Stmt::Vote { ratio_left: 100, ratio_right: 1, .. })
+            Some(Stmt::Vote {
+                ratio_left: 100,
+                ratio_right: 1,
+                ..
+            })
         ));
     }
 
@@ -1699,7 +1703,10 @@ mod tests {
                 aspect: None,
             }]
         );
-        assert!(containments(&doc).is_empty(), "URL items are never desugared");
+        assert!(
+            containments(&doc).is_empty(),
+            "URL items are never desugared"
+        );
     }
 
     #[test]

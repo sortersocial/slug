@@ -5,9 +5,7 @@ use maud::html;
 use crate::{
     html::forum::ThreadNav,
     path_types::ItemId,
-    reducer::{
-        BorderPairState, ContentState, FallenBorderEntry, MembershipStatus, ScopeId,
-    },
+    reducer::{BorderPairState, ContentState, FallenBorderEntry, MembershipStatus, ScopeId},
     scope_rank::{
         build_children_rankings, build_children_rankings_in_group, build_rankings_for_item_set,
         resolve_scope_recursive, ChildrenRankings,
@@ -250,27 +248,28 @@ fn build_sibling_nav(
 
     // Components are already sorted largest-first; only the first is the "largest ranking group".
     let current_path = current.to_storage_string();
-    let (largest_group_rank, winner_percentile) =
-        match rankings.component_rankings.first() {
-            Some(largest) if largest.ranked.len() >= 2 => {
-                let of = largest.ranked.len();
-                match largest.ranked.iter().position(|r| {
-                    r.item.clone().normalized_storage().as_str() == current_path
-                }) {
-                    Some(idx) => {
-                        let rank = idx + 1;
-                        let pct = if rank == 1 {
-                            winner_percentile_for_group_size(of)
-                        } else {
-                            None
-                        };
-                        (Some((rank, of)), pct)
-                    }
-                    None => (None, None),
+    let (largest_group_rank, winner_percentile) = match rankings.component_rankings.first() {
+        Some(largest) if largest.ranked.len() >= 2 => {
+            let of = largest.ranked.len();
+            match largest
+                .ranked
+                .iter()
+                .position(|r| r.item.clone().normalized_storage().as_str() == current_path)
+            {
+                Some(idx) => {
+                    let rank = idx + 1;
+                    let pct = if rank == 1 {
+                        winner_percentile_for_group_size(of)
+                    } else {
+                        None
+                    };
+                    (Some((rank, of)), pct)
                 }
+                None => (None, None),
             }
-            _ => (None, None),
-        };
+        }
+        _ => (None, None),
+    };
 
     Some(SiblingNavBar {
         groups,
@@ -279,7 +278,11 @@ fn build_sibling_nav(
     })
 }
 
-pub(super) fn sibling_nav_markup(nav: &ThreadNav, bar: &SiblingNavBar, current_item: &str) -> maud::Markup {
+pub(super) fn sibling_nav_markup(
+    nav: &ThreadNav,
+    bar: &SiblingNavBar,
+    current_item: &str,
+) -> maud::Markup {
     html! {
         div class="ont-sibling-nav-wrap" {
             nav class="breadcrumb ont-sibling-nav" aria-label="siblings under same parent" {
@@ -600,4 +603,3 @@ pub(super) fn build_item_page_view_model(
         threads,
     }
 }
-

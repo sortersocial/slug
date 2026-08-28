@@ -23,8 +23,7 @@ use crate::{
 use super::auth::{parse_bearer, verify_bearer_principal};
 use super::helpers::{
     compute_connectivity_stats, is_pair_voted, now_ms, paginate_rankings, parse_parent_specs,
-    pick_random_distinct_item_pair, validate_garden_parent_scope_paths,
-    vote_touches_path,
+    pick_random_distinct_item_pair, validate_garden_parent_scope_paths, vote_touches_path,
 };
 use super::validate::validate_ingest_document;
 
@@ -235,10 +234,7 @@ fn build_rank_response_for_content(
             ));
         }
         if specs.len() > 1 {
-            return Err((
-                "aspect ranking requires a single parent".into(),
-                None,
-            ));
+            return Err(("aspect ranking requires a single parent".into(), None));
         }
     }
 
@@ -253,9 +249,7 @@ fn build_rank_response_for_content(
                 .unwrap_or_else(|| ItemId::opaque(specs[0].clone()))
         };
         let empty = crate::reducer::GroupState::new();
-        let group = content
-            .aspect_group(&parent_id, slug)
-            .unwrap_or(&empty);
+        let group = content.aspect_group(&parent_id, slug).unwrap_or(&empty);
         let items = if depth > 1 && !is_global && !specs.is_empty() {
             crate::scope_rank::resolve_scope_recursive(content, &specs, depth)
         } else if is_global || specs.is_empty() {

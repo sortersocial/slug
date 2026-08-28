@@ -7,15 +7,8 @@ use maud::html;
 
 use crate::{
     html::{
-        cli_panel,
-        forum::ThreadNav,
-        layout,
-        now_ms,
-        format_ratio_current_markup, ratio_pct,
-        recency_color_style,
-        render_item_body_in_scope,
-        theme_from_jar,
-        theme_next_from_uri,
+        cli_panel, format_ratio_current_markup, forum::ThreadNav, layout, now_ms, ratio_pct,
+        recency_color_style, render_item_body_in_scope, theme_from_jar, theme_next_from_uri,
     },
     middleware::canonical_view_url,
     path_types::ItemId,
@@ -28,7 +21,7 @@ use super::{
     access::content_for_garden_view,
     browse::{garden_layout_meta, scoped_bc_path_for, GardenBrowsePath},
     copy::garden_rank_copy_button_markup,
-    external::{external_frame_allowed, external_source_href, github_resolver_controls},
+    external::{external_frame_allowed, external_resolver_controls, external_source_href},
     item::{
         child_depth_from_uri, garden_depth_select_markup, item_code_label, item_display_path,
         item_href,
@@ -93,7 +86,7 @@ pub(super) fn aspect_ranking_sections_markup(
 ) -> maud::Markup {
     html! {
         @for aspect in aspects {
-            section class="ont-tab-panel ont-tab-panel-aspect" {
+            section class="ont-tab-panel ont-tab-panel-aspect" id=(format!("aspect-{}", aspect.slug)) {
                 h4 class="ont-aspect-heading" { ":" (aspect.slug) }
                 @if let Some(prompt) = &aspect.prompt {
                     p class="muted ont-aspect-prompt" { (prompt) }
@@ -209,7 +202,7 @@ pub(super) async fn render_scope_view(
                 }
             }
 
-            @if let Some(markup) = github_resolver_controls(&model.item, &nav, &next_for_pin) {
+            @if let Some(markup) = external_resolver_controls(&model.item, &nav, &next_for_pin) {
                 (markup)
             }
 
@@ -360,4 +353,3 @@ pub(super) async fn render_scope_view(
 
     Html(page.into_string()).into_response()
 }
-

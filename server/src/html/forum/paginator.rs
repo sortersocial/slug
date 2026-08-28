@@ -25,9 +25,18 @@ pub(crate) fn snap_page_offset(requested: usize, total: usize) -> usize {
 }
 
 /// Prev/next links between chronological posts on a single-post (`/t/tag/N`) page.
-pub(super) fn render_post_permalink_nav(nav: &ThreadNav, tag: &str, index: usize, total: usize) -> Markup {
+pub(super) fn render_post_permalink_nav(
+    nav: &ThreadNav,
+    tag: &str,
+    index: usize,
+    total: usize,
+) -> Markup {
     let prev_idx = index.checked_sub(1);
-    let next_idx = if index + 1 < total { Some(index + 1) } else { None };
+    let next_idx = if index + 1 < total {
+        Some(index + 1)
+    } else {
+        None
+    };
     html! {
         div class="post-nav" {
             @if let Some(i) = prev_idx {
@@ -47,7 +56,13 @@ pub(super) fn render_post_permalink_nav(nav: &ThreadNav, tag: &str, index: usize
     }
 }
 
-pub(super) fn render_thread_paginator(nav: &ThreadNav, tag: &str, offset: usize, total: usize, top: bool) -> Markup {
+pub(super) fn render_thread_paginator(
+    nav: &ThreadNav,
+    tag: &str,
+    offset: usize,
+    total: usize,
+    top: bool,
+) -> Markup {
     let newer_offset = offset.checked_add(PAGE_SIZE).filter(|&o| o < total);
     let older_offset = if offset > 0 {
         Some(offset.saturating_sub(PAGE_SIZE))

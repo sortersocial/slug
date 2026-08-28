@@ -120,7 +120,11 @@ impl GroupState {
         let a_idx = self.ensure_item(&vote.a);
         let b_idx = self.ensure_item(&vote.b);
 
-        let (i, j) = if a_idx < b_idx { (a_idx, b_idx) } else { (b_idx, a_idx) };
+        let (i, j) = if a_idx < b_idx {
+            (a_idx, b_idx)
+        } else {
+            (b_idx, a_idx)
+        };
         self.voted_pairs.insert((i, j));
 
         let w_a = vote.ratio_left as f64;
@@ -244,14 +248,12 @@ pub struct RoomTimelineEntry {
     pub kind: RoomTimelineKind,
 }
 
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct ForumThreadState {
     pub last_activity_ts: i64,
     /// Username of the most recent person who bumped this thread.
     pub last_actor: String,
 }
-
 
 #[derive(Debug, Clone)]
 pub(crate) struct RankPositionCache {
@@ -312,7 +314,8 @@ pub struct ContentState {
 
 impl ContentState {
     pub fn aspect_group(&self, parent: &ItemId, aspect: &str) -> Option<&GroupState> {
-        self.aspect_groups.get(&(parent.ontology_leaf(), aspect.to_string()))
+        self.aspect_groups
+            .get(&(parent.ontology_leaf(), aspect.to_string()))
     }
 
     pub fn aspect_prompt(&self, aspect: &str) -> Option<&str> {
@@ -455,10 +458,7 @@ impl ContentState {
                 .entry(child.clone())
                 .or_default()
                 .insert(parent.clone());
-            self.item_children
-                .entry(parent)
-                .or_default()
-                .insert(child);
+            self.item_children.entry(parent).or_default().insert(child);
         } else {
             if let Some(set) = self.members_by_scope.get_mut(&parent) {
                 set.remove(&child);
@@ -495,7 +495,6 @@ pub struct ReducerState {
     /// token_id -> (username, salt, token_hash)
     pub tokens_by_id: HashMap<String, (String, String, String)>,
     pub agent_bindings: HashMap<String, String>,
-
 
     pub ingests_by_id: HashMap<String, Ingest>,
     /// (scope, thread_tag) → ingest ids, newest first.
@@ -567,9 +566,7 @@ impl ReducerState {
         post_id: &str,
     ) -> usize {
         self.try_thread_post_index_chronological(scope, thread_tag, post_id)
-            .expect(
-                "post_id must appear in ingests_by_scope_thread for this scope and thread",
-            )
+            .expect("post_id must appear in ingests_by_scope_thread for this scope and thread")
     }
 
     /// Ingest ids authored by `actor`, oldest first. Unfiltered; use with access checks per ingest.
@@ -590,9 +587,8 @@ impl ReducerState {
                         let scope = scope_from_room_wire(&ing.room_id);
                         match &scope {
                             ScopeId::Public => true,
-                            ScopeId::Room(rid) => {
-                                viewer.is_some_and(|u| self.user_has_cap(rid, u, ThreadCapability::View))
-                            }
+                            ScopeId::Room(rid) => viewer
+                                .is_some_and(|u| self.user_has_cap(rid, u, ThreadCapability::View)),
                         }
                     })
             })
@@ -658,7 +654,9 @@ impl ReducerState {
     }
 
     pub fn public(&self) -> &ContentState {
-        self.content.get(&ScopeId::Public).expect("public scope missing")
+        self.content
+            .get(&ScopeId::Public)
+            .expect("public scope missing")
     }
 
     /// Register parent→child edges for the full ancestor chain of **URL / external**
@@ -676,7 +674,9 @@ impl ReducerState {
                 .entry(parent.clone())
                 .or_default()
                 .insert(child);
-            if !is_new { break; }
+            if !is_new {
+                break;
+            }
             child = parent;
         }
     }
@@ -688,10 +688,7 @@ impl ReducerState {
 
     /// 1-indexed rank within its own connected component, for every active member of
     /// `scope`. Items with no votes connecting them to a sibling are absent.
-    fn scope_positions(
-        group: &GroupState,
-        members: &HashSet<ItemId>,
-    ) -> HashMap<ItemId, usize> {
+    fn scope_positions(group: &GroupState, members: &HashSet<ItemId>) -> HashMap<ItemId, usize> {
         if members.is_empty() {
             return HashMap::new();
         }
@@ -716,7 +713,11 @@ impl ReducerState {
         );
         let comps_global: Vec<Vec<usize>> = comps
             .iter()
-            .map(|c| c.iter().filter_map(|&l| sibling_idxs.get(l).copied()).collect())
+            .map(|c| {
+                c.iter()
+                    .filter_map(|&l| sibling_idxs.get(l).copied())
+                    .collect()
+            })
             .collect();
 
         let mut out = HashMap::new();
@@ -889,7 +890,11 @@ impl ReducerState {
 
                     if let Some(body_text) = body {
                         if !body_text.trim().is_empty() {
-                            nav!(content.item_bodies, keypath(item.clone()), setval(body_text));
+                            nav!(
+                                content.item_bodies,
+                                keypath(item.clone()),
+                                setval(body_text)
+                            );
                         }
                     }
                 }
@@ -909,12 +914,7 @@ impl ReducerState {
                     ingest_items.insert(child_id.clone());
                     ingest_items.insert(parent_id.clone());
                     content.apply_containment_claim(
-                        child_id,
-                        parent_id,
-                        border,
-                        sugar,
-                        ing.ts,
-                        &ing.id,
+                        child_id, parent_id, border, sugar, ing.ts, &ing.id,
                     );
                 }
                 dsl::Stmt::Aspect { slug, prompt } => {
@@ -972,7 +972,11 @@ impl ReducerState {
                         content.ranking_group.apply_vote(vote.clone());
 
                         for it in [&item_a, &item_b] {
-                            nav!(content.item_votes, keypath(it.clone()), push_front(vote.clone()));
+                            nav!(
+                                content.item_votes,
+                                keypath(it.clone()),
+                                push_front(vote.clone())
+                            );
                         }
                     }
                 }
@@ -981,7 +985,11 @@ impl ReducerState {
         }
 
         for item in ingest_items.iter() {
-            nav!(content.item_snippets, keypath(item.clone()), push_front(ing.id.clone()));
+            nav!(
+                content.item_snippets,
+                keypath(item.clone()),
+                push_front(ing.id.clone())
+            );
         }
 
         for item in ingest_items.iter() {
@@ -1017,18 +1025,22 @@ impl ReducerState {
                     .map(|s| content.members_of(s).len())
                     .unwrap_or(0);
                 let global_total = content.ranking_group.idx_to_item.len();
-                content.rank_history.entry(item.clone()).or_default().push(RankHistoryEntry {
-                    ts: ing.ts,
-                    scope_rank: after_scope,
-                    scope_rank_delta: scope_delta,
-                    scope_total,
-                    global_rank: after_global,
-                    global_rank_delta: global_delta,
-                    global_total,
-                    score,
-                    thread: thread.clone(),
-                    post_id: ing.id.clone(),
-                });
+                content
+                    .rank_history
+                    .entry(item.clone())
+                    .or_default()
+                    .push(RankHistoryEntry {
+                        ts: ing.ts,
+                        scope_rank: after_scope,
+                        scope_rank_delta: scope_delta,
+                        scope_total,
+                        global_rank: after_global,
+                        global_rank_delta: global_delta,
+                        global_total,
+                        score,
+                        thread: thread.clone(),
+                        post_id: ing.id.clone(),
+                    });
             }
         }
 
@@ -1075,11 +1087,9 @@ impl ReducerState {
         to_drop.dedup();
         for id in to_drop {
             if let Some(ing) = self.ingests_by_id.remove(&id) {
-                self.posts_by_actor
-                    .entry(ing.principal)
-                    .and_modify(|q| {
-                        q.retain(|x| x != &id);
-                    });
+                self.posts_by_actor.entry(ing.principal).and_modify(|q| {
+                    q.retain(|x| x != &id);
+                });
             }
             self.ingests_ordered.retain(|x| x != &id);
             self.redacted_posts.remove(&id);
@@ -1123,15 +1133,14 @@ impl ReducerState {
             Event::RoomDeleted(rd) => {
                 let room_id = rd.room_id.clone();
                 if self.rooms.contains(&room_id) {
-                    self.room_timeline
-                        .entry(room_id.clone())
-                        .or_default()
-                        .push(RoomTimelineEntry {
+                    self.room_timeline.entry(room_id.clone()).or_default().push(
+                        RoomTimelineEntry {
                             ts: rd.ts,
                             kind: RoomTimelineKind::RoomDeleted {
                                 deleted_by: rd.deleted_by.clone(),
                             },
-                        });
+                        },
+                    );
                 }
                 self.purge_private_room(&room_id);
             }
@@ -1155,20 +1164,35 @@ impl ReducerState {
 
                 self.ingests_by_id.insert(ing.id.clone(), ing.clone());
 
-                let ft = self.forum_threads.entry(scope_thread_key.clone()).or_default();
+                let ft = self
+                    .forum_threads
+                    .entry(scope_thread_key.clone())
+                    .or_default();
                 let prev_ts = ft.last_activity_ts;
                 if ing.ts > prev_ts {
                     ft.last_activity_ts = ing.ts;
                     ft.last_actor = ing.principal.clone();
                 }
 
-                nav!(self.ingests_by_scope_thread, keypath(scope_thread_key), push_front(ing.id.clone()));
+                nav!(
+                    self.ingests_by_scope_thread,
+                    keypath(scope_thread_key),
+                    push_front(ing.id.clone())
+                );
 
                 nav!(self.ingests_ordered, push_back(ing.id.clone()));
 
-                nav!(self.posts_by_actor, keypath(ing.principal.clone()), push_back(ing.id.clone()));
+                nav!(
+                    self.posts_by_actor,
+                    keypath(ing.principal.clone()),
+                    push_back(ing.id.clone())
+                );
 
-                nav!(self.actor_last_post_ts, keypath(ing.principal.clone()), setval(ing.ts));
+                nav!(
+                    self.actor_last_post_ts,
+                    keypath(ing.principal.clone()),
+                    setval(ing.ts)
+                );
             }
             Event::PostRedacted(pr) => {
                 self.redacted_posts.insert(pr.post_id.clone());
@@ -1182,7 +1206,8 @@ impl ReducerState {
             }
             Event::GrantAdded(ga) => {
                 let room_id = ga.room_id.clone();
-                let caps = self.grants
+                let caps = self
+                    .grants
                     .entry(ga.room_id)
                     .or_default()
                     .entry(ga.username.clone())
@@ -1253,7 +1278,8 @@ impl ReducerState {
             Event::ThreadGraduated(tg) => {
                 let room_id = tg.source_room_id.trim().to_string();
                 let tag = canonicalize_tag(&tg.thread_tag);
-                self.graduated_threads.insert((room_id.clone(), tag.clone()));
+                self.graduated_threads
+                    .insert((room_id.clone(), tag.clone()));
                 self.room_timeline
                     .entry(room_id)
                     .or_default()
@@ -1335,11 +1361,7 @@ mod rank_position_cache_tests {
         )
         .unwrap();
         assert_eq!(
-            content
-                .rank_position_cache
-                .as_ref()
-                .unwrap()
-                .recomputations,
+            content.rank_position_cache.as_ref().unwrap().recomputations,
             2,
             "adding an isolate must not invalidate ranked positions"
         );
@@ -1418,13 +1440,12 @@ mod aspect_tests {
         assert_eq!(speed.recent_votes[0].ratio_left, 4);
         assert_eq!(speed.recent_votes[0].ratio_right, 1);
 
-        assert_eq!(
-            content.aspect_prompt("beauty"),
-            Some("more beautiful")
-        );
+        assert_eq!(content.aspect_prompt("beauty"), Some("more beautiful"));
         assert_eq!(content.aspect_prompt("speed"), Some("faster"));
         assert!(content.item_votes.values().all(|votes| {
-            votes.iter().all(|v| v.ratio_left == 3 && v.ratio_right == 1)
+            votes
+                .iter()
+                .all(|v| v.ratio_left == 3 && v.ratio_right == 1)
         }));
     }
 
@@ -1435,13 +1456,16 @@ mod aspect_tests {
             "first",
             ":beauty { first prompt }\n~/songs/a { a }",
         )));
-        state.apply_event(Event::Ingest(ingest(
-            "second",
-            ":beauty { second prompt }",
-        )));
-        assert_eq!(state.public().aspect_prompt("beauty"), Some("second prompt"));
+        state.apply_event(Event::Ingest(ingest("second", ":beauty { second prompt }")));
+        assert_eq!(
+            state.public().aspect_prompt("beauty"),
+            Some("second prompt")
+        );
         state.apply_event(Event::Ingest(ingest("empty", ":beauty {   }")));
-        assert_eq!(state.public().aspect_prompt("beauty"), Some("second prompt"));
+        assert_eq!(
+            state.public().aspect_prompt("beauty"),
+            Some("second prompt")
+        );
     }
 
     #[test]
@@ -1455,7 +1479,10 @@ mod aspect_tests {
             "aspects",
             ":beauty\n{ pretty }\n~/songs/a 2:1 ~/songs/b",
         )));
-        assert!(state.public().aspect_group(&parent_songs(), "beauty").is_some());
+        assert!(state
+            .public()
+            .aspect_group(&parent_songs(), "beauty")
+            .is_some());
         assert_eq!(state.public().ranking_group.voted_pairs.len(), 1);
 
         state.apply_event(Event::PostRedacted(PostRedacted {
@@ -1527,8 +1554,12 @@ mod aspect_tests {
             .content_for_scope(&ScopeId::Room("aa11bb/studio".into()))
             .expect("private scope");
         let pub_content = state.public();
-        assert!(priv_content.aspect_group(&parent_songs(), "beauty").is_some());
-        assert!(pub_content.aspect_group(&parent_songs(), "beauty").is_some());
+        assert!(priv_content
+            .aspect_group(&parent_songs(), "beauty")
+            .is_some());
+        assert!(pub_content
+            .aspect_group(&parent_songs(), "beauty")
+            .is_some());
         assert_eq!(
             priv_content.aspect_prompt("beauty"),
             pub_content.aspect_prompt("beauty")
@@ -1633,11 +1664,7 @@ mod containment_tests {
     #[test]
     fn sugar_weights_are_idempotent() {
         let mut state = ReducerState::default();
-        state.apply_event(Event::Ingest(ingest_at(
-            "one",
-            1,
-            "~/jedi/luke { l }",
-        )));
+        state.apply_event(Event::Ingest(ingest_at("one", 1, "~/jedi/luke { l }")));
         state.apply_event(Event::Ingest(ingest_at(
             "two",
             2,
@@ -1647,7 +1674,10 @@ mod containment_tests {
         let st = c.border_state(&item("~luke"), &item("~jedi")).unwrap();
         assert_eq!(st.containment_weight, 1);
         assert_eq!(st.status, MembershipStatus::Active);
-        assert_eq!(c.item_bodies.get(&item("~luke")).map(String::as_str), Some("l again"));
+        assert_eq!(
+            c.item_bodies.get(&item("~luke")).map(String::as_str),
+            Some("l again")
+        );
     }
 
     #[test]
@@ -1673,20 +1703,15 @@ mod containment_tests {
     #[test]
     fn leaf_collision_merges_two_old_paths() {
         let mut state = ReducerState::default();
-        state.apply_event(Event::Ingest(ingest_at(
-            "x",
-            1,
-            "~/x/luke { from x }",
-        )));
-        state.apply_event(Event::Ingest(ingest_at(
-            "y",
-            2,
-            "~/y/luke { from y }",
-        )));
+        state.apply_event(Event::Ingest(ingest_at("x", 1, "~/x/luke { from x }")));
+        state.apply_event(Event::Ingest(ingest_at("y", 2, "~/y/luke { from y }")));
         let c = state.public();
         assert!(c.items.contains(&item("~luke")));
         assert!(!c.items.contains(&ItemId::parse("~/x/luke").unwrap()));
-        assert_eq!(c.item_bodies.get(&item("~luke")).map(String::as_str), Some("from y"));
+        assert_eq!(
+            c.item_bodies.get(&item("~luke")).map(String::as_str),
+            Some("from y")
+        );
         assert_eq!(c.members_of(&item("~x")), vec![item("~luke")]);
         assert_eq!(c.members_of(&item("~y")), vec![item("~luke")]);
         let mut scopes = c.scopes_of(&item("~luke"));

@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 
-use crate::path_types::ItemId;
 use super::github::ExternalResolver;
+use crate::path_types::ItemId;
 
 /// Placeholder until other domain-specific resolvers exist.
 pub struct DefaultExternalResolver;

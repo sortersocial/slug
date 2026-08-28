@@ -192,7 +192,10 @@ mod tests {
 
         nav!(item_votes, keypath(item), push_front(vote_id));
 
-        assert_eq!(item_votes.get("ai/llm").unwrap().front().unwrap(), "vote-001");
+        assert_eq!(
+            item_votes.get("ai/llm").unwrap().front().unwrap(),
+            "vote-001"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -271,7 +274,8 @@ mod tests {
     #[test]
     fn mutation_7_ingests_by_scope_thread() {
         use crate::reducer::ScopeId;
-        let mut ingests_by_scope_thread: HashMap<(ScopeId, String), VecDeque<String>> = HashMap::new();
+        let mut ingests_by_scope_thread: HashMap<(ScopeId, String), VecDeque<String>> =
+            HashMap::new();
         let thread = "debate-1".to_string();
         let id1 = "ing-1".to_string();
         let id2 = "ing-2".to_string();
@@ -280,7 +284,9 @@ mod tests {
         nav!(ingests_by_scope_thread, keypath(k.clone()), push_front(id1));
         nav!(ingests_by_scope_thread, keypath(k), push_front(id2));
 
-        let q = ingests_by_scope_thread.get(&(ScopeId::Public, "debate-1".to_string())).unwrap();
+        let q = ingests_by_scope_thread
+            .get(&(ScopeId::Public, "debate-1".to_string()))
+            .unwrap();
         assert_eq!(q[0], "ing-2"); // most recent first
         assert_eq!(q[1], "ing-1");
     }
@@ -313,13 +319,19 @@ mod tests {
         // First bump
         let ts_entry = threads.entry(thread.clone()).or_default();
         let new_ts: i64 = 100;
-        nav!(ts_entry.last_activity_ts, selected(new_ts > ts_entry.last_activity_ts, setval(new_ts)));
+        nav!(
+            ts_entry.last_activity_ts,
+            selected(new_ts > ts_entry.last_activity_ts, setval(new_ts))
+        );
         assert_eq!(threads.get("debate-1").unwrap().last_activity_ts, 100);
 
         // No-op bump (older ts)
         let ts_entry = threads.entry(thread).or_default();
         let old_ts: i64 = 50;
-        nav!(ts_entry.last_activity_ts, selected(old_ts > ts_entry.last_activity_ts, setval(old_ts)));
+        nav!(
+            ts_entry.last_activity_ts,
+            selected(old_ts > ts_entry.last_activity_ts, setval(old_ts))
+        );
         assert_eq!(threads.get("debate-1").unwrap().last_activity_ts, 100);
     }
 
@@ -358,7 +370,10 @@ mod tests {
         }
 
         assert!(state.items.contains("ai/llm"));
-        assert_eq!(state.item_bodies.get("ai/llm").unwrap(), "Large language models");
+        assert_eq!(
+            state.item_bodies.get("ai/llm").unwrap(),
+            "Large language models"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -386,7 +401,12 @@ mod tests {
             .collect();
 
         for item in &items {
-            nav_each!(item_threads, keypath(item.clone()), set_elem, threads.iter().cloned());
+            nav_each!(
+                item_threads,
+                keypath(item.clone()),
+                set_elem,
+                threads.iter().cloned()
+            );
         }
 
         assert!(item_threads.get("ai/llm").unwrap().contains("debate-1"));

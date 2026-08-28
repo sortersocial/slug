@@ -15,9 +15,9 @@ use crate::middleware::canonical_view_url;
 use crate::reducer::ScopeId;
 use crate::state::AppState;
 
+use super::access::user_can_manage_room;
 use super::access::user_can_post_room;
 use super::access::user_can_view_room;
-use super::access::user_can_manage_room;
 use super::feed::{collect_thread_rows_for_scope, render_thread_feed};
 use super::graduate::{thread_graduate_button_markup, thread_graduated_banner_markup};
 use super::ingest::ingest_entry_markup;
@@ -27,9 +27,7 @@ use super::page::{auth_strip, bc_room};
 use super::paginator::{render_thread_paginator, snap_page_offset, PAGE_SIZE};
 use super::room_members::room_members_section_markup;
 use crate::html::ui_action::UI_RPC_FIELD;
-use crate::html::{
-    bc_threads, cli_panel, layout, now_ms, theme_from_jar, theme_next_from_uri,
-};
+use crate::html::{bc_threads, cli_panel, layout, now_ms, theme_from_jar, theme_next_from_uri};
 
 fn compose_form(nav: &ThreadNav, thread_tag: &str, show: bool) -> Markup {
     if !show {
@@ -118,7 +116,10 @@ async fn thread_view_inner(
         .is_some_and(|rid| reduced.is_thread_graduated(rid, &tag));
     let can_manage = room_id
         .as_ref()
-        .and_then(|rid| user.as_ref().map(|u| user_can_manage_room(&reduced, rid, u)))
+        .and_then(|rid| {
+            user.as_ref()
+                .map(|u| user_can_manage_room(&reduced, rid, u))
+        })
         .unwrap_or(false);
     let show_compose = !graduated
         && match &sc {
@@ -299,8 +300,7 @@ pub async fn room_page(
         drop(reduced);
         return (StatusCode::NOT_FOUND, "room not found").into_response();
     };
-    let members_markup =
-        room_members_section_markup(&reduced, &room_id, false, user.as_deref());
+    let members_markup = room_members_section_markup(&reduced, &room_id, false, user.as_deref());
     let forum_cli = format!("npx slugsocial private {room_id} forum list");
     let garden_cli = format!("npx slugsocial private {room_id} garden tree");
     let audit_cli = format!("npx slugsocial private {room_id} audit");

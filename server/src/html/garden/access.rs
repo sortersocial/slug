@@ -7,12 +7,7 @@ use maud::html;
 
 use crate::{
     events::ThreadCapability,
-    html::{
-        forum::ThreadNav,
-        layout,
-        theme_from_jar,
-        theme_next_from_uri,
-    },
+    html::{forum::ThreadNav, layout, theme_from_jar, theme_next_from_uri},
     reducer::{ContentState, ReducerState, ScopeId},
 };
 
@@ -36,7 +31,11 @@ pub(super) fn room_not_found_page(jar: &CookieJar, uri: &Uri) -> impl IntoRespon
     (StatusCode::NOT_FOUND, Html(page.into_string()))
 }
 
-pub(super) fn user_can_view_room(reduced: &ReducerState, room_id: &str, username: Option<&str>) -> bool {
+pub(super) fn user_can_view_room(
+    reduced: &ReducerState,
+    room_id: &str,
+    username: Option<&str>,
+) -> bool {
     if !reduced.rooms.contains(room_id) {
         return false;
     }

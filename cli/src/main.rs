@@ -14,7 +14,12 @@ use std::path::PathBuf;
 )]
 struct Cli {
     /// Dev only: server URL (env: SLUG_SERVER). Not exposed as a flag.
-    #[arg(env = "SLUG_SERVER", default_value = "https://slug.social", hide_env_values = true, hide = true)]
+    #[arg(
+        env = "SLUG_SERVER",
+        default_value = "https://slug.social",
+        hide_env_values = true,
+        hide = true
+    )]
     server: String,
 
     #[command(subcommand)]
@@ -372,7 +377,6 @@ enum GardenCmd {
     },
 }
 
-
 fn print_item_response(resp: &ItemResponse) {
     if let Some(body) = &resp.body {
         println!("{body}");
@@ -400,7 +404,14 @@ fn print_item_response(resp: &ItemResponse) {
     }
     if !resp.threads.is_empty() {
         println!();
-        println!("threads: {}", resp.threads.iter().map(|t| format!("#{t}")).collect::<Vec<_>>().join(" "));
+        println!(
+            "threads: {}",
+            resp.threads
+                .iter()
+                .map(|t| format!("#{t}"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
     }
 }
 
@@ -410,7 +421,11 @@ fn format_connectivity_stats(stats: &ConnectivityStats) -> String {
     } else {
         stats.pairs_voted as f64 / stats.pairs_possible as f64 * 100.0
     };
-    let component_label = if stats.components == 1 { "component" } else { "components" };
+    let component_label = if stats.components == 1 {
+        "component"
+    } else {
+        "components"
+    };
     let connection_status = if stats.comparisons_until_connected == 0 {
         "connected".to_string()
     } else {
@@ -419,7 +434,10 @@ fn format_connectivity_stats(stats: &ConnectivityStats) -> String {
         } else {
             "comparisons"
         };
-        format!("{} {comparison_label} to connect", stats.comparisons_until_connected)
+        format!(
+            "{} {comparison_label} to connect",
+            stats.comparisons_until_connected
+        )
     };
     format!(
         "graph: {} items, {}/{} pairs ({density:.1}% density), {} {component_label}, {connection_status}",
@@ -441,7 +459,14 @@ fn print_pair_response(resp: &PairResponse) {
     }
     if !resp.threads.is_empty() {
         println!();
-        println!("threads: {}", resp.threads.iter().map(|t| format!("#{t}")).collect::<Vec<_>>().join(" "));
+        println!(
+            "threads: {}",
+            resp.threads
+                .iter()
+                .map(|t| format!("#{t}"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
     }
     if let Some(stats) = &resp.connectivity {
         println!();
@@ -478,27 +503,47 @@ fn print_rank_history_response(resp: &slug_types::RankHistoryResponse) {
         .as_millis() as i64;
     let n = resp.history.len();
     for (i, e) in resp.history.iter().enumerate() {
-        let label = if i == 0 { " ← first appearance" } else if i == n - 1 { " ← current" } else { "" };
+        let label = if i == 0 {
+            " ← first appearance"
+        } else if i == n - 1 {
+            " ← current"
+        } else {
+            ""
+        };
         let scope_delta = match e.scope_rank_delta.cmp(&0) {
-            std::cmp::Ordering::Less    => format!(" ↑{}", e.scope_rank_delta.unsigned_abs()),
+            std::cmp::Ordering::Less => format!(" ↑{}", e.scope_rank_delta.unsigned_abs()),
             std::cmp::Ordering::Greater => format!(" ↓{}", e.scope_rank_delta),
-            std::cmp::Ordering::Equal   => String::new(),
+            std::cmp::Ordering::Equal => String::new(),
         };
         let global_delta = match e.global_rank_delta.cmp(&0) {
-            std::cmp::Ordering::Less    => format!(" ↑{}", e.global_rank_delta.unsigned_abs()),
+            std::cmp::Ordering::Less => format!(" ↑{}", e.global_rank_delta.unsigned_abs()),
             std::cmp::Ordering::Greater => format!(" ↓{}", e.global_rank_delta),
-            std::cmp::Ordering::Equal   => String::new(),
+            std::cmp::Ordering::Equal => String::new(),
         };
         println!(
             "\n  #{} of {} among siblings{}   #{} of {} globally{}   {}   {} post #{}{}",
-            e.scope_rank, e.scope_total, scope_delta,
-            e.global_rank, e.global_total, global_delta,
+            e.scope_rank,
+            e.scope_total,
+            scope_delta,
+            e.global_rank,
+            e.global_total,
+            global_delta,
             slug_types::timeago::timeago(now_ms, e.ts),
-            e.thread, e.thread_post_index,
+            e.thread,
+            e.thread_post_index,
             label,
         );
         for v in &e.caused_by {
-            println!("    {} {} {} {}", v.a, v.ratio, v.b, v.actor.as_deref().map(|a| format!("  ({a})")).unwrap_or_default());
+            println!(
+                "    {} {} {} {}",
+                v.a,
+                v.ratio,
+                v.b,
+                v.actor
+                    .as_deref()
+                    .map(|a| format!("  ({a})"))
+                    .unwrap_or_default()
+            );
             if !v.body.is_empty() {
                 println!("      {}", v.body.lines().next().unwrap_or(&v.body).trim());
             }
@@ -511,8 +556,16 @@ fn print_rank_history_response(resp: &slug_types::RankHistoryResponse) {
 }
 
 fn print_global_rank_response(resp: &GlobalRankResponse) {
-    let show_percent = resp.components.iter().flat_map(|component| &component.ranking).any(|row| row.percent.is_some());
-    let shown_ranked: usize = resp.components.iter().map(|component| component.ranking.len()).sum();
+    let show_percent = resp
+        .components
+        .iter()
+        .flat_map(|component| &component.ranking)
+        .any(|row| row.percent.is_some());
+    let shown_ranked: usize = resp
+        .components
+        .iter()
+        .map(|component| component.ranking.len())
+        .sum();
     let shown_total = shown_ranked + resp.unranked_items.len();
     println!(
         "global rank  (showing {}-{} of {} ranked + {} unranked)",
@@ -523,10 +576,21 @@ fn print_global_rank_response(resp: &GlobalRankResponse) {
     );
     let mut rank = resp.offset + 1;
     for (component_index, component) in resp.components.iter().enumerate() {
-        println!("\ncomponent {}  ({} items, {} pairs; scores are component-local)", component_index + 1, component.ranking.len(), component.pairs);
+        println!(
+            "\ncomponent {}  ({} items, {} pairs; scores are component-local)",
+            component_index + 1,
+            component.ranking.len(),
+            component.pairs
+        );
         for row in &component.ranking {
             if show_percent {
-                println!("{:>4}. {:<40} {:>6.1}%  ({:.6})", rank, row.item, row.percent.unwrap_or(0.0), row.score);
+                println!(
+                    "{:>4}. {:<40} {:>6.1}%  ({:.6})",
+                    rank,
+                    row.item,
+                    row.percent.unwrap_or(0.0),
+                    row.score
+                );
             } else {
                 println!("{:>4}. {:<40} {:.6}", rank, row.item, row.score);
             }
@@ -612,10 +676,7 @@ fn print_threads(resp: &ThreadsResponse) {
         .as_millis() as i64;
     for t in &resp.threads {
         let ago = slug_types::timeago::timeago(now_ms, t.last_activity_ts);
-        println!(
-            "{:<32} {}",
-            t.thread, ago
-        );
+        println!("{:<32} {}", t.thread, ago);
     }
 }
 
@@ -679,7 +740,9 @@ fn parse_ts(s: &str) -> Result<i64> {
         let days = days_from_epoch(y, m, d)?;
         return Ok(days * 86_400_000);
     }
-    Err(anyhow!("expected Unix ms timestamp or YYYY-MM-DD, got '{s}'"))
+    Err(anyhow!(
+        "expected Unix ms timestamp or YYYY-MM-DD, got '{s}'"
+    ))
 }
 
 /// Days from Unix epoch (1970-01-01) to the given Gregorian date.
@@ -731,7 +794,9 @@ fn rpc_line_ok(line: &RpcLine) -> Result<&RpcResult> {
         }
         return Err(anyhow!(m));
     }
-    line.result.as_ref().ok_or_else(|| anyhow!("rpc missing result"))
+    line.result
+        .as_ref()
+        .ok_or_else(|| anyhow!("rpc missing result"))
 }
 
 const PRIVATE_ROOM_NEEDS_BEARER: &str = "needs bearer token, use slugsocial identity command";
@@ -821,10 +886,7 @@ fn ontology_path_for_api_query(normalized: &str) -> String {
 /// Parse `--depth` for garden children (`all` / `∞` / `inf` → unbounded).
 fn parse_garden_depth_arg(raw: &str) -> usize {
     let s = raw.trim();
-    if matches!(
-        s,
-        "all" | "∞" | "inf" | "infinity" | "*" | "unlimited"
-    ) {
+    if matches!(s, "all" | "∞" | "inf" | "infinity" | "*" | "unlimited") {
         return usize::MAX;
     }
     s.parse::<usize>().unwrap_or(1).max(1)
@@ -874,7 +936,8 @@ fn write_secret_file(name: &str, contents: &str) -> Result<()> {
     let dir = slug_config_dir();
     std::fs::create_dir_all(&dir).with_context(|| format!("failed to create {}", dir.display()))?;
     let path = dir.join(name);
-    std::fs::write(&path, contents).with_context(|| format!("failed to write {}", path.display()))?;
+    std::fs::write(&path, contents)
+        .with_context(|| format!("failed to write {}", path.display()))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -972,7 +1035,15 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
     match sub {
         ScopedCmd::Garden { sub } => match sub {
             GardenCmd::Tree { json } => {
-                let batch = send_rpc(&client, base, scoped_read_bearer, vec![RpcCommand::GetLeaves { room: room.to_string() }]).await?;
+                let batch = send_rpc(
+                    &client,
+                    base,
+                    scoped_read_bearer,
+                    vec![RpcCommand::GetLeaves {
+                        room: room.to_string(),
+                    }],
+                )
+                .await?;
                 match rpc_line_ok_scoped_read(&batch.results[0], room)? {
                     RpcResult::Leaves(resp) => {
                         if json {
@@ -1014,7 +1085,12 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
                     _ => return Err(anyhow!("unexpected RPC result")),
                 }
             }
-            GardenCmd::Children { paths, depth, json, aspect } => {
+            GardenCmd::Children {
+                paths,
+                depth,
+                json,
+                aspect,
+            } => {
                 let paths: Vec<String> = paths
                     .iter()
                     .map(|p| normalize_ontology_path_input(p).map_err(anyhow::Error::msg))
@@ -1124,7 +1200,13 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
                     _ => return Err(anyhow!("unexpected RPC result")),
                 }
             }
-            GardenCmd::Rank { limit, offset, percent, json, aspect } => {
+            GardenCmd::Rank {
+                limit,
+                offset,
+                percent,
+                json,
+                aspect,
+            } => {
                 if let Some(aspect) = aspect {
                     let batch = send_rpc(
                         &client,
@@ -1177,202 +1259,204 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
                 }
             }
         },
-        ScopedCmd::Forum { sub } => match sub {
-            ForumCmd::List { json } => {
-                let batch = send_rpc(
-                    &client,
-                    base,
-                    scoped_read_bearer,
-                    vec![RpcCommand::ListForumThreads {
-                        room: room.to_string(),
-                    }],
-                )
-                .await?;
-                match rpc_line_ok_scoped_read(&batch.results[0], room)? {
-                    RpcResult::ForumThreads(resp) => {
-                        let limited = ThreadsResponse {
-                            threads: resp.threads.iter().take(10).cloned().collect(),
-                        };
-                        if json {
-                            println!("{}", serde_json::to_string_pretty(&limited)?);
-                        } else {
-                            print_threads(&limited);
+        ScopedCmd::Forum { sub } => {
+            match sub {
+                ForumCmd::List { json } => {
+                    let batch = send_rpc(
+                        &client,
+                        base,
+                        scoped_read_bearer,
+                        vec![RpcCommand::ListForumThreads {
+                            room: room.to_string(),
+                        }],
+                    )
+                    .await?;
+                    match rpc_line_ok_scoped_read(&batch.results[0], room)? {
+                        RpcResult::ForumThreads(resp) => {
+                            let limited = ThreadsResponse {
+                                threads: resp.threads.iter().take(10).cloned().collect(),
+                            };
+                            if json {
+                                println!("{}", serde_json::to_string_pretty(&limited)?);
+                            } else {
+                                print_threads(&limited);
+                            }
                         }
+                        _ => return Err(anyhow!("unexpected RPC result")),
                     }
-                    _ => return Err(anyhow!("unexpected RPC result")),
                 }
-            }
-            ForumCmd::Show {
-                tag,
-                json,
-                offset,
-                limit,
-                since,
-                before,
-                actor,
-                post,
-            } => {
-                let thread_tag = normalize_thread_input(&tag);
-                let batch = send_rpc(
-                    &client,
-                    base,
-                    scoped_read_bearer,
-                    vec![RpcCommand::GetForumThread {
-                        room: room.to_string(),
-                        thread_tag,
-                        offset,
-                        limit,
-                        since: match &since {
-                            Some(s) => Some(parse_ts(s)?),
-                            None => None,
-                        },
-                        before: match &before {
-                            Some(s) => Some(parse_ts(s)?),
-                            None => None,
-                        },
-                        actor,
-                        post_id: post,
-                    }],
-                )
-                .await?;
-                match rpc_line_ok_scoped_read(&batch.results[0], room)? {
-                    RpcResult::ForumThread(resp) => {
-                        if json {
-                            println!("{}", serde_json::to_string_pretty(&resp)?);
-                        } else {
-                            print_thread(resp);
+                ForumCmd::Show {
+                    tag,
+                    json,
+                    offset,
+                    limit,
+                    since,
+                    before,
+                    actor,
+                    post,
+                } => {
+                    let thread_tag = normalize_thread_input(&tag);
+                    let batch = send_rpc(
+                        &client,
+                        base,
+                        scoped_read_bearer,
+                        vec![RpcCommand::GetForumThread {
+                            room: room.to_string(),
+                            thread_tag,
+                            offset,
+                            limit,
+                            since: match &since {
+                                Some(s) => Some(parse_ts(s)?),
+                                None => None,
+                            },
+                            before: match &before {
+                                Some(s) => Some(parse_ts(s)?),
+                                None => None,
+                            },
+                            actor,
+                            post_id: post,
+                        }],
+                    )
+                    .await?;
+                    match rpc_line_ok_scoped_read(&batch.results[0], room)? {
+                        RpcResult::ForumThread(resp) => {
+                            if json {
+                                println!("{}", serde_json::to_string_pretty(&resp)?);
+                            } else {
+                                print_thread(resp);
+                            }
                         }
+                        _ => return Err(anyhow!("unexpected RPC result")),
                     }
-                    _ => return Err(anyhow!("unexpected RPC result")),
                 }
-            }
-            ForumCmd::Post {
-                tag,
-                delegate,
-                file,
-                json,
-            } => {
-                let delegate = delegate.trim();
-                if delegate.is_empty() {
-                    return Err(anyhow!(
+                ForumCmd::Post {
+                    tag,
+                    delegate,
+                    file,
+                    json,
+                } => {
+                    let delegate = delegate.trim();
+                    if delegate.is_empty() {
+                        return Err(anyhow!(
                         "--delegate is required for CLI posts (humans use the website); set SLUG_DELEGATE or pass --delegate uuid:rig:provider/model"
                     ));
-                }
-                let mut text = String::new();
-                match file {
-                    Some(path) => {
-                        text = std::fs::read_to_string(&path)
-                            .with_context(|| format!("failed to read {}", path.display()))?;
                     }
-                    None => {
-                        std::io::stdin()
-                            .read_to_string(&mut text)
-                            .context("failed to read stdin")?;
-                    }
-                }
-                if text.trim().is_empty() {
-                    return Err(anyhow!("no input provided (empty)"));
-                }
-                let bearer = effective_bearer().ok_or_else(private_room_needs_bearer_error)?;
-                let thread_tag = normalize_thread_input(&tag);
-                let batch = send_rpc(
-                    &client,
-                    base,
-                    Some(&bearer),
-                    vec![RpcCommand::Post {
-                        room: room.to_string(),
-                        thread_tag,
-                        delegate: Some(delegate.to_string()),
-                        text,
-                        return_rank_diff: true,
-                    }],
-                )
-                .await?;
-                match rpc_line_ok(&batch.results[0])? {
-                    RpcResult::PostOk {
-                        events_appended,
-                        post_id: _,
-                        post_index: _,
-                        ranking_changes,
-                        threads,
-                        next,
-                    } => {
-                        if json {
-                            println!(
-                                "{}",
-                                serde_json::to_string_pretty(&serde_json::json!({
-                                    "ok": true,
-                                    "events_appended": events_appended,
-                                    "ranking_changes": ranking_changes,
-                                    "threads": threads,
-                                    "next": next,
-                                }))?
-                            );
-                        } else {
-                            println!("✓ posted");
-                            println!("events: {events_appended}");
-                            if !threads.is_empty() {
-                                println!("threads:");
-                                for t in threads {
-                                    println!("  {t}");
-                                }
-                            }
-                            if let Some(ref rc) = ranking_changes {
-                                print_ranking_changes(rc);
-                            }
-                            print_next(next);
-                            println!();
-                            println!("---");
-                            println!("For your next comparison: remember to ask your human first. Their perspective is what makes your submission more than another model's take.");
-                            println!("---");
+                    let mut text = String::new();
+                    match file {
+                        Some(path) => {
+                            text = std::fs::read_to_string(&path)
+                                .with_context(|| format!("failed to read {}", path.display()))?;
+                        }
+                        None => {
+                            std::io::stdin()
+                                .read_to_string(&mut text)
+                                .context("failed to read stdin")?;
                         }
                     }
-                    _ => return Err(anyhow!("unexpected RPC result")),
+                    if text.trim().is_empty() {
+                        return Err(anyhow!("no input provided (empty)"));
+                    }
+                    let bearer = effective_bearer().ok_or_else(private_room_needs_bearer_error)?;
+                    let thread_tag = normalize_thread_input(&tag);
+                    let batch = send_rpc(
+                        &client,
+                        base,
+                        Some(&bearer),
+                        vec![RpcCommand::Post {
+                            room: room.to_string(),
+                            thread_tag,
+                            delegate: Some(delegate.to_string()),
+                            text,
+                            return_rank_diff: true,
+                        }],
+                    )
+                    .await?;
+                    match rpc_line_ok(&batch.results[0])? {
+                        RpcResult::PostOk {
+                            events_appended,
+                            post_id: _,
+                            post_index: _,
+                            ranking_changes,
+                            threads,
+                            next,
+                        } => {
+                            if json {
+                                println!(
+                                    "{}",
+                                    serde_json::to_string_pretty(&serde_json::json!({
+                                        "ok": true,
+                                        "events_appended": events_appended,
+                                        "ranking_changes": ranking_changes,
+                                        "threads": threads,
+                                        "next": next,
+                                    }))?
+                                );
+                            } else {
+                                println!("✓ posted");
+                                println!("events: {events_appended}");
+                                if !threads.is_empty() {
+                                    println!("threads:");
+                                    for t in threads {
+                                        println!("  {t}");
+                                    }
+                                }
+                                if let Some(ref rc) = ranking_changes {
+                                    print_ranking_changes(rc);
+                                }
+                                print_next(next);
+                                println!();
+                                println!("---");
+                                println!("For your next comparison: remember to ask your human first. Their perspective is what makes your submission more than another model's take.");
+                                println!("---");
+                            }
+                        }
+                        _ => return Err(anyhow!("unexpected RPC result")),
+                    }
                 }
-            }
-            ForumCmd::Graduate { tag, json } => {
-                if room == "public" {
-                    return Err(anyhow!(
+                ForumCmd::Graduate { tag, json } => {
+                    if room == "public" {
+                        return Err(anyhow!(
                         "forum graduate is only for private rooms; use `slugsocial private <room> forum graduate <tag>`"
                     ));
-                }
-                let bearer = effective_bearer().ok_or_else(private_room_needs_bearer_error)?;
-                let thread_tag = normalize_thread_input(&tag);
-                let batch = send_rpc(
-                    &client,
-                    base,
-                    Some(&bearer),
-                    vec![RpcCommand::ThreadGraduate {
-                        room: room.to_string(),
-                        thread_tag,
-                    }],
-                )
-                .await?;
-                match rpc_line_ok(&batch.results[0])? {
-                    RpcResult::ThreadGraduatedOk {
-                        thread_tag,
-                        posts_copied,
-                        web,
-                    } => {
-                        if json {
-                            println!(
-                                "{}",
-                                serde_json::to_string_pretty(&serde_json::json!({
-                                    "ok": true,
-                                    "thread_tag": thread_tag,
-                                    "posts_copied": posts_copied,
-                                    "web": web,
-                                }))?
-                            );
-                        } else {
-                            println!("✓ graduated #{thread_tag} to public ({posts_copied} posts copied)");
-                            println!("  {web}");
-                        }
                     }
-                    _ => return Err(anyhow!("unexpected RPC result")),
+                    let bearer = effective_bearer().ok_or_else(private_room_needs_bearer_error)?;
+                    let thread_tag = normalize_thread_input(&tag);
+                    let batch = send_rpc(
+                        &client,
+                        base,
+                        Some(&bearer),
+                        vec![RpcCommand::ThreadGraduate {
+                            room: room.to_string(),
+                            thread_tag,
+                        }],
+                    )
+                    .await?;
+                    match rpc_line_ok(&batch.results[0])? {
+                        RpcResult::ThreadGraduatedOk {
+                            thread_tag,
+                            posts_copied,
+                            web,
+                        } => {
+                            if json {
+                                println!(
+                                    "{}",
+                                    serde_json::to_string_pretty(&serde_json::json!({
+                                        "ok": true,
+                                        "thread_tag": thread_tag,
+                                        "posts_copied": posts_copied,
+                                        "web": web,
+                                    }))?
+                                );
+                            } else {
+                                println!("✓ graduated #{thread_tag} to public ({posts_copied} posts copied)");
+                                println!("  {web}");
+                            }
+                        }
+                        _ => return Err(anyhow!("unexpected RPC result")),
+                    }
                 }
             }
-        },
+        }
         ScopedCmd::InviteLink { caps, uses, json } => {
             let caps: Vec<String> = caps
                 .into_iter()
@@ -1446,7 +1530,12 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
                         if resp.grants.is_empty() {
                             println!("(no grants recorded)");
                         } else {
-                            let w_user = resp.grants.iter().map(|g| g.username.len()).max().unwrap_or(0);
+                            let w_user = resp
+                                .grants
+                                .iter()
+                                .map(|g| g.username.len())
+                                .max()
+                                .unwrap_or(0);
                             for g in &resp.grants {
                                 let caps = g.capabilities.join(", ");
                                 println!("{:<width$}  {}", g.username, caps, width = w_user.max(8));
@@ -1550,7 +1639,10 @@ async fn run() -> Result<()> {
 
     // If no command provided, print the guide
     let Some(cmd) = cmd else {
-        print!("{}", include_str!("../GUIDE.sorter").replace("npx slugsocial", "slugsocial"));
+        print!(
+            "{}",
+            include_str!("../GUIDE.sorter").replace("npx slugsocial", "slugsocial")
+        );
         return Ok(());
     };
 
@@ -1593,13 +1685,8 @@ async fn run() -> Result<()> {
             RoomCmd::List { json } => {
                 let client = http_client()?;
                 let bearer = effective_bearer().ok_or_else(private_room_needs_bearer_error)?;
-                let batch = send_rpc(
-                    &client,
-                    base,
-                    Some(&bearer),
-                    vec![RpcCommand::RoomList],
-                )
-                .await?;
+                let batch =
+                    send_rpc(&client, base, Some(&bearer), vec![RpcCommand::RoomList]).await?;
                 match rpc_line_ok(&batch.results[0])? {
                     RpcResult::RoomList(resp) => {
                         if json {
@@ -1659,7 +1746,9 @@ async fn run() -> Result<()> {
                     }
                 }
                 if !resp.threads.is_empty() {
-                    if !resp.items.is_empty() { println!(); }
+                    if !resp.items.is_empty() {
+                        println!();
+                    }
                     println!("threads ({})", resp.threads.len());
                     let now_ms = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
@@ -1675,7 +1764,9 @@ async fn run() -> Result<()> {
                     }
                 }
                 if !resp.posts.is_empty() {
-                    if !resp.items.is_empty() || !resp.threads.is_empty() { println!(); }
+                    if !resp.items.is_empty() || !resp.threads.is_empty() {
+                        println!();
+                    }
                     println!("posts ({})", resp.posts.len());
                     let now_ms = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
@@ -1683,7 +1774,12 @@ async fn run() -> Result<()> {
                         .as_millis() as i64;
                     for p in &resp.posts {
                         let first_line = p.snippet.lines().next().unwrap_or("").trim();
-                        println!("  {} · {}  {}", p.thread, slug_types::timeago::timeago(now_ms, p.ts), first_line);
+                        println!(
+                            "  {} · {}  {}",
+                            p.thread,
+                            slug_types::timeago::timeago(now_ms, p.ts),
+                            first_line
+                        );
                     }
                 }
                 if resp.items.is_empty() && resp.threads.is_empty() && resp.posts.is_empty() {
@@ -1692,7 +1788,12 @@ async fn run() -> Result<()> {
             }
         }
 
-        Command::Feed { delegate, since, limit, json } => {
+        Command::Feed {
+            delegate,
+            since,
+            limit,
+            json,
+        } => {
             let client = http_client()?;
             let bearer = effective_bearer().ok_or_else(|| {
                 anyhow!(
@@ -1730,10 +1831,14 @@ async fn run() -> Result<()> {
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_millis() as i64;
-                let since_attr = resp.since
+                let since_attr = resp
+                    .since
                     .map(|ts| format!(" since=\"{}\"", slug_types::timeago::timeago(now_ms, ts)))
                     .unwrap_or_default();
-                println!("<feed total=\"{}\" limit=\"{}\"{}>", resp.total, limit, since_attr);
+                println!(
+                    "<feed total=\"{}\" limit=\"{}\"{}>",
+                    resp.total, limit, since_attr
+                );
                 if resp.posts.is_empty() {
                     println!("<!-- no new activity -->");
                 } else {
@@ -1749,7 +1854,9 @@ async fn run() -> Result<()> {
                             p.id, ago, p.room, thread_attr
                         );
                         print!("{}", p.body);
-                        if !p.body.ends_with('\n') { println!(); }
+                        if !p.body.ends_with('\n') {
+                            println!();
+                        }
                         println!("</post>");
                     }
                 }
@@ -1774,7 +1881,8 @@ async fn run() -> Result<()> {
                 )
                 .await?;
 
-                let poll_url = if start.poll_url.starts_with("http://") || start.poll_url.starts_with("https://")
+                let poll_url = if start.poll_url.starts_with("http://")
+                    || start.poll_url.starts_with("https://")
                 {
                     start.poll_url.clone()
                 } else {
@@ -1799,7 +1907,9 @@ async fn run() -> Result<()> {
                     println!();
                     println!("  {}", start.login_url);
                     println!();
-                    println!("Show the above link to the user. Then immediately run (do not wait):");
+                    println!(
+                        "Show the above link to the user. Then immediately run (do not wait):"
+                    );
                     println!();
                     println!("  slugsocial identity poll {}", start.session);
                     println!();
@@ -1821,7 +1931,8 @@ async fn run() -> Result<()> {
                     eprintln!("Polling for login completion (every {poll_interval_ms}ms, max {max_wait_secs}s)…");
                 }
 
-                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(max_wait_secs);
+                let deadline =
+                    std::time::Instant::now() + std::time::Duration::from_secs(max_wait_secs);
                 let mut token_out: Option<String> = None;
                 let mut user_out: Option<String> = None;
                 let mut agent_out: Option<String> = None;
@@ -1830,7 +1941,12 @@ async fn run() -> Result<()> {
                     tokio::time::sleep(std::time::Duration::from_millis(poll_interval_ms)).await;
                     let poll: PendingSessionPollResponse =
                         expect_json(client.get(&poll_url).send().await?).await?;
-                    if let Some(a) = poll.agent.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+                    if let Some(a) = poll
+                        .agent
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                    {
                         agent_out = Some(a.to_string());
                     }
                     if poll.complete {

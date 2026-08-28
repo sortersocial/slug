@@ -86,14 +86,20 @@ struct SearchResults {
 fn can_view_scope(state: &ReducerState, scope: &ScopeId, principal: Option<&str>) -> bool {
     match scope {
         ScopeId::Public => true,
-        ScopeId::Room(room_id) => principal.is_some_and(|u| state.user_has_cap(room_id, u, ThreadCapability::View)),
+        ScopeId::Room(room_id) => {
+            principal.is_some_and(|u| state.user_has_cap(room_id, u, ThreadCapability::View))
+        }
     }
 }
 
 fn search(state: &ReducerState, q: &str, limit: usize, principal: Option<&str>) -> SearchResults {
     let words = tokenize(q);
     if words.is_empty() {
-        return SearchResults { items: vec![], threads: vec![], posts: vec![] };
+        return SearchResults {
+            items: vec![],
+            threads: vec![],
+            posts: vec![],
+        };
     }
 
     let public = state.public();
@@ -121,10 +127,13 @@ fn search(state: &ReducerState, q: &str, limit: usize, principal: Option<&str>) 
             }
         }
         if score > 0 {
-            scored_items.push((score, ItemRow {
-                path: item.as_str().to_string(),
-                body: public.item_bodies.get(item).cloned(),
-            }));
+            scored_items.push((
+                score,
+                ItemRow {
+                    path: item.as_str().to_string(),
+                    body: public.item_bodies.get(item).cloned(),
+                },
+            ));
         }
     }
 
@@ -145,12 +154,15 @@ fn search(state: &ReducerState, q: &str, limit: usize, principal: Option<&str>) 
                 .get(&(ScopeId::Public, tag.clone()))
                 .map(|q| q.len())
                 .unwrap_or(0);
-            scored_threads.push((score, ThreadRow {
-                tag: tag.clone(),
-                subtitle: None,
-                post_count,
-                last_activity: thread_state.last_activity_ts,
-            }));
+            scored_threads.push((
+                score,
+                ThreadRow {
+                    tag: tag.clone(),
+                    subtitle: None,
+                    post_count,
+                    last_activity: thread_state.last_activity_ts,
+                },
+            ));
         }
     }
 
@@ -166,18 +178,20 @@ fn search(state: &ReducerState, q: &str, limit: usize, principal: Option<&str>) 
             }
         }
         if score > 0 {
-            let Some((scope, tag)) = state
-                .ingests_by_scope_thread
-                .iter()
-                .find_map(|((scope, tag), ids)| {
-                    if ids.contains(id) {
-                        Some((scope.clone(), tag.clone()))
-                    } else {
-                        None
-                    }
-                }) else {
-                    continue;
-                };
+            let Some((scope, tag)) =
+                state
+                    .ingests_by_scope_thread
+                    .iter()
+                    .find_map(|((scope, tag), ids)| {
+                        if ids.contains(id) {
+                            Some((scope.clone(), tag.clone()))
+                        } else {
+                            None
+                        }
+                    })
+            else {
+                continue;
+            };
             if !can_view_scope(state, &scope, principal) {
                 continue;
             }
@@ -185,17 +199,23 @@ fn search(state: &ReducerState, q: &str, limit: usize, principal: Option<&str>) 
                 ScopeId::Public => format!("#{tag}"),
                 ScopeId::Room(rid) => format!("{rid}/#{tag}"),
             };
-            scored_posts.push((score, PostRow {
-                thread,
-                actor_display: authorship_address(&ingest.principal, &ingest.delegate),
-                text: ingest.raw.clone(),
-                ts: ingest.ts,
-            }));
+            scored_posts.push((
+                score,
+                PostRow {
+                    thread,
+                    actor_display: authorship_address(&ingest.principal, &ingest.delegate),
+                    text: ingest.raw.clone(),
+                    ts: ingest.ts,
+                },
+            ));
         }
     }
 
     scored_items.sort_by(|a, b| b.0.cmp(&a.0));
-    scored_threads.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.last_activity.cmp(&a.1.last_activity)));
+    scored_threads.sort_by(|a, b| {
+        b.0.cmp(&a.0)
+            .then_with(|| b.1.last_activity.cmp(&a.1.last_activity))
+    });
     scored_posts.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.ts.cmp(&a.1.ts)));
 
     scored_items.truncate(limit);
@@ -213,17 +233,25 @@ fn search(state: &ReducerState, q: &str, limit: usize, principal: Option<&str>) 
 
 /// Snap a byte offset to the nearest char boundary at or before `pos`.
 fn floor_char_boundary(s: &str, pos: usize) -> usize {
-    if pos >= s.len() { return s.len(); }
+    if pos >= s.len() {
+        return s.len();
+    }
     let mut i = pos;
-    while i > 0 && !s.is_char_boundary(i) { i -= 1; }
+    while i > 0 && !s.is_char_boundary(i) {
+        i -= 1;
+    }
     i
 }
 
 /// Snap a byte offset to the nearest char boundary at or after `pos`.
 fn ceil_char_boundary(s: &str, pos: usize) -> usize {
-    if pos >= s.len() { return s.len(); }
+    if pos >= s.len() {
+        return s.len();
+    }
     let mut i = pos;
-    while i < s.len() && !s.is_char_boundary(i) { i += 1; }
+    while i < s.len() && !s.is_char_boundary(i) {
+        i += 1;
+    }
     i
 }
 
@@ -242,7 +270,10 @@ fn highlight_snippet(text: &str, words: &[String], max_len: usize) -> String {
     let start = if raw_start > 0 {
         let snapped = ceil_char_boundary(&escaped_full, raw_start);
         // Try to snap to a word boundary (space)
-        escaped_full[snapped..].find(' ').map(|i| snapped + i + 1).unwrap_or(snapped)
+        escaped_full[snapped..]
+            .find(' ')
+            .map(|i| snapped + i + 1)
+            .unwrap_or(snapped)
     } else {
         0
     };
@@ -268,9 +299,13 @@ fn highlight_snippet(text: &str, words: &[String], max_len: usize) -> String {
 
     if marks.is_empty() {
         let mut result = String::new();
-        if start > 0 { result.push('\u{2026}'); }
+        if start > 0 {
+            result.push('\u{2026}');
+        }
         result.push_str(snippet);
-        if end < escaped_full.len() { result.push('\u{2026}'); }
+        if end < escaped_full.len() {
+            result.push('\u{2026}');
+        }
         return result;
     }
 
@@ -287,7 +322,9 @@ fn highlight_snippet(text: &str, words: &[String], max_len: usize) -> String {
     }
 
     let mut result = String::new();
-    if start > 0 { result.push('\u{2026}'); }
+    if start > 0 {
+        result.push('\u{2026}');
+    }
     let mut cursor = 0;
     for (s, e) in &merged {
         result.push_str(&snippet[cursor..*s]);
@@ -297,7 +334,9 @@ fn highlight_snippet(text: &str, words: &[String], max_len: usize) -> String {
         cursor = *e;
     }
     result.push_str(&snippet[cursor..]);
-    if end < escaped_full.len() { result.push('\u{2026}'); }
+    if end < escaped_full.len() {
+        result.push('\u{2026}');
+    }
     result
 }
 
@@ -414,7 +453,11 @@ pub async fn search_page(
         let principal = optional_principal(&headers, &jar, &reduced);
         search(&reduced, &query, 50, principal.as_deref())
     } else {
-        SearchResults { items: vec![], threads: vec![], posts: vec![] }
+        SearchResults {
+            items: vec![],
+            threads: vec![],
+            posts: vec![],
+        }
     };
 
     let url_key = canonical_view_url(&uri);
@@ -454,7 +497,11 @@ pub async fn search_results_fragment(
         let principal = optional_principal(&headers, &jar, &reduced);
         search(&reduced, &query, 50, principal.as_deref())
     } else {
-        SearchResults { items: vec![], threads: vec![], posts: vec![] }
+        SearchResults {
+            items: vec![],
+            threads: vec![],
+            posts: vec![],
+        }
     };
 
     Html(render_search_results(&results, &query).into_string())

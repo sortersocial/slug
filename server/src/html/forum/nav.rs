@@ -78,7 +78,11 @@ impl ThreadNav {
             let ext_prefix = format!("{}-", self.garden_path_prefix.trim_end_matches('~'));
             format!("{ext_prefix}/{rest}")
         } else {
-            format!("{}/{}", self.garden_path_prefix, canonicalize_item(c.as_str()))
+            format!(
+                "{}/{}",
+                self.garden_path_prefix,
+                canonicalize_item(c.as_str())
+            )
         }
     }
 
@@ -115,6 +119,15 @@ impl ThreadNav {
             }
         }
     }
+
+    /// Shareable question page: `/q/:leaf` or `/q/:leaf/:aspect` (room-prefixed when private).
+    pub(crate) fn question_href(&self, collection_leaf: &str, aspect: Option<&str>) -> String {
+        let prefix = self.room_path_prefix_for_vote_compare();
+        match aspect.filter(|s| !s.is_empty()) {
+            Some(a) => format!("{prefix}/q/{collection_leaf}/{a}"),
+            None => format!("{prefix}/q/{collection_leaf}"),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -124,8 +137,14 @@ mod tests {
     #[test]
     fn thread_url_for_post_uses_page_offset_and_fragment() {
         let nav = ThreadNav::public();
-        assert_eq!(nav.thread_url_for_post("hist-test", 0), "/t/hist-test#post-0");
-        assert_eq!(nav.thread_url_for_post("hist-test", 9), "/t/hist-test#post-9");
+        assert_eq!(
+            nav.thread_url_for_post("hist-test", 0),
+            "/t/hist-test#post-0"
+        );
+        assert_eq!(
+            nav.thread_url_for_post("hist-test", 9),
+            "/t/hist-test#post-9"
+        );
         assert_eq!(
             nav.thread_url_for_post("hist-test", 10),
             "/t/hist-test?offset=10#post-10"
@@ -144,5 +163,20 @@ mod tests {
             "/r/abcd123demo/t/topic?offset=10#post-12"
         );
         assert_eq!(nav.post_url("topic", 12), "/r/abcd123demo/t/topic/12");
+    }
+
+    #[test]
+    fn question_href_public_and_room() {
+        let nav = ThreadNav::public();
+        assert_eq!(nav.question_href("psalms", None), "/q/psalms");
+        assert_eq!(
+            nav.question_href("psalms", Some("beauty")),
+            "/q/psalms/beauty"
+        );
+        let room = ThreadNav::from_room_id("abcd123/demo").unwrap();
+        assert_eq!(
+            room.question_href("psalms", Some("beauty")),
+            "/r/abcd123demo/q/psalms/beauty"
+        );
     }
 }

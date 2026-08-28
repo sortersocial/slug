@@ -8,11 +8,7 @@ use crate::reducer::ReducerState;
 use super::nav::ThreadNav;
 use crate::html::bc_segment;
 
-pub(super) fn auth_strip(
-    headers: &HeaderMap,
-    jar: &CookieJar,
-    reduced: &ReducerState,
-) -> Markup {
+pub(super) fn auth_strip(headers: &HeaderMap, jar: &CookieJar, reduced: &ReducerState) -> Markup {
     match optional_principal(headers, jar, reduced) {
         Some(u) => html! {
             p class="muted auth-strip" {

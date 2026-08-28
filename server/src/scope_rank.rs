@@ -166,11 +166,12 @@ pub fn build_rankings_for_group_and_items(
         }
     }
 
-    let component_rankings: Vec<ScopedComponent> = rank_partition(group, &comps_global, 10000, 1e-8)
-        .into_iter()
-        .zip(pair_counts)
-        .map(|(ranked, pairs)| ScopedComponent { pairs, ranked })
-        .collect();
+    let component_rankings: Vec<ScopedComponent> =
+        rank_partition(group, &comps_global, 10000, 1e-8)
+            .into_iter()
+            .zip(pair_counts)
+            .map(|(ranked, pairs)| ScopedComponent { pairs, ranked })
+            .collect();
 
     let mut unranked_items: Vec<ItemId> = isolate_local_idxs
         .into_iter()
@@ -364,13 +365,20 @@ mod tests {
 
     #[test]
     fn comparable_items_excludes_bodyless_organizational_nodes() {
-        let folder = ItemId::parse("~/models/anthropic").unwrap().normalized_storage();
-        let leaf = ItemId::parse("~/models/claude").unwrap().normalized_storage();
+        let folder = ItemId::parse("~/models/anthropic")
+            .unwrap()
+            .normalized_storage();
+        let leaf = ItemId::parse("~/models/claude")
+            .unwrap()
+            .normalized_storage();
         let mut content = content_with_children(&[]);
         content.items.insert(leaf.clone());
         content.item_bodies.insert(leaf.clone(), "A model.".into());
 
-        assert_eq!(comparable_items(&content, vec![folder, leaf.clone()]), vec![leaf]);
+        assert_eq!(
+            comparable_items(&content, vec![folder, leaf.clone()]),
+            vec![leaf]
+        );
     }
 
     #[test]
@@ -404,8 +412,14 @@ mod tests {
         let org = ItemId::parse("https://github.com/org").unwrap();
         let repo = ItemId::parse("https://github.com/org/rep").unwrap();
         let mut item_children: HashMap<ItemId, HashSet<ItemId>> = HashMap::new();
-        item_children.entry(gh.clone()).or_default().insert(org.clone());
-        item_children.entry(org.clone()).or_default().insert(repo.clone());
+        item_children
+            .entry(gh.clone())
+            .or_default()
+            .insert(org.clone());
+        item_children
+            .entry(org.clone())
+            .or_default()
+            .insert(repo.clone());
         let mut items = HashSet::new();
         items.insert(repo.clone());
         let content = ContentState {

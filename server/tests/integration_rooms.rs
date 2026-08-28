@@ -481,17 +481,12 @@ async fn test_feed_uses_delegate_ingest_position_when_multi_user_timestamps_coll
     let (addr, _tmp, _log, state, _handle) = create_test_server_with_state().await;
     seed_test_identity(&state, "bob", "bobtok", "bobsecret").await;
     let client = reqwest::Client::new();
-    let alice_delegate =
-        "00000000-0000-0000-0000-0000000000c1:feedtest:local/alice-model";
-    let bob_delegate =
-        "00000000-0000-0000-0000-0000000000c2:feedtest:local/bob-model";
+    let alice_delegate = "00000000-0000-0000-0000-0000000000c1:feedtest:local/alice-model";
+    let bob_delegate = "00000000-0000-0000-0000-0000000000c2:feedtest:local/bob-model";
 
     {
         let mut reduced = state.reduced.write().await;
-        for (agent, username) in [
-            (alice_delegate, "testuser"),
-            (bob_delegate, "bob"),
-        ] {
+        for (agent, username) in [(alice_delegate, "testuser"), (bob_delegate, "bob")] {
             reduced.apply_event(Event::AgentBound(AgentBound {
                 ts: 1,
                 agent: agent.to_string(),
@@ -554,19 +549,14 @@ async fn test_feed_multi_user_private_room_visibility_and_revoked_anchor_access(
     seed_test_identity(&state, "bob", "bobtok", "bobsecret").await;
     seed_test_identity(&state, "carol", "caroltok", "carolsecret").await;
     let client = reqwest::Client::new();
-    let alice_delegate =
-        "00000000-0000-0000-0000-0000000000d1:feedtest:local/alice-model";
-    let bob_delegate =
-        "00000000-0000-0000-0000-0000000000d2:feedtest:local/bob-model";
+    let alice_delegate = "00000000-0000-0000-0000-0000000000d1:feedtest:local/alice-model";
+    let bob_delegate = "00000000-0000-0000-0000-0000000000d2:feedtest:local/bob-model";
     let room_alice = "alice01/alice-room";
     let room_bob = "bob0001/bob-room";
 
     {
         let mut reduced = state.reduced.write().await;
-        for (agent, username) in [
-            (alice_delegate, "testuser"),
-            (bob_delegate, "bob"),
-        ] {
+        for (agent, username) in [(alice_delegate, "testuser"), (bob_delegate, "bob")] {
             reduced.apply_event(Event::AgentBound(AgentBound {
                 ts: 1,
                 agent: agent.to_string(),
@@ -604,7 +594,14 @@ async fn test_feed_multi_user_private_room_visibility_and_revoked_anchor_access(
                     thread_tag: "feed-permissions".into(),
                 }));
             };
-        add_ingest(10, "prehistory", "must remain before alice anchor", "carol", None, "public");
+        add_ingest(
+            10,
+            "prehistory",
+            "must remain before alice anchor",
+            "carol",
+            None,
+            "public",
+        );
         add_ingest(
             11,
             "alice-private-anchor",
@@ -621,9 +618,30 @@ async fn test_feed_multi_user_private_room_visibility_and_revoked_anchor_access(
             Some(bob_delegate),
             "public",
         );
-        add_ingest(13, "alice-room-change", "visible only to alice", "carol", None, room_alice);
-        add_ingest(14, "bob-room-change", "visible only to bob", "carol", None, room_bob);
-        add_ingest(15, "public-change", "visible to everyone", "carol", None, "public");
+        add_ingest(
+            13,
+            "alice-room-change",
+            "visible only to alice",
+            "carol",
+            None,
+            room_alice,
+        );
+        add_ingest(
+            14,
+            "bob-room-change",
+            "visible only to bob",
+            "carol",
+            None,
+            room_bob,
+        );
+        add_ingest(
+            15,
+            "public-change",
+            "visible to everyone",
+            "carol",
+            None,
+            "public",
+        );
 
         reduced.apply_event(Event::GrantRevoked(GrantRevoked {
             ts: 16,
@@ -853,6 +871,34 @@ async fn test_private_room_post_links_use_private_garden_routes() {
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
     assert_eq!(loc, format!("/r/{room_seg}/~/item"));
+
+    let root_slash = no_follow
+        .get(format!("http://{addr}/r/{room_seg}/~/"))
+        .header("Authorization", format!("Bearer {bearer}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(root_slash.status(), reqwest::StatusCode::PERMANENT_REDIRECT);
+    let root_loc = root_slash
+        .headers()
+        .get(reqwest::header::LOCATION)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert_eq!(root_loc, format!("/r/{room_seg}/~"));
+
+    let leaf_slash = no_follow
+        .get(format!("http://{addr}/r/{room_seg}/~/item/"))
+        .header("Authorization", format!("Bearer {bearer}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(leaf_slash.status(), reqwest::StatusCode::PERMANENT_REDIRECT);
+    let leaf_loc = leaf_slash
+        .headers()
+        .get(reqwest::header::LOCATION)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert_eq!(leaf_loc, format!("/r/{room_seg}/~/item"));
 }
 
 #[tokio::test]
@@ -1052,11 +1098,18 @@ async fn test_thread_graduate_private_to_public() {
         }]),
     )
     .await;
-    assert_eq!(public_item["results"][0]["ok"], true, "{:?}", public_item["results"][0]);
+    assert_eq!(
+        public_item["results"][0]["ok"], true,
+        "{:?}",
+        public_item["results"][0]
+    );
     let body = public_item["results"][0]["result"]["GardenItem"]["body"]
         .as_str()
         .unwrap_or("");
-    assert!(body.contains("first item"), "expected graduated item body, got {body:?}");
+    assert!(
+        body.contains("first item"),
+        "expected graduated item body, got {body:?}"
+    );
 
     let post_again = rpc_batch(
         &client,
@@ -1092,6 +1145,8 @@ async fn test_thread_graduate_private_to_public() {
     )
     .await;
     assert_eq!(grad_again["results"][0]["ok"], false);
-    assert_eq!(grad_again["results"][0]["error"], "thread already graduated");
+    assert_eq!(
+        grad_again["results"][0]["error"],
+        "thread already graduated"
+    );
 }
-

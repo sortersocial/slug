@@ -39,7 +39,10 @@ fn parses_big_book_fixture_with_attached_bodies() {
         match s {
             dsl::Stmt::Item { title, body } => {
                 items += 1;
-                assert!(!title.contains("__BLOCK_"), "title should not include block tokens");
+                assert!(
+                    !title.contains("__BLOCK_"),
+                    "title should not include block tokens"
+                );
                 assert!(
                     body.as_ref().map(|b| !b.is_empty()).unwrap_or(false),
                     "items in big book should have bodies"
@@ -69,5 +72,3 @@ fn parses_external_dash_vote_line() {
         }]
     );
 }
-
-

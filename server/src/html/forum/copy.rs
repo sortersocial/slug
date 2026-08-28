@@ -9,7 +9,7 @@ use super::access::user_can_view_room;
 use super::ingest::thread_ui_fetch_onclick;
 use super::nav::ThreadNav;
 use crate::html::ui_action::HtmlUiAction;
-use crate::html::{JsBuilder, now_ms};
+use crate::html::{now_ms, JsBuilder};
 
 /// CLI `forum show` and browser copy-thread text (`slug_types::thread_xml`).
 pub(crate) fn format_thread_cli_text(
