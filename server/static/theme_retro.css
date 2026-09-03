@@ -472,6 +472,59 @@ body.view-ontology ol.vote-landing-steps {
 body.view-ontology ol.vote-landing-steps li {
   margin: 0.3rem 0;
 }
+body.view-ontology .vote-open-index {
+  margin: 0.5rem auto 2rem;
+  max-width: 560px;
+}
+body.view-ontology .vote-open-index > h3 {
+  border-top: 2px solid #ccc;
+  color: #333;
+  font-size: 0.75rem;
+  letter-spacing: 0.14em;
+  margin-top: 0.5rem;
+  padding-top: 0.6rem;
+  text-transform: uppercase;
+}
+body.view-ontology ul.vote-open-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  max-width: 100%;
+}
+body.view-ontology ul.vote-open-list li.vote-open-row {
+  align-items: baseline;
+  background: #faf8f3;
+  border: 1px solid #ccc;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.15rem 0.5rem;
+  padding: 0.4rem 0.65rem;
+  width: auto;
+  max-width: none;
+}
+body.view-ontology a.vote-open-judge {
+  font-size: 0.78rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+body.view-ontology .vote-open-name {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #111;
+}
+body.view-ontology .vote-open-meta {
+  font-size: 0.72rem;
+  color: #666;
+}
+body.view-ontology .vote-open-links {
+  font-size: 0.72rem;
+  margin-left: auto;
+  white-space: nowrap;
+}
 
 /* ================================================================
    GARDEN HIERARCHY — parents ↑ / self / children ↓ (paper context).

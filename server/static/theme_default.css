@@ -2342,3 +2342,60 @@ ol.vote-landing-steps {
 ol.vote-landing-steps li {
   margin: 4px 0;
 }
+
+/* Heat index below the dealt pair: a menu, not a ranking — judged counts
+   and activity instead of scores, so it never reads as rank order. */
+.vote-open-index {
+  margin: 8px auto 32px;
+  max-width: 560px;
+  padding: 0 16px;
+}
+.vote-open-index > h3 {
+  border-top: 2px solid var(--lo);
+  color: var(--ui);
+  font-size: 11px;
+  margin-top: 8px;
+  padding-top: 10px;
+}
+ul.vote-open-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  max-width: 100%;
+}
+ul.vote-open-list li.vote-open-row {
+  align-items: baseline;
+  background: var(--g3);
+  border: 1px solid var(--lo);
+  border-radius: 2px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  padding: 6px 10px;
+  width: auto;
+  max-width: none;
+}
+a.vote-open-judge {
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.vote-open-name {
+  font-size: 13px;
+  font-weight: 600;
+}
+.vote-open-name a {
+  color: var(--signal);
+}
+.vote-open-meta {
+  font-size: 11px;
+}
+.vote-open-links {
+  font-size: 11px;
+  margin-left: auto;
+  white-space: nowrap;
+}

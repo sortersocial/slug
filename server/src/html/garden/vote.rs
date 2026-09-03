@@ -14,13 +14,14 @@ use crate::{
     canonical_path::canonicalize_tag,
     form_template::template_json_compact,
     html::{
-        format_ratio, forum::ThreadNav, layout_full_bleed_chromeless, ratio_pct,
+        format_ratio, forum::ThreadNav, layout_full_bleed_chromeless, now_ms, ratio_pct,
         render_item_body_in_scope, theme_from_jar, theme_next_from_uri, ui_action::UI_RPC_FIELD,
         user_can_post_room, JsBuilder,
     },
     middleware::canonical_view_url,
     path_types::ItemId,
-    reducer::{ContentState, GroupState, ScopeId},
+    reducer::{ContentState, ForumThreadState, ScopeId},
+    timeago,
     scope_rank::{comparable_items, suggest_next_pair_in_pool},
     state::AppState,
 };
@@ -579,6 +580,7 @@ pub(super) struct LandingQuestion {
     pub voted: usize,
     pub possible: usize,
     pub members: usize,
+    pub last_vote_ts: i64,
 }
 
 /// Density of voted pairs among `members` inside one vote graph.
@@ -604,76 +606,127 @@ fn voted_density(
     (voted, possible)
 }
 
-pub(super) fn pick_landing_question(content: &ContentState) -> Option<LandingQuestion> {
-    // Most voted pairs wins; ties prefer more members, then canonical over an
-    // aspect, then lex order (iteration is lex-sorted and only strictly-better
-    // candidates replace the incumbent).
-    let mut best: Option<LandingQuestion> = None;
+/// Every open question (canonical + aspect groups with ≥1 unvoted pair),
+/// unsorted. Powers both the landing deal and the heat index below it.
+fn open_questions(content: &ContentState) -> Vec<LandingQuestion> {
+    let mut out = Vec::new();
     let mut scopes: Vec<&ItemId> = content
         .members_by_scope
         .keys()
         .filter(|id| matches!(id.tilde_tail(), Some(t) if !t.is_empty() && !t.contains('/')))
         .collect();
     scopes.sort_by(|a, b| a.as_str().cmp(b.as_str()));
-    // (scope, aspect-group-or-canonical, aspect-slug-or-None), canonical first
-    // per scope so ties keep the canonical question.
-    let mut candidates: Vec<(&ItemId, Option<(&GroupState, String)>)> = Vec::new();
-    for scope in &scopes {
-        candidates.push((scope, None));
-    }
     let mut aspect_keys: Vec<&(ItemId, String)> = content.aspect_groups.keys().collect();
     aspect_keys.sort();
-    for (scope, slug) in aspect_keys {
-        if scopes.iter().any(|s| s.as_str() == scope.as_str()) {
-            candidates.push((
-                scopes
-                    .iter()
-                    .find(|s| s.as_str() == scope.as_str())
-                    .expect("scope present"),
-                Some((
-                    content
-                        .aspect_groups
-                        .get(&(scope.clone(), slug.clone()))
-                        .expect("aspect group present"),
-                    slug.clone(),
-                )),
-            ));
-        }
-    }
-    for (scope, group_opt) in candidates {
+    for scope in &scopes {
         let members = comparable_items(content, content.members_of(scope));
         if members.len() < 2 {
             continue;
         }
-        let (group_idx, group_pairs) = match &group_opt {
-            None => (
-                &content.ranking_group.item_to_idx,
-                &content.ranking_group.voted_pairs,
-            ),
-            Some((group, _)) => (&group.item_to_idx, &group.voted_pairs),
-        };
-        let (voted, possible) = voted_density(group_idx, group_pairs, &members);
-        if voted >= possible {
-            continue;
-        }
-        // Highest voted-pair count first; ties prefer more members (then the
-        // lex-first candidate, since iteration is sorted and only
-        // strictly-better replaces the incumbent).
-        let take = match &best {
-            None => true,
-            Some(incumbent) => {
-                voted.cmp(&incumbent.voted) == std::cmp::Ordering::Greater
-                    || (voted == incumbent.voted && members.len() > incumbent.members)
-            }
-        };
-        if take {
-            best = Some(LandingQuestion {
+        let (voted, possible) = voted_density(
+            &content.ranking_group.item_to_idx,
+            &content.ranking_group.voted_pairs,
+            &members,
+        );
+        if voted < possible {
+            out.push(LandingQuestion {
                 scope: (*scope).clone(),
-                aspect: group_opt.map(|(_, slug)| slug),
+                aspect: None,
                 voted,
                 possible,
                 members: members.len(),
+                last_vote_ts: last_canonical_vote_ts(content, &members),
             });
+        }
+        for (ascope, slug) in aspect_keys
+            .iter()
+            .filter(|(s, _)| s.as_str() == scope.as_str())
+        {
+            let Some(group) = content.aspect_groups.get(&(ascope.clone(), slug.clone())) else {
+                continue;
+            };
+            let (voted, possible) =
+                voted_density(&group.item_to_idx, &group.voted_pairs, &members);
+            if voted < possible {
+                out.push(LandingQuestion {
+                    scope: (*scope).clone(),
+                    aspect: Some(slug.clone()),
+                    voted,
+                    possible,
+                    members: members.len(),
+                    last_vote_ts: group.recent_votes.front().map(|v| v.ts).unwrap_or(0),
+                });
+            }
+        }
+    }
+    out
+}
+
+/// Newest canonical vote touching two members (0 when none). The global
+/// recent-votes deque is newest-first, so the first in-electorate hit wins.
+fn last_canonical_vote_ts(content: &ContentState, members: &[ItemId]) -> i64 {
+    let set: std::collections::HashSet<&ItemId> = members.iter().collect();
+    content
+        .ranking_group
+        .recent_votes
+        .iter()
+        .find(|v| set.contains(&v.a) && set.contains(&v.b))
+        .map(|v| v.ts)
+        .unwrap_or(0)
+}
+
+/// One row of the heat index: an open question plus its thread heartbeat.
+pub(super) struct OpenRow {
+    pub question: LandingQuestion,
+    pub thread_ts: i64,
+}
+
+const OPEN_INDEX_CAP: usize = 10;
+
+/// Open questions hottest first: newest vote wins, then newest thread post.
+/// Votes always outrank mere discussion (a voted question has
+/// `last_vote_ts > 0`; a talked-about one has 0), so judging heat beats
+/// talking heat by construction.
+pub(super) fn rank_open_questions(
+    content: &ContentState,
+    threads: &HashMap<(ScopeId, String), ForumThreadState>,
+    scope: &ScopeId,
+) -> Vec<OpenRow> {
+    let mut rows: Vec<OpenRow> = open_questions(content)
+        .into_iter()
+        .map(|question| {
+            let leaf = canonicalize_tag(question.scope.last_segment());
+            let thread_ts = threads
+                .get(&(scope.clone(), leaf))
+                .map(|t| t.last_activity_ts)
+                .unwrap_or(0);
+            OpenRow {
+                question,
+                thread_ts,
+            }
+        })
+        .collect();
+    rows.sort_by(|a, b| {
+        (b.question.last_vote_ts, b.thread_ts).cmp(&(a.question.last_vote_ts, a.thread_ts))
+    });
+    rows
+}
+
+pub(super) fn pick_landing_question(content: &ContentState) -> Option<LandingQuestion> {
+    // Most voted pairs wins; ties prefer more members, then canonical over an
+    // aspect, then lex order (`open_questions` is lex-sorted with canonical
+    // first per scope, and only strictly-better replaces the incumbent).
+    let mut best: Option<LandingQuestion> = None;
+    for q in open_questions(content) {
+        let take = match &best {
+            None => true,
+            Some(incumbent) => {
+                q.voted.cmp(&incumbent.voted) == std::cmp::Ordering::Greater
+                    || (q.voted == incumbent.voted && q.members > incumbent.members)
+            }
+        };
+        if take {
+            best = Some(q);
         }
     }
     best
@@ -808,6 +861,7 @@ pub(super) async fn vote_compare_inner(
         aspect_slug,
         q.thread.clone(),
         None,
+        None,
     )
     .await
 }
@@ -826,6 +880,7 @@ async fn render_compare_page(
     aspect_slug: Option<String>,
     query_thread: Option<String>,
     intro: Option<maud::Markup>,
+    below: Option<maud::Markup>,
 ) -> axum::response::Response {
     let reduced = state.reduced.read().await;
     let content = content_for_garden_view(&reduced, &nav.scope());
@@ -894,6 +949,9 @@ async fn render_compare_page(
             (intro)
         }
         (panel)
+        @if let Some(below) = below {
+            (below)
+        }
     };
 
     let url_key = canonical_view_url(&uri);
@@ -920,14 +978,25 @@ async fn vote_landing(
     jar: CookieJar,
     uri: Uri,
 ) -> axum::response::Response {
-    let needy = {
+    let scope_id = nav.scope();
+    let (pick, index) = {
         let reduced = state.reduced.read().await;
         let content = content_for_garden_view(&reduced, &nav.scope());
-        pick_landing_question(content).map(|n| (n.scope, n.aspect, n.voted, n.possible))
+        let pick = pick_landing_question(content);
+        let mut index = rank_open_questions(content, &reduced.forum_threads, &scope_id);
+        if let Some(dealt) = &pick {
+            index.retain(|row| {
+                !(row.question.scope == dealt.scope && row.question.aspect == dealt.aspect)
+            });
+        }
+        index.truncate(OPEN_INDEX_CAP);
+        (pick, index)
     };
-    let Some((scope, aspect, voted, possible)) = needy else {
+    let Some(dealt) = pick else {
         return landing_empty_page(&state, &jar, &uri).await;
     };
+    let (scope, aspect, voted, possible) =
+        (dealt.scope, dealt.aspect, dealt.voted, dealt.possible);
     let pair = {
         let reduced = state.reduced.read().await;
         let content = content_for_garden_view(&reduced, &nav.scope());
@@ -980,6 +1049,11 @@ async fn vote_landing(
             }
         }
     };
+    let below = if index.is_empty() {
+        None
+    } else {
+        Some(open_index_markup(&nav, &index, now_ms()))
+    };
     render_compare_page(
         state,
         nav,
@@ -992,8 +1066,62 @@ async fn vote_landing(
         aspect,
         None,
         Some(intro),
+        below,
     )
     .await
+}
+
+/// Heat index below the dealt pair: more open questions, hottest first. Each
+/// row deals straight into its pool — a menu, not a ranking, so it carries
+/// judged counts and activity instead of scores.
+fn open_index_markup(nav: &ThreadNav, rows: &[OpenRow], now: i64) -> maud::Markup {
+    html! {
+        section class="vote-open-index ont-tab-panel" {
+            h3 { "more open questions" }
+            ul class="vote-open-list" {
+                @for row in rows {
+                    @let q = &row.question;
+                    @let judge_href = match &q.aspect {
+                        None => vote_pool_href(nav, q.scope.as_str()),
+                        Some(slug) => format!(
+                            "{}&aspect={}",
+                            vote_pool_href(nav, q.scope.as_str()),
+                            urlencoding::encode(slug)
+                        ),
+                    };
+                    @let garden_href = match &q.aspect {
+                        None => item_href(q.scope.as_str(), nav),
+                        Some(slug) => {
+                            format!("{}#aspect-{slug}", item_href(q.scope.as_str(), nav))
+                        }
+                    };
+                    @let leaf = canonicalize_tag(q.scope.last_segment());
+                    @let active_ts = row.question.last_vote_ts.max(row.thread_ts);
+                    li class="vote-open-row" {
+                        a class="vote-open-judge" href=(judge_href) { "judge" }
+                        span class="vote-open-name" {
+                            @if let Some(slug) = &q.aspect {
+                                span class="vote-open-aspect" { ":" (slug) " in " }
+                            }
+                            a href=(garden_href) { (item_display_path(q.scope.as_str())) }
+                        }
+                        span class="muted vote-open-meta" {
+                            (format!("{} of {} judged", q.voted, q.possible))
+                            @if active_ts > 0 {
+                                @let hover = timeago::rfc3339_utc(active_ts);
+                                @let ago = timeago::timeago(now, active_ts);
+                                " · "
+                                span title=(hover) { (ago) }
+                            }
+                        }
+                        span class="vote-open-links" {
+                            a href=(nav.thread_url(&leaf)) { "thread" }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Nothing left to judge: every scope with two comparable members is fully compared.

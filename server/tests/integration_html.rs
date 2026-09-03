@@ -445,6 +445,96 @@ async fn test_vote_landing_serves_neediest_pair() {
 }
 
 #[tokio::test]
+async fn test_vote_landing_lists_more_open_questions() {
+    let (addr, _tmp, _log, state, _handle) = create_test_server_with_state().await;
+    {
+        let mut w = state.reduced.write().await;
+        // NOTE: leaves are global (`~/duel/a` IS `~a`), so the straggler scope
+        // needs its own leaves or the busy scope's votes would judge its pair.
+        w.apply_event(Event::Ingest(Ingest {
+            ts: 20,
+            id: "ing-duel2".into(),
+            raw: "~/duel/p { Pee }\n~/duel/q { Kew }\n".to_string(),
+            principal: "testuser".into(),
+            delegate: None,
+            room_id: "public".into(),
+            thread_tag: "duel".into(),
+        }));
+        w.apply_event(Event::Ingest(Ingest {
+            ts: 25,
+            id: "ing-old".into(),
+            raw: "~/old/a { Alpha }\n~/old/b { Beta }\n~/old/c { Gamma }\n\
+                  { judged }\n~/old/a 2:1 ~/old/b\n"
+                .to_string(),
+            principal: "testuser".into(),
+            delegate: None,
+            room_id: "public".into(),
+            thread_tag: "old".into(),
+        }));
+    }
+    let client = reqwest::Client::new();
+    let body = client
+        .get(format!("http://{addr}/vote"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    // Dealt pair is ~/old (1 judged pair beats duel's 0); the index lists
+    // only the straggler — never a second row for the dealt question.
+    assert!(body.contains("more open questions"), "heat index missing");
+    assert_eq!(
+        body.matches("vote-open-row").count(),
+        1,
+        "index should hold exactly the straggler row"
+    );
+    assert!(
+        body.contains("~%2Fduel"),
+        "straggler judge link missing: {}",
+        body.chars().take(3000).collect::<String>()
+    );
+    assert!(body.contains("0 of 1 judged"));
+}
+
+#[tokio::test]
+async fn test_vote_landing_deals_hungrier_aspect_group() {
+    let (addr, _tmp, _log, state, _handle) = create_test_server_with_state().await;
+    {
+        let mut w = state.reduced.write().await;
+        w.apply_event(Event::Ingest(Ingest {
+            ts: 24,
+            id: "ing-tri-full".into(),
+            raw: "~/tri/a { alpha }\n~/tri/b { beta }\n~/tri/c { gamma }\n\
+                  { ab }\n~/tri/a 2:1 ~/tri/b\n\
+                  { ac }\n~/tri/a 2:1 ~/tri/c\n\
+                  { bc }\n~/tri/b 2:1 ~/tri/c\n\
+                  :beauty {more beautiful}\n{ pretty }\n~/tri/a 2:1 ~/tri/b\n"
+                .to_string(),
+            principal: "testuser".into(),
+            delegate: None,
+            room_id: "public".into(),
+            thread_tag: "tri".into(),
+        }));
+    }
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("http://{addr}/vote"))
+        .header("Authorization", format!("Bearer {}", test_bearer()))
+        .send()
+        .await
+        .unwrap();
+    assert!(resp.status().is_success(), "{}", resp.status());
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("judge one pair"), "landing intro missing");
+    assert!(body.contains(":beauty"), "aspect question missing");
+    assert!(body.contains("1 of 3"), "aspect need count missing");
+    assert!(body.contains("name=\"aspect\""), "aspect input missing");
+    assert!(body.contains("value=\"beauty\""), "aspect value missing");
+    assert!(body.contains("value=\"tri\""), "thread_tag should seed to pool leaf");
+}
+
+#[tokio::test]
 async fn test_vote_aspect_query_param() {
     let (addr, _tmp, _log, state, _handle) = create_test_server_with_state().await;
     {
