@@ -393,6 +393,23 @@ async fn test_garden_item_pair_matchup_include_threads() {
     assert!(!votes.is_empty(), "matchup should have at least one vote");
     let first_thread = votes[0]["thread"].as_str().unwrap();
     assert_eq!(first_thread, "sorting-hat", "vote should cite thread");
+
+    let bare = rpc_batch(
+        &client,
+        addr,
+        None,
+        serde_json::json!([{
+            "GetMatchup": {
+                "room": "public",
+                "item_path": "insertion"
+            }
+        }]),
+    )
+    .await;
+    assert_eq!(
+        bare["results"][0]["result"]["Matchup"]["item"],
+        "https://slug.social/~/insertion"
+    );
 }
 
 /// `GetGardenRank` and `GetPair` must agree on whether a parent path "exists" (empty garden).

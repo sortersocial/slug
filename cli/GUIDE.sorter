@@ -158,7 +158,7 @@ Examples:
 
 Garden and check do not take a forum tag on the command line the same way; check is a dry-run against public garden semantics.
 
-Global (no room prefix): room, identity, whoami, feed, search, healthz.
+Global (no room prefix): room, identity, whoami, feed, search, healthz (alias: health).
 }
 
 ~/intro/example-session {
@@ -229,7 +229,7 @@ feed … --since 2026-01-01                       Override lower bound (Unix ms 
 
 search <query>                                  Search items, threads, posts (public index)
 
-healthz [--json]                                Server liveness
+healthz [--json]                                Server liveness (alias: health)
 
 Add --json to scoped commands for machine-readable output (RPC-shaped JSON where applicable).
 }

@@ -52,7 +52,10 @@ fn empty_content() -> &'static crate::reducer::ContentState {
 }
 
 fn content_for_room<'a>(reduced: &'a ReducerState, room: &str) -> &'a crate::reducer::ContentState {
-    let scope = scope_from_room_wire(room);
+    let room = reduced
+        .resolve_room_id(room)
+        .unwrap_or_else(|| room.to_string());
+    let scope = scope_from_room_wire(&room);
     reduced.content.get(&scope).unwrap_or(empty_content())
 }
 
@@ -297,6 +300,7 @@ pub async fn writer_actor(mut rx: mpsc::Receiver<WriteCmd>, state: AppState) {
                         .map_err(|msg| {
                             (msg, Some("thread tags are one /t/:tag segment (no '/')".into()))
                         })?;
+                    let room_key = reduced.resolve_room_id(&room_key).unwrap_or(room_key);
                     let scope = scope_from_room_wire(&room_key);
                     let is_private = !matches!(scope, ScopeId::Public);
                     if is_private && !reduced.rooms.contains(&room_key) {
@@ -539,9 +543,10 @@ pub async fn writer_actor(mut rx: mpsc::Receiver<WriteCmd>, state: AppState) {
                         .map_err(|msg| {
                             (msg, Some("system thread tags must not contain '/'".into()))
                         })?;
+                    let mut reduced = state.reduced.write().await;
+                    let room_key = reduced.resolve_room_id(&room_key).unwrap_or(room_key);
                     let scope = scope_from_room_wire(&room_key);
                     let is_private = !matches!(scope, ScopeId::Public);
-                    let mut reduced = state.reduced.write().await;
                     if is_private && !reduced.rooms.contains(&room_key) {
                         return Err((
                             "unknown room".into(),
@@ -785,10 +790,9 @@ pub async fn writer_actor(mut rx: mpsc::Receiver<WriteCmd>, state: AppState) {
 
                     let mut reduced = state.reduced.write().await;
                     let principal = verify_token(&reduced, &bearer).map_err(|(_, m)| (m, None))?;
-                    let room = room.trim().to_string();
-                    if !reduced.rooms.contains(&room) {
-                        return Err(("unknown room".into(), None));
-                    }
+                    let room = reduced
+                        .resolve_room_id(room.trim())
+                        .ok_or_else(|| ("unknown room".into(), None))?;
                     if !reduced.user_has_cap(&room, &principal, ThreadCapability::Manage) {
                         return Err(("requires Manage capability".into(), None));
                     }
@@ -828,11 +832,10 @@ pub async fn writer_actor(mut rx: mpsc::Receiver<WriteCmd>, state: AppState) {
 
                     let mut reduced = state.reduced.write().await;
                     let principal = verify_token(&reduced, &bearer).map_err(|(_, m)| (m, None))?;
-                    let room = room.trim().to_string();
+                    let room = reduced
+                        .resolve_room_id(room.trim())
+                        .ok_or_else(|| ("unknown room".into(), None))?;
                     let thread_tag = canonicalize_tag(&thread_tag);
-                    if !reduced.rooms.contains(&room) {
-                        return Err(("unknown room".into(), None));
-                    }
                     if !reduced.user_has_cap(&room, &principal, ThreadCapability::Manage) {
                         return Err(("requires Manage capability".into(), None));
                     }
@@ -929,6 +932,9 @@ pub async fn writer_actor(mut rx: mpsc::Receiver<WriteCmd>, state: AppState) {
 
                     let mut reduced = state.reduced.write().await;
                     let principal = verify_token(&reduced, &bearer).map_err(|(_, m)| (m, None))?;
+                    let room = reduced
+                        .resolve_room_id(room.trim())
+                        .ok_or_else(|| ("unknown room".into(), None))?;
                     if !reduced.user_has_cap(&room, &principal, ThreadCapability::Manage) {
                         return Err(("requires Manage capability".into(), None));
                     }
@@ -977,6 +983,9 @@ pub async fn writer_actor(mut rx: mpsc::Receiver<WriteCmd>, state: AppState) {
 
                     let mut reduced = state.reduced.write().await;
                     let principal = verify_token(&reduced, &bearer).map_err(|(_, m)| (m, None))?;
+                    let room = reduced
+                        .resolve_room_id(room.trim())
+                        .ok_or_else(|| ("unknown room".into(), None))?;
                     if !reduced.user_has_cap(&room, &principal, ThreadCapability::Manage) {
                         return Err(("requires Manage capability".into(), None));
                     }

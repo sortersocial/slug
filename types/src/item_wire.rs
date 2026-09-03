@@ -164,6 +164,29 @@ pub fn canonicalize_item(input: &str) -> String {
     }
 }
 
+/// Garden query input → storage URL.
+///
+/// Bare leaves (`ship-sets`, `luke`) resolve as ontology items (`~ship-sets`), matching
+/// CLI `garden matchup ship-sets` and MCP `get_matchup` / `get_item` docs. Tilde tokens,
+/// nested `~/x/luke`, `http(s)://…`, and `-/…` external forms stay on [`canonicalize_item`].
+pub fn canonicalize_garden_item(input: &str) -> String {
+    let s = input.trim();
+    if is_bare_garden_leaf(s) {
+        return canonicalize_item(&format!("~{s}"));
+    }
+    canonicalize_item(s)
+}
+
+fn is_bare_garden_leaf(s: &str) -> bool {
+    !s.is_empty()
+        && !s.contains('/')
+        && !s.starts_with('~')
+        && !s.starts_with('-')
+        && !s.contains(':')
+        && s.bytes()
+            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'z' | b'A'..=b'Z' | b'_' | b'-'))
+}
+
 pub fn item_path_segments(input: &str) -> Vec<String> {
     let canonical = canonicalize_item(input);
     if canonical.is_empty() {

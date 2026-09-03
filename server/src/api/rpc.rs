@@ -8,7 +8,7 @@ use slug_types::*;
 use tokio::sync::oneshot;
 
 use crate::{
-    canonical_path::{canonicalize_item, canonicalize_tag},
+    canonical_path::{canonicalize_garden_item, canonicalize_item, canonicalize_tag},
     dsl,
     events::{Event, Ingest, ThreadCapability},
     identity::{parse_agent, parse_username},
@@ -33,7 +33,10 @@ fn empty_content() -> &'static crate::reducer::ContentState {
 }
 
 fn content_for_room<'a>(reduced: &'a ReducerState, room: &str) -> &'a crate::reducer::ContentState {
-    let scope = scope_from_room_wire(room);
+    let room = reduced
+        .resolve_room_id(room)
+        .unwrap_or_else(|| room.to_string());
+    let scope = scope_from_room_wire(&room);
     reduced.content.get(&scope).unwrap_or(empty_content())
 }
 
@@ -162,7 +165,11 @@ fn authorize_room_read(
     headers: &HeaderMap,
     room: &str,
 ) -> Result<Option<String>, RpcErr> {
-    let scope = scope_from_room_wire(room);
+    let room = match reduced.resolve_room_id(room) {
+        Some(r) => r,
+        None => return Err(("room not found".into(), None)),
+    };
+    let scope = scope_from_room_wire(&room);
     let ScopeId::Room(room_id) = scope else {
         return Ok(None);
     };
@@ -424,7 +431,12 @@ async fn rpc_check(
     text: String,
 ) -> Result<RpcResult, RpcErr> {
     let reduced_arc = state.reduced.clone();
-    let room_key = room.trim().to_string();
+    let room_key = {
+        let reduced = reduced_arc.read().await;
+        reduced
+            .resolve_room_id(room.trim())
+            .unwrap_or_else(|| room.trim().to_string())
+    };
     let scope = scope_from_room_wire(&room_key);
     let reduced = reduced_arc.read().await;
     let principal = authorize_room_read(&reduced, headers, &room_key)?;
@@ -857,6 +869,10 @@ async fn rpc_get_pair(
     room: String,
     parent_path: String,
 ) -> Result<RpcResult, RpcErr> {
+    let room = {
+        let reduced = state.reduced.read().await;
+        reduced.resolve_room_id(&room).unwrap_or(room)
+    };
     let scope = scope_from_room_wire(&room);
     let reduced_arc = state.reduced.clone();
     let pool: Vec<ItemId> = {
@@ -1057,7 +1073,7 @@ pub async fn dispatch_rpc(state: &AppState, headers: &HeaderMap, cmd: RpcCommand
                 line_err(e, h)
             } else {
                 let content = content_for_room(&reduced, &room);
-                let item_str = canonicalize_item(&item_path);
+                let item_str = canonicalize_garden_item(&item_path);
                 let item = ItemId::parse(&item_str)
                     .map(|id| id.ontology_leaf())
                     .unwrap_or_else(|| ItemId::opaque(item_str.clone()));
@@ -1117,6 +1133,7 @@ pub async fn dispatch_rpc(state: &AppState, headers: &HeaderMap, cmd: RpcCommand
             if let Err((e, h)) = authorize_room_read(&reduced, &headers, &room) {
                 line_err(e, h)
             } else {
+                let room = reduced.resolve_room_id(&room).unwrap_or(room);
                 let actor_prefix = match actor.as_deref().map(str::trim) {
                     None | Some("") => Ok(String::new()),
                     Some(s) => parse_username(s)
@@ -1150,6 +1167,7 @@ pub async fn dispatch_rpc(state: &AppState, headers: &HeaderMap, cmd: RpcCommand
             if let Err((e, h)) = authorize_room_read(&reduced, &headers, &room) {
                 line_err(e, h)
             } else {
+                let room = reduced.resolve_room_id(&room).unwrap_or(room);
                 line_ok(RpcResult::ForumThreads(rpc_list_forum_threads(
                     &reduced, &room,
                 )))
@@ -1218,6 +1236,13 @@ pub async fn dispatch_rpc(state: &AppState, headers: &HeaderMap, cmd: RpcCommand
             match principal {
                 Err((_, m)) => line_err(m, None),
                 Ok(principal) => {
+                    let room = {
+                        let reduced = state.reduced.read().await;
+                        match reduced.resolve_room_id(&room) {
+                            Some(r) if r != "public" => r,
+                            _ => return line_err("unknown room", None),
+                        }
+                    };
                     let can_manage = {
                         let reduced = state.reduced.read().await;
                         reduced.user_has_cap(&room, &principal, ThreadCapability::Manage)
@@ -1279,9 +1304,14 @@ pub async fn dispatch_rpc(state: &AppState, headers: &HeaderMap, cmd: RpcCommand
                 Err((_, m)) => line_err(m, None),
                 Ok(principal) => {
                     let reduced = state.reduced.read().await;
-                    if room == "public" {
-                        line_err("audit is only available for private rooms", None)
-                    } else if !reduced.rooms.contains(&room) {
+                    let room = match reduced.resolve_room_id(&room) {
+                        Some(r) if r != "public" => r,
+                        Some(_) => {
+                            return line_err("audit is only available for private rooms", None);
+                        }
+                        None => return line_err("unknown room", None),
+                    };
+                    if !reduced.rooms.contains(&room) {
                         line_err("unknown room", None)
                     } else {
                         let can_audit =
@@ -1471,7 +1501,7 @@ pub async fn dispatch_rpc(state: &AppState, headers: &HeaderMap, cmd: RpcCommand
                 line_err(e, h)
             } else {
                 let content = content_for_room(&reduced, &room);
-                let item_str = canonicalize_item(&item_path);
+                let item_str = canonicalize_garden_item(&item_path);
                 let item = ItemId::parse(&item_str)
                     .map(|id| id.ontology_leaf())
                     .unwrap_or_else(|| ItemId::opaque(item_str.clone()));
@@ -1521,8 +1551,9 @@ pub async fn dispatch_rpc(state: &AppState, headers: &HeaderMap, cmd: RpcCommand
                 line_err(e, h)
             } else {
                 let content = content_for_room(&reduced, &room);
+                let room = reduced.resolve_room_id(&room).unwrap_or(room);
                 let scope = scope_from_room_wire(&room);
-                let item_str = canonicalize_item(&item_path);
+                let item_str = canonicalize_garden_item(&item_path);
                 let item = ItemId::parse(&item_str)
                     .map(|id| id.ontology_leaf())
                     .unwrap_or_else(|| ItemId::opaque(item_str.clone()));
@@ -1670,7 +1701,7 @@ pub async fn dispatch_rpc(state: &AppState, headers: &HeaderMap, cmd: RpcCommand
                 let limit = limit.unwrap_or(25).clamp(1, 200);
                 let iter = group.recent_votes.iter();
                 let iter: Box<dyn Iterator<Item = _>> = if let Some(p) = &parent {
-                    let parent_can = canonicalize_item(p);
+                    let parent_can = canonicalize_garden_item(p);
                     Box::new(iter.filter(move |v| {
                         vote_touches_path(content, v.a.as_str(), v.b.as_str(), &parent_can)
                     }))
@@ -1698,8 +1729,12 @@ pub async fn dispatch_rpc(state: &AppState, headers: &HeaderMap, cmd: RpcCommand
         RpcCommand::Search { query, room } => {
             let reduced = state.reduced.read().await;
             let limit = 50usize;
-            let room_key = room.as_deref().map(str::trim).filter(|s| !s.is_empty());
-            if let Some(room) = room_key {
+            let room_key = room
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|s| reduced.resolve_room_id(s).unwrap_or_else(|| s.to_string()));
+            if let Some(room) = room_key.as_deref() {
                 if let Err((e, h)) = authorize_room_read(&reduced, &headers, room) {
                     line_err(e, h)
                 } else {
@@ -1709,7 +1744,7 @@ pub async fn dispatch_rpc(state: &AppState, headers: &HeaderMap, cmd: RpcCommand
                             &query,
                             limit,
                             principal.as_deref(),
-                            room_key,
+                            room_key.as_deref(),
                         ))),
                         Err((e, h)) => line_err(e, h),
                     }
@@ -1721,7 +1756,7 @@ pub async fn dispatch_rpc(state: &AppState, headers: &HeaderMap, cmd: RpcCommand
                         &query,
                         limit,
                         principal.as_deref(),
-                        room_key,
+                        room_key.as_deref(),
                     ))),
                     Err((e, h)) => line_err(e, h),
                 }

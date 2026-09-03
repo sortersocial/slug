@@ -103,6 +103,20 @@ mod tests {
     }
 
     #[test]
+    fn parse_parent_specs_treats_bare_leaf_as_ontology_item() {
+        let specs = parse_parent_specs(Some(&"ship-sets".to_string()));
+        assert_eq!(specs, vec!["https://slug.social/~/ship-sets".to_string()]);
+        let specs = parse_parent_specs(Some(&"~hop, ~/x/luke".to_string()));
+        assert_eq!(
+            specs,
+            vec![
+                "https://slug.social/~/hop".to_string(),
+                "https://slug.social/~/x/luke".to_string()
+            ]
+        );
+    }
+
+    #[test]
     fn recent_votes_parent_filter_uses_containment_not_path_prefix() {
         let mut reduced = ReducerState::default();
         apply_ingest(

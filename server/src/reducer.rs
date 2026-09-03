@@ -6,7 +6,7 @@ use crate::canonical_path::canonicalize_tag;
 use crate::dsl;
 use crate::events::{Event, Ingest, ThreadCapability};
 use crate::path_types::ItemId;
-use slug_types::PostStats;
+use slug_types::{is_room_short_id, room_id_from_route_segment, PostStats};
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ScopeId {
@@ -529,6 +529,36 @@ pub struct ReducerState {
 impl ReducerState {
     pub fn content_for_scope(&self, scope: &ScopeId) -> Option<&ContentState> {
         self.content.get(scope)
+    }
+
+    /// Expand a room wire id to the stored `shortid/slug` (or `"public"`).
+    ///
+    /// Accepts `public`, a full `shortid/slug`, the `/r/{short}{slug}` route segment,
+    /// or the bare 7-char shortid when it uniquely matches a known room.
+    pub fn resolve_room_id(&self, room: &str) -> Option<String> {
+        let room = room.trim();
+        if room.is_empty() || room == "public" {
+            return Some("public".to_string());
+        }
+        if self.rooms.contains(room) {
+            return Some(room.to_string());
+        }
+        if let Some(from_seg) = room_id_from_route_segment(room) {
+            if self.rooms.contains(&from_seg) {
+                return Some(from_seg);
+            }
+        }
+        if is_room_short_id(room) {
+            let mut hits = self.rooms.iter().filter(|id| {
+                id.split_once('/')
+                    .is_some_and(|(short, slug)| short == room && !slug.is_empty())
+            });
+            match (hits.next(), hits.next()) {
+                (Some(id), None) => return Some(id.clone()),
+                _ => {}
+            }
+        }
+        None
     }
 
     /// Most recent forum post bump in `room_id`, or room-created time if the room has no posts.
@@ -1783,5 +1813,43 @@ mod containment_tests {
             MembershipStatus::Active
         );
         assert!(c.fallen_borders().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod room_id_resolve_tests {
+    use super::*;
+    use crate::events::RoomCreated;
+
+    fn add_room(state: &mut ReducerState, room_id: &str) {
+        let slug = room_id.split_once('/').map(|(_, s)| s).unwrap_or(room_id);
+        state.apply_event(Event::RoomCreated(RoomCreated {
+            ts: 1,
+            room_id: room_id.to_string(),
+            slug: slug.to_string(),
+            owner: "alice".to_string(),
+        }));
+    }
+
+    #[test]
+    fn resolve_room_id_accepts_shortid_and_route_segment() {
+        let mut state = ReducerState::default();
+        add_room(&mut state, "7jhckr4/slug-beta");
+
+        assert_eq!(state.resolve_room_id("public").as_deref(), Some("public"));
+        assert_eq!(
+            state.resolve_room_id("7jhckr4/slug-beta").as_deref(),
+            Some("7jhckr4/slug-beta")
+        );
+        assert_eq!(
+            state.resolve_room_id("7jhckr4").as_deref(),
+            Some("7jhckr4/slug-beta")
+        );
+        assert_eq!(
+            state.resolve_room_id("7jhckr4slug-beta").as_deref(),
+            Some("7jhckr4/slug-beta")
+        );
+        assert_eq!(state.resolve_room_id("zzzzzzz"), None);
+        assert_eq!(state.resolve_room_id("unknown/room"), None);
     }
 }
