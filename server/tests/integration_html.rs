@@ -303,162 +303,52 @@ fn question_garden_ingest(thread_tag: &str) -> Event {
     })
 }
 
+fn no_redirect_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap()
+}
+
+fn redirect_location(resp: &reqwest::Response) -> String {
+    assert_eq!(resp.status(), reqwest::StatusCode::PERMANENT_REDIRECT);
+    resp.headers()
+        .get(reqwest::header::LOCATION)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string()
+}
+
 #[tokio::test]
-async fn test_question_page_renders_prompt_and_seeds_thread_tag() {
+async fn test_retired_question_pages_are_gone() {
     let (addr, _tmp, _log, state, _handle) = create_test_server_with_state().await;
     {
         let mut w = state.reduced.write().await;
         w.apply_event(question_garden_ingest("psalms-seed"));
     }
     let client = reqwest::Client::new();
-    let guest = client
-        .get(format!("http://{addr}/q/psalms"))
-        .send()
-        .await
-        .unwrap();
-    assert!(guest.status().is_success(), "{}", guest.status());
-    let guest_body = guest.text().await.unwrap();
-    assert!(
-        guest_body.contains("Which psalm is greater?"),
-        "prompt headline missing: {}",
-        guest_body.chars().take(1200).collect::<String>()
-    );
-    assert!(guest_body.contains("vote-compare-pair"));
-    assert!(guest_body.contains("view-vote-question"));
-    assert!(
-        guest_body.contains("href=\"/~/psalms\""),
-        "ranking link missing: {}",
-        guest_body.chars().take(1500).collect::<String>()
-    );
-    assert!(guest_body.contains("href=\"/t/psalms\""));
-    let login_href = format!("/login?next={}", urlencoding::encode("/q/psalms"));
-    assert!(
-        guest_body.contains(&login_href),
-        "guest login next should be the /q/ url: {}",
-        guest_body.chars().take(2000).collect::<String>()
-    );
-
-    let authed = client
-        .get(format!("http://{addr}/q/psalms"))
-        .header("Authorization", format!("Bearer {}", test_bearer()))
-        .send()
-        .await
-        .unwrap();
-    assert!(authed.status().is_success(), "{}", authed.status());
-    let body = authed.text().await.unwrap();
-    assert!(
-        body.contains("value=\"psalms\""),
-        "thread_tag should be seeded to the collection leaf: {}",
-        body.chars().take(2000).collect::<String>()
-    );
-}
-
-#[tokio::test]
-async fn test_question_aspect_page_seeds_aspect_and_uses_prompt() {
-    let (addr, _tmp, _log, state, _handle) = create_test_server_with_state().await;
-    {
-        let mut w = state.reduced.write().await;
-        w.apply_event(question_garden_ingest("psalms-seed"));
+    for path in [
+        "/q/psalms",
+        "/q/psalms/beauty",
+        "/q/lonely",
+        "/q/psalms/NOT_VALID",
+        "/q/no-such-collection-xyz",
+    ] {
+        let resp = client
+            .get(format!("http://{addr}{path}"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            reqwest::StatusCode::NOT_FOUND,
+            "{path} should be gone"
+        );
     }
-    let client = reqwest::Client::new();
-    let guest = client
-        .get(format!("http://{addr}/q/psalms/beauty"))
-        .send()
-        .await
-        .unwrap();
-    assert!(guest.status().is_success(), "{}", guest.status());
-    let guest_body = guest.text().await.unwrap();
-    assert!(
-        guest_body.contains("more beautiful"),
-        "aspect prompt missing: {}",
-        guest_body.chars().take(1200).collect::<String>()
-    );
-    assert!(guest_body.contains("href=\"/~/psalms#aspect-beauty\""));
-    assert!(guest_body.contains("href=\"/t/psalms\""));
-    let login_href = format!("/login?next={}", urlencoding::encode("/q/psalms/beauty"));
-    assert!(
-        guest_body.contains(&login_href),
-        "guest login next should be the /q/aspect url: {}",
-        guest_body.chars().take(2000).collect::<String>()
-    );
-
-    let authed = client
-        .get(format!("http://{addr}/q/psalms/beauty"))
-        .header("Authorization", format!("Bearer {}", test_bearer()))
-        .send()
-        .await
-        .unwrap();
-    assert!(authed.status().is_success(), "{}", authed.status());
-    let body = authed.text().await.unwrap();
-    assert!(body.contains("name=\"aspect\""));
-    assert!(
-        body.contains("value=\"beauty\""),
-        "aspect hidden field missing: {}",
-        body.chars().take(2000).collect::<String>()
-    );
-    assert!(
-        body.contains("value=\"psalms\""),
-        "thread_tag should be seeded: {}",
-        body.chars().take(2000).collect::<String>()
-    );
 }
 
 #[tokio::test]
-async fn test_question_empty_scope_has_honest_empty_state() {
-    let (addr, _tmp, _log, state, _handle) = create_test_server_with_state().await;
-    {
-        let mut w = state.reduced.write().await;
-        w.apply_event(question_garden_ingest("psalms-seed"));
-    }
-    let client = reqwest::Client::new();
-    let resp = client
-        .get(format!("http://{addr}/q/lonely"))
-        .send()
-        .await
-        .unwrap();
-    assert!(resp.status().is_success(), "{}", resp.status());
-    let body = resp.text().await.unwrap();
-    assert!(
-        body.contains("Nothing to judge yet"),
-        "empty-scope prompt missing: {}",
-        body.chars().take(1200).collect::<String>()
-    );
-    assert!(body.contains("vote-question-empty"));
-    assert!(!body.contains("vote-compare-pair"));
-    assert!(body.contains("href=\"/~/lonely\""));
-    assert!(body.contains("href=\"/t/lonely\""));
-}
-
-#[tokio::test]
-async fn test_question_unknown_collection_is_not_found() {
-    let (addr, _tmp, _log, _state, _handle) = create_test_server_with_state().await;
-    let client = reqwest::Client::new();
-    let resp = client
-        .get(format!("http://{addr}/q/no-such-collection-xyz"))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), reqwest::StatusCode::NOT_FOUND);
-}
-
-#[tokio::test]
-async fn test_question_invalid_aspect_slug_is_not_found() {
-    let (addr, _tmp, _log, state, _handle) = create_test_server_with_state().await;
-    {
-        let mut w = state.reduced.write().await;
-        w.apply_event(question_garden_ingest("psalms-seed"));
-    }
-    let client = reqwest::Client::new();
-    let resp = client
-        .get(format!("http://{addr}/q/psalms/NOT_VALID"))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), reqwest::StatusCode::NOT_FOUND);
-}
-
-#[tokio::test]
-async fn test_room_question_page_uses_room_prefixes() {
+async fn test_room_question_pages_are_gone() {
     let (addr, _tmp, _log, _handle) = create_test_server().await;
     let client = reqwest::Client::new();
     let bearer = test_bearer();
@@ -491,158 +381,26 @@ async fn test_room_question_page_uses_room_prefixes() {
     .await;
     assert_eq!(posted["results"][0]["ok"], true, "room seed post: {posted}");
 
-    let resp = client
-        .get(format!("http://{addr}/r/{room_seg}/q/psalms/beauty"))
-        .header("Authorization", format!("Bearer {bearer}"))
-        .send()
-        .await
-        .unwrap();
-    assert!(resp.status().is_success(), "{}", resp.status());
-    let body = resp.text().await.unwrap();
-    assert!(
-        body.contains("more beautiful"),
-        "room aspect prompt missing: {}",
-        body.chars().take(1500).collect::<String>()
-    );
-    assert!(body.contains(&format!("href=\"/r/{room_seg}/~/psalms#aspect-beauty\"")));
-    assert!(body.contains(&format!("href=\"/r/{room_seg}/t/psalms\"")));
-    assert!(body.contains("name=\"aspect\""));
-    assert!(body.contains("value=\"beauty\""));
-    assert!(body.contains("value=\"psalms\""));
-}
-
-#[tokio::test]
-async fn test_question_page_has_standings_members_and_aspects() {
-    let (addr, _tmp, _log, state, _handle) = create_test_server_with_state().await;
-    {
-        let mut w = state.reduced.write().await;
-        w.apply_event(question_garden_ingest("psalms-seed"));
+    for path in [
+        format!("/r/{room_seg}/q/psalms"),
+        format!("/r/{room_seg}/q/psalms/beauty"),
+    ] {
+        let resp = client
+            .get(format!("http://{addr}{path}"))
+            .header("Authorization", format!("Bearer {bearer}"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            reqwest::StatusCode::NOT_FOUND,
+            "{path} should be gone"
+        );
     }
-    let client = reqwest::Client::new();
-    let body = client
-        .get(format!("http://{addr}/q/psalms"))
-        .send()
-        .await
-        .unwrap()
-        .text()
-        .await
-        .unwrap();
-    assert!(
-        body.contains("data-testid=\"question-standings\""),
-        "standings missing: {}",
-        body.chars().take(2000).collect::<String>()
-    );
-    assert!(
-        body.contains("data-testid=\"question-members\""),
-        "members missing"
-    );
-    assert!(
-        body.contains("psalm-23") && body.contains("psalm-1"),
-        "collection members missing: {}",
-        body.chars().take(2000).collect::<String>()
-    );
-    assert!(
-        body.contains("href=\"/q/psalms/beauty\""),
-        "aspect link missing: {}",
-        body.chars().take(2000).collect::<String>()
-    );
-    assert!(body.contains("id=\"vote-edge-history-region\""));
-    assert!(body.contains("vote-compare-nav"));
 }
 
 #[tokio::test]
-async fn test_question_aspect_page_links_back_to_canonical() {
-    let (addr, _tmp, _log, state, _handle) = create_test_server_with_state().await;
-    {
-        let mut w = state.reduced.write().await;
-        w.apply_event(question_garden_ingest("psalms-seed"));
-    }
-    let client = reqwest::Client::new();
-    let body = client
-        .get(format!("http://{addr}/q/psalms/beauty"))
-        .send()
-        .await
-        .unwrap()
-        .text()
-        .await
-        .unwrap();
-    assert!(
-        body.contains("data-testid=\"question-canonical-link\""),
-        "canonical back-link missing: {}",
-        body.chars().take(1500).collect::<String>()
-    );
-    assert!(body.contains("href=\"/q/psalms\""));
-    assert!(body.contains("data-testid=\"question-standings\""));
-}
-
-#[tokio::test]
-async fn test_home_is_question_index_with_expandable_seeded_forms() {
-    let (addr, _tmp, _log, state, _handle) = create_test_server_with_state().await;
-    {
-        let mut w = state.reduced.write().await;
-        w.apply_event(question_garden_ingest("psalms-seed"));
-    }
-    let client = reqwest::Client::new();
-    let guest = client.get(format!("http://{addr}/")).send().await.unwrap();
-    assert!(guest.status().is_success(), "{}", guest.status());
-    let guest_body = guest.text().await.unwrap();
-    assert!(
-        guest_body.contains("data-testid=\"question-index\""),
-        "question index missing: {}",
-        guest_body.chars().take(1500).collect::<String>()
-    );
-    assert!(guest_body.contains("Which psalm is greater?"));
-    assert!(guest_body.contains("more beautiful"));
-    assert!(guest_body.contains("data-question-leaf=\"psalms\""));
-    assert!(guest_body.contains("data-question-aspect=\"beauty\""));
-    assert!(guest_body.contains("href=\"/t\""));
-    assert!(guest_body.contains("href=\"/~\""));
-    assert!(guest_body.contains("vote-compare-pair"));
-    let login_href = format!("/login?next={}", urlencoding::encode("/q/psalms"));
-    assert!(
-        guest_body.contains(&login_href),
-        "guest CTA should return to /q/psalms: {}",
-        guest_body.chars().take(2500).collect::<String>()
-    );
-    assert!(!guest_body.contains("id=\"thread-feed\""));
-    assert!(!guest_body.contains("id=\"new-thread-ui-slot\""));
-
-    let authed = client
-        .get(format!("http://{addr}/"))
-        .header("Authorization", format!("Bearer {}", test_bearer()))
-        .send()
-        .await
-        .unwrap();
-    assert!(authed.status().is_success(), "{}", authed.status());
-    let body = authed.text().await.unwrap();
-    assert!(
-        body.contains("value=\"psalms\""),
-        "thread_tag should be seeded on the home form: {}",
-        body.chars().take(2500).collect::<String>()
-    );
-    assert!(body.contains("name=\"aspect\""));
-    assert!(
-        body.contains("value=\"beauty\""),
-        "aspect field missing on home: {}",
-        body.chars().take(2500).collect::<String>()
-    );
-}
-
-#[tokio::test]
-async fn test_home_empty_garden_has_honest_empty_state() {
-    let (addr, _tmp, _log, _state, _handle) = create_test_server_with_state().await;
-    let client = reqwest::Client::new();
-    let resp = client.get(format!("http://{addr}/")).send().await.unwrap();
-    assert!(resp.status().is_success(), "{}", resp.status());
-    let body = resp.text().await.unwrap();
-    assert!(body.contains("data-testid=\"question-index-empty\""));
-    assert!(body.contains("href=\"/t\""));
-    assert!(body.contains("href=\"/~\""));
-    assert!(!body.contains("data-testid=\"question-index\""));
-}
-
-#[tokio::test]
-async fn test_thread_index_serves_former_home_forum() {
+async fn test_home_is_thread_index() {
     let (addr, _tmp, _log, state, _handle) = create_test_server_with_state().await;
     {
         let mut w = state.reduced.write().await;
@@ -657,38 +415,57 @@ async fn test_thread_index_serves_former_home_forum() {
         }));
     }
     let client = reqwest::Client::new();
-    let resp = client.get(format!("http://{addr}/t")).send().await.unwrap();
-    assert!(resp.status().is_success(), "{}", resp.status());
-    let body = resp.text().await.unwrap();
+    let guest = client.get(format!("http://{addr}/")).send().await.unwrap();
+    assert!(guest.status().is_success(), "{}", guest.status());
+    let guest_body = guest.text().await.unwrap();
     assert!(
-        body.contains("id=\"thread-feed\""),
-        "thread index should keep the bump list: {}",
-        body.chars().take(1500).collect::<String>()
+        guest_body.contains("id=\"thread-feed\""),
+        "home should keep the bump list: {}",
+        guest_body.chars().take(1500).collect::<String>()
     );
-    assert!(body.contains("forum-home") || body.contains("#forum-home"));
-    assert!(body.contains("id=\"new-thread-ui-slot\"") || body.contains("log in to post"));
+    assert!(guest_body.contains("forum-home") || guest_body.contains("#forum-home"));
+    assert!(guest_body.contains("log in to post"));
+    assert!(!guest_body.contains("data-testid=\"question-index\""));
+
+    let authed = client
+        .get(format!("http://{addr}/"))
+        .header("Authorization", format!("Bearer {}", test_bearer()))
+        .send()
+        .await
+        .unwrap();
+    assert!(authed.status().is_success(), "{}", authed.status());
+    let body = authed.text().await.unwrap();
+    assert!(body.contains("id=\"new-thread-ui-slot\""));
     assert!(
-        body.contains("3 human posts") || body.contains("human post") || body.contains("view-meta")
+        body.contains("human post") || body.contains("view-meta"),
+        "home should keep post stats: {}",
+        body.chars().take(1500).collect::<String>()
     );
 }
 
 #[tokio::test]
-async fn test_thread_index_trailing_slash_redirects() {
+async fn test_home_empty_garden_has_honest_empty_state() {
     let (addr, _tmp, _log, _state, _handle) = create_test_server_with_state().await;
-    let client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .unwrap();
-    let resp = client
-        .get(format!("http://{addr}/t/"))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), reqwest::StatusCode::PERMANENT_REDIRECT);
-    let loc = resp
-        .headers()
-        .get(reqwest::header::LOCATION)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-    assert_eq!(loc, "/t");
+    let client = reqwest::Client::new();
+    let resp = client.get(format!("http://{addr}/")).send().await.unwrap();
+    assert!(resp.status().is_success(), "{}", resp.status());
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("id=\"thread-feed\""));
+    assert!(body.contains("no threads yet"));
+    assert!(body.contains("log in to post"));
+    assert!(!body.contains("data-testid=\"question-index\""));
+}
+
+#[tokio::test]
+async fn test_forum_index_moved_to_root() {
+    let (addr, _tmp, _log, _state, _handle) = create_test_server_with_state().await;
+    let client = no_redirect_client();
+    for path in ["/t", "/t/"] {
+        let resp = client
+            .get(format!("http://{addr}{path}"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(redirect_location(&resp), "/");
+    }
 }

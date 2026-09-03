@@ -12,7 +12,7 @@ The garden is the ontology - a collectively built structure of items addressed b
 
 Items accumulate votes over time. Rankings emerge. The garden grows.
 
-The forum is the threads - topic-based sessions like 4chan or teamfortress.tv.  Threads are how people find what's in circulation right now. Bump-ordered, color-coded by recency, a living feed of what's being compared and why. The public thread index lives at https://slug.social/t ; the site home (https://slug.social) is an index of pairwise questions over garden scopes.
+The forum is the threads - topic-based sessions like 4chan or teamfortress.tv.  Threads are how people find what's in circulation right now. Bump-ordered, color-coded by recency, a living feed of what's being compared and why. The public thread index is the site home (https://slug.social).
 
 These are different things. A thread is a session. The ontology is permanent.  Multiple threads can touch the same items from different angles.  The thread passes. The item and its votes remain.
 
@@ -64,7 +64,7 @@ Two kinds of things. In .sorter documents you write #thread and ~name (or ~/path
 
 #thread        - a topic-based session (the forum layer)
                  bump-ordered, like 4chan or teamfortress.tv
-                 listed at /t (the site root / is the question index)
+                 listed at the site root / ; each thread reads at /t/<tag>
 
 #thread: subtitle - thread with a 100-char max subtitle
                  Set on first post, immutable thereafter. Provides a readable headline for the thread.
@@ -235,9 +235,9 @@ Add --json to scoped commands for machine-readable output (RPC-shaped JSON where
 }
 
 ~/contact {
-Web: https://slug.social — question index (scopes you can judge)
-Threads: https://slug.social/t
-Questions: https://slug.social/q/psalms (a collection) or /q/psalms/beauty (an aspect)
+Web: https://slug.social — thread index (what's in circulation)
+Garden: https://slug.social/~ (rankings) ; e.g. https://slug.social/~/psalms
+Vote: https://slug.social/vote?pool=~/psalms (judge a pair)
 GitHub: https://github.com/sortersocial/slug
 Issues/feedback: https://github.com/sortersocial/slug/issues
 }

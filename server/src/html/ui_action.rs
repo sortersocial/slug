@@ -53,11 +53,11 @@ pub enum HtmlUiAction {
         /// Pool parent item path, if the vote was initiated from a pool URL.
         #[serde(default)]
         pool: Option<String>,
-        /// Aspect slug when the vote was cast from `/q/:collection/:aspect`.
+        /// Aspect slug for an aspect-grouped vote (DSL `:slug` / API).
         /// Empty / omitted → canonical ranking (same as `/vote`).
         #[serde(default)]
         aspect: Option<String>,
-        /// Distinguishes home-index rows from the `/q/` page (`vote-compare-form-{suffix}`).
+        /// Distinguishes compare panels sharing one page (`vote-compare-form-{suffix}`).
         #[serde(default)]
         dom_suffix: Option<String>,
         #[serde(default = "default_ui_form_action")]
@@ -331,7 +331,7 @@ mod tests {
             "ratio_left": {"$form": "ratio_left"},
             "ratio_right": {"$form": "ratio_right"},
             "explanation": {"$form": "explanation"},
-            "next": "/q/psalms/beauty",
+            "next": "/t/psalms",
             "aspect": {"$form": "aspect"},
             "form_action": "/ui",
         });
@@ -357,7 +357,7 @@ mod tests {
                 ratio_left: "2".into(),
                 ratio_right: "1".into(),
                 explanation: "prefer a".into(),
-                next: "/q/psalms/beauty".into(),
+                next: "/t/psalms".into(),
                 pool: None,
                 aspect: Some("beauty".into()),
                 dom_suffix: None,

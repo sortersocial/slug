@@ -74,9 +74,9 @@ pub fn create_app(state: AppState) -> Router {
     Router::new()
         .route("/healthz", get(|| async { "ok" }))
         .route("/static/:filename", get(crate::html::serve_static))
-        .route("/", get(crate::html::home))
-        .route("/t", get(crate::html::thread_index))
-        .route("/t/", get(crate::html::redirect_strip_trailing_slash))
+        .route("/", get(crate::html::thread_index))
+        .route("/t", get(crate::html::redirect_forum_index))
+        .route("/t/", get(crate::html::redirect_forum_index))
         .route("/login", get(api::get_web_login))
         .route("/logout", get(api::get_logout))
         .route("/ui", post(api::post_ui_html))
@@ -92,19 +92,6 @@ pub fn create_app(state: AppState) -> Router {
         .route(
             "/r/:room_key/vote",
             get(crate::html::room_vote_compare_page),
-        )
-        .route("/q/:collection", get(crate::html::question_page))
-        .route(
-            "/q/:collection/:aspect",
-            get(crate::html::question_aspect_page),
-        )
-        .route(
-            "/r/:room_key/q/:collection",
-            get(crate::html::room_question_page),
-        )
-        .route(
-            "/r/:room_key/q/:collection/:aspect",
-            get(crate::html::room_question_aspect_page),
         )
         .route("/~", get(crate::html::garden_index))
         .route("/~/", get(crate::html::redirect_strip_trailing_slash))

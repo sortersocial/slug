@@ -31,27 +31,9 @@ use super::{
         user_can_view_room,
     },
     item::{item_display_path, login_href_with_next},
-    question_body::{question_rankings, question_standings_region},
 };
 
-/// Prompt shown as the `/q/` headline (scope body, or restrained fallback copy).
-#[derive(Debug, Clone)]
-pub(super) enum QuestionHeadline {
-    Body(String),
-    Fallback(String),
-}
-
-/// Shareable question page: compare machinery seeded by (scope, optional aspect).
-pub(super) struct QuestionCtx {
-    pub aspect: Option<String>,
-    pub question_path: String,
-    pub garden_href: String,
-    pub thread_href: String,
-    pub headline: QuestionHeadline,
-    pub title: String,
-}
-
-/// Unique element ids for a compare panel. Empty suffix is the `/q/` and `/vote` page.
+/// Unique element ids for a compare panel. Empty suffix is the `/vote` page.
 #[derive(Debug, Clone, Default)]
 pub(super) struct VoteCompareDomIds {
     pub suffix: Option<String>,
@@ -122,48 +104,6 @@ impl VoteCompareDomIds {
 
     pub(super) fn explain_id(&self) -> String {
         self.suffixed("vote-explain")
-    }
-}
-
-fn is_question_href(path: &str) -> bool {
-    let path = path.split(['?', '#']).next().unwrap_or(path);
-    path.starts_with("/q/") || path.contains("/q/")
-}
-
-/// `/q/:leaf` → `None`; `/q/:leaf/:aspect` and room-prefixed twins → `Some(aspect)`.
-fn aspect_from_question_path(next: &str) -> Option<String> {
-    let path = next.split(['?', '#']).next().unwrap_or(next);
-    let parts: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-    let q = parts.iter().position(|p| *p == "q")?;
-    parts
-        .get(q + 2)
-        .filter(|s| !s.is_empty())
-        .map(|s| (*s).to_string())
-}
-
-fn question_header_markup(
-    question: &QuestionCtx,
-    garden_root: &str,
-    item_bodies: Option<&HashMap<ItemId, String>>,
-) -> maud::Markup {
-    html! {
-        header class="vote-question" {
-            @match &question.headline {
-                QuestionHeadline::Body(body) => {
-                    div class="vote-question-headline" {
-                        (render_item_body_in_scope(body, garden_root, item_bodies))
-                    }
-                }
-                QuestionHeadline::Fallback(text) => {
-                    h1 class="vote-question-headline" { (text) }
-                }
-            }
-            nav class="vote-question-links muted" {
-                a data-testid="question-ranking-link" href=(question.garden_href) { "ranking" }
-                " · "
-                a data-testid="question-thread-link" href=(question.thread_href) { "thread" }
-            }
-        }
     }
 }
 
@@ -347,7 +287,7 @@ pub(crate) async fn vote_compare_post_success_js(
     pool: Option<&ItemId>,
     _post_id: &str,
     _post_idx: Option<usize>,
-    next: &str,
+    _next: &str,
     dom_suffix: Option<&str>,
 ) -> String {
     let ids = VoteCompareDomIds::with_suffix(dom_suffix.unwrap_or("").to_string());
@@ -355,25 +295,14 @@ pub(crate) async fn vote_compare_post_success_js(
     let content = content_for_garden_view(&reduced, &nav.scope());
     let edge_history = vote_edge_history_markup(content, left, right);
     let next_pair = suggest_next_vote_pair(content, left, right, pool);
-    let next_override = is_question_href(next).then_some(next);
-    let nav_markup =
-        vote_compare_nav_markup(nav, next_pair.as_ref(), pool, next_override, &ids.nav_id());
-    let standings = if is_question_href(next) {
-        pool.map(|p| {
-            let aspect = aspect_from_question_path(next);
-            question_standings_region(&question_rankings(content, p, aspect.as_deref()), nav)
-        })
-    } else {
-        None
-    };
+    let nav_markup = vote_compare_nav_markup(nav, next_pair.as_ref(), pool, &ids.nav_id());
     drop(reduced);
-    let mut js = JsBuilder::new()
+    JsBuilder::new()
         .morph_inner_selector(&format!("#{}", ids.history_id()), edge_history)
-        .morph_selector(&format!("#{}", ids.nav_id()), nav_markup);
-    if let Some(standings) = standings {
-        js = js.morph_selector("#question-standings-region", standings);
-    }
-    js.qs(&format!("#{}", ids.form_id())).reset().build()
+        .morph_selector(&format!("#{}", ids.nav_id()), nav_markup)
+        .qs(&format!("#{}", ids.form_id()))
+        .reset()
+        .build()
 }
 
 pub(super) fn vote_compare_href(
@@ -418,14 +347,9 @@ fn vote_compare_nav_markup(
     nav: &ThreadNav,
     next_pair: Option<&(ItemId, ItemId)>,
     pool: Option<&ItemId>,
-    next_pair_href_override: Option<&str>,
     nav_id: &str,
 ) -> maud::Markup {
-    let next_pair_href = if let Some(over) = next_pair_href_override.filter(|s| !s.is_empty()) {
-        next_pair.and(Some(over.to_string()))
-    } else {
-        next_pair.map(|(nl, nr)| vote_compare_href(nav, nl, nr, None, pool))
-    };
+    let next_pair_href = next_pair.map(|(nl, nr)| vote_compare_href(nav, nl, nr, None, pool));
     html! {
         div id=(nav_id) class="vote-compare-nav" {
             @if let Some(href) = &next_pair_href {
@@ -506,16 +430,14 @@ pub(super) struct VoteComparePanel<'a> {
     pub edge_history: maud::Markup,
     pub next_pair: Option<&'a (ItemId, ItemId)>,
     pub next_path: &'a str,
-    pub next_pair_override: Option<&'a str>,
     pub aspect_slug: Option<&'a str>,
     pub logged_in: bool,
     pub show_vote_form: bool,
-    pub question: Option<&'a QuestionCtx>,
     pub include_heading: bool,
     pub ids: &'a VoteCompareDomIds,
 }
 
-/// Pair cards + nav + history + vote form. Shared by `/q/` and `/vote`.
+/// Pair cards + nav + history + vote form for `/vote`.
 pub(super) fn vote_compare_panel_markup(p: VoteComparePanel<'_>) -> maud::Markup {
     let mut rpc_val = json!({
         "action": "vote_compare_post",
@@ -552,11 +474,7 @@ pub(super) fn vote_compare_panel_markup(p: VoteComparePanel<'_>) -> maud::Markup
     html! {
         section class="vote-compare-shell" {
             @if p.include_heading {
-                @if let Some(qctx) = p.question {
-                    (question_header_markup(qctx, p.nav.garden_root_url(), p.item_bodies))
-                } @else {
-                    h2 { "compare" }
-                }
+                h2 { "compare" }
             }
             div class="vote-compare-pair" {
                 (vote_compare_item_card(
@@ -575,13 +493,7 @@ pub(super) fn vote_compare_panel_markup(p: VoteComparePanel<'_>) -> maud::Markup
                     p.item_bodies,
                 ))
             }
-            (vote_compare_nav_markup(
-                p.nav,
-                p.next_pair,
-                p.pool,
-                p.next_pair_override,
-                &nav_id,
-            ))
+            (vote_compare_nav_markup(p.nav, p.next_pair, p.pool, &nav_id))
             div id=(history_id) {
                 (p.edge_history)
             }
@@ -640,66 +552,6 @@ pub(super) fn vote_compare_panel_markup(p: VoteComparePanel<'_>) -> maud::Markup
 }
 
 /// Build the compare panel for a garden scope (and optional aspect), or empty markup if no pair.
-pub(super) fn question_vote_panel(
-    content: &ContentState,
-    nav: &ThreadNav,
-    collection: &ItemId,
-    aspect: Option<&str>,
-    logged_in: bool,
-    can_post: bool,
-    next_path: &str,
-    next_pair_override: Option<&str>,
-    question: Option<&QuestionCtx>,
-    include_heading: bool,
-    ids: &VoteCompareDomIds,
-) -> maud::Markup {
-    let members = comparable_items(content, content.members_of(collection));
-    if members.len() < 2 {
-        return html! {
-            p class="muted vote-question-empty" {
-                "nothing to compare yet — this scope needs at least two items with bodies."
-            }
-        };
-    }
-    let Some((left, right)) = suggest_next_pair_in_pool(&content.ranking_group, &members, None)
-    else {
-        return html! {
-            p class="muted vote-question-empty" { "no pairs available in this scope." }
-        };
-    };
-    let auto_thread = canonicalize_tag(&collection.last_segment());
-    let mut thread_tags = vote_thread_tags_for_pair(content, &left, &right);
-    if !auto_thread.is_empty() && !thread_tags.iter().any(|t| t == &auto_thread) {
-        thread_tags.insert(0, auto_thread.clone());
-    }
-    let edge_history = vote_edge_history_markup(content, &left, &right);
-    let left_body = content.item_bodies.get(&left);
-    let right_body = content.item_bodies.get(&right);
-    let next_pair = suggest_next_vote_pair(content, &left, &right, Some(collection));
-    let show_vote_form = can_post || !logged_in;
-    vote_compare_panel_markup(VoteComparePanel {
-        nav,
-        left: &left,
-        right: &right,
-        left_body,
-        right_body,
-        item_bodies: Some(&content.item_bodies),
-        pool: Some(collection),
-        auto_thread: &auto_thread,
-        thread_tags: &thread_tags,
-        edge_history,
-        next_pair: next_pair.as_ref(),
-        next_path,
-        next_pair_override,
-        aspect_slug: aspect.filter(|s| !s.is_empty()),
-        logged_in,
-        show_vote_form,
-        question,
-        include_heading,
-        ids,
-    })
-}
-
 #[derive(Debug, Deserialize)]
 pub struct VoteCompareQuery {
     #[serde(default)]
@@ -721,7 +573,7 @@ pub async fn vote_compare_page(
     uri: Uri,
 ) -> impl IntoResponse {
     let nav = ThreadNav::public();
-    vote_compare_inner(state, q, nav, headers, jar, uri, None).await
+    vote_compare_inner(state, q, nav, headers, jar, uri).await
 }
 
 pub async fn room_vote_compare_page(
@@ -749,7 +601,7 @@ pub async fn room_vote_compare_page(
         return room_not_found_page(&jar, &uri).into_response();
     }
     drop(reduced);
-    vote_compare_inner(state, q, nav, headers, jar, uri, None).await
+    vote_compare_inner(state, q, nav, headers, jar, uri).await
 }
 
 pub(super) async fn vote_compare_inner(
@@ -759,7 +611,6 @@ pub(super) async fn vote_compare_inner(
     headers: HeaderMap,
     jar: CookieJar,
     uri: Uri,
-    question: Option<QuestionCtx>,
 ) -> axum::response::Response {
     let pool_id: Option<ItemId> = match q.pool.as_deref() {
         Some(p) => match ItemId::parse(p.trim()) {
@@ -849,31 +700,18 @@ pub(super) async fn vote_compare_inner(
     let next_pair = suggest_next_vote_pair(content, &left, &right, pool_id.as_ref());
     drop(reduced);
 
-    let title = question
-        .as_ref()
-        .map(|q| q.title.clone())
-        .unwrap_or_else(|| {
-            format!(
-                "vote — {} vs {}",
-                item_display_path(left.as_str()),
-                item_display_path(right.as_str())
-            )
-        });
+    let title = format!(
+        "vote — {} vs {}",
+        item_display_path(left.as_str()),
+        item_display_path(right.as_str())
+    );
     let next_path = uri
         .path_and_query()
         .map(|pq| pq.as_str().to_string())
         .unwrap_or_else(|| "/vote".into());
 
-    let aspect_slug = question
-        .as_ref()
-        .and_then(|q| q.aspect.clone())
-        .filter(|s| !s.is_empty());
-    let next_pair_override = question.as_ref().map(|q| q.question_path.clone());
-    let view_class = if question.is_some() {
-        "view-ontology view-ontology-light view-vote-compare view-vote-compare-fullscreen view-vote-question"
-    } else {
-        "view-ontology view-ontology-light view-vote-compare view-vote-compare-fullscreen"
-    };
+    let view_class =
+        "view-ontology view-ontology-light view-vote-compare view-vote-compare-fullscreen";
 
     let body = vote_compare_panel_markup(VoteComparePanel {
         nav: &nav,
@@ -888,11 +726,9 @@ pub(super) async fn vote_compare_inner(
         edge_history,
         next_pair: next_pair.as_ref(),
         next_path: &next_path,
-        next_pair_override: next_pair_override.as_deref(),
-        aspect_slug: aspect_slug.as_deref(),
+        aspect_slug: None,
         logged_in,
         show_vote_form,
-        question: question.as_ref(),
         include_heading: true,
         ids: &VoteCompareDomIds::page(),
     });

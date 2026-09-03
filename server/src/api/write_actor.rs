@@ -122,11 +122,11 @@ async fn broadcast_web_refresh(
     };
 
     let feed_prefixes = if room_key == "public" {
-        vec!["/t".to_string(), thread_url.clone()]
+        vec!["/".to_string(), thread_url.clone()]
     } else if let Some(seg) = room_route_segment(room_key) {
         vec![format!("/r/{seg}"), thread_url.clone()]
     } else {
-        vec!["/t".to_string(), thread_url.clone()]
+        vec!["/".to_string(), thread_url.clone()]
     };
 
     let _ = state.js_tx.send(crate::state::JsSnippet {

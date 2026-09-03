@@ -304,7 +304,15 @@ pub(crate) async fn thread_latest_page_region(
     (latest_offset, markup)
 }
 
-/// Public thread index (`GET /t`): private rooms (signed-in), then public bump-ordered threads.
+/// Retired `/t` index path → `/`: the public thread index lives at the site root.
+pub async fn redirect_forum_index(uri: Uri) -> impl IntoResponse {
+    match uri.query() {
+        Some(q) if !q.is_empty() => axum::response::Redirect::permanent(&format!("/?{q}")),
+        _ => axum::response::Redirect::permanent("/"),
+    }
+}
+
+/// Public thread index (`GET /`): private rooms (signed-in), then public bump-ordered threads.
 pub async fn thread_index(
     State(state): State<AppState>,
     headers: HeaderMap,

@@ -25,7 +25,7 @@ impl ThreadNav {
         Self {
             room_wire: "public".into(),
             scope: ScopeId::Public,
-            room_path: "/t".into(),
+            room_path: "/".into(),
             thread_path_prefix: "/t".into(),
             garden_path_prefix: "/~".into(),
         }
@@ -115,19 +115,10 @@ impl ThreadNav {
             ScopeId::Public => String::new(),
             ScopeId::Room(room_id) => {
                 let seg = room_route_segment(room_id).expect("room seg");
-                format!("/r/{seg}")
-            }
+            format!("/r/{seg}")
         }
     }
-
-    /// Shareable question page: `/q/:leaf` or `/q/:leaf/:aspect` (room-prefixed when private).
-    pub(crate) fn question_href(&self, collection_leaf: &str, aspect: Option<&str>) -> String {
-        let prefix = self.room_path_prefix_for_vote_compare();
-        match aspect.filter(|s| !s.is_empty()) {
-            Some(a) => format!("{prefix}/q/{collection_leaf}/{a}"),
-            None => format!("{prefix}/q/{collection_leaf}"),
-        }
-    }
+}
 }
 
 #[cfg(test)]
@@ -165,18 +156,4 @@ mod tests {
         assert_eq!(nav.post_url("topic", 12), "/r/abcd123demo/t/topic/12");
     }
 
-    #[test]
-    fn question_href_public_and_room() {
-        let nav = ThreadNav::public();
-        assert_eq!(nav.question_href("psalms", None), "/q/psalms");
-        assert_eq!(
-            nav.question_href("psalms", Some("beauty")),
-            "/q/psalms/beauty"
-        );
-        let room = ThreadNav::from_room_id("abcd123/demo").unwrap();
-        assert_eq!(
-            room.question_href("psalms", Some("beauty")),
-            "/r/abcd123demo/q/psalms/beauty"
-        );
-    }
 }

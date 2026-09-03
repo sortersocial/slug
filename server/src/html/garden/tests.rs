@@ -2,18 +2,16 @@ use super::{
     access::content_for_garden_view,
     browse::scoped_bc_containment,
     external::{external_frame_allowed, external_resolver_status_markup, external_source_href},
-    home::collect_question_entries,
     item_page::{
         build_item_page_view_model, containment_crumb_chain, edge_fragment_id,
         item_relations_markup, pair_weight_label, sibling_nav_markup,
     },
     pin::ont_pin_vote_controls,
-    question::{collection_is_known, parse_collection_leaf, question_headline},
     render::aspect_ranking_sections_markup,
     vote::{
         canonical_edge_items, edge_vote_count_for_pair, edge_vote_entries_for_pair,
         ratios_for_compare_page, sort_votes_for_compare_display, suggest_next_vote_pair,
-        vote_compare_item_card, vote_pool_href, QuestionHeadline,
+        vote_compare_item_card, vote_pool_href,
     },
 };
 use crate::{
@@ -361,57 +359,6 @@ fn item_page_renders_aspect_section_below_canonical() {
         html.contains("id=\"aspect-beauty\""),
         "missing aspect section anchor: {html}"
     );
-}
-
-#[test]
-fn parse_collection_leaf_maps_bare_name_to_tilde_item() {
-    let id = parse_collection_leaf("psalms").expect("psalms");
-    assert_eq!(id, ItemId::parse("~psalms").unwrap().ontology_leaf());
-    assert_eq!(
-        parse_collection_leaf("~psalms"),
-        parse_collection_leaf("psalms")
-    );
-    assert!(parse_collection_leaf("").is_none());
-    assert!(parse_collection_leaf("~").is_none());
-    assert!(parse_collection_leaf("~/psalms").is_none());
-    assert!(parse_collection_leaf("foo/bar").is_none());
-}
-
-#[test]
-fn question_headline_uses_scope_body_then_fallback_and_aspect_prompt() {
-    let mut reduced = ReducerState::default();
-    apply_ingest(
-        &mut reduced,
-        1,
-        "~/psalms {Which psalm is greater?}\n\
-         ~/psalms/a {alpha}\n\
-         ~/lonely\n\
-         :beauty {more beautiful}\n",
-    );
-    let content = content_for_garden_view(&reduced, &ScopeId::Public);
-    let psalms = ItemId::parse("~psalms").unwrap().ontology_leaf();
-    let lonely = ItemId::parse("~lonely").unwrap().ontology_leaf();
-    match question_headline(content, &psalms, None) {
-        QuestionHeadline::Body(b) => assert_eq!(b, "Which psalm is greater?"),
-        QuestionHeadline::Fallback(s) => panic!("expected body headline, got {s}"),
-    }
-    match question_headline(content, &lonely, None) {
-        QuestionHeadline::Fallback(s) => assert_eq!(s, "Which is greater: lonely?"),
-        QuestionHeadline::Body(b) => panic!("expected fallback, got body {b}"),
-    }
-    match question_headline(content, &psalms, Some("beauty")) {
-        QuestionHeadline::Body(b) => assert_eq!(b, "more beautiful"),
-        QuestionHeadline::Fallback(s) => panic!("expected aspect prompt, got {s}"),
-    }
-    match question_headline(content, &psalms, Some("speed")) {
-        QuestionHeadline::Fallback(s) => assert_eq!(s, ":speed — which wins?"),
-        QuestionHeadline::Body(b) => panic!("expected aspect fallback, got {b}"),
-    }
-    assert!(collection_is_known(content, &psalms));
-    assert!(!collection_is_known(
-        content,
-        &ItemId::parse("~no-such-q").unwrap().ontology_leaf()
-    ));
 }
 
 #[test]
@@ -819,42 +766,6 @@ fn containment_breadcrumb_emits_leaf_hrefs() {
         "missing luke crumb: {html}"
     );
     assert!(!html.contains("/~/x/"));
-}
-
-#[test]
-fn collect_question_entries_lists_scope_and_aspect_prompt() {
-    let mut reduced = ReducerState::default();
-    apply_ingest(
-        &mut reduced,
-        1,
-        "~/psalms {Which psalm is greater?}\n\
-         ~/psalms/a {alpha}\n\
-         ~/psalms/b {beta}\n\
-         :beauty {more beautiful}\n\
-         ~/lonely {Nothing to judge yet}\n",
-    );
-    let content = content_for_garden_view(&reduced, &ScopeId::Public);
-    let entries = collect_question_entries(&reduced, content, &ThreadNav::public());
-    assert!(
-        entries
-            .iter()
-            .any(|e| e.leaf == "psalms" && e.aspect.is_none()),
-        "canonical psalms missing: {:?}",
-        entries
-            .iter()
-            .map(|e| (e.leaf.clone(), e.aspect.clone()))
-            .collect::<Vec<_>>()
-    );
-    assert!(
-        entries
-            .iter()
-            .any(|e| e.leaf == "psalms" && e.aspect.as_deref() == Some("beauty")),
-        "aspect beauty missing"
-    );
-    assert!(
-        entries.iter().all(|e| e.leaf != "lonely"),
-        "lonely has no members and must not appear"
-    );
 }
 
 /// An item with two active scopes gets one sibling nav per scope (primary first),
