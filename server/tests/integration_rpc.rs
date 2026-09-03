@@ -253,6 +253,23 @@ async fn test_rank_endpoint() {
     assert_eq!(ranking.len(), 2);
     assert_eq!(ranking[0]["item"], "https://slug.social/~/rust");
     assert!(rank["unranked_items"].is_array());
+
+    let global_batch = serde_json::json!([{
+        "GetGlobalRank": {
+            "room": "public",
+            "limit": 25,
+            "offset": 0,
+            "percent": false
+        }
+    }]);
+    let global_body = rpc_batch(&client, addr, None, global_batch).await;
+    let global = &global_body["results"][0]["result"]["GlobalRank"];
+    assert!(
+        global["items"].is_array(),
+        "CLI ≤0.0.68 requires flattened items: {global}"
+    );
+    assert!(!global["items"].as_array().unwrap().is_empty());
+    assert!(global["components"].is_array());
 }
 
 #[tokio::test]

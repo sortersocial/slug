@@ -22,8 +22,9 @@ use crate::{
 
 use super::auth::{parse_bearer, verify_bearer_principal};
 use super::helpers::{
-    compute_connectivity_stats, is_pair_voted, now_ms, paginate_rankings, parse_parent_specs,
-    pick_random_distinct_item_pair, validate_garden_parent_scope_paths, vote_touches_path,
+    compute_connectivity_stats, flatten_global_rank_items, is_pair_voted, now_ms,
+    paginate_rankings, parse_parent_specs, pick_random_distinct_item_pair,
+    validate_garden_parent_scope_paths, vote_touches_path,
 };
 use super::validate::validate_ingest_document;
 
@@ -1438,6 +1439,7 @@ pub async fn dispatch_rpc(state: &AppState, headers: &HeaderMap, cmd: RpcCommand
                     .collect();
                 let (components, unranked_items) =
                     paginate_rankings(components, unranked, offset, Some(limit));
+                let items = flatten_global_rank_items(&components, &unranked_items, want_percent);
 
                 line_ok(RpcResult::GlobalRank(GlobalRankResponse {
                     ranked_total,
@@ -1446,6 +1448,7 @@ pub async fn dispatch_rpc(state: &AppState, headers: &HeaderMap, cmd: RpcCommand
                     limit,
                     components,
                     unranked_items,
+                    items,
                 }))
             }
         }
