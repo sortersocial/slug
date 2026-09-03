@@ -83,22 +83,36 @@ fn question_activity(
     thread_ts.max(vote_ts)
 }
 
-fn prompted_aspects(content: &ContentState, collection: &ItemId) -> Vec<String> {
-    let mut slugs: Vec<String> = content
-        .aspect_prompts
-        .iter()
-        .filter(|(_, p)| !p.trim().is_empty())
-        .map(|(slug, _)| slug.clone())
+/// Aspects that have actually been voted under this scope. Aspect prompts recorded
+/// elsewhere in the room must not fabricate rows here (no scope × prompt cross-product).
+fn scope_aspects(content: &ContentState, collection: &ItemId) -> Vec<String> {
+    let mut slugs: Vec<String> = aspects_for_scope(content, collection)
+        .into_iter()
+        .map(|(slug, _)| slug)
         .filter(|slug| is_valid_aspect_slug(slug))
         .collect();
-    for (slug, prompt) in aspects_for_scope(content, collection) {
-        if prompt.as_deref().is_some_and(|p| !p.is_empty()) && is_valid_aspect_slug(&slug) {
-            slugs.push(slug);
-        }
-    }
     slugs.sort();
     slugs.dedup();
     slugs
+}
+
+/// At least one recorded canonical vote between two members of this scope.
+fn scope_has_voted_pair(content: &ContentState, collection: &ItemId) -> bool {
+    let g = &content.ranking_group;
+    let idxs: Vec<usize> = content
+        .members_of(collection)
+        .iter()
+        .filter_map(|m| g.item_to_idx.get(m).copied())
+        .collect();
+    for (i, &a) in idxs.iter().enumerate() {
+        for &b in &idxs[i + 1..] {
+            let key = if a < b { (a, b) } else { (b, a) };
+            if g.voted_pairs.contains(&key) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn entry_from_scope(
@@ -138,8 +152,10 @@ fn entry_from_scope(
     })
 }
 
-/// Public scopes with ≥2 comparable members, plus prompted aspects under those scopes.
-/// Bump-ordered by thread / vote activity, then member count descending.
+/// Public scopes with ≥2 comparable members that show some effort — a written
+/// prompt body, a recorded vote between members, or a voted aspect — plus the
+/// aspects actually voted under each scope. Bump-ordered by thread / vote
+/// activity, then member count descending.
 pub(super) fn collect_question_entries(
     reduced: &ReducerState,
     content: &ContentState,
@@ -165,10 +181,18 @@ pub(super) fn collect_question_entries(
 
     let mut entries = Vec::new();
     for (scope, member_count) in scopes {
+        let aspects = scope_aspects(content, &scope);
+        let has_prompt = matches!(
+            question_headline(content, &scope, None),
+            QuestionHeadline::Body(_)
+        );
+        if !has_prompt && aspects.is_empty() && !scope_has_voted_pair(content, &scope) {
+            continue;
+        }
         if let Some(e) = entry_from_scope(content, nav, &scope, None, member_count) {
             entries.push(e);
         }
-        for slug in prompted_aspects(content, &scope) {
+        for slug in aspects {
             if let Some(e) = entry_from_scope(content, nav, &scope, Some(&slug), member_count) {
                 entries.push(e);
             }
