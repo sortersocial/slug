@@ -55,15 +55,9 @@ pub struct GlobalRankResponse {
     pub limit: usize,
     /// Ranked components, ordered largest-first. Scores and percentages are comparable within,
     /// but not across, components.
-    #[serde(default)]
     pub components: Vec<RankComponent>,
     /// Unranked items included in this page after the ranked components.
-    #[serde(default)]
     pub unranked_items: Vec<GardenItemUrl>,
-    /// Flattened page for CLI ≤0.0.68: ranked rows first, then unranked at score 0.
-    /// Always serialized so published clients that require `items` keep working.
-    #[serde(default)]
-    pub items: Vec<RankRow>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -777,65 +771,4 @@ pub struct VoteResponse {
     pub ok: bool,
     pub ranking: Vec<RankRow>,
     pub next: NextMoves,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn global_rank_response_deserializes_legacy_items_and_components() {
-        let legacy = r#"{
-            "ranked_total": 1,
-            "unranked_total": 0,
-            "offset": 0,
-            "limit": 25,
-            "items": [{"item": "https://slug.social/~/rust", "score": 1.0}]
-        }"#;
-        let parsed: GlobalRankResponse = serde_json::from_str(legacy).unwrap();
-        assert_eq!(parsed.items.len(), 1);
-        assert!(parsed.components.is_empty());
-        assert!(parsed.unranked_items.is_empty());
-
-        let modern = r#"{
-            "ranked_total": 1,
-            "unranked_total": 1,
-            "offset": 0,
-            "limit": 25,
-            "components": [{"pairs": 1, "ranking": [{"item": "https://slug.social/~/rust", "score": 1.0}]}],
-            "unranked_items": ["https://slug.social/~/go"]
-        }"#;
-        let parsed: GlobalRankResponse = serde_json::from_str(modern).unwrap();
-        assert_eq!(parsed.components.len(), 1);
-        assert_eq!(parsed.unranked_items.len(), 1);
-        assert!(parsed.items.is_empty());
-    }
-
-    #[test]
-    fn global_rank_response_serializes_items_for_old_cli() {
-        let resp = GlobalRankResponse {
-            ranked_total: 1,
-            unranked_total: 0,
-            offset: 0,
-            limit: 25,
-            components: vec![RankComponent {
-                pairs: 1,
-                ranking: vec![RankRow {
-                    item: GardenItemUrl("https://slug.social/~/rust".into()),
-                    score: 1.0,
-                    percent: None,
-                }],
-            }],
-            unranked_items: vec![],
-            items: vec![RankRow {
-                item: GardenItemUrl("https://slug.social/~/rust".into()),
-                score: 1.0,
-                percent: None,
-            }],
-        };
-        let json = serde_json::to_value(&resp).unwrap();
-        assert!(json.get("items").and_then(|v| v.as_array()).is_some());
-        assert_eq!(json["items"].as_array().unwrap().len(), 1);
-        assert_eq!(json["components"].as_array().unwrap().len(), 1);
-    }
 }

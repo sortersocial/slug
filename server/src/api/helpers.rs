@@ -144,23 +144,6 @@ pub fn paginate_rankings(
     (out_components, out_unranked)
 }
 
-/// Flatten a paginated global rank page into the `items` list CLI ≤0.0.68 requires.
-pub fn flatten_global_rank_items(
-    components: &[RankComponent],
-    unranked_items: &[GardenItemUrl],
-    want_percent: bool,
-) -> Vec<RankRow> {
-    components
-        .iter()
-        .flat_map(|component| component.ranking.iter().cloned())
-        .chain(unranked_items.iter().map(|item| RankRow {
-            item: item.clone(),
-            score: 0.0,
-            percent: want_percent.then_some(0.0),
-        }))
-        .collect()
-}
-
 pub fn pick_random_distinct_item_pair(items: &[ItemId]) -> Option<(ItemId, ItemId)> {
     use rand::seq::SliceRandom;
     if items.len() < 2 {
@@ -267,29 +250,4 @@ pub fn vote_touches_path(content: &ContentState, a: &str, b: &str, parent_canon:
     }
     let members = content.members_of(&parent);
     members.iter().any(|m| *m == a || *m == b)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn flatten_global_rank_items_ranked_then_unranked() {
-        let components = vec![RankComponent {
-            pairs: 1,
-            ranking: vec![RankRow {
-                item: GardenItemUrl("https://slug.social/~/rust".into()),
-                score: 1.5,
-                percent: Some(100.0),
-            }],
-        }];
-        let unranked = vec![GardenItemUrl("https://slug.social/~/go".into())];
-        let items = flatten_global_rank_items(&components, &unranked, true);
-        assert_eq!(items.len(), 2);
-        assert_eq!(items[0].item.as_str(), "https://slug.social/~/rust");
-        assert_eq!(items[0].score, 1.5);
-        assert_eq!(items[1].item.as_str(), "https://slug.social/~/go");
-        assert_eq!(items[1].score, 0.0);
-        assert_eq!(items[1].percent, Some(0.0));
-    }
 }

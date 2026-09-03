@@ -264,12 +264,12 @@ async fn test_rank_endpoint() {
     }]);
     let global_body = rpc_batch(&client, addr, None, global_batch).await;
     let global = &global_body["results"][0]["result"]["GlobalRank"];
-    assert!(
-        global["items"].is_array(),
-        "CLI ≤0.0.68 requires flattened items: {global}"
-    );
-    assert!(!global["items"].as_array().unwrap().is_empty());
     assert!(global["components"].is_array());
+    assert!(global["unranked_items"].is_array());
+    assert!(
+        global.get("items").is_none(),
+        "GetGlobalRank is components + unranked_items only: {global}"
+    );
 }
 
 #[tokio::test]
