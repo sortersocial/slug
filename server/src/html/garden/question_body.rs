@@ -13,6 +13,7 @@ use crate::{
 };
 
 use super::item::item_display_path;
+use super::item_page::pair_weight_label;
 
 pub(super) fn aspects_for_scope(
     content: &ContentState,
@@ -268,10 +269,7 @@ pub(super) fn question_members_markup(
                             span { "suspended" }
                             " "
                             span {
-                                (format!(
-                                    "containment {} · border {}",
-                                    st.containment_weight, st.border_weight
-                                ))
+                                (pair_weight_label(st))
                             }
                         }
                     }

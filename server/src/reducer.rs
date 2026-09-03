@@ -170,6 +170,10 @@ pub struct BorderPairState {
     pub child: ItemId,
     pub parent: ItemId,
     pub containment_weight: u32,
+    /// Explicit `<:` claims (accumulate). Sugar (`~/a/b` desugar) adds at most 1 (see `sugar`).
+    pub explicit: u32,
+    /// Whether idempotent `~/a/b` path sugar contributed (worth exactly 1).
+    pub sugar: bool,
     pub border_weight: u32,
     pub status: MembershipStatus,
 }
@@ -371,11 +375,8 @@ impl ContentState {
         let child = child.ontology_leaf();
         let parent = parent.ontology_leaf();
         let pair = (child.clone(), parent.clone());
-        let c_w = self
-            .containment
-            .get(&pair)
-            .map(ContainmentWeights::containment_weight)
-            .unwrap_or(0);
+        let weights = self.containment.get(&pair).cloned().unwrap_or_default();
+        let c_w = weights.containment_weight();
         let b_w = self.borders.get(&pair).copied().unwrap_or(0);
         if c_w == 0 && b_w == 0 {
             return None;
@@ -389,6 +390,8 @@ impl ContentState {
             child,
             parent,
             containment_weight: c_w,
+            explicit: weights.explicit,
+            sugar: weights.sugar,
             border_weight: b_w,
             status,
         })

@@ -2,10 +2,12 @@ use crate::path_types::{tilde_http_path_to_item_id, ItemId};
 use slug_types::SLUG_TILDE_ONTOLOGY_ROOT;
 
 /// Semantic view of an ontology path for rendering and routing decisions.
+///
+/// Tilde items have leaf identity (`~/x/luke` is `~luke`), so the typed path beyond
+/// the leaf carries no meaning: nested inputs 308 to the leaf before rendering, and
+/// breadcrumbs come from the containment graph (strongest-parent walk), not URL segments.
 pub(super) struct OntologyPath {
     item: ItemId,
-    /// Breadcrumb segments: for `~/a/b` this is `["a", "b"]` (leading `~` rendered separately).
-    segments: Vec<String>,
 }
 
 impl OntologyPath {
@@ -17,15 +19,7 @@ impl OntologyPath {
     }
 
     pub(super) fn from_item(item: ItemId) -> Self {
-        // tilde_segments() returns ["~", "a", "b"] but bc_path() renders "~" itself,
-        // so we skip the leading "~" segment here.
-        let segments = item
-            .tilde_segments()
-            .into_iter()
-            .skip(1) // drop the leading "~"
-            .map(|s| s.to_string())
-            .collect();
-        Self { item, segments }
+        Self { item }
     }
 
     /// Nested `x/luke` → canonical leaf path `/~/luke`. `luke` (already a leaf) → `None`.
@@ -53,7 +47,7 @@ impl OntologyPath {
     }
 
     pub(super) fn is_root(&self) -> bool {
-        self.segments.is_empty()
+        self.item.tilde_tail() == Some("") || self.item == ItemId::ontology_root()
     }
 
     /// At ontology root, allow mode toggle to home (`/`).
@@ -64,10 +58,6 @@ impl OntologyPath {
         } else {
             "/~"
         }
-    }
-
-    pub(super) fn segments(&self) -> &[String] {
-        &self.segments
     }
 
     pub(super) fn as_str(&self) -> &str {

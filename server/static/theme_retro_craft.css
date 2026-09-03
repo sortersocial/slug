@@ -555,6 +555,13 @@ nav.breadcrumb.ont-sibling-nav span.ont-sibling-nav-group-sep {
   font-size: 0.9em;
   line-height: 1.3;
 }
+/* Current position in the sibling order (cream context). */
+body.view-ontology nav.breadcrumb.ont-sibling-nav a[aria-current="page"] {
+  background: #1a4a8c;
+  color: #fff;
+  border-radius: 2px;
+  padding: 0 0.25em;
+}
 
 body.view-ontology {
   background: #ebe6dc;
@@ -1290,3 +1297,199 @@ details.question-row {
   padding: 0.2rem 0.5rem;
 }
 details.question-row > summary { cursor: pointer; }
+
+/* ----------------------------------------------------------------
+   Garden hierarchy: parents ↑ / self / children ↓ (cream context).
+   Craft headings use light --ink for dark thread pages, which vanishes
+   on cream ontology pages — every rule below is scoped to
+   body.view-ontology and re-pins dark-cream-ink explicitly.
+   ---------------------------------------------------------------- */
+body.view-ontology section.ont-tab-panel > h3 {
+  color: #3d3a34;
+  font-family: var(--font-ui);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  border-top: 2px solid #c8c4bc;
+  margin: 1.5rem 0 0.5rem;
+  padding-top: 0.6rem;
+}
+body.view-ontology h4.ont-aspect-heading {
+  color: #5c574e;
+}
+/* UP card: same chrome as the hero, neutral ascent edge. */
+/* FLOW GRADIENT (all themes): parents most blue → hero mid → children grey. */
+body.view-ontology section.ont-tab-panel-memberships {
+  background: #f7f3eb;
+  border: 1px solid #c8c4bc;
+  border-left: 6px solid #1a4a8c;
+  box-shadow: 0 1px 0 rgba(26, 24, 20, 0.06);
+  margin: 0.5rem 0 1rem;
+  padding: 0 0 0.25rem;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+body.view-ontology section.ont-tab-panel-memberships > h3 {
+  border-top: none;
+  margin-top: 0;
+  padding: 0.5rem 0.65rem;
+  border-bottom: 1px solid #c8c4bc;
+}
+body.view-ontology .ont-parents-list {
+  display: flex;
+  flex-direction: column;
+}
+body.view-ontology .ont-parent-row {
+  padding: 0.5rem 0.65rem 0.65rem;
+  border-bottom: 1px solid #e3ded4;
+  scroll-margin-top: 0.75rem;
+}
+body.view-ontology .ont-parent-row:last-child {
+  border-bottom: none;
+}
+body.view-ontology .ont-parent-row:target {
+  background: color-mix(in srgb, #1a4a8c 8%, transparent);
+}
+body.view-ontology .ont-parent-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+body.view-ontology a.ont-parent-link {
+  font-weight: 600;
+  color: #1a1814;
+  text-decoration: none;
+}
+body.view-ontology a.ont-parent-link:hover {
+  color: #1a4a8c;
+  text-decoration: underline;
+}
+body.view-ontology .ont-parent-solo {
+  font-size: 0.78rem;
+}
+/* Edge meta row: weight footnote left, vote home + permalink right. */
+body.view-ontology .ont-edge-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+}
+body.view-ontology .ont-edge-weight {
+  font-size: 0.78rem;
+  color: #6a655c;
+}
+body.view-ontology a.ont-parent-vote {
+  margin-left: auto;
+  font-family: var(--font-ui);
+  font-size: 0.72rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+body.view-ontology a.ont-edge-link {
+  color: #8a857a;
+  text-decoration: none;
+  padding: 0 0.15rem;
+}
+body.view-ontology a.ont-edge-link:hover {
+  color: #1a4a8c;
+}
+body.view-ontology .ont-parent-row .ont-sibling-nav-wrap {
+  margin-top: 0.4rem;
+}
+/* Suspended borders + fallen journal live in the UP card. */
+body.view-ontology section.ont-tab-panel-memberships section.ont-tab-panel-borders {
+  margin: 0;
+  padding: 0 0.65rem;
+}
+body.view-ontology section.ont-tab-panel-memberships section.ont-tab-panel-borders > h3 {
+  border-top: 1px dashed #c8c4bc;
+  margin-top: 0.65rem;
+  padding-top: 0.5rem;
+}
+body.view-ontology section.ont-tab-panel-memberships details.ont-fallen-borders {
+  margin: 0.5rem 0.65rem 0.4rem;
+}
+/* HERE hero: same card, stepped-down edge — full blue belongs to parents. */
+body.view-ontology .ont-item-shell {
+  border-left: 6px solid color-mix(in srgb, #1a4a8c 55%, #c8c4bc);
+  box-shadow: 0 1px 0 rgba(26, 24, 20, 0.06);
+}
+/* DOWN: same widths as the default theme (2px trunk, 4px row edges) so the
+   gradient survives the minimal craft rows. Rank fade capped below the hero. */
+body.view-ontology section.ont-tab-panel-children {
+  border-left: 4px solid #c8c4bc;
+  padding-left: 0.65rem;
+  margin-left: 0.1rem;
+}
+body.view-ontology section.ont-tab-panel-aspect {
+  border-left: 2px solid #c8c4bc;
+  padding-left: 0.65rem;
+  margin-left: 0.1rem;
+}
+body.view-ontology section.ont-tab-panel-children > h3 {
+  border-top: none;
+  margin-top: 1rem;
+  padding-top: 0;
+}
+body.view-ontology ol.ont-ranking-list li,
+body.view-ontology ul.ont-group-list li {
+  border-left: 4px solid #c8c4bc;
+  padding-left: 0.5rem;
+}
+body.view-ontology ol.ont-ranking-list li:nth-child(1) {
+  border-left-color: color-mix(in srgb, #1a4a8c 40%, #c8c4bc);
+}
+body.view-ontology ol.ont-ranking-list li:nth-child(2) {
+  border-left-color: color-mix(in srgb, #1a4a8c 25%, #c8c4bc);
+}
+body.view-ontology ol.ont-ranking-list li:nth-child(3) {
+  border-left-color: color-mix(in srgb, #1a4a8c 15%, #c8c4bc);
+}
+/* DOWN: children under a trunk rule, full-width rows, muted scores. */
+body.view-ontology section.ont-tab-panel-children {
+  border-left: 2px solid #c8c4bc;
+  padding-left: 0.65rem;
+  margin-left: 0.1rem;
+}
+body.view-ontology section.ont-tab-panel-children > h3 {
+  border-top: none;
+  margin-top: 1rem;
+  padding-top: 0;
+}
+body.view-ontology section.ont-tab-panel-children > h3 {
+  color: #3d3a34;
+}
+body.view-ontology .ont-group-meta {
+  color: #8a857a !important;
+  font-size: 0.68rem !important;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+body.view-ontology ol.ont-ranking-list,
+body.view-ontology ul.ont-group-list {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+body.view-ontology ol.ont-ranking-list li,
+body.view-ontology ul.ont-group-list li {
+  width: 100%;
+  max-width: none;
+  box-sizing: border-box;
+  scroll-margin-top: 0.75rem;
+}
+body.view-ontology ol.ont-ranking-list li:target,
+body.view-ontology ul.ont-group-list li:target {
+  outline: 2px solid #1a4a8c;
+  outline-offset: 1px;
+}
+body.view-ontology .ont-rank-score {
+  margin-left: auto;
+  font-size: 0.78rem;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  color: #8a857a;
+  white-space: nowrap;
+}

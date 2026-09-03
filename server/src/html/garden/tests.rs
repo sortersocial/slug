@@ -4,8 +4,8 @@ use super::{
     external::{external_frame_allowed, external_resolver_status_markup, external_source_href},
     home::collect_question_entries,
     item_page::{
-        build_item_page_view_model, containment_crumb_chain, item_relations_markup,
-        sibling_nav_markup,
+        build_item_page_view_model, containment_crumb_chain, edge_fragment_id,
+        item_relations_markup, pair_weight_label, sibling_nav_markup,
     },
     pin::ont_pin_vote_controls,
     question::{collection_is_known, parse_collection_leaf, question_headline},
@@ -171,7 +171,8 @@ fn item_page_model_includes_body_and_unranked_without_votes() {
 
     let model = build_item_page_view_model(&reduced, &ScopeId::Public, "~/topic/a", 1);
     assert_eq!(model.body.as_deref(), Some("alpha"));
-    assert!(model.sibling_nav.is_some());
+    assert_eq!(model.sibling_navs.len(), 1);
+    assert_eq!(model.sibling_navs[0].scope.last_segment(), "topic");
     assert!(model.child_rankings.component_rankings.is_empty());
 }
 
@@ -190,7 +191,8 @@ fn item_page_model_computes_sibling_nav_in_component() {
     );
 
     let model = build_item_page_view_model(&reduced, &ScopeId::Public, "~/topic/a", 1);
-    let nav = model.sibling_nav.expect("expected sibling nav");
+    assert_eq!(model.sibling_navs.len(), 1);
+    let nav = &model.sibling_navs[0].bar;
     assert_eq!(nav.groups.len(), 2);
     assert_eq!(nav.groups[0].links.len(), 2);
     assert_eq!(nav.groups[1].links.len(), 1);
@@ -219,18 +221,18 @@ fn sibling_nav_rank_score_only_for_largest_group_member() {
 
     // Largest component is a/b/c (size 3); d/e is size 2.
     let winner = build_item_page_view_model(&reduced, &ScopeId::Public, "~/topic/a", 1);
-    let winner_nav = winner.sibling_nav.expect("sibling nav");
+    let winner_nav = &winner.sibling_navs[0].bar;
     assert_eq!(winner_nav.largest_group_rank, Some((1, 3)));
     assert_eq!(winner_nav.winner_percentile, Some(66)); // (3-1)*100/3
 
     let mid = build_item_page_view_model(&reduced, &ScopeId::Public, "~/topic/b", 1);
-    let mid_nav = mid.sibling_nav.expect("sibling nav");
+    let mid_nav = &mid.sibling_navs[0].bar;
     assert_eq!(mid_nav.largest_group_rank, Some((2, 3)));
     assert_eq!(mid_nav.winner_percentile, None);
 
     // Member of the smaller ranking group: no rank/percentile score.
     let small = build_item_page_view_model(&reduced, &ScopeId::Public, "~/topic/d", 1);
-    let small_nav = small.sibling_nav.expect("sibling nav");
+    let small_nav = &small.sibling_navs[0].bar;
     assert_eq!(small_nav.largest_group_rank, None);
     assert_eq!(small_nav.winner_percentile, None);
 }
@@ -251,9 +253,9 @@ fn sibling_nav_markup_includes_rank_and_winner_percentile() {
     );
 
     let winner = build_item_page_view_model(&reduced, &ScopeId::Public, "~/topic/a", 1);
-    let winner_nav = winner.sibling_nav.expect("sibling nav");
+    let winner_nav = &winner.sibling_navs[0].bar;
     let nav = ThreadNav::public();
-    let html = sibling_nav_markup(&nav, &winner_nav, &winner.item).into_string();
+    let html = sibling_nav_markup(&nav, winner_nav, &winner.item).into_string();
     assert!(html.contains("rank: 1/3"), "missing rank in {html}");
     assert!(
         html.contains("top 66th percentile"),
@@ -261,8 +263,8 @@ fn sibling_nav_markup_includes_rank_and_winner_percentile() {
     );
 
     let mid = build_item_page_view_model(&reduced, &ScopeId::Public, "~/topic/b", 1);
-    let mid_nav = mid.sibling_nav.expect("sibling nav");
-    let mid_html = sibling_nav_markup(&nav, &mid_nav, &mid.item).into_string();
+    let mid_nav = &mid.sibling_navs[0].bar;
+    let mid_html = sibling_nav_markup(&nav, mid_nav, &mid.item).into_string();
     assert!(
         mid_html.contains("rank: 2/3"),
         "missing mid rank in {mid_html}"
@@ -289,7 +291,7 @@ fn sibling_nav_splits_each_unranked_into_its_own_group() {
     );
 
     let model = build_item_page_view_model(&reduced, &ScopeId::Public, "~/topic/a", 1);
-    let nav = model.sibling_nav.expect("expected sibling nav");
+    let nav = &model.sibling_navs[0].bar;
     assert_eq!(nav.groups.len(), 3);
     assert_eq!(nav.groups[0].links.len(), 2);
     assert_eq!(nav.groups[1].links.len(), 1);
@@ -482,7 +484,7 @@ fn item_page_room_scope_root_lists_top_level_children() {
         root.as_str(),
         1,
     );
-    assert!(!model.item_has_parent);
+    assert!(model.scopes.is_empty());
     assert_eq!(model.child_rankings.unranked_items.len(), 2);
     let set: std::collections::HashSet<&str> = model
         .child_rankings
@@ -638,8 +640,9 @@ fn item_page_sibling_nav_implies_vote_on_item_pool_href() {
          ~/topic/b {beta}\n",
     );
     let model = build_item_page_view_model(&reduced, &ScopeId::Public, "~/topic/a", 1);
-    assert!(
-        model.sibling_nav.is_some(),
+    assert_eq!(
+        model.sibling_navs.len(),
+        1,
         "expected sibling nav for ~/topic/a"
     );
     let parent = ItemId::parse(&model.item)
@@ -741,8 +744,9 @@ fn item_page_crumb_picks_strongest_parent_lists_alternates() {
     );
 
     let model = build_item_page_view_model(&reduced, &ScopeId::Public, "~luke", 1);
-    assert_eq!(model.alternate_scopes.len(), 1);
-    assert_eq!(model.alternate_scopes[0].last_segment(), "sith");
+    assert_eq!(model.scopes.len(), 2);
+    assert_eq!(model.scopes[0].last_segment(), "jedi");
+    assert_eq!(model.scopes[1].last_segment(), "sith");
 }
 
 #[test]
@@ -851,4 +855,79 @@ fn collect_question_entries_lists_scope_and_aspect_prompt() {
         entries.iter().all(|e| e.leaf != "lonely"),
         "lonely has no members and must not appear"
     );
+}
+
+/// An item with two active scopes gets one sibling nav per scope (primary first),
+/// instead of the old single-parent nav that hid the second scope.
+#[test]
+fn item_page_builds_sibling_nav_per_scope() {
+    let mut reduced = ReducerState::default();
+    apply_ingest(
+        &mut reduced,
+        1,
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n\
+         ~jedi {j}\n~sith {s}\n~luke {l}\n~han {h}\n~maul {m}\n\
+         { j1 }\n~luke <: ~jedi\n{ j2 }\n~han <: ~jedi\n\
+         { s1 }\n~luke <: ~sith\n{ s2 }\n~maul <: ~sith\n",
+    );
+    let model = build_item_page_view_model(&reduced, &ScopeId::Public, "~luke", 1);
+    assert_eq!(model.scopes.len(), 2);
+    assert_eq!(model.sibling_navs.len(), 2);
+    assert_eq!(model.sibling_navs[0].scope.last_segment(), "jedi");
+    assert_eq!(model.sibling_navs[1].scope.last_segment(), "sith");
+    // Each nav lists fellow members of that scope.
+    let jedi_links: Vec<&str> = model.sibling_navs[0].bar.groups[0].links
+        .iter()
+        .map(|l| l.path.as_str())
+        .collect();
+    assert!(jedi_links.iter().any(|p| p.ends_with("/han")));
+    // The UP card merges one row per scope: parent link, position strip,
+    // vote home, and `#edge-…` permalink.
+    let html = item_relations_markup(&model, &ThreadNav::public(), 10_000).into_string();
+    assert!(html.contains("/~/jedi"), "missing jedi scope row: {html}");
+    assert!(html.contains("/~/sith"), "missing sith scope row: {html}");
+    assert!(
+        html.contains("vote?pool="),
+        "missing per-scope vote home: {html}"
+    );
+    assert!(
+        html.contains(&format!(
+            "id=\"{}\"",
+            edge_fragment_id(
+                &ItemId::parse("~luke").unwrap(),
+                &ItemId::parse("~jedi").unwrap()
+            )
+        )),
+        "missing edge permalink id: {html}"
+    );
+}
+
+/// Weight labels show totals only: sugar counts the same as explicit `<:`
+/// claims in the UI — sugar is not special there. (The reducer still tracks
+/// the mix for idempotent path desugaring; see `ContainmentWeights`.)
+#[test]
+fn pair_weight_label_counts_sugar_like_explicit() {
+    let mut reduced = ReducerState::default();
+    apply_ingest(
+        &mut reduced,
+        1,
+        "~jedi { j }\n~luke { l }\n~han { h }\n{ in }\n~luke <: ~jedi\n",
+    );
+    // ~/topic/han sugar edge only: ~/topic/han desugars to han <: topic + sugar.
+    apply_ingest(
+        &mut reduced,
+        2,
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n~/topic {t}\n~/topic/han {h}\n",
+    );
+    let content = content_for_garden_view(&reduced, &ScopeId::Public);
+    let luke = ItemId::parse("~luke").unwrap();
+    let jedi = ItemId::parse("~jedi").unwrap();
+    let st = content.border_state(&luke, &jedi).expect("luke/jedi pair");
+    assert_eq!(pair_weight_label(&st), "containment 1 · border 0");
+
+    let han = ItemId::parse("~han").unwrap();
+    let topic = ItemId::parse("~topic").unwrap();
+    let sugar_st = content.border_state(&han, &topic).expect("han/topic pair");
+    assert!(sugar_st.sugar);
+    assert_eq!(pair_weight_label(&sugar_st), "containment 1 · border 0");
 }

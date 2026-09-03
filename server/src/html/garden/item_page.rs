@@ -16,6 +16,7 @@ use crate::{
 use super::{
     access::content_for_garden_view,
     item::{item_display_path, item_href},
+    vote::vote_pool_href,
 };
 
 #[derive(Debug, Clone)]
@@ -81,19 +82,26 @@ pub(super) struct AspectRankingView {
     pub(super) rankings: ChildrenRankings,
 }
 
+/// Sibling nav for one scope: the item's fellow members under that scope.
+#[derive(Debug, Clone)]
+pub(super) struct ScopedSiblingNav {
+    pub(super) scope: ItemId,
+    pub(super) bar: SiblingNavBar,
+}
+
 #[derive(Debug, Clone)]
 pub(super) struct ItemPageViewModel {
     pub(super) item: String,
     pub(super) body: Option<String>,
-    pub(super) sibling_nav: Option<SiblingNavBar>,
-    /// False at the tilde ontology root (`~/`): sibling-rank footnote does not apply.
-    pub(super) item_has_parent: bool,
+    /// One sibling nav per active scope (primary / strongest scope first).
+    /// Empty when the item has no scope with 2+ fellow members.
+    pub(super) sibling_navs: Vec<ScopedSiblingNav>,
+    /// Active scopes of this item, primary (strongest containment) first. Empty at root.
+    pub(super) scopes: Vec<ItemId>,
     /// True when this item has active members (it is used as a scope / role).
     pub(super) is_scope: bool,
     /// Strongest-parent walk, root-adjacent first, including the current item. Empty at root.
     pub(super) crumb_chain: Vec<ItemId>,
-    /// Active scopes other than the primary (strongest) parent.
-    pub(super) alternate_scopes: Vec<ItemId>,
     /// Active memberships (this item as child) with weights.
     pub(super) memberships: Vec<BorderPairState>,
     /// Suspended borders (`containment_weight <= border_weight`) where this item is the child.
@@ -212,15 +220,32 @@ pub(super) fn aspect_rankings_for_parent(
         .collect()
 }
 
-fn build_sibling_nav(
+/// Sibling navs for every active scope of `current` (primary scope first).
+/// A scope with fewer than 2 total members yields no nav (nothing to rank against).
+fn build_sibling_navs(
     reduced: &crate::reducer::ReducerState,
     scope: &ScopeId,
     current: &ItemId,
-) -> Option<SiblingNavBar> {
+    scopes: &[ItemId],
+) -> Vec<ScopedSiblingNav> {
     let current = current.clone().normalized_storage().ontology_leaf();
     let content = content_for_garden_view(reduced, scope);
-    let parent = strongest_parent(content, &current)?.normalized_storage();
-    let rankings = build_children_rankings(content, &parent);
+    let mut out = Vec::new();
+    for parent in scopes {
+        let parent = parent.clone().normalized_storage();
+        if let Some(nav) = build_sibling_nav_in_scope(content, &current, &parent) {
+            out.push(ScopedSiblingNav { scope: parent, bar: nav });
+        }
+    }
+    out
+}
+
+fn build_sibling_nav_in_scope(
+    content: &ContentState,
+    current: &ItemId,
+    parent: &ItemId,
+) -> Option<SiblingNavBar> {
+    let rankings = build_children_rankings(content, parent);
     let mut groups: Vec<SiblingNavGroup> = Vec::new();
     for comp in &rankings.component_rankings {
         let links: Vec<SiblingNavLink> = comp
@@ -324,39 +349,107 @@ pub(super) fn sibling_nav_markup(
     }
 }
 
-fn pair_weight_label(pair: &BorderPairState) -> String {
+/// Edge weight footnote: total containment vs border. Path sugar counts the
+/// same as explicit `<:` claims here — sugar is not special in the UI.
+pub(super) fn pair_weight_label(pair: &BorderPairState) -> String {
     format!(
         "containment {} · border {}",
         pair.containment_weight, pair.border_weight
     )
 }
 
+/// Fragment-safe slug for `#edge-…` / `#item-…` anchors: lowercase alnum plus
+/// `-`/`_`, everything else folds to a single `-`. Best-effort uniqueness —
+/// tilde leaves are unique by construction; URL items can theoretically collide.
+pub(super) fn fragment_slug(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    for c in raw.chars() {
+        if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+            out.push(c.to_ascii_lowercase());
+        } else if !out.is_empty() && !out.ends_with('-') {
+            out.push('-');
+        }
+    }
+    out.trim_matches('-').to_string()
+}
+
+/// Stable fragment id for one containment edge, so every edge has its own URL
+/// (`/~/hop#edge-hop-in-durable`). The matching child row on the parent page
+/// carries `#item-<child>` (see `ont_ranking_lists_markup`). The ontology root
+/// has an empty leaf segment, so it falls back to `root`.
+pub(super) fn edge_fragment_id(child: &ItemId, parent: &ItemId) -> String {
+    let child_slug = fragment_slug(child.last_segment());
+    let parent_slug = fragment_slug(parent.last_segment());
+    format!(
+        "edge-{}-in-{}",
+        if child_slug.is_empty() {
+            "root".to_string()
+        } else {
+            child_slug
+        },
+        if parent_slug.is_empty() {
+            "root".to_string()
+        } else {
+            parent_slug
+        },
+    )
+}
+
+/// UP card: everything about this item's upward edges, rendered ABOVE the item
+/// body so the page flows parents → self → children. One row per active scope
+/// (primary first), each merging the parent link, this item's position strip
+/// among its fellows, the containment/border weight, and the vote home for
+/// that scope — so every edge has its own `#edge-…` URL and every scope's
+/// ranking contest has a vote link.
 pub(super) fn item_relations_markup(
     model: &ItemPageViewModel,
     nav: &ThreadNav,
     now: i64,
 ) -> maud::Markup {
     html! {
-        @if !model.alternate_scopes.is_empty() {
-            p class="muted ont-alt-scopes" {
-                "also in "
-                @for (i, scope) in model.alternate_scopes.iter().enumerate() {
-                    @if i > 0 { span class="muted" { " · " } }
-                    a href=(item_href(scope.as_str(), nav)) { (item_display_path(scope.as_str())) }
-                }
-            }
-        }
         @if !model.memberships.is_empty() {
-            section class="ont-tab-panel ont-tab-panel-memberships" {
-                h3 { "memberships" }
-                ul class="ont-group-list" {
-                    @for pair in &model.memberships {
-                        li {
-                            a href=(item_href(pair.parent.as_str(), nav)) {
-                                (item_display_path(pair.parent.as_str()))
+            section class="ont-tab-panel ont-tab-panel-memberships" id="parents" {
+                h3 {
+                    span aria-hidden="true" { "↑ " }
+                    "member of"
+                    span class="muted" { (format!(" ({})", model.memberships.len())) }
+                }
+                @let item_id = ItemId::parse(&model.item)
+                    .map(|i| i.ontology_leaf())
+                    .unwrap_or_else(|| ItemId::opaque(model.item.clone()));
+                div class="ont-parents-list" {
+                    @for scope in &model.scopes {
+                        @let strip = model.sibling_navs.iter().find(|s| s.scope == *scope);
+                        @let weight = model.memberships.iter().find(|p| p.parent == *scope);
+                        @let edge_id = edge_fragment_id(&item_id, scope);
+                        div class="ont-parent-row" id=(edge_id) {
+                            div class="ont-parent-head" {
+                                a class="ont-parent-link"
+                                    href=(item_href(scope.as_str(), nav)) {
+                                    (item_display_path(scope.as_str()))
+                                }
+                                @if strip.is_none() {
+                                    span class="muted ont-parent-solo" { "only member" }
+                                }
                             }
-                            " "
-                            span class="muted" { (pair_weight_label(pair)) }
+                            @if let Some(s) = strip {
+                                (sibling_nav_markup(nav, &s.bar, model.item.as_str()))
+                            }
+                            div class="ont-edge-meta" {
+                                @if let Some(w) = weight {
+                                    span class="muted ont-edge-weight" { (pair_weight_label(w)) }
+                                }
+                                a class="ont-parent-vote"
+                                    href=(vote_pool_href(nav, scope.as_str()))
+                                    title=(format!("vote among {} members", item_display_path(scope.as_str()))) {
+                                    "vote"
+                                }
+                                a class="ont-edge-link"
+                                    href=(format!("#{edge_id}"))
+                                    title="permalink to this membership" {
+                                    "§"
+                                }
+                            }
                         }
                     }
                 }
@@ -537,15 +630,18 @@ pub(super) fn build_item_page_view_model(
         .map(|id| id.ontology_leaf())
         .unwrap_or_else(|| ItemId::parse("~/").unwrap())
         .normalized_storage();
-    let item_has_parent = !content.scopes_of(&item_key).is_empty();
     let is_scope = !content.members_of(&item_key).is_empty();
     let crumb_chain = containment_crumb_chain(content, &item_key);
+    // Active scopes, primary (strongest containment) first. Multi-parent items
+    // belong to several scopes at once — the old tree model kept only one.
     let primary_parent = strongest_parent(content, &item_key);
-    let alternate_scopes: Vec<ItemId> = content
-        .scopes_of(&item_key)
-        .into_iter()
-        .filter(|s| Some(s) != primary_parent.as_ref())
-        .collect();
+    let mut scopes = content.scopes_of(&item_key);
+    scopes.sort_by(|a, b| {
+        let primary_first = |s: &ItemId| if Some(s) == primary_parent.as_ref() { 0 } else { 1 };
+        primary_first(a)
+            .cmp(&primary_first(b))
+            .then_with(|| a.as_str().cmp(b.as_str()))
+    });
     let pairs = child_border_pairs(content, &item_key);
     let memberships: Vec<BorderPairState> = pairs
         .iter()
@@ -570,7 +666,7 @@ pub(super) fn build_item_page_view_model(
     } else {
         build_children_rankings(content, &item_key)
     };
-    let sibling_nav = build_sibling_nav(reduced, scope, &item_key);
+    let sibling_navs = build_sibling_navs(reduced, scope, &item_key, &scopes);
 
     let rank_history = build_rank_history(reduced, scope, item_key.as_str());
 
@@ -588,11 +684,10 @@ pub(super) fn build_item_page_view_model(
             .get(&item_key)
             .cloned()
             .or_else(|| reduced.public().item_bodies.get(&item_key).cloned()),
-        sibling_nav,
-        item_has_parent,
+        sibling_navs,
+        scopes,
         is_scope,
         crumb_chain,
-        alternate_scopes,
         memberships,
         suspended_borders,
         fallen_journal,

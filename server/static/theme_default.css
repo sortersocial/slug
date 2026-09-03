@@ -1989,3 +1989,329 @@ details.question-row .vote-compare-shell {
   margin: 0 8px 10px;
   max-width: none;
 }
+
+/* ================================================================
+   GARDEN HIERARCHY — above / here / below (paper/light only)
+   Problem: breadcrumb, sibling strip, current item, membership
+   jargon, and child rankings all shared one beige bevel at one
+   weight, with fit-content ranking rows forming a staircase.
+   This pass establishes: muted UP strip, hero HERE card,
+   de-emphasized LATERAL, and an indented DOWN ranking table.
+   ================================================================ */
+body.view-ontology.view-ontology-light nav.breadcrumb {
+  border-width: 1px;
+}
+body.view-ontology.view-ontology-light nav.breadcrumb a.bc-current {
+  font-weight: 700;
+}
+/* Sibling scope label: micro caps, clearly "up / lateral" */
+body.view-ontology.view-ontology-light p.ont-sibling-scope-label {
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  margin: 10px 0 2px;
+}
+body.view-ontology.view-ontology-light p.ont-sibling-scope-label a {
+  text-transform: none;
+  letter-spacing: normal;
+  font-size: 12px;
+}
+/* Sibling number strip: flatten to an inset subordinate ribbon */
+body.view-ontology.view-ontology-light nav.breadcrumb.ont-sibling-nav {
+  background: var(--g1);
+  border: 1px solid var(--lo);
+  font-size: 12px;
+  margin-top: 2px;
+  padding: 2px 8px;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+body.view-ontology.view-ontology-light nav.breadcrumb.ont-sibling-nav a {
+  display: inline-block;
+  min-width: 1.4em;
+  text-align: center;
+  padding: 0 3px;
+  border-radius: 3px;
+  color: var(--ui);
+}
+body.view-ontology.view-ontology-light nav.breadcrumb.ont-sibling-nav a:hover {
+  background: var(--g4);
+  color: var(--signal);
+}
+/* Current position in the sibling order: filled pill, unmissable */
+body.view-ontology.view-ontology-light nav.breadcrumb.ont-sibling-nav a[aria-current="page"] {
+  background: var(--link);
+  color: #fff;
+  font-weight: 700;
+}
+body.view-ontology.view-ontology-light div.ont-sibling-nav-score {
+  font-size: 11px;
+  margin: 2px 0 0;
+}
+body.view-ontology.view-ontology-light span.ont-sibling-nav-rank {
+  background: var(--g4);
+  border: 1px solid var(--lo);
+  border-radius: 3px;
+  padding: 0 6px;
+  font-weight: 700;
+  color: var(--signal);
+}
+/* HERE: current item is the hero — white card, mid-gradient edge.
+   Full blue belongs to the parents above; the hero steps down. */
+body.view-ontology.view-ontology-light .ont-item-shell {
+  background: var(--g3);
+  border: 1px solid var(--lo);
+  border-left: 6px solid color-mix(in srgb, var(--link) 55%, var(--lo));
+  box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.08);
+}
+body.view-ontology.view-ontology-light .ont-item-meta {
+  background: transparent;
+  border-bottom: 1px solid var(--lo);
+  padding: 8px 12px;
+}
+body.view-ontology.view-ontology-light .ont-item-title {
+  font-size: 15px;
+}
+body.view-ontology.view-ontology-light .ont-item-content {
+  padding: 10px 12px;
+}
+/* Section dividers: every garden section shares one header voice;
+   direction comes from the ↑ / ↓ glyphs in the markup. */
+body.view-ontology.view-ontology-light section.ont-tab-panel {
+  margin-top: 6px;
+}
+body.view-ontology.view-ontology-light section.ont-tab-panel > h3 {
+  border-top: 2px solid var(--lo);
+  margin-top: 26px;
+  padding-top: 10px;
+  font-size: 11px;
+  color: var(--ui);
+}
+/* UP card: same card chrome as the HERE hero.
+   FLOW GRADIENT: the left edge descends parents → self → children from
+   full blue to grey, so the hierarchy reads as downward flow. Parents are
+   most blue; each step down fades. */
+body.view-ontology.view-ontology-light section.ont-tab-panel-memberships {
+  background: var(--g3);
+  border: 1px solid var(--lo);
+  border-left: 6px solid var(--link);
+  box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.08);
+  margin: 8px 0 14px;
+  padding: 0 0 4px;
+  width: 100%;
+  min-width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+body.view-ontology.view-ontology-light section.ont-tab-panel-memberships > h3 {
+  border-top: none;
+  margin-top: 0;
+  padding: 8px 12px;
+  background: transparent;
+  border-bottom: 1px solid var(--lo);
+}
+/* One row per parent scope: head line, position strip, meta footnote. */
+body.view-ontology.view-ontology-light .ont-parents-list {
+  display: flex;
+  flex-direction: column;
+}
+body.view-ontology.view-ontology-light .ont-parent-row {
+  padding: 8px 12px 10px;
+  border-bottom: 1px solid var(--g4);
+  scroll-margin-top: 12px;
+}
+body.view-ontology.view-ontology-light .ont-parent-row:last-child {
+  border-bottom: none;
+}
+body.view-ontology.view-ontology-light .ont-parent-row:target {
+  background: color-mix(in srgb, var(--link) 8%, transparent);
+}
+body.view-ontology.view-ontology-light .ont-parent-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+body.view-ontology.view-ontology-light a.ont-parent-link {
+  font-size: 13px;
+  font-weight: 700;
+}
+body.view-ontology.view-ontology-light .ont-parent-solo {
+  font-size: 11px;
+}
+/* Edge meta row: weight footnote left, vote home + permalink right —
+   kept off the title line so the parent name always stands alone. */
+body.view-ontology.view-ontology-light .ont-edge-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 4px 0 0;
+}
+body.view-ontology.view-ontology-light .ont-edge-weight {
+  font-size: 11px;
+}
+body.view-ontology.view-ontology-light a.ont-parent-vote {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+body.view-ontology.view-ontology-light a.ont-edge-link {
+  color: var(--meta);
+  font-size: 13px;
+  text-decoration: none;
+  padding: 0 2px;
+}
+body.view-ontology.view-ontology-light a.ont-edge-link:hover {
+  color: var(--link);
+}
+body.view-ontology.view-ontology-light .ont-parent-row .ont-sibling-nav-wrap {
+  margin: 6px 0 0;
+}
+/* Suspended borders + fallen journal live in the UP card (edge states). */
+body.view-ontology.view-ontology-light section.ont-tab-panel-memberships section.ont-tab-panel-borders {
+  margin: 4px 0 0;
+  padding: 0 12px;
+}
+body.view-ontology.view-ontology-light section.ont-tab-panel-memberships section.ont-tab-panel-borders > h3 {
+  border-top: 1px dashed var(--lo);
+  margin-top: 10px;
+  padding-top: 8px;
+}
+body.view-ontology.view-ontology-light section.ont-tab-panel-memberships details.ont-fallen-borders {
+  margin: 8px 12px 6px;
+}
+/* Children heading controls: keep the vote action on one line, primary */
+body.view-ontology.view-ontology-light section.ont-tab-panel-children > h3 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+}
+body.view-ontology.view-ontology-light a.ont-vote-children-btn {
+  white-space: nowrap;
+  color: var(--link);
+  font-weight: 700;
+  text-decoration: none;
+}
+body.view-ontology.view-ontology-light a.ont-vote-children-btn:hover {
+  text-decoration: underline;
+}
+/* Aspect sub-sections: same DOWN treatment as child groups */
+body.view-ontology.view-ontology-light section.ont-tab-panel-aspect {
+  border-left: 2px solid var(--lo);
+  padding-left: 12px;
+  margin-left: 2px;
+  margin-top: 18px;
+}
+body.view-ontology.view-ontology-light h4.ont-aspect-heading {
+  color: var(--ui);
+  border-top: 1px dashed var(--lo);
+  margin-top: 0;
+  padding-top: 10px;
+}
+body.view-ontology.view-ontology-light h4.ont-aspect-heading::before {
+  content: "\25BC  ";
+  color: var(--meta);
+  font-size: 10px;
+}
+/* DOWN: children live under a tree-trunk rule, full-width rows.
+   The trunk carries the last breath of blue before the table greys out. */
+body.view-ontology.view-ontology-light section.ont-tab-panel-children {
+  border-left: 4px solid color-mix(in srgb, var(--link) 22%, var(--lo));
+  padding-left: 12px;
+  margin-left: 2px;
+}
+body.view-ontology.view-ontology-light section.ont-tab-panel-children > h3 {
+  border-top: none;
+  margin-top: 18px;
+  padding-top: 0;
+}
+body.view-ontology.view-ontology-light .ont-group-shell,
+body.view-ontology.view-ontology-light .ont-group-shell.ont-group-unsorted {
+  border: 1px solid var(--lo);
+  width: 100%;
+  min-width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+body.view-ontology.view-ontology-light .ont-group-meta {
+  background: transparent;
+  border-bottom: 1px solid var(--lo);
+  color: var(--meta);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+/* Ranking rows: table-like, names lead, scores trail muted.
+   NOTE: generic `ul:not(.thread-feed):not(.ranking)` forces
+   `width: fit-content` (staircase). Unranked lists are <ul>, so
+   override width here or single-child shells stay narrow. */
+body.view-ontology.view-ontology-light ol.ont-ranking-list,
+body.view-ontology.view-ontology-light ul.ont-group-list {
+  padding: 6px;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  align-items: stretch;
+}
+body.view-ontology.view-ontology-light ol.ont-ranking-list li,
+body.view-ontology.view-ontology-light ul.ont-group-list li {
+  width: 100%;
+  max-width: none;
+  box-sizing: border-box;
+  flex: 1 1 auto;
+  background: var(--g3);
+  border: 1px solid var(--lo);
+  border-left: 4px solid var(--lo);
+  border-radius: 2px;
+  padding: 6px 10px;
+}
+/* DOWN keeps rank order readable, but capped below the hero so the
+   section gradient keeps descending: parents 100 → hero 55 → rows ≤40. */
+body.view-ontology.view-ontology-light ol.ont-ranking-list li:nth-child(1) {
+  border-left-color: color-mix(in srgb, var(--link) 40%, var(--lo));
+}
+body.view-ontology.view-ontology-light ol.ont-ranking-list li:nth-child(2) {
+  border-left-color: color-mix(in srgb, var(--link) 25%, var(--lo));
+}
+body.view-ontology.view-ontology-light ol.ont-ranking-list li:nth-child(3) {
+  border-left-color: color-mix(in srgb, var(--link) 15%, var(--lo));
+}
+body.view-ontology.view-ontology-light .ont-ranking-list li::before {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--ui);
+  min-width: 3ch;
+}
+body.view-ontology.view-ontology-light .ont-group-list li a.item-link,
+body.view-ontology.view-ontology-light .ont-ranking-list li a.item-link {
+  font-size: 13px;
+  font-weight: 600;
+}
+body.view-ontology.view-ontology-light .ont-group-list li a.item-link code,
+body.view-ontology.view-ontology-light .ont-ranking-list li a.item-link code {
+  font-size: 13px;
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--signal);
+}
+body.view-ontology.view-ontology-light .ont-rank-score {
+  font-size: 0.8rem;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  color: var(--meta);
+  margin-left: auto;
+  white-space: nowrap;
+}
+/* Jump targets: edge links from the other side of the relation land here. */
+body.view-ontology.view-ontology-light ol.ont-ranking-list li,
+body.view-ontology.view-ontology-light ul.ont-group-list li {
+  scroll-margin-top: 12px;
+}
+body.view-ontology.view-ontology-light ol.ont-ranking-list li:target,
+body.view-ontology.view-ontology-light ul.ont-group-list li:target {
+  outline: 2px solid var(--link);
+  outline-offset: 1px;
+}

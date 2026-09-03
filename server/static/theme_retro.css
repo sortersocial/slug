@@ -459,3 +459,175 @@ body.view-ontology .vote-compare-right .vote-compare-item-body .item-body-rich a
 
 details.question-row > summary { cursor: pointer; }
 .question-row-links { font-size: 13px; }
+
+/* ================================================================
+   GARDEN HIERARCHY — parents ↑ / self / children ↓ (paper context).
+   Lean retro version of the same system in the other themes:
+   FLOW GRADIENT on the left edge, parents most blue → hero mid →
+   children grey. Structural flex rules included so per-edge vote/§
+   links never glue onto parent titles.
+   ================================================================ */
+body.view-ontology section.ont-tab-panel > h3 {
+  font-size: 0.75rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #333;
+  border-top: 2px solid #ccc;
+  margin: 1.5rem 0 0.5rem;
+  padding-top: 0.6rem;
+}
+body.view-ontology h4.ont-aspect-heading {
+  color: #555;
+}
+/* UP card: modest box, full-blue ascent edge. */
+body.view-ontology section.ont-tab-panel-memberships {
+  background: #faf8f3;
+  border: 1px solid #ccc;
+  border-left: 6px solid #23a;
+  margin: 0.5rem 0 1rem;
+  padding: 0 0 0.25rem;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+body.view-ontology section.ont-tab-panel-memberships > h3 {
+  border-top: none;
+  margin-top: 0;
+  padding: 0.5rem 0.65rem;
+  border-bottom: 1px solid #ccc;
+}
+body.view-ontology .ont-parents-list {
+  display: flex;
+  flex-direction: column;
+}
+body.view-ontology .ont-parent-row {
+  padding: 0.5rem 0.65rem 0.65rem;
+  border-bottom: 1px solid #e3ded4;
+  scroll-margin-top: 0.75rem;
+}
+body.view-ontology .ont-parent-row:last-child {
+  border-bottom: none;
+}
+body.view-ontology .ont-parent-row:target {
+  background: color-mix(in srgb, #23a 8%, transparent);
+}
+body.view-ontology .ont-parent-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+body.view-ontology a.ont-parent-link {
+  font-weight: 600;
+  color: #111;
+  text-decoration: none;
+}
+body.view-ontology a.ont-parent-link:hover {
+  color: #23a;
+  text-decoration: underline;
+}
+body.view-ontology .ont-parent-solo {
+  font-size: 0.78rem;
+}
+/* Edge meta row: weight footnote left, vote home + permalink right. */
+body.view-ontology .ont-edge-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+}
+body.view-ontology .ont-edge-weight {
+  font-size: 0.78rem;
+  color: #666;
+}
+body.view-ontology a.ont-parent-vote {
+  margin-left: auto;
+  font-size: 0.78rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+body.view-ontology a.ont-edge-link {
+  color: #888;
+  text-decoration: none;
+  padding: 0 0.15rem;
+}
+body.view-ontology a.ont-edge-link:hover {
+  color: #23a;
+}
+body.view-ontology .ont-parent-row .ont-sibling-nav-wrap {
+  margin-top: 0.4rem;
+}
+/* Current position in the sibling order. */
+body.view-ontology nav.breadcrumb.ont-sibling-nav a[aria-current="page"] {
+  background: #23a;
+  color: #fff;
+  border-radius: 2px;
+  padding: 0 0.25em;
+}
+/* Suspended borders + fallen journal live in the UP card. */
+body.view-ontology section.ont-tab-panel-memberships section.ont-tab-panel-borders {
+  margin: 0;
+  padding: 0 0.65rem;
+}
+body.view-ontology section.ont-tab-panel-memberships section.ont-tab-panel-borders > h3 {
+  border-top: 1px dashed #ccc;
+  margin-top: 0.65rem;
+  padding-top: 0.5rem;
+}
+body.view-ontology section.ont-tab-panel-memberships details.ont-fallen-borders {
+  margin: 0.5rem 0.65rem 0.4rem;
+}
+/* HERE hero: no box (lean), stepped-down edge. */
+body.view-ontology .ont-item-shell {
+  border-left: 6px solid color-mix(in srgb, #23a 55%, #ccc);
+  padding-left: 0.65rem;
+  margin: 0.5rem 0 1rem;
+}
+/* DOWN: children under a grey trunk, full-width rows, muted scores. */
+body.view-ontology section.ont-tab-panel-children {
+  border-left: 4px solid #ccc;
+  padding-left: 0.65rem;
+  margin-left: 0.1rem;
+}
+body.view-ontology section.ont-tab-panel-children > h3 {
+  border-top: none;
+  margin-top: 1rem;
+  padding-top: 0;
+}
+body.view-ontology section.ont-tab-panel-aspect {
+  border-left: 2px solid #ccc;
+  padding-left: 0.65rem;
+  margin-left: 0.1rem;
+  margin-top: 1rem;
+}
+body.view-ontology .ont-group-meta {
+  color: #888;
+  font-size: 0.7rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+body.view-ontology ol.ont-ranking-list,
+body.view-ontology ul.ont-group-list {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+body.view-ontology ol.ont-ranking-list li,
+body.view-ontology ul.ont-group-list li {
+  width: 100%;
+  max-width: none;
+  box-sizing: border-box;
+  scroll-margin-top: 0.75rem;
+}
+body.view-ontology ol.ont-ranking-list li:target,
+body.view-ontology ul.ont-group-list li:target {
+  outline: 2px solid #23a;
+  outline-offset: 1px;
+}
+body.view-ontology .ont-rank-score {
+  margin-left: auto;
+  font-size: 0.78rem;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  color: #888;
+  white-space: nowrap;
+}

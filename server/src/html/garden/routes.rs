@@ -31,9 +31,10 @@ use super::{
     },
     browse::{scoped_bc_path_external, GardenBrowsePath},
     copy::garden_rank_copy_button_markup,
-    item::{child_depth_from_uri, garden_depth_select_markup, item_display_path, item_href},
+    item::{child_depth_from_uri, garden_depth_select_markup},
     item_page::aspect_rankings_for_parent,
-    render::render_scope_view,
+    pin::pinned_item_from_jar,
+    render::{aspect_ranking_sections_markup, ont_ranking_lists_markup, render_scope_view},
 };
 
 /// 308 to `canonical`, keeping a non-empty query string.
@@ -77,6 +78,35 @@ pub async fn garden_index(
     let url_key = canonical_view_url(&uri);
     let view_count = state.views.get_views(&url_key);
 
+    // Shared ranking-list markup (same helper as item pages): scores + pin/vote
+    // affordances, so the index never drifts from the scope view.
+    let pin_ref = pinned_item_from_jar(&jar);
+    let next_for_pin = match uri.query() {
+        Some(q) if !q.is_empty() => format!("/~?{q}"),
+        _ => "/~".to_string(),
+    };
+    let (rankings_markup, aspects_markup) = {
+        let reduced = state.reduced.read().await;
+        let scope_content = content_for_garden_view(&reduced, &nav.scope());
+        (
+            ont_ranking_lists_markup(
+                &child_rankings,
+                &nav,
+                pin_ref.as_ref(),
+                scope_content,
+                &next_for_pin,
+                "",
+            ),
+            aspect_ranking_sections_markup(
+                &aspect_rankings,
+                &nav,
+                pin_ref.as_ref(),
+                scope_content,
+                &next_for_pin,
+            ),
+        )
+    };
+
     let page = layout(
         "~/",
         "view-ontology view-ontology-light",
@@ -95,58 +125,9 @@ pub async fn garden_index(
             @if child_rankings.component_rankings.is_empty() && child_rankings.unranked_items.is_empty() {
                 p class="muted" { "no items yet" }
             } @else {
-                @for (ci, comp) in child_rankings.component_rankings.iter().enumerate() {
-                    div class="ont-group-shell" {
-                        div class="ont-group-meta" {
-                            (format!("ordering {} items={} pairs={}", ci + 1, comp.ranked.len(), comp.pairs))
-                        }
-                        ol class="ont-ranking-list" {
-                            @for r in comp.ranked.iter() {
-                                @let href = item_href(r.item.as_str(), &nav);
-                                li {
-                                    a href=(href) { (item_display_path(r.item.as_str())) }
-                                }
-                            }
-                        }
-                    }
-                }
-                @if !child_rankings.unranked_items.is_empty() {
-                    div class="ont-group-shell ont-group-unsorted" {
-                        div class="ont-group-meta" { "unranked" }
-                        ul class="ont-group-list" {
-                            @for name in &child_rankings.unranked_items {
-                                li {
-                                    @let href = item_href(name.as_str(), &nav);
-                                    a href=(href) { (item_display_path(name.as_str())) }
-                                }
-                            }
-                        }
-                    }
-                }
+                (rankings_markup)
             }
-            @for aspect in &aspect_rankings {
-                section class="ont-tab-panel ont-tab-panel-aspect" id=(format!("aspect-{}", aspect.slug)) {
-                    h4 class="ont-aspect-heading" { ":" (aspect.slug) }
-                    @if let Some(prompt) = &aspect.prompt {
-                        p class="muted ont-aspect-prompt" { (prompt) }
-                    }
-                    @for (ci, comp) in aspect.rankings.component_rankings.iter().enumerate() {
-                        div class="ont-group-shell" {
-                            div class="ont-group-meta" {
-                                (format!("ordering {} items={} pairs={}", ci + 1, comp.ranked.len(), comp.pairs))
-                            }
-                            ol class="ont-ranking-list" {
-                                @for r in comp.ranked.iter() {
-                                    @let href = item_href(r.item.as_str(), &nav);
-                                    li {
-                                        a href=(href) { (item_display_path(r.item.as_str())) }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            (aspects_markup)
             (cli_panel(&["npx slugsocial garden tree"]))
         },
         Some(view_count),
@@ -198,6 +179,24 @@ pub async fn external_garden_index(
     let url_key = canonical_view_url(&uri);
     let view_count = state.views.get_views(&url_key);
 
+    let pin_ref = pinned_item_from_jar(&jar);
+    let next_for_pin = match uri.query() {
+        Some(q) if !q.is_empty() => format!("/-/?{q}"),
+        _ => "/-/".to_string(),
+    };
+    let rankings_markup = {
+        let reduced = state.reduced.read().await;
+        let scope_content = content_for_garden_view(&reduced, &nav.scope());
+        ont_ranking_lists_markup(
+            &child_rankings,
+            &nav,
+            pin_ref.as_ref(),
+            scope_content,
+            &next_for_pin,
+            "",
+        )
+    };
+
     let page = layout(
         "-/",
         "view-ontology view-ontology-light",
@@ -214,34 +213,7 @@ pub async fn external_garden_index(
             @if child_rankings.component_rankings.is_empty() && child_rankings.unranked_items.is_empty() {
                 p class="muted" { "no external items indexed yet" }
             } @else {
-                @for (ci, comp) in child_rankings.component_rankings.iter().enumerate() {
-                    div class="ont-group-shell" {
-                        div class="ont-group-meta" {
-                            (format!("ordering {} items={} pairs={}", ci + 1, comp.ranked.len(), comp.pairs))
-                        }
-                        ol class="ont-ranking-list" {
-                            @for r in comp.ranked.iter() {
-                                @let href = item_href(r.item.as_str(), &nav);
-                                li {
-                                    a href=(href) { (item_display_path(r.item.as_str())) }
-                                }
-                            }
-                        }
-                    }
-                }
-                @if !child_rankings.unranked_items.is_empty() {
-                    div class="ont-group-shell ont-group-unsorted" {
-                        div class="ont-group-meta" { "unranked" }
-                        ul class="ont-group-list" {
-                            @for name in &child_rankings.unranked_items {
-                                li {
-                                    @let href = item_href(name.as_str(), &nav);
-                                    a href=(href) { (item_display_path(name.as_str())) }
-                                }
-                            }
-                        }
-                    }
-                }
+                (rankings_markup)
             }
         },
         Some(view_count),
@@ -343,6 +315,24 @@ pub async fn room_external_garden_index(
     let url_key = canonical_view_url(&uri);
     let view_count = state.views.get_views(&url_key);
 
+    let pin_ref = pinned_item_from_jar(&jar);
+    let next_for_pin = match uri.query() {
+        Some(q) if !q.is_empty() => format!("{}-/?{q}", nav.garden_root_url().trim_end_matches('~')),
+        _ => format!("{}-/", nav.garden_root_url().trim_end_matches('~')),
+    };
+    let rankings_markup = {
+        let reduced = state.reduced.read().await;
+        let scope_content = content_for_garden_view(&reduced, &nav.scope());
+        ont_ranking_lists_markup(
+            &child_rankings,
+            &nav,
+            pin_ref.as_ref(),
+            scope_content,
+            &next_for_pin,
+            "",
+        )
+    };
+
     let page = layout(
         "-/",
         "view-ontology view-ontology-light",
@@ -358,34 +348,7 @@ pub async fn room_external_garden_index(
             @if child_rankings.component_rankings.is_empty() && child_rankings.unranked_items.is_empty() {
                 p class="muted" { "no external items indexed yet" }
             } @else {
-                @for (ci, comp) in child_rankings.component_rankings.iter().enumerate() {
-                    div class="ont-group-shell" {
-                        div class="ont-group-meta" {
-                            (format!("ordering {} items={} pairs={}", ci + 1, comp.ranked.len(), comp.pairs))
-                        }
-                        ol class="ont-ranking-list" {
-                            @for r in comp.ranked.iter() {
-                                @let href = item_href(r.item.as_str(), &nav);
-                                li {
-                                    a href=(href) { (item_display_path(r.item.as_str())) }
-                                }
-                            }
-                        }
-                    }
-                }
-                @if !child_rankings.unranked_items.is_empty() {
-                    div class="ont-group-shell ont-group-unsorted" {
-                        div class="ont-group-meta" { "unranked" }
-                        ul class="ont-group-list" {
-                            @for name in &child_rankings.unranked_items {
-                                li {
-                                    @let href = item_href(name.as_str(), &nav);
-                                    a href=(href) { (item_display_path(name.as_str())) }
-                                }
-                            }
-                        }
-                    }
-                }
+                (rankings_markup)
             }
         },
         Some(view_count),

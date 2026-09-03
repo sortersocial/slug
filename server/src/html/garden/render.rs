@@ -27,19 +27,22 @@ use super::{
         item_href,
     },
     item_page::{
-        build_item_page_view_model, item_relations_markup, sibling_nav_markup, strongest_parent,
-        AspectRankingView,
+        build_item_page_view_model, fragment_slug, item_relations_markup, AspectRankingView,
     },
     pin::{child_row_pin_or_vote, ont_pin_vote_controls, pinned_item_from_jar},
     vote::vote_pool_href,
 };
 
+/// Ranking tables for one scope. `id_prefix` namespaces the per-row `#item-…`
+/// anchors ("" for the canonical table, `"aspect-<slug>-"` for aspect tables)
+/// so each ranked edge is linkable from the parent page.
 pub(super) fn ont_ranking_lists_markup(
     rankings: &crate::scope_rank::ChildrenRankings,
     nav: &ThreadNav,
     pin_ref: Option<&(String, ItemId)>,
     scope_content: &ContentState,
     next_for_pin: &str,
+    id_prefix: &str,
 ) -> maud::Markup {
     html! {
         @for (ci, comp) in rankings.component_rankings.iter().enumerate() {
@@ -51,7 +54,8 @@ pub(super) fn ont_ranking_lists_markup(
                     @for r in comp.ranked.iter() {
                         @let item_url = item_href(r.item.as_str(), nav);
                         @let score_str = format!("{:.3}", r.score);
-                        li data-garden-item=(r.item.as_str()) {
+                        li data-garden-item=(r.item.as_str())
+                            id=(format!("{id_prefix}item-{}", fragment_slug(r.item.last_segment()))) {
                             (child_row_pin_or_vote(nav, &r.item, pin_ref, scope_content, next_for_pin))
                             a class="item-link" href=(item_url) { code { (item_display_path(r.item.as_str())) } }
                             span class="ont-rank-score" { (score_str) }
@@ -65,7 +69,8 @@ pub(super) fn ont_ranking_lists_markup(
                 div class="ont-group-meta" { "unranked" }
                 ul class="ont-group-list" {
                     @for name in &rankings.unranked_items {
-                        li data-garden-item=(name.as_str()) {
+                        li data-garden-item=(name.as_str())
+                            id=(format!("{id_prefix}item-{}", fragment_slug(name.last_segment()))) {
                             (child_row_pin_or_vote(nav, name, pin_ref, scope_content, next_for_pin))
                             @let href = item_href(name.as_str(), nav);
                             a class="item-link" href=(href) { code { (item_display_path(name.as_str())) } }
@@ -91,12 +96,14 @@ pub(super) fn aspect_ranking_sections_markup(
                 @if let Some(prompt) = &aspect.prompt {
                     p class="muted ont-aspect-prompt" { (prompt) }
                 }
+                @let aspect_prefix = format!("aspect-{}-", aspect.slug);
                 (ont_ranking_lists_markup(
                     &aspect.rankings,
                     nav,
                     pin_ref,
                     scope_content,
                     next_for_pin,
+                    &aspect_prefix,
                 ))
             }
         }
@@ -139,21 +146,12 @@ pub(super) async fn render_scope_view(
         "view-ontology view-ontology-light",
         html! {
             nav class="breadcrumb" { (scoped_bc_path_for(&browse, &nav, &model.crumb_chain)) }
-            @if let Some(ref bar) = model.sibling_nav {
-                (sibling_nav_markup(&nav, bar, &model.item))
-            }
+            // UP — parents above the body: the page flows parents → self → children.
+            (item_relations_markup(&model, &nav, now_ms()))
             section class="ont-item-shell" data-garden-item=(model.item.as_str()) {
                 header class="ont-item-meta" {
                     span class="ont-item-title" { (item_display_path(&model.item)) }
-                    @if model.sibling_nav.is_none() && model.item_has_parent {
-                        span class="muted ont-item-unranked-note" { "unranked among siblings" }
-                    }
-                    @let vote_item_href = model.sibling_nav.as_ref().and_then(|_| {
-                        ItemId::parse(&model.item).and_then(|i| {
-                            strongest_parent(scope_content, &i)
-                                .map(|p| vote_pool_href(&nav, p.as_str()))
-                        })
-                    });
+                    @let vote_item_href = model.scopes.first().map(|p| vote_pool_href(&nav, p.as_str()));
                     (ont_pin_vote_controls(
                         &nav,
                         &model.item,
@@ -294,13 +292,12 @@ pub(super) async fn render_scope_view(
                 }
             }
 
-            (item_relations_markup(&model, &nav, now_ms()))
-
             section class="ont-tab-panel ont-tab-panel-children" {
                 @let total_children = model.child_rankings.component_rankings
                     .iter().map(|c| c.ranked.len()).sum::<usize>()
                     + model.child_rankings.unranked_items.len();
                 h3 {
+                    span aria-hidden="true" { "↓ " }
                     "ranked child groups"
                     " "
                     (garden_depth_select_markup(model.child_depth))
@@ -329,6 +326,7 @@ pub(super) async fn render_scope_view(
                     pin_ref.as_ref(),
                     scope_content,
                     &next_for_pin,
+                    "",
                 ))
             }
             (aspect_ranking_sections_markup(

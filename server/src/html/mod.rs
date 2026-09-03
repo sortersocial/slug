@@ -595,16 +595,13 @@ fn bc_path_external(path: &ExternalOntologyPath) -> Markup {
     }
 }
 
-/// Breadcrumb for any ontology path segment, e.g. "parables" or "parables/counting-the-cost".
+/// Breadcrumb for the garden root (`/~`, the only caller). Deeper tilde pages render
+/// the containment breadcrumb (`scoped_bc_containment`); URL segments are not
+/// hierarchy — nested inputs redirect to the leaf before any page renders.
 fn bc_path(path: &OntologyPath) -> Markup {
     html! {
         a href=(path.slug_root_href()) { "slug.social" }
-        (bc_segment("~", "/~", path.is_root()))
-        @for (i, seg) in path.segments().iter().enumerate() {
-            @let href = format!("/~/{}", path.segments()[..=i].join("/"));
-            @let is_last = i == path.segments().len() - 1;
-            (bc_segment(seg, &href, is_last))
-        }
+        (bc_segment("~", "/~", true))
     }
 }
 

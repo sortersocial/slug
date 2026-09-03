@@ -115,8 +115,8 @@ pub(super) fn garden_depth_select_markup(current: usize) -> Markup {
     }
     html! {
         form method="get" class="garden-depth-control" {
-            label {
-                span class="muted" { "depth" }
+            label title="How many scope levels down to include (follows membership, not URL paths)" {
+                span class="muted" { "scope depth" }
                 " "
                 select id="garden-depth-select" name="depth" aria-label="Garden ranking depth"
                     onchange="this.form.submit()" {
