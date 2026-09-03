@@ -205,6 +205,7 @@ enum Command {
     },
 
     /// Simple health check
+    #[command(visible_alias = "health")]
     Healthz {
         /// Output as JSON for agent parsing
         #[arg(long)]

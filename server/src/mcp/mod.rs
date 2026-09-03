@@ -197,7 +197,7 @@ fn tool(
 fn room_id_schema() -> Value {
     json!({
         "type": "string",
-        "description": "Room id: \"public\" (default) or a private room id from create_room / list_rooms (shortid/slug)."
+        "description": "Room id: \"public\" (default), a private room id from create_room / list_rooms (shortid/slug), or just the 7-char shortid."
     })
 }
 
@@ -227,6 +227,15 @@ fn search_result_schema() -> Value {
 fn tools_list() -> Value {
     json!({
         "tools": [
+            tool(
+                "health",
+                "Server liveness",
+                "Liveness check. Same as GET /healthz. Returns ok when the process is serving requests.",
+                json!({"type": "object", "properties": {}}),
+                json!({"type": "object"}),
+                annotations(true, false, false),
+                oauth_or_anon(),
+            ),
             tool(
                 "whoami",
                 "Linked identity",
@@ -279,11 +288,11 @@ fn tools_list() -> Value {
             tool(
                 "read_room",
                 "Read a private room",
-                "Authenticated. Open one private room: members, bump-ordered threads, and recent posts with actor/delegate provenance. Use room_id from list_rooms.",
+                "Authenticated. Open one private room: members, bump-ordered threads, and recent posts with actor/delegate provenance. Use room_id from list_rooms (full shortid/slug or the 7-char shortid).",
                 json!({
                     "type": "object",
                     "properties": {
-                        "room_id": {"type": "string", "description": "Private room id (shortid/slug) from list_rooms"}
+                        "room_id": {"type": "string", "description": "Private room id from list_rooms: shortid/slug, or just the shortid"}
                     },
                     "required": ["room_id"]
                 }),
@@ -815,6 +824,7 @@ async fn tools_call(state: &AppState, headers: &HeaderMap, params: &Value) -> Va
     let name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
     let args = params.get("arguments").cloned().unwrap_or(json!({}));
     match name {
+        "health" => tool_ok(json!({"ok": true, "status": "ok"}), "ok"),
         "whoami" => whoami(state, headers).await,
         "identity_start" => identity_start(state, headers, &args).await,
         "identity_poll" => identity_poll(state, &args).await,
@@ -1220,6 +1230,10 @@ async fn read_room(state: &AppState, headers: &HeaderMap, args: &Value) -> Value
     let Some(room_id) = arg_string(args, "room_id").or_else(|| arg_string(args, "room")) else {
         return tool_err("room_id is required", None);
     };
+    let room_id = {
+        let reduced = state.reduced.read().await;
+        reduced.resolve_room_id(&room_id).unwrap_or(room_id)
+    };
     if room_id == "public" {
         return tool_err(
             "read_room is for private rooms",
@@ -1287,7 +1301,16 @@ async fn get_feed(state: &AppState, headers: &HeaderMap, args: &Value) -> Value 
     if let Some(err) = require_bearer(headers) {
         return err;
     }
-    let room_filter = arg_string(args, "room_id").or_else(|| arg_string(args, "room"));
+    let room_filter = {
+        let raw = arg_string(args, "room_id").or_else(|| arg_string(args, "room"));
+        match raw {
+            Some(room) => {
+                let reduced = state.reduced.read().await;
+                Some(reduced.resolve_room_id(&room).unwrap_or(room))
+            }
+            None => None,
+        }
+    };
     let since = args.get("since").and_then(|v| v.as_i64());
     let limit = Some(arg_usize(args, "limit").unwrap_or(10));
     let delegate = match arg_string(args, "delegate") {

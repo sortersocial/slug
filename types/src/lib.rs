@@ -9,13 +9,13 @@ pub mod url_normalize;
 
 pub use item_id::ItemId;
 pub use item_wire::{
-    canonicalize_item, item_parent_path, item_path_segments, normalize_slug_ontology_storage_url,
-    repair_collapsed_http_scheme, SLUG_TILDE_ONTOLOGY_ROOT,
+    canonicalize_garden_item, canonicalize_item, item_parent_path, item_path_segments,
+    normalize_slug_ontology_storage_url, repair_collapsed_http_scheme, SLUG_TILDE_ONTOLOGY_ROOT,
 };
 pub use paths::{
-    canonicalize_tag, room_id_from_route_segment, room_route_segment, tilde_http_path_to_item_id,
-    validate_thread_tag, ForumThreadUrl, GardenItemUrl, RelativePath, TildeHttpPathTail,
-    TildeOntologyPath, TildePath, ROOM_SHORT_ID_LEN,
+    canonicalize_tag, is_room_short_id, room_id_from_route_segment, room_route_segment,
+    tilde_http_path_to_item_id, validate_thread_tag, ForumThreadUrl, GardenItemUrl, RelativePath,
+    TildeHttpPathTail, TildeOntologyPath, TildePath, ROOM_SHORT_ID_LEN,
 };
 pub use url_normalize::normalize_http_identity_url;
 

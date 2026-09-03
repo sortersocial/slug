@@ -17,8 +17,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::item_id::ItemId;
 pub use crate::item_wire::{
-    canonicalize_item, item_parent_path, item_path_segments, normalize_slug_ontology_storage_url,
-    SLUG_TILDE_ONTOLOGY_ROOT,
+    canonicalize_garden_item, canonicalize_item, item_parent_path, item_path_segments,
+    normalize_slug_ontology_storage_url, SLUG_TILDE_ONTOLOGY_ROOT,
 };
 
 // ---------------------------------------------------------------------------
@@ -41,6 +41,11 @@ pub fn room_route_segment(room_id: &str) -> Option<String> {
         return None;
     }
     Some(format!("{short}{slug}"))
+}
+
+/// True when `s` is the 7-char random prefix of a `shortid/slug` room id.
+pub fn is_room_short_id(s: &str) -> bool {
+    s.len() == ROOM_SHORT_ID_LEN && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'z'))
 }
 
 /// `/r/{short}{slug}` path segment → `short/slug` wire id (inverse of [`room_route_segment`]).
@@ -624,6 +629,35 @@ mod tests {
     #[test]
     fn too_short_room_route_segment_rejected() {
         assert!(room_id_from_route_segment("9ab12cd").is_none());
+        assert!(is_room_short_id("9ab12cd"));
+        assert!(!is_room_short_id("9ab12c"));
+        assert!(!is_room_short_id("9AB12CD"));
+    }
+
+    #[test]
+    fn canonicalize_garden_item_accepts_bare_leaf() {
+        assert_eq!(
+            canonicalize_garden_item("ship-sets"),
+            "https://slug.social/~/ship-sets"
+        );
+        assert_eq!(canonicalize_garden_item("Luke"), canonicalize_item("~luke"));
+        assert_eq!(
+            canonicalize_garden_item("~ship-sets"),
+            canonicalize_item("~ship-sets")
+        );
+        assert_eq!(
+            canonicalize_garden_item("~/x/luke"),
+            "https://slug.social/~/x/luke"
+        );
+        assert_eq!(
+            canonicalize_garden_item("https://example.com/a"),
+            "https://example.com/a"
+        );
+        assert_eq!(
+            canonicalize_item("ship-sets"),
+            "https://slug.social/ship-sets",
+            "non-garden canonicalize still treats bare strings as site paths"
+        );
     }
 
     #[test]

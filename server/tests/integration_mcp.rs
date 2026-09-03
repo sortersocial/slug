@@ -91,6 +91,7 @@ async fn mcp_initialize_and_lists_v1_tools() {
     let tools = listed["result"]["tools"].as_array().unwrap();
     let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
     for expected in [
+        "health",
         "whoami",
         "identity_start",
         "identity_poll",
@@ -139,6 +140,11 @@ async fn mcp_initialize_and_lists_v1_tools() {
         .unwrap()
         .iter()
         .any(|v| v == "room_id"));
+
+    let health = tool_call(&client, addr, "health", serde_json::json!({}), None).await;
+    assert_eq!(health["isError"], false, "{health}");
+    assert_eq!(health["structuredContent"]["ok"], true);
+    assert_eq!(health["structuredContent"]["status"], "ok");
 }
 
 const TEST_DELEGATE: &str = "00000000-0000-0000-0000-000000000000:test:local/test";
@@ -313,6 +319,24 @@ async fn mcp_read_and_write_tools_round_trip() {
     )
     .await;
     assert_eq!(matchup["isError"], false, "{matchup}");
+    let bare_leaf = tool_call(
+        &client,
+        addr,
+        "get_matchup",
+        serde_json::json!({"item_path": "mcp-a"}),
+        None,
+    )
+    .await;
+    assert_eq!(bare_leaf["isError"], false, "{bare_leaf}");
+    assert_eq!(
+        bare_leaf["structuredContent"]["Matchup"]["votes"]
+            .as_array()
+            .map(|a| a.len()),
+        matchup["structuredContent"]["Matchup"]["votes"]
+            .as_array()
+            .map(|a| a.len()),
+        "bare leaf must resolve like ~/mcp-a: {bare_leaf}"
+    );
     let votes = matchup["structuredContent"]["Matchup"]["votes"]
         .as_array()
         .unwrap();
@@ -861,6 +885,17 @@ async fn mcp_whoami_and_private_room_round_trip() {
     .await;
     assert_eq!(room["isError"], false, "{room}");
     assert_eq!(room["structuredContent"]["room_id"], room_id);
+    let shortid = room_id.split_once('/').map(|(s, _)| s).unwrap();
+    let room_by_short = tool_call(
+        &client,
+        addr,
+        "read_room",
+        serde_json::json!({"room_id": shortid}),
+        Some(&bearer),
+    )
+    .await;
+    assert_eq!(room_by_short["isError"], false, "{room_by_short}");
+    assert_eq!(room_by_short["structuredContent"]["room_id"], room_id);
     assert_eq!(room["structuredContent"]["visibility"], "private");
     let members = room["structuredContent"]["members"].as_array().unwrap();
     assert!(

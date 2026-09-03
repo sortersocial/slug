@@ -67,7 +67,7 @@ pub fn parse_parent_specs(parent: Option<&String>) -> Vec<String> {
         return vec![];
     }
     s.split(',')
-        .map(|x| x.trim().to_string())
+        .map(|x| canonicalize_garden_item(x.trim()))
         .filter(|x| !x.is_empty())
         .collect()
 }
