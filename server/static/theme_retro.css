@@ -460,6 +460,19 @@ body.view-ontology .vote-compare-right .vote-compare-item-body .item-body-rich a
 details.question-row > summary { cursor: pointer; }
 .question-row-links { font-size: 13px; }
 
+/* Vote landing (`GET /vote` with no pair): judgment entry point. Lean retro
+   keeps browser heading sizes; only the column and list need rules. */
+body.view-ontology .vote-landing {
+  margin: 1.5rem auto;
+  max-width: 560px;
+}
+body.view-ontology ol.vote-landing-steps {
+  padding-left: 1.4em;
+}
+body.view-ontology ol.vote-landing-steps li {
+  margin: 0.3rem 0;
+}
+
 /* ================================================================
    GARDEN HIERARCHY — parents ↑ / self / children ↓ (paper context).
    Lean retro version of the same system in the other themes:

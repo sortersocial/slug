@@ -399,6 +399,122 @@ async fn test_room_question_pages_are_gone() {
     }
 }
 
+fn landing_seed_ingest() -> Event {
+    Event::Ingest(Ingest {
+        ts: 21,
+        id: "ing-duel".into(),
+        raw: "~/duel/a { Alpha }\n~/duel/b { Beta }\n".to_string(),
+        principal: "testuser".to_string(),
+        delegate: None,
+        room_id: "public".into(),
+        thread_tag: "duel".into(),
+    })
+}
+
+#[tokio::test]
+async fn test_vote_landing_serves_neediest_pair() {
+    let (addr, _tmp, _log, state, _handle) = create_test_server_with_state().await;
+    {
+        let mut w = state.reduced.write().await;
+        w.apply_event(landing_seed_ingest());
+    }
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("http://{addr}/vote"))
+        .send()
+        .await
+        .unwrap();
+    assert!(resp.status().is_success(), "{}", resp.status());
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("judge one pair"), "landing intro missing");
+    assert!(body.contains("0 of 1"), "need count missing");
+    assert!(body.contains("drag the slider"), "steps missing");
+    assert!(body.contains("href=\"/~/duel\""), "scope link missing");
+    assert!(body.contains("vote-compare-pair"));
+
+    // Guests get the login CTA; the seeded compose form needs a session.
+    let authed = client
+        .get(format!("http://{addr}/vote"))
+        .header("Authorization", format!("Bearer {}", test_bearer()))
+        .send()
+        .await
+        .unwrap();
+    assert!(authed.status().is_success(), "{}", authed.status());
+    let body = authed.text().await.unwrap();
+    assert!(body.contains("value=\"duel\""), "thread_tag should seed to pool leaf");
+}
+
+#[tokio::test]
+async fn test_vote_aspect_query_param() {
+    let (addr, _tmp, _log, state, _handle) = create_test_server_with_state().await;
+    {
+        let mut w = state.reduced.write().await;
+        w.apply_event(Event::Ingest(Ingest {
+            ts: 22,
+            id: "ing-tri".into(),
+            raw: "~/tri/a { alpha }\n~/tri/b { beta }\n~/tri/c { gamma }\n\
+                  { ab }\n~/tri/a 2:1 ~/tri/b\n\
+                  :beauty {more beautiful}\n{ pretty }\n~/tri/a 2:1 ~/tri/b\n"
+                .to_string(),
+            principal: "testuser".to_string(),
+            delegate: None,
+            room_id: "public".into(),
+            thread_tag: "tri".into(),
+        }));
+    }
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("http://{addr}/vote?pool=~/tri&aspect=beauty"))
+        .header("Authorization", format!("Bearer {}", test_bearer()))
+        .send()
+        .await
+        .unwrap();
+    assert!(resp.status().is_success(), "{}", resp.status());
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("name=\"aspect\""), "aspect input missing");
+    assert!(body.contains("value=\"beauty\""), "aspect value missing");
+
+    let bad = client
+        .get(format!("http://{addr}/vote?left=~/tri/a&right=~/tri/b&aspect=NOPE"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(bad.status(), reqwest::StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn test_garden_index_lists_tilde_scopes() {
+    let (addr, _tmp, _log, state, _handle) = create_test_server_with_state().await;
+    {
+        let mut w = state.reduced.write().await;
+        w.apply_event(Event::Ingest(Ingest {
+            ts: 23,
+            id: "ing-mix".into(),
+            raw: "~mix { Mixed scope }\n~/mix/a { alpha }\n\
+                  https://example.com/thing { An imported thing }\n\
+                  { import }\nhttps://example.com/thing <: ~mix\n"
+                .to_string(),
+            principal: "testuser".to_string(),
+            delegate: None,
+            room_id: "public".into(),
+            thread_tag: "mix".into(),
+        }));
+    }
+    let client = reqwest::Client::new();
+    let body = client
+        .get(format!("http://{addr}/~"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(body.contains("~/mix"), "tilde scope missing");
+    // Root membership is tilde-only by construction (the DSL has no spelling
+    // for a URL `<: ~` claim), so the index never mixes in imports.
+    assert!(!body.contains("example.com/thing"));
+}
+
 #[tokio::test]
 async fn test_home_is_thread_index() {
     let (addr, _tmp, _log, state, _handle) = create_test_server_with_state().await;
@@ -425,6 +541,8 @@ async fn test_home_is_thread_index() {
     );
     assert!(guest_body.contains("forum-home") || guest_body.contains("#forum-home"));
     assert!(guest_body.contains("log in to post"));
+    assert!(guest_body.contains("judge one pair"));
+    assert!(guest_body.contains("href=\"/vote\""));
     assert!(!guest_body.contains("data-testid=\"question-index\""));
 
     let authed = client

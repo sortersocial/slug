@@ -1290,6 +1290,33 @@ body.view-ontology #vote-compare-preview {
   min-height: 2.5rem;
 }
 
+/* Vote landing (`GET /vote` with no pair): judgment entry point. */
+body.view-ontology .vote-landing {
+  margin: 2rem auto;
+  max-width: 38rem;
+  padding: 0 1.25rem;
+}
+body.view-ontology .vote-landing-title {
+  color: #1a1814;
+  font-family: var(--font-prose);
+  font-size: 1.6rem;
+  font-weight: 600;
+  letter-spacing: normal;
+  margin: 0 0 0.5rem;
+  text-transform: none;
+}
+body.view-ontology .vote-landing-need {
+  color: #3d3a34;
+  margin: 0 0 1rem;
+}
+body.view-ontology ol.vote-landing-steps {
+  margin: 0 0 1.25rem;
+  padding-left: 1.4em;
+}
+body.view-ontology ol.vote-landing-steps li {
+  margin: 0.3rem 0;
+}
+
 .home-intro { margin: 1rem 0; }
 details.question-row {
   border: 1px solid #c4b89a;

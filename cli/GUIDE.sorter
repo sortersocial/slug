@@ -237,7 +237,7 @@ Add --json to scoped commands for machine-readable output (RPC-shaped JSON where
 ~/contact {
 Web: https://slug.social — thread index (what's in circulation)
 Garden: https://slug.social/~ (rankings) ; e.g. https://slug.social/~/psalms
-Vote: https://slug.social/vote?pool=~/psalms (judge a pair)
+Vote: https://slug.social/vote (deals the pair that needs you) or /vote?pool=~/psalms
 GitHub: https://github.com/sortersocial/slug
 Issues/feedback: https://github.com/sortersocial/slug/issues
 }

@@ -30,7 +30,7 @@ use super::{
         content_for_garden_view, room_not_found_page, room_scope_has_garden_content,
         user_can_view_room,
     },
-    item::{item_display_path, login_href_with_next},
+    item::{item_display_path, item_href, login_href_with_next},
 };
 
 /// Unique element ids for a compare panel. Empty suffix is the `/vote` page.
@@ -562,6 +562,63 @@ pub struct VoteCompareQuery {
     pub thread: Option<String>,
     #[serde(default)]
     pub pool: Option<String>,
+    /// Aspect sub-question to vote under (`:slug` group instead of canonical).
+    #[serde(default)]
+    pub aspect: Option<String>,
+}
+
+/// Neediest scope for the `/vote` landing: lowest voted-pair density among
+/// tilde scopes with ≥2 comparable members. Returns scope + voted + possible.
+/// Fully-judged scopes are skipped; `None` means everything is judged.
+pub(super) fn pick_neediest_scope(content: &ContentState) -> Option<(ItemId, usize, usize)> {
+    let group = &content.ranking_group;
+    // (density_num, density_den, scope): lowest density wins; ties prefer more
+    // members, then lex-smallest scope (iteration order is lex-sorted, and
+    // only strictly-better candidates replace the incumbent).
+    let mut best: Option<(usize, usize, usize, ItemId)> = None;
+    let mut scopes: Vec<&ItemId> = content
+        .members_by_scope
+        .keys()
+        .filter(|id| matches!(id.tilde_tail(), Some(t) if !t.is_empty() && !t.contains('/')))
+        .collect();
+    scopes.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+    for scope in scopes {
+        let members = comparable_items(content, content.members_of(scope));
+        if members.len() < 2 {
+            continue;
+        }
+        let possible = members.len() * (members.len() - 1) / 2;
+        let idx: Vec<usize> = members
+            .iter()
+            .filter_map(|m| group.item_to_idx.get(m).copied())
+            .collect();
+        let mut voted = 0usize;
+        for (i, &a) in idx.iter().enumerate() {
+            for &b in &idx[i + 1..] {
+                let key = if a < b { (a, b) } else { (b, a) };
+                if group.voted_pairs.contains(&key) {
+                    voted += 1;
+                }
+            }
+        }
+        if voted >= possible {
+            continue;
+        }
+        // Compare voted/possible without floats: a/b < c/d ⟺ a·d < c·b.
+        // strictly-less keeps the lex-first scope on exact ties; larger member
+        // count wins on equal density.
+        let take = match &best {
+            None => true,
+            Some((bv, bp, bn, _)) => {
+                (voted * bp).cmp(&(bv * possible)) == std::cmp::Ordering::Less
+                    || (voted * bp == bv * possible && members.len() > *bn)
+            }
+        };
+        if take {
+            best = Some((voted, possible, members.len(), (*scope).clone()));
+        }
+    }
+    best.map(|(voted, possible, _, scope)| (scope, voted, possible))
 }
 
 /// Public pairwise vote UI — `/vote?left=&right=&thread=`.
@@ -637,7 +694,7 @@ pub(super) async fn vote_compare_inner(
         }
         (None, None) => {
             let Some(pool) = pool_id.as_ref() else {
-                return (StatusCode::BAD_REQUEST, "provide left+right or pool").into_response();
+                return vote_landing(state, nav, headers, jar, uri).await;
             };
             let reduced = state.reduced.read().await;
             let content = content_for_garden_view(&reduced, &nav.scope());
@@ -669,6 +726,49 @@ pub(super) async fn vote_compare_inner(
         }
     };
 
+    let aspect_slug = q
+        .aspect
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    if let Some(slug) = &aspect_slug {
+        if !crate::dsl::is_valid_aspect_slug(slug) {
+            return (StatusCode::BAD_REQUEST, "bad aspect slug").into_response();
+        }
+    }
+
+    render_compare_page(
+        state,
+        nav,
+        headers,
+        jar,
+        uri,
+        left,
+        right,
+        pool_id,
+        aspect_slug,
+        q.thread.clone(),
+        None,
+    )
+    .await
+}
+
+/// Render one judged pair: intro header (landing only) + compare panel.
+#[allow(clippy::too_many_arguments)]
+async fn render_compare_page(
+    state: AppState,
+    nav: ThreadNav,
+    headers: HeaderMap,
+    jar: CookieJar,
+    uri: Uri,
+    left: ItemId,
+    right: ItemId,
+    pool_id: Option<ItemId>,
+    aspect_slug: Option<String>,
+    query_thread: Option<String>,
+    intro: Option<maud::Markup>,
+) -> axum::response::Response {
     let reduced = state.reduced.read().await;
     let content = content_for_garden_view(&reduced, &nav.scope());
     let viewer = optional_principal(&headers, &jar, &reduced);
@@ -683,10 +783,9 @@ pub(super) async fn vote_compare_inner(
     // Guests see the same compose UI; submitting VoteComparePost redirects to
     // `/login?next=<this pair URL>` so OAuth returns them to the shared matchup.
     let show_vote_form = can_post || !logged_in;
-    let auto_thread = q
-        .thread
-        .as_ref()
-        .map(|t| canonicalize_tag(t))
+    let auto_thread = query_thread
+        .as_deref()
+        .map(canonicalize_tag)
         .filter(|t| !t.is_empty())
         .unwrap_or_else(|| pick_autothread_for_vote_pair(content, &left, &right));
     let mut thread_tags = vote_thread_tags_for_pair(content, &left, &right);
@@ -713,7 +812,7 @@ pub(super) async fn vote_compare_inner(
     let view_class =
         "view-ontology view-ontology-light view-vote-compare view-vote-compare-fullscreen";
 
-    let body = vote_compare_panel_markup(VoteComparePanel {
+    let panel = vote_compare_panel_markup(VoteComparePanel {
         nav: &nav,
         left: &left,
         right: &right,
@@ -726,12 +825,18 @@ pub(super) async fn vote_compare_inner(
         edge_history,
         next_pair: next_pair.as_ref(),
         next_path: &next_path,
-        aspect_slug: None,
+        aspect_slug: aspect_slug.as_deref(),
         logged_in,
         show_vote_form,
         include_heading: true,
         ids: &VoteCompareDomIds::page(),
     });
+    let body = html! {
+        @if let Some(intro) = intro {
+            (intro)
+        }
+        (panel)
+    };
 
     let url_key = canonical_view_url(&uri);
     let view_count = state.views.get_views(&url_key);
@@ -743,6 +848,103 @@ pub(super) async fn vote_compare_inner(
         Some(view_count),
         theme_from_jar(&jar),
         &theme_next_from_uri(&uri),
+    );
+    Html(page.into_string()).into_response()
+}
+
+/// `GET /vote` with no pair: deal the neediest scope first — the judgment
+/// entry point. First run is three steps; every later visit is one pair.
+async fn vote_landing(
+    state: AppState,
+    nav: ThreadNav,
+    headers: HeaderMap,
+    jar: CookieJar,
+    uri: Uri,
+) -> axum::response::Response {
+    let (scope, voted, possible) = {
+        let reduced = state.reduced.read().await;
+        let content = content_for_garden_view(&reduced, &nav.scope());
+        match pick_neediest_scope(content) {
+            Some(pick) => pick,
+            None => {
+                drop(reduced);
+                return landing_empty_page(&state, &jar, &uri).await;
+            }
+        }
+    };
+    let pair = {
+        let reduced = state.reduced.read().await;
+        let content = content_for_garden_view(&reduced, &nav.scope());
+        let members = comparable_items(content, content.members_of(&scope));
+        suggest_next_pair_in_pool(&content.ranking_group, &members, None)
+    };
+    let Some((left, right)) = pair else {
+        return landing_empty_page(&state, &jar, &uri).await;
+    };
+    let intro = html! {
+        header class="vote-landing" {
+            h1 class="vote-landing-title" { "judge one pair" }
+            p class="vote-landing-need" {
+                (item_display_path(scope.as_str()))
+                " has "
+                (format!("{voted} of {possible}"))
+                " comparisons so far — your vote counts here more than anywhere else."
+            }
+            ol class="vote-landing-steps" {
+                li { "compare the two items below" }
+                li { "drag the slider, then write why (required)" }
+                li {
+                    "post — your vote ranks them in "
+                    a href=(item_href(scope.as_str(), &nav)) {
+                        (item_display_path(scope.as_str()))
+                    }
+                }
+            }
+        }
+    };
+    render_compare_page(
+        state,
+        nav,
+        headers,
+        jar,
+        uri,
+        left,
+        right,
+        Some(scope),
+        None,
+        None,
+        Some(intro),
+    )
+    .await
+}
+
+/// Nothing left to judge: every scope with two comparable members is fully compared.
+async fn landing_empty_page(
+    state: &AppState,
+    jar: &CookieJar,
+    uri: &Uri,
+) -> axum::response::Response {
+    let url_key = canonical_view_url(uri);
+    let view_count = state.views.get_views(&url_key);
+    let page = layout_full_bleed_chromeless(
+        "vote",
+        "view-ontology view-ontology-light view-vote-compare view-vote-compare-fullscreen",
+        html! {
+            header class="vote-landing" {
+                h1 class="vote-landing-title" { "judge one pair" }
+                p class="vote-landing-need" {
+                    "everything with two comparable members has been fully compared. "
+                    "Browse the "
+                    a href="/~" { "garden" }
+                    ", or start a "
+                    a href="/" { "thread" }
+                    " to open a new question."
+                }
+            }
+        },
+        Some(view_count),
+        theme_from_jar(jar),
+        &theme_next_from_uri(uri),
     );
     Html(page.into_string()).into_response()
 }

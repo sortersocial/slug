@@ -10,8 +10,8 @@ use super::{
     render::aspect_ranking_sections_markup,
     vote::{
         canonical_edge_items, edge_vote_count_for_pair, edge_vote_entries_for_pair,
-        ratios_for_compare_page, sort_votes_for_compare_display, suggest_next_vote_pair,
-        vote_compare_item_card, vote_pool_href,
+        pick_neediest_scope, ratios_for_compare_page, sort_votes_for_compare_display,
+        suggest_next_vote_pair, vote_compare_item_card, vote_pool_href,
     },
 };
 use crate::{
@@ -340,6 +340,7 @@ fn item_page_renders_aspect_section_below_canonical() {
         None,
         content,
         "/~/topic",
+        "~/topic",
     )
     .into_string();
     assert!(
@@ -841,4 +842,42 @@ fn pair_weight_label_counts_sugar_like_explicit() {
     let sugar_st = content.border_state(&han, &topic).expect("han/topic pair");
     assert!(sugar_st.sugar);
     assert_eq!(pair_weight_label(&sugar_st), "containment 1 · border 0");
+}
+
+/// The `/vote` landing deals the least-judged scope first and skips scopes
+/// whose pairs are all voted.
+#[test]
+fn pick_neediest_scope_prefers_unjudged_scope() {
+    let mut reduced = ReducerState::default();
+    apply_ingest(
+        &mut reduced,
+        1,
+        "~/done/a { alpha }\n~/done/b { beta }\n{ judged }\n~/done/a 2:1 ~/done/b\n",
+    );
+    apply_ingest(
+        &mut reduced,
+        2,
+        "~/fresh/x { ex }\n~/fresh/y { why }\n~/fresh/z { zed }\n",
+    );
+    let content = content_for_garden_view(&reduced, &ScopeId::Public);
+    let (scope, voted, possible) =
+        pick_neediest_scope(content).expect("an unjudged scope");
+    assert!(
+        scope.as_str().ends_with("fresh"),
+        "should deal ~/fresh, got {}",
+        scope.as_str()
+    );
+    assert_eq!((voted, possible), (0, 3));
+}
+
+#[test]
+fn pick_neediest_scope_returns_none_when_all_judged() {
+    let mut reduced = ReducerState::default();
+    apply_ingest(
+        &mut reduced,
+        1,
+        "~/done/a { alpha }\n~/done/b { beta }\n{ judged }\n~/done/a 2:1 ~/done/b\n",
+    );
+    let content = content_for_garden_view(&reduced, &ScopeId::Public);
+    assert!(pick_neediest_scope(content).is_none());
 }

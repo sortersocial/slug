@@ -61,6 +61,11 @@ pub async fn garden_index(
 ) -> impl IntoResponse {
     let nav = ThreadNav::public();
     let child_depth = child_depth_from_uri(&uri);
+    // NOTE: no tilde/external split here on purpose. Root membership only
+    // ever holds tilde scopes (the DSL has no spelling for a URL `<: ~`
+    // claim, and URL items are never path-sugared), so the index is already
+    // tilde-only. Import volume drowns `tree`/`leaves`/global-rank instead —
+    // server-RPC surfaces, deliberately untouched here.
     let (child_rankings, aspect_rankings) = {
         let reduced = state.reduced.read().await;
         let content = reduced.public();
@@ -103,6 +108,7 @@ pub async fn garden_index(
                 pin_ref.as_ref(),
                 scope_content,
                 &next_for_pin,
+                "~",
             ),
         )
     };

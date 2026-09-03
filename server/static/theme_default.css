@@ -2315,3 +2315,30 @@ body.view-ontology.view-ontology-light ul.ont-group-list li:target {
   outline: 2px solid var(--link);
   outline-offset: 1px;
 }
+
+/* ----------------------------------------------------------------
+   VOTE LANDING — judgment entry point (`GET /vote` with no pair).
+   One pair that needs you, plus the three-step first run.
+   ---------------------------------------------------------------- */
+.vote-landing {
+  margin: 24px auto;
+  max-width: 560px;
+  padding: 0 16px;
+}
+.vote-landing-title {
+  font-size: 22px;
+  letter-spacing: normal;
+  margin: 0 0 8px;
+  text-transform: none;
+}
+.vote-landing-need {
+  color: var(--prose);
+  margin: 0 0 12px;
+}
+ol.vote-landing-steps {
+  margin: 0 0 16px;
+  padding-left: 1.4em;
+}
+ol.vote-landing-steps li {
+  margin: 4px 0;
+}

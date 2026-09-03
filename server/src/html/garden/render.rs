@@ -88,11 +88,20 @@ pub(super) fn aspect_ranking_sections_markup(
     pin_ref: Option<&(String, ItemId)>,
     scope_content: &ContentState,
     next_for_pin: &str,
+    pool_item: &str,
 ) -> maud::Markup {
     html! {
         @for aspect in aspects {
             section class="ont-tab-panel ont-tab-panel-aspect" id=(format!("aspect-{}", aspect.slug)) {
-                h4 class="ont-aspect-heading" { ":" (aspect.slug) }
+                h4 class="ont-aspect-heading" {
+                    ":" (aspect.slug)
+                    " "
+                    a class="ont-vote-children-btn" href=(format!(
+                        "{}&aspect={}",
+                        vote_pool_href(nav, pool_item),
+                        urlencoding::encode(&aspect.slug)
+                    )) { "vote" }
+                }
                 @if let Some(prompt) = &aspect.prompt {
                     p class="muted ont-aspect-prompt" { (prompt) }
                 }
@@ -335,6 +344,7 @@ pub(super) async fn render_scope_view(
                 pin_ref.as_ref(),
                 scope_content,
                 &next_for_pin,
+                model.item.as_str(),
             ))
             @let cli = match &scope {
                 ScopeId::Public => format!("npx slugsocial public garden body {cli_path_arg}"),

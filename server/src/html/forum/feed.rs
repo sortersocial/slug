@@ -370,6 +370,11 @@ pub async fn thread_index(
                 }
             }
             p class="muted" { "dark = time-ordered · light = vote-ranked" }
+            p class="muted home-judge-cta" {
+                "new here? "
+                a href="/vote" { "judge one pair" }
+                " — rankings come from comparisons."
+            }
             div id="new-thread-ui-slot" {
                 @if user.is_some() {
                     (fragment_new_thread_slot(&nav, true, false))
