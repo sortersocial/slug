@@ -20,7 +20,7 @@ use crate::{
     },
     middleware::canonical_view_url,
     path_types::ItemId,
-    reducer::{ContentState, ScopeId},
+    reducer::{ContentState, GroupState, ScopeId},
     scope_rank::{comparable_items, suggest_next_pair_in_pool},
     state::AppState,
 };
@@ -567,58 +567,116 @@ pub struct VoteCompareQuery {
     pub aspect: Option<String>,
 }
 
-/// Neediest scope for the `/vote` landing: lowest voted-pair density among
-/// tilde scopes with ≥2 comparable members. Returns scope + voted + possible.
-/// Fully-judged scopes are skipped; `None` means everything is judged.
-pub(super) fn pick_neediest_scope(content: &ContentState) -> Option<(ItemId, usize, usize)> {
-    let group = &content.ranking_group;
-    // (density_num, density_den, scope): lowest density wins; ties prefer more
-    // members, then lex-smallest scope (iteration order is lex-sorted, and
-    // only strictly-better candidates replace the incumbent).
-    let mut best: Option<(usize, usize, usize, ItemId)> = None;
+/// Showcase question for the `/vote` landing: the most-compared open
+/// question across canonical scopes and voted aspect groups. Popularity is
+/// judged by distinct voted pairs, so winners keep winning: dealing a
+/// popular scope's stragglers grows it further. Fully-judged questions are
+/// skipped (nothing left to deal); `None` means everything is judged.
+pub(super) struct LandingQuestion {
+    pub scope: ItemId,
+    /// `None` = canonical ranking, `Some(slug)` = that aspect group.
+    pub aspect: Option<String>,
+    pub voted: usize,
+    pub possible: usize,
+    pub members: usize,
+}
+
+/// Density of voted pairs among `members` inside one vote graph.
+fn voted_density(
+    item_to_idx: &std::collections::HashMap<ItemId, usize>,
+    voted_pairs: &std::collections::HashSet<(usize, usize)>,
+    members: &[ItemId],
+) -> (usize, usize) {
+    let possible = members.len() * (members.len() - 1) / 2;
+    let idx: Vec<usize> = members
+        .iter()
+        .filter_map(|m| item_to_idx.get(m).copied())
+        .collect();
+    let mut voted = 0usize;
+    for (i, &a) in idx.iter().enumerate() {
+        for &b in &idx[i + 1..] {
+            let key = if a < b { (a, b) } else { (b, a) };
+            if voted_pairs.contains(&key) {
+                voted += 1;
+            }
+        }
+    }
+    (voted, possible)
+}
+
+pub(super) fn pick_landing_question(content: &ContentState) -> Option<LandingQuestion> {
+    // Most voted pairs wins; ties prefer more members, then canonical over an
+    // aspect, then lex order (iteration is lex-sorted and only strictly-better
+    // candidates replace the incumbent).
+    let mut best: Option<LandingQuestion> = None;
     let mut scopes: Vec<&ItemId> = content
         .members_by_scope
         .keys()
         .filter(|id| matches!(id.tilde_tail(), Some(t) if !t.is_empty() && !t.contains('/')))
         .collect();
     scopes.sort_by(|a, b| a.as_str().cmp(b.as_str()));
-    for scope in scopes {
+    // (scope, aspect-group-or-canonical, aspect-slug-or-None), canonical first
+    // per scope so ties keep the canonical question.
+    let mut candidates: Vec<(&ItemId, Option<(&GroupState, String)>)> = Vec::new();
+    for scope in &scopes {
+        candidates.push((scope, None));
+    }
+    let mut aspect_keys: Vec<&(ItemId, String)> = content.aspect_groups.keys().collect();
+    aspect_keys.sort();
+    for (scope, slug) in aspect_keys {
+        if scopes.iter().any(|s| s.as_str() == scope.as_str()) {
+            candidates.push((
+                scopes
+                    .iter()
+                    .find(|s| s.as_str() == scope.as_str())
+                    .expect("scope present"),
+                Some((
+                    content
+                        .aspect_groups
+                        .get(&(scope.clone(), slug.clone()))
+                        .expect("aspect group present"),
+                    slug.clone(),
+                )),
+            ));
+        }
+    }
+    for (scope, group_opt) in candidates {
         let members = comparable_items(content, content.members_of(scope));
         if members.len() < 2 {
             continue;
         }
-        let possible = members.len() * (members.len() - 1) / 2;
-        let idx: Vec<usize> = members
-            .iter()
-            .filter_map(|m| group.item_to_idx.get(m).copied())
-            .collect();
-        let mut voted = 0usize;
-        for (i, &a) in idx.iter().enumerate() {
-            for &b in &idx[i + 1..] {
-                let key = if a < b { (a, b) } else { (b, a) };
-                if group.voted_pairs.contains(&key) {
-                    voted += 1;
-                }
-            }
-        }
+        let (group_idx, group_pairs) = match &group_opt {
+            None => (
+                &content.ranking_group.item_to_idx,
+                &content.ranking_group.voted_pairs,
+            ),
+            Some((group, _)) => (&group.item_to_idx, &group.voted_pairs),
+        };
+        let (voted, possible) = voted_density(group_idx, group_pairs, &members);
         if voted >= possible {
             continue;
         }
-        // Compare voted/possible without floats: a/b < c/d ⟺ a·d < c·b.
-        // strictly-less keeps the lex-first scope on exact ties; larger member
-        // count wins on equal density.
+        // Highest voted-pair count first; ties prefer more members (then the
+        // lex-first candidate, since iteration is sorted and only
+        // strictly-better replaces the incumbent).
         let take = match &best {
             None => true,
-            Some((bv, bp, bn, _)) => {
-                (voted * bp).cmp(&(bv * possible)) == std::cmp::Ordering::Less
-                    || (voted * bp == bv * possible && members.len() > *bn)
+            Some(incumbent) => {
+                voted.cmp(&incumbent.voted) == std::cmp::Ordering::Greater
+                    || (voted == incumbent.voted && members.len() > incumbent.members)
             }
         };
         if take {
-            best = Some((voted, possible, members.len(), (*scope).clone()));
+            best = Some(LandingQuestion {
+                scope: (*scope).clone(),
+                aspect: group_opt.map(|(_, slug)| slug),
+                voted,
+                possible,
+                members: members.len(),
+            });
         }
     }
-    best.map(|(voted, possible, _, scope)| (scope, voted, possible))
+    best
 }
 
 /// Public pairwise vote UI — `/vote?left=&right=&thread=`.
@@ -852,8 +910,9 @@ async fn render_compare_page(
     Html(page.into_string()).into_response()
 }
 
-/// `GET /vote` with no pair: deal the neediest scope first — the judgment
-/// entry point. First run is three steps; every later visit is one pair.
+/// `GET /vote` with no pair: deal the neediest open question first — a scope
+/// or one of its aspect groups. First run is three steps; every later visit
+/// is one pair.
 async fn vote_landing(
     state: AppState,
     nav: ThreadNav,
@@ -861,41 +920,60 @@ async fn vote_landing(
     jar: CookieJar,
     uri: Uri,
 ) -> axum::response::Response {
-    let (scope, voted, possible) = {
+    let needy = {
         let reduced = state.reduced.read().await;
         let content = content_for_garden_view(&reduced, &nav.scope());
-        match pick_neediest_scope(content) {
-            Some(pick) => pick,
-            None => {
-                drop(reduced);
-                return landing_empty_page(&state, &jar, &uri).await;
-            }
-        }
+        pick_landing_question(content).map(|n| (n.scope, n.aspect, n.voted, n.possible))
+    };
+    let Some((scope, aspect, voted, possible)) = needy else {
+        return landing_empty_page(&state, &jar, &uri).await;
     };
     let pair = {
         let reduced = state.reduced.read().await;
         let content = content_for_garden_view(&reduced, &nav.scope());
         let members = comparable_items(content, content.members_of(&scope));
-        suggest_next_pair_in_pool(&content.ranking_group, &members, None)
+        // Aspect groups share the scope electorate; canonical and aspect votes
+        // live in separate graphs, so deal from the group being judged.
+        let group = match &aspect {
+            None => &content.ranking_group,
+            Some(slug) => match content.aspect_group(&scope, slug) {
+                Some(group) => group,
+                None => {
+                    drop(reduced);
+                    return landing_empty_page(&state, &jar, &uri).await;
+                }
+            },
+        };
+        suggest_next_pair_in_pool(group, &members, None)
     };
     let Some((left, right)) = pair else {
         return landing_empty_page(&state, &jar, &uri).await;
+    };
+    let scope_href = match &aspect {
+        None => item_href(scope.as_str(), &nav),
+        Some(slug) => format!("{}#aspect-{slug}", item_href(scope.as_str(), &nav)),
     };
     let intro = html! {
         header class="vote-landing" {
             h1 class="vote-landing-title" { "judge one pair" }
             p class="vote-landing-need" {
+                @if let Some(slug) = &aspect {
+                    ":" (slug) " in "
+                }
                 (item_display_path(scope.as_str()))
-                " has "
+                " — "
                 (format!("{voted} of {possible}"))
-                " comparisons so far — your vote counts here more than anywhere else."
+                " pairs judged, the garden's most compared open question."
             }
             ol class="vote-landing-steps" {
                 li { "compare the two items below" }
                 li { "drag the slider, then write why (required)" }
                 li {
                     "post — your vote ranks them in "
-                    a href=(item_href(scope.as_str(), &nav)) {
+                    a href=(scope_href) {
+                        @if let Some(slug) = &aspect {
+                            ":" (slug) " in "
+                        }
                         (item_display_path(scope.as_str()))
                     }
                 }
@@ -911,7 +989,7 @@ async fn vote_landing(
         left,
         right,
         Some(scope),
-        None,
+        aspect,
         None,
         Some(intro),
     )

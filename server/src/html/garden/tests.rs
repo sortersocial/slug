@@ -10,7 +10,7 @@ use super::{
     render::aspect_ranking_sections_markup,
     vote::{
         canonical_edge_items, edge_vote_count_for_pair, edge_vote_entries_for_pair,
-        pick_neediest_scope, ratios_for_compare_page, sort_votes_for_compare_display,
+        pick_landing_question, ratios_for_compare_page, sort_votes_for_compare_display,
         suggest_next_vote_pair, vote_compare_item_card, vote_pool_href,
     },
 };
@@ -844,10 +844,10 @@ fn pair_weight_label_counts_sugar_like_explicit() {
     assert_eq!(pair_weight_label(&sugar_st), "containment 1 · border 0");
 }
 
-/// The `/vote` landing deals the least-judged scope first and skips scopes
-/// whose pairs are all voted.
+/// The `/vote` landing deals the most-compared open question first and skips
+/// scopes whose pairs are all voted.
 #[test]
-fn pick_neediest_scope_prefers_unjudged_scope() {
+fn pick_landing_question_serves_lone_open_scope() {
     let mut reduced = ReducerState::default();
     apply_ingest(
         &mut reduced,
@@ -860,18 +860,43 @@ fn pick_neediest_scope_prefers_unjudged_scope() {
         "~/fresh/x { ex }\n~/fresh/y { why }\n~/fresh/z { zed }\n",
     );
     let content = content_for_garden_view(&reduced, &ScopeId::Public);
-    let (scope, voted, possible) =
-        pick_neediest_scope(content).expect("an unjudged scope");
+    let needy = pick_landing_question(content).expect("an unjudged scope");
     assert!(
-        scope.as_str().ends_with("fresh"),
+        needy.scope.as_str().ends_with("fresh"),
         "should deal ~/fresh, got {}",
-        scope.as_str()
+        needy.scope.as_str()
     );
-    assert_eq!((voted, possible), (0, 3));
+    assert_eq!(needy.aspect, None);
+    assert_eq!((needy.voted, needy.possible), (0, 3));
+}
+
+/// An aspect group hungrier than its canonical table wins the deal.
+#[test]
+fn pick_landing_question_prefers_hungrier_aspect_group() {
+    let mut reduced = ReducerState::default();
+    apply_ingest(
+        &mut reduced,
+        1,
+        "~/tri/a { alpha }\n~/tri/b { beta }\n~/tri/c { gamma }\n\
+         { ab }\n~/tri/a 2:1 ~/tri/b\n\
+         { ac }\n~/tri/a 2:1 ~/tri/c\n\
+         { bc }\n~/tri/b 2:1 ~/tri/c\n\
+         :beauty {more beautiful}\n\
+         { pretty }\n~/tri/a 2:1 ~/tri/b\n",
+    );
+    let content = content_for_garden_view(&reduced, &ScopeId::Public);
+    let needy = pick_landing_question(content).expect("the aspect question");
+    assert!(
+        needy.scope.as_str().ends_with("tri"),
+        "should deal ~/tri, got {}",
+        needy.scope.as_str()
+    );
+    assert_eq!(needy.aspect.as_deref(), Some("beauty"));
+    assert_eq!((needy.voted, needy.possible), (1, 3));
 }
 
 #[test]
-fn pick_neediest_scope_returns_none_when_all_judged() {
+fn pick_landing_question_returns_none_when_all_judged() {
     let mut reduced = ReducerState::default();
     apply_ingest(
         &mut reduced,
@@ -879,5 +904,31 @@ fn pick_neediest_scope_returns_none_when_all_judged() {
         "~/done/a { alpha }\n~/done/b { beta }\n{ judged }\n~/done/a 2:1 ~/done/b\n",
     );
     let content = content_for_garden_view(&reduced, &ScopeId::Public);
-    assert!(pick_neediest_scope(content).is_none());
+    assert!(pick_landing_question(content).is_none());
+}
+
+/// Popularity beats neediness: a busy scope with stragglers outranks a fresh
+/// scope nobody has touched. Winners keep winning.
+#[test]
+fn pick_landing_question_prefers_most_compared_scope() {
+    let mut reduced = ReducerState::default();
+    apply_ingest(
+        &mut reduced,
+        1,
+        "~/big/a { a }\n~/big/b { b }\n~/big/c { c }\n~/big/d { d }\n\
+         { ab }\n~/big/a 2:1 ~/big/b\n\
+         { ac }\n~/big/a 2:1 ~/big/c\n\
+         { ad }\n~/big/a 2:1 ~/big/d\n\
+         { bc }\n~/big/b 2:1 ~/big/c\n\
+         { bd }\n~/big/b 2:1 ~/big/d\n",
+    );
+    apply_ingest(&mut reduced, 2, "~/small/x { ex }\n~/small/y { why }\n");
+    let content = content_for_garden_view(&reduced, &ScopeId::Public);
+    let deal = pick_landing_question(content).expect("an open question");
+    assert!(
+        deal.scope.as_str().ends_with("big"),
+        "should deal popular ~/big, got {}",
+        deal.scope.as_str()
+    );
+    assert_eq!((deal.voted, deal.possible), (5, 6));
 }
