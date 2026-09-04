@@ -342,13 +342,15 @@ enum GardenCmd {
         json: bool,
     },
 
-    /// Global ranking — all items across every scope, grouped by disconnected component.
+    /// Global ranking — tilde ontology across every scope, grouped by disconnected component.
     ///
     /// Components are largest-first; scores and percentages are comparable only within a component.
+    /// External imports are excluded unless `--all` is given.
     ///
     /// Examples:
     ///   slugsocial public garden rank
     ///   slugsocial public garden rank --limit 20 --offset 40 --percent
+    ///   slugsocial public garden rank --all
     Rank {
         /// Max items to return (default: 50, max: 500)
         #[arg(long, default_value = "50")]
@@ -359,6 +361,9 @@ enum GardenCmd {
         /// Show normalized score within each component (top item = 100%, unranked = 0%)
         #[arg(long)]
         percent: bool,
+        /// Include external imports alongside the tilde ontology
+        #[arg(long)]
+        all: bool,
         /// Rank the ontology-root electorate under this aspect (GetGardenRank).
         #[arg(long, value_name = "SLUG")]
         aspect: Option<String>,
@@ -556,7 +561,7 @@ fn print_rank_history_response(resp: &slug_types::RankHistoryResponse) {
     println!();
 }
 
-fn print_global_rank_response(resp: &GlobalRankResponse) {
+fn print_global_rank_response(resp: &GlobalRankResponse, include_all: bool) {
     let show_percent = resp
         .components
         .iter()
@@ -569,7 +574,12 @@ fn print_global_rank_response(resp: &GlobalRankResponse) {
         .sum();
     let shown_total = shown_ranked + resp.unranked_items.len();
     println!(
-        "global rank  (showing {}-{} of {} ranked + {} unranked)",
+        "global rank ({})  (showing {}-{} of {} ranked + {} unranked)",
+        if include_all {
+            "all items"
+        } else {
+            "tilde ontology"
+        },
         resp.offset + 1,
         resp.offset + shown_total,
         resp.ranked_total,
@@ -1207,6 +1217,7 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
                 percent,
                 json,
                 aspect,
+                all,
             } => {
                 if let Some(aspect) = aspect {
                     let batch = send_rpc(
@@ -1244,6 +1255,7 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
                             limit: Some(limit),
                             offset: Some(offset),
                             percent: Some(percent),
+                            all: all.then_some(true),
                         }],
                     )
                     .await?;
@@ -1252,7 +1264,7 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
                             if json {
                                 println!("{}", serde_json::to_string_pretty(&resp)?);
                             } else {
-                                print_global_rank_response(resp);
+                                print_global_rank_response(resp, all);
                             }
                         }
                         _ => return Err(anyhow!("unexpected RPC result")),

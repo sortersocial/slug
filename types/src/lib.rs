@@ -42,7 +42,9 @@ pub struct RankRow {
     pub percent: Option<f64>,
 }
 
-/// Paginated global ranking across all items, grouped by disconnected component.
+/// Paginated global ranking, grouped by disconnected component. Scoped to the
+/// tilde ontology unless the request sets `all` (which pulls in external
+/// imports too — thousands of resolver items that otherwise drown the garden).
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GlobalRankResponse {
     /// Total ranked items (have at least one vote connecting them to another item).
@@ -468,6 +470,9 @@ pub enum RpcCommand {
         offset: Option<usize>,
         #[serde(default)]
         percent: Option<bool>,
+        /// Include external imports alongside the tilde ontology (default: tilde only).
+        #[serde(default)]
+        all: Option<bool>,
     },
     GetPair {
         room: String,

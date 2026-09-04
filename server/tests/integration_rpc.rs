@@ -273,6 +273,74 @@ async fn test_rank_endpoint() {
 }
 
 #[tokio::test]
+async fn test_global_rank_defaults_to_tilde_ontology() {
+    let (addr, _tmp, _log, _handle) = create_test_server().await;
+    let client = reqwest::Client::new();
+    let seed = serde_json::json!([{
+        "Post": {
+            "room": "public",
+            "thread_tag": "ns",
+            "delegate": "00000000-0000-0000-0000-000000000000:test:local/test",
+            "text": "~/nslang {scoped}\n~/nslang2 {scoped too}\n{because}\n~/nslang 2:1 ~/nslang2\n\
+                     https://example.com/a { imported a }\nhttps://example.com/b { imported b }\n\
+                     { why }\nhttps://example.com/a 2:1 https://example.com/b\n",
+            "return_rank_diff": false
+        }
+    }]);
+    let seeded = rpc_batch(&client, addr, Some(&test_bearer()), seed).await;
+    assert_eq!(seeded["results"][0]["ok"], true);
+
+    let flat_items = |body: &serde_json::Value| -> Vec<String> {
+        let global = &body["results"][0]["result"]["GlobalRank"];
+        let mut items: Vec<String> = global["components"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|c| c["ranking"].as_array().unwrap().iter())
+            .map(|r| r["item"].as_str().unwrap().to_string())
+            .collect();
+        items.extend(
+            global["unranked_items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|i| i.as_str().unwrap().to_string()),
+        );
+        items
+    };
+
+    let default_body = rpc_batch(
+        &client,
+        addr,
+        None,
+        serde_json::json!([{ "GetGlobalRank": { "room": "public" } }]),
+    )
+    .await;
+    let default_items = flat_items(&default_body);
+    assert!(
+        default_items.iter().any(|i| i.ends_with("/~/nslang")),
+        "tilde items present by default: {default_items:?}"
+    );
+    assert!(
+        default_items.iter().all(|i| !i.contains("example.com")),
+        "external imports excluded by default: {default_items:?}"
+    );
+
+    let all_body = rpc_batch(
+        &client,
+        addr,
+        None,
+        serde_json::json!([{ "GetGlobalRank": { "room": "public", "all": true } }]),
+    )
+    .await;
+    let all_items = flat_items(&all_body);
+    assert!(
+        all_items.iter().any(|i| i.contains("example.com")),
+        "external imports included with all=true: {all_items:?}"
+    );
+}
+
+#[tokio::test]
 async fn test_check_endpoint_does_not_commit() {
     let (addr, tmp, _log, _handle) = create_test_server().await;
     let client = reqwest::Client::new();

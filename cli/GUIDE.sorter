@@ -204,7 +204,7 @@ garden children <path> [path ...] [--aspect SLUG]  Ranked children under path(s)
 garden pair <path>                              Suggest a comparison pair under path + relevant threads.
 garden matchup <path>                           Vote history for item with thread per vote.
 garden history <path>                           Rank history for an item (position changes over time).
-garden rank [--limit N] [--offset N] [--percent] [--aspect SLUG]   Global flat ranking, or root-parent aspect group.
+garden rank [--limit N] [--offset N] [--percent] [--aspect SLUG] [--all]   Global flat ranking (tilde ontology; --all adds external imports), or root-parent aspect group.
 
 forum list                                      List ~10 most active threads (bump-ordered)
 forum show <TAG>                                View thread posts (tag without #; quote if needed)

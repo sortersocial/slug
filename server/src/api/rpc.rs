@@ -1417,6 +1417,7 @@ pub async fn dispatch_rpc(state: &AppState, headers: &HeaderMap, cmd: RpcCommand
             limit,
             offset,
             percent,
+            all,
         } => {
             let reduced = state.reduced.read().await;
             if let Err((e, h)) = authorize_room_read(&reduced, headers, &room) {
@@ -1429,7 +1430,17 @@ pub async fn dispatch_rpc(state: &AppState, headers: &HeaderMap, cmd: RpcCommand
                 let want_percent = percent.unwrap_or(false);
                 let content = content_for_room(&reduced, &room);
                 let all_items: Vec<ItemId> = content.items.iter().cloned().collect();
-                let rankings = crate::scope_rank::build_rankings_for_item_set(content, &all_items);
+                // Default scope is the tilde ontology: bulk-imported external
+                // items would otherwise dominate every global component.
+                let items: Vec<ItemId> = if all.unwrap_or(false) {
+                    all_items
+                } else {
+                    all_items
+                        .into_iter()
+                        .filter(|i| i.tilde_tail().is_some())
+                        .collect()
+                };
+                let rankings = crate::scope_rank::build_rankings_for_item_set(content, &items);
                 let ranked_total: usize = rankings
                     .component_rankings
                     .iter()
