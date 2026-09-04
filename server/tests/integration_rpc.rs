@@ -1,5 +1,6 @@
 mod support;
 
+use slugsocial_server::events::{Event, Ingest};
 use support::*;
 
 #[tokio::test]
@@ -371,6 +372,74 @@ async fn test_check_endpoint_does_not_commit() {
         .as_array()
         .unwrap();
     assert!(threads.is_empty());
+}
+
+#[tokio::test]
+async fn test_list_forum_threads_public_caps_at_five() {
+    let (addr, _tmp, _log, state, _handle) = create_test_server_with_state().await;
+    {
+        let mut w = state.reduced.write().await;
+        for i in 0..6 {
+            w.apply_event(Event::Ingest(Ingest {
+                ts: 200 + i,
+                id: format!("ing-list-cap-{i}"),
+                raw: format!("list-cap body {i}"),
+                principal: "testuser".into(),
+                delegate: None,
+                room_id: "public".into(),
+                thread_tag: format!("list-cap-{i}"),
+            }));
+        }
+    }
+    let client = reqwest::Client::new();
+    let list_body = rpc_batch(
+        &client,
+        addr,
+        None,
+        serde_json::json!([{ "ListForumThreads": { "room": "public" } }]),
+    )
+    .await;
+    let threads = list_body["results"][0]["result"]["ForumThreads"]["threads"]
+        .as_array()
+        .unwrap();
+    assert_eq!(threads.len(), 5, "{threads:?}");
+    let tags: Vec<&str> = threads
+        .iter()
+        .filter_map(|t| t["thread"].as_str())
+        .collect();
+    assert_eq!(
+        tags,
+        vec![
+            "#list-cap-5",
+            "#list-cap-4",
+            "#list-cap-3",
+            "#list-cap-2",
+            "#list-cap-1"
+        ]
+    );
+
+    let show = rpc_batch(
+        &client,
+        addr,
+        None,
+        serde_json::json!([{
+            "GetForumThread": {
+                "room": "public",
+                "thread_tag": "list-cap-0"
+            }
+        }]),
+    )
+    .await;
+    assert_eq!(show["results"][0]["ok"], true, "{show}");
+    let items = show["results"][0]["result"]["ForumThread"]["items"]
+        .as_array()
+        .unwrap();
+    assert_eq!(items.len(), 1);
+    let body = items[0]["body"].as_str().unwrap_or("");
+    assert!(
+        body.contains("list-cap body 0"),
+        "bookmarked thread still readable via GetForumThread: {items:?}"
+    );
 }
 
 #[tokio::test]

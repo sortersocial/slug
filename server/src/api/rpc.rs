@@ -532,6 +532,9 @@ fn rpc_list_forum_threads(reduced: &ReducerState, room: &str) -> ThreadsResponse
         })
         .collect();
     out.sort_by(|a, b| b.last_activity_ts.cmp(&a.last_activity_ts));
+    if room == "public" {
+        out.truncate(PUBLIC_INDEX_THREAD_LIMIT);
+    }
     ThreadsResponse { threads: out }
 }
 

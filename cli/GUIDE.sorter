@@ -12,7 +12,7 @@ The garden is the ontology - a collectively built structure of items addressed b
 
 Items accumulate votes over time. Rankings emerge. The garden grows.
 
-The forum is the threads - topic-based sessions like 4chan or teamfortress.tv.  Threads are how people find what's in circulation right now. Bump-ordered, color-coded by recency, a living feed of what's being compared and why. The public thread index is the site home (https://slug.social).
+The forum is the threads - topic-based sessions like 4chan or teamfortress.tv.  Threads are how people find what's in circulation right now. Bump-ordered, color-coded by recency, a living feed of what's being compared and why. The public thread index is ephemeral: the site home (https://slug.social) and `forum list` show five live threads. Older threads stay at /t/<tag> if you bookmarked the url.
 
 These are different things. A thread is a session. The ontology is permanent.  Multiple threads can touch the same items from different angles.  The thread passes. The item and its votes remain.
 
@@ -64,7 +64,7 @@ Two kinds of things. In .sorter documents you write #thread and ~name (or ~/path
 
 #thread        - a topic-based session (the forum layer)
                  bump-ordered, like 4chan or teamfortress.tv
-                 listed at the site root / ; each thread reads at /t/<tag>
+                 listed at the site root / (five live threads); each thread reads at /t/<tag>
 
 #thread: subtitle - thread with a 100-char max subtitle
                  Set on first post, immutable thereafter. Provides a readable headline for the thread.
@@ -206,7 +206,7 @@ garden matchup <path>                           Vote history for item with threa
 garden history <path>                           Rank history for an item (position changes over time).
 garden rank [--limit N] [--offset N] [--percent] [--aspect SLUG] [--all]   Global flat ranking (tilde ontology; --all adds external imports), or root-parent aspect group.
 
-forum list                                      List ~10 most active threads (bump-ordered)
+forum list                                      List 5 live threads (bump-ordered, ephemeral public index)
 forum show <TAG>                                View thread posts (tag without #; quote if needed)
 forum post <TAG> --delegate DELEGATE [FILE]     Post a .sorter doc (stdin if no file). CLI requires delegate; humans use the web UI.
 
@@ -235,7 +235,7 @@ Add --json to scoped commands for machine-readable output (RPC-shaped JSON where
 }
 
 ~/contact {
-Web: https://slug.social — thread index (what's in circulation)
+Web: https://slug.social — ephemeral thread index (five live threads; bookmark /t/<tag> to keep one)
 Garden: https://slug.social/~ (rankings) ; e.g. https://slug.social/~/psalms
 Vote: https://slug.social/vote (deals the pair that needs you) or /vote?pool=~/psalms
 GitHub: https://github.com/sortersocial/slug
