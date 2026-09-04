@@ -22,6 +22,7 @@ use crate::html::{
     bc_threads, cli_panel, layout_with_post_stats, now_ms, recency_class, recency_color_style,
     theme_from_jar, theme_next_from_uri,
 };
+use slug_types::PUBLIC_INDEX_THREAD_LIMIT;
 
 #[derive(Clone)]
 pub(super) struct ThreadRow {
@@ -64,6 +65,23 @@ pub(super) fn collect_thread_rows_for_scope(
             }
         })
         .collect()
+}
+
+/// Sort bump-newest first and keep only the public board (5 threads).
+pub(super) fn take_public_index(rows: &mut Vec<ThreadRow>) {
+    rows.sort_by(|a, b| b.last_ts.cmp(&a.last_ts));
+    rows.truncate(PUBLIC_INDEX_THREAD_LIMIT);
+}
+
+pub(super) fn public_index_rows(reduced: &ReducerState, now: i64) -> Vec<ThreadRow> {
+    let mut rows = collect_thread_rows_for_scope(reduced, &ScopeId::Public, now);
+    take_public_index(&mut rows);
+    rows
+}
+
+/// Whether this public tag is currently on the ephemeral frontpage.
+pub(super) fn is_on_public_index(reduced: &ReducerState, tag: &str, now: i64) -> bool {
+    public_index_rows(reduced, now).iter().any(|r| r.tag == tag)
 }
 
 /// Rooms the user can access, newest activity first (tie-break: room id).
@@ -133,11 +151,10 @@ pub(super) fn render_thread_feed(
 pub async fn thread_feed_html(state: &AppState) -> Markup {
     let now = now_ms();
     let nav = ThreadNav::public();
-    let mut rows = {
+    let rows = {
         let reduced = state.reduced.read().await;
-        collect_thread_rows_for_scope(&reduced, &ScopeId::Public, now)
+        public_index_rows(&reduced, now)
     };
-    rows.sort_by(|a, b| b.last_ts.cmp(&a.last_ts));
     render_thread_feed(Some(&nav), "thread-feed", &rows, now)
 }
 
@@ -326,10 +343,9 @@ pub async fn thread_index(
         .as_ref()
         .map(|u| rooms_for_user(&reduced, u))
         .unwrap_or_default();
-    let mut public_rows = collect_thread_rows_for_scope(&reduced, &ScopeId::Public, now);
+    let public_rows = public_index_rows(&reduced, now);
     let post_stats = reduced.public_post_stats();
     drop(reduced);
-    public_rows.sort_by(|a, b| b.last_ts.cmp(&a.last_ts));
 
     let nav = ThreadNav::public();
     let reduced_read = state.reduced.read().await;
@@ -374,6 +390,11 @@ pub async fn thread_index(
                 "new here? "
                 a href="/vote" { "judge one pair" }
                 " — rankings come from comparisons."
+            }
+            p class="muted home-index-hint" {
+                "the index is ephemeral — five live threads. bookmark a "
+                code { "/t/…" }
+                " url to keep one."
             }
             div id="new-thread-ui-slot" {
                 @if user.is_some() {

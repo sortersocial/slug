@@ -18,7 +18,7 @@ use crate::state::AppState;
 use super::access::user_can_manage_room;
 use super::access::user_can_post_room;
 use super::access::user_can_view_room;
-use super::feed::{collect_thread_rows_for_scope, render_thread_feed};
+use super::feed::{collect_thread_rows_for_scope, is_on_public_index, render_thread_feed};
 use super::graduate::{thread_graduate_button_markup, thread_graduated_banner_markup};
 use super::ingest::ingest_entry_markup;
 use super::nav::ThreadNav;
@@ -131,6 +131,8 @@ async fn thread_view_inner(
         };
     let strip = auth_strip(&headers, &jar, &reduced);
     let now = now_ms();
+    let off_index =
+        matches!(sc, ScopeId::Public) && total > 0 && !is_on_public_index(&reduced, &tag, now);
     let entry_rows: Vec<Markup> = display_ingests
         .iter()
         .enumerate()
@@ -176,6 +178,11 @@ async fn thread_view_inner(
             }
         }
         p class="muted" { "top=oldest · bottom=newest" }
+        @if off_index {
+            p class="muted home-index-hint" {
+                "off the index — bookmark this url to keep it"
+            }
+        }
         div id="thread-feed-region" {
             @if display_ingests.is_empty() {
                 p class="muted" { "no activity yet" }

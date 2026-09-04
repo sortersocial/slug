@@ -29,7 +29,7 @@ struct Cli {
 /// Subcommands under `public forum` / `private <room> forum`.
 #[derive(Subcommand, Debug)]
 enum ForumCmd {
-    /// List the ~10 most recently active forum threads (bump-ordered)
+    /// List recently active threads (public: 5, ephemeral; private rooms: full list)
     List {
         /// Output as JSON for agent parsing
         #[arg(long)]
@@ -1286,9 +1286,16 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
                     .await?;
                     match rpc_line_ok_scoped_read(&batch.results[0], room)? {
                         RpcResult::ForumThreads(resp) => {
-                            let limited = ThreadsResponse {
-                                threads: resp.threads.iter().take(10).cloned().collect(),
+                            let threads = if room == "public" {
+                                resp.threads
+                                    .iter()
+                                    .take(PUBLIC_INDEX_THREAD_LIMIT)
+                                    .cloned()
+                                    .collect()
+                            } else {
+                                resp.threads.clone()
                             };
+                            let limited = ThreadsResponse { threads };
                             if json {
                                 println!("{}", serde_json::to_string_pretty(&limited)?);
                             } else {
