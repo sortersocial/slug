@@ -1286,18 +1286,16 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
                     .await?;
                     match rpc_line_ok_scoped_read(&batch.results[0], room)? {
                         RpcResult::ForumThreads(resp) => {
-                            let limited = if room == "public" {
-                                ThreadsResponse {
-                                    threads: resp
-                                        .threads
-                                        .iter()
-                                        .take(PUBLIC_INDEX_THREAD_LIMIT)
-                                        .cloned()
-                                        .collect(),
-                                }
+                            let threads = if room == "public" {
+                                resp.threads
+                                    .iter()
+                                    .take(PUBLIC_INDEX_THREAD_LIMIT)
+                                    .cloned()
+                                    .collect()
                             } else {
-                                resp
+                                resp.threads.clone()
                             };
+                            let limited = ThreadsResponse { threads };
                             if json {
                                 println!("{}", serde_json::to_string_pretty(&limited)?);
                             } else {
