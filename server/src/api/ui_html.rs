@@ -15,7 +15,10 @@ use crate::{
     api::{
         auth::{resolve_web_session, WebSession},
         handle_rpc_batch,
-        rpc::{rpc_post_redact, rpc_post_with_bearer, rpc_room_delete, rpc_thread_graduate},
+        rpc::{
+            rpc_post_redact, rpc_post_with_bearer, rpc_room_delete, rpc_thread_graduate,
+            rpc_vote_skip_with_bearer,
+        },
     },
     canonical_path::{canonicalize_tag, validate_thread_tag},
     html::vote_compare_post_success_js,
@@ -25,7 +28,7 @@ use crate::{
         thread_feed_html, thread_feed_html_for_room, thread_latest_page_region,
         thread_ui_collapse_redacted_post, thread_ui_copy_thread, thread_ui_expand_post_full,
         thread_ui_expand_redacted_post, ui_js_warn, user_can_post_room, user_can_view_room,
-        HtmlUiAction, JsBuilder, ThreadNav,
+        vote_compare_skip_redirect, vote_skipped_region_markup, HtmlUiAction, JsBuilder, ThreadNav,
     },
     reducer::{scope_from_room_wire, ScopeId},
     resolvers::resolve_external_children,
@@ -330,15 +333,11 @@ async fn dispatch_ui_action(
             )
             .await
             {
-                Ok(RpcResult::PostOk {
-                    post_id,
-                    post_index,
-                    ..
-                }) => {
-                    let Some(pid) = post_id else {
+                Ok(RpcResult::PostOk { post_id, .. }) => {
+                    if post_id.is_none() {
                         let loc = sanitize_vote_compare_next(&next);
                         return js_redirect(&loc).into_response();
-                    };
+                    }
                     let nav = if room == "public" {
                         ThreadNav::public()
                     } else {
@@ -355,13 +354,11 @@ async fn dispatch_ui_action(
                     let js = vote_compare_post_success_js(
                         state,
                         &nav,
-                        &room,
-                        &thread_tag,
+                        &session.username,
                         &left_id,
                         &right_id,
                         pool_id.as_ref(),
-                        pid.as_str(),
-                        post_index,
+                        aspect,
                         &next,
                         dom_suffix.as_deref(),
                     )
@@ -376,6 +373,204 @@ async fn dispatch_ui_action(
                     err_tgt.as_ref(),
                     "unexpected response",
                     "Post did not return PostOk.",
+                )
+                .into_response(),
+                Err((msg, hint)) => {
+                    form_js_error(err_tgt.as_ref(), &msg, hint.as_deref().unwrap_or(""))
+                        .into_response()
+                }
+            }
+        }
+        HtmlUiAction::VoteCompareSkip {
+            room,
+            left_item,
+            right_item,
+            pool,
+            aspect,
+            dom_suffix,
+            form_action,
+        } => {
+            if form_action != "/ui" {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    "invalid vote_compare_skip form_action",
+                )
+                    .into_response();
+            }
+            let Some(session) = session else {
+                return js_redirect(&login_redirect_for("/vote")).into_response();
+            };
+            let err_tgt = Some(match dom_suffix.as_deref().filter(|s| !s.is_empty()) {
+                Some(s) => format!("vote-compare-errors-{s}"),
+                None => "vote-compare-errors".to_string(),
+            });
+            let room = room.trim().to_string();
+            let left_id = match crate::path_types::ItemId::parse(left_item.trim()) {
+                Some(i) => i.normalized_storage().ontology_leaf(),
+                None => {
+                    return form_js_error(err_tgt.as_ref(), "bad item", "Invalid left item path.")
+                        .into_response();
+                }
+            };
+            let right_id = match crate::path_types::ItemId::parse(right_item.trim()) {
+                Some(i) => i.normalized_storage().ontology_leaf(),
+                None => {
+                    return form_js_error(err_tgt.as_ref(), "bad item", "Invalid right item path.")
+                        .into_response();
+                }
+            };
+            if left_id == right_id {
+                return form_js_error(err_tgt.as_ref(), "bad pair", "Items must differ.")
+                    .into_response();
+            }
+            let pool_id = pool.as_deref().and_then(|p| {
+                crate::path_types::ItemId::parse(p.trim())
+                    .map(|i| i.normalized_storage().ontology_leaf())
+            });
+            let aspect = aspect
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string);
+            if let Some(slug) = &aspect {
+                if !crate::dsl::is_valid_aspect_slug(slug) {
+                    return form_js_error(
+                        err_tgt.as_ref(),
+                        "invalid aspect",
+                        "Aspect slugs are [a-z0-9_-]{1,64}.",
+                    )
+                    .into_response();
+                }
+            }
+            match rpc_vote_skip_with_bearer(
+                state,
+                &session.bearer,
+                room.clone(),
+                left_id.as_str().to_string(),
+                right_id.as_str().to_string(),
+                aspect.clone(),
+                pool_id.as_ref().map(|p| p.as_str().to_string()),
+                true,
+            )
+            .await
+            {
+                Ok(RpcResult::VoteSkipOk { .. }) => {
+                    let nav = if room == "public" {
+                        ThreadNav::public()
+                    } else {
+                        let Some(n) = ThreadNav::from_room_id(&room) else {
+                            return form_js_error(
+                                err_tgt.as_ref(),
+                                "bad room",
+                                "Unknown room for vote skip.",
+                            )
+                            .into_response();
+                        };
+                        n
+                    };
+                    let loc = vote_compare_skip_redirect(
+                        state,
+                        &nav,
+                        &session.username,
+                        &left_id,
+                        &right_id,
+                        pool_id.as_ref(),
+                        aspect.as_deref(),
+                    )
+                    .await;
+                    js_redirect(&loc).into_response()
+                }
+                Ok(_) => form_js_error(
+                    err_tgt.as_ref(),
+                    "unexpected response",
+                    "Skip did not return VoteSkipOk.",
+                )
+                .into_response(),
+                Err((msg, hint)) => {
+                    form_js_error(err_tgt.as_ref(), &msg, hint.as_deref().unwrap_or(""))
+                        .into_response()
+                }
+            }
+        }
+        HtmlUiAction::VoteCompareUnskip {
+            room,
+            left_item,
+            right_item,
+            aspect,
+            form_action,
+        } => {
+            if form_action != "/ui" {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    "invalid vote_compare_unskip form_action",
+                )
+                    .into_response();
+            }
+            let Some(session) = session else {
+                return js_redirect(&login_redirect_for("/vote/skipped")).into_response();
+            };
+            let err_tgt = Some("vote-skipped-region".to_string());
+            let room = room.trim().to_string();
+            let left_id = match crate::path_types::ItemId::parse(left_item.trim()) {
+                Some(i) => i.normalized_storage().ontology_leaf(),
+                None => {
+                    return form_js_error(err_tgt.as_ref(), "bad item", "Invalid left item path.")
+                        .into_response();
+                }
+            };
+            let right_id = match crate::path_types::ItemId::parse(right_item.trim()) {
+                Some(i) => i.normalized_storage().ontology_leaf(),
+                None => {
+                    return form_js_error(err_tgt.as_ref(), "bad item", "Invalid right item path.")
+                        .into_response();
+                }
+            };
+            let aspect = aspect
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string);
+            match rpc_vote_skip_with_bearer(
+                state,
+                &session.bearer,
+                room.clone(),
+                left_id.as_str().to_string(),
+                right_id.as_str().to_string(),
+                aspect,
+                None,
+                false,
+            )
+            .await
+            {
+                Ok(RpcResult::VoteSkipOk { .. }) => {
+                    let nav = if room == "public" {
+                        ThreadNav::public()
+                    } else {
+                        match ThreadNav::from_room_id(&room) {
+                            Some(n) => n,
+                            None => {
+                                return form_js_error(
+                                    err_tgt.as_ref(),
+                                    "bad room",
+                                    "Unknown room.",
+                                )
+                                .into_response();
+                            }
+                        }
+                    };
+                    let reduced = state.reduced.read().await;
+                    let entries = reduced.skipped_entries(&session.username, &nav.scope());
+                    drop(reduced);
+                    let markup =
+                        vote_skipped_region_markup(&nav, &entries, crate::api::helpers::now_ms());
+                    JsBuilder::new()
+                        .morph_selector("#vote-skipped-region", markup)
+                        .into_response()
+                }
+                Ok(_) => form_js_error(
+                    err_tgt.as_ref(),
+                    "unexpected response",
+                    "Unskip did not return VoteSkipOk.",
                 )
                 .into_response(),
                 Err((msg, hint)) => {
