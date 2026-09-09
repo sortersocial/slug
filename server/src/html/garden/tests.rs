@@ -117,7 +117,8 @@ fn suggest_next_vote_pair_prefers_unvoted_sibling_pair() {
     let content = content_for_garden_view(&reduced, &ScopeId::Public);
     let a = ItemId::parse("~/topic/a").unwrap().ontology_leaf();
     let b = ItemId::parse("~/topic/b").unwrap().ontology_leaf();
-    let next = suggest_next_vote_pair(content, &a, &b, None).expect("next sibling pair");
+    let next = suggest_next_vote_pair(content, &a, &b, None, &content.ranking_group, None)
+        .expect("next sibling pair");
     assert_ne!(
         canonical_edge_items(&next.0, &next.1),
         canonical_edge_items(&a, &b)
@@ -125,6 +126,41 @@ fn suggest_next_vote_pair_prefers_unvoted_sibling_pair() {
     assert!(
         next.0.as_str().ends_with("/c") || next.1.as_str().ends_with("/c"),
         "next pair should include the unvoted sibling: {next:?}"
+    );
+}
+
+#[test]
+fn suggest_next_vote_pair_omits_skipped_canonical_pair() {
+    let mut reduced = ReducerState::default();
+    apply_ingest(
+        &mut reduced,
+        1,
+        "@00000000-0000-0000-0000-000000000000:test:local/test\n\
+         ~/topic {root}\n\
+         ~/topic/a {alpha}\n\
+         ~/topic/b {beta}\n\
+         ~/topic/c {gamma}\n",
+    );
+    let a = ItemId::parse("~/topic/a").unwrap().ontology_leaf();
+    let b = ItemId::parse("~/topic/b").unwrap().ontology_leaf();
+    let c = ItemId::parse("~/topic/c").unwrap().ontology_leaf();
+    let topic = ItemId::parse("~/topic").unwrap().ontology_leaf();
+    let excluded: std::collections::HashSet<_> =
+        [canonical_edge_items(&a, &b)].into_iter().collect();
+    let content = content_for_garden_view(&reduced, &ScopeId::Public);
+    let next = suggest_next_vote_pair(
+        content,
+        &a,
+        &b,
+        Some(&topic),
+        &content.ranking_group,
+        Some(&excluded),
+    )
+    .expect("remaining pair");
+    assert!(next.0 == c || next.1 == c);
+    assert_ne!(
+        canonical_edge_items(&next.0, &next.1),
+        canonical_edge_items(&a, &b)
     );
 }
 
@@ -789,7 +825,8 @@ fn item_page_builds_sibling_nav_per_scope() {
     assert_eq!(model.sibling_navs[0].scope.last_segment(), "jedi");
     assert_eq!(model.sibling_navs[1].scope.last_segment(), "sith");
     // Each nav lists fellow members of that scope.
-    let jedi_links: Vec<&str> = model.sibling_navs[0].bar.groups[0].links
+    let jedi_links: Vec<&str> = model.sibling_navs[0].bar.groups[0]
+        .links
         .iter()
         .map(|l| l.path.as_str())
         .collect();
@@ -915,15 +952,17 @@ fn pick_landing_question_returns_none_when_all_judged() {
 fn rank_open_questions_prefers_votes_over_thread_chatter() {
     use crate::events::Ingest as TestIngest;
     let mut reduced = ReducerState::default();
-    let post = |ts: i64, id: &str, raw: &str, thread_tag: &str| Event::Ingest(TestIngest {
-        ts,
-        id: id.to_string(),
-        raw: raw.to_string(),
-        principal: "testuser".to_string(),
-        delegate: None,
-        room_id: "public".to_string(),
-        thread_tag: thread_tag.to_string(),
-    });
+    let post = |ts: i64, id: &str, raw: &str, thread_tag: &str| {
+        Event::Ingest(TestIngest {
+            ts,
+            id: id.to_string(),
+            raw: raw.to_string(),
+            principal: "testuser".to_string(),
+            delegate: None,
+            room_id: "public".to_string(),
+            thread_tag: thread_tag.to_string(),
+        })
+    };
     // Voted long ago (still open: 1 of 3 pairs), never discussed since.
     reduced.apply_event(post(
         1,
@@ -931,14 +970,14 @@ fn rank_open_questions_prefers_votes_over_thread_chatter() {
         "~/voted/a { a }\n~/voted/b { b }\n~/voted/c { c }\n",
         "voted",
     ));
-    reduced.apply_event(post(
-        2,
-        "v2",
-        "{ old }\n~/voted/a 2:1 ~/voted/b\n",
-        "voted",
-    ));
+    reduced.apply_event(post(2, "v2", "{ old }\n~/voted/a 2:1 ~/voted/b\n", "voted"));
     // Never voted, talked about yesterday.
-    reduced.apply_event(post(10, "t1", "~/talked/x { ex }\n~/talked/y { why }\n", "talked"));
+    reduced.apply_event(post(
+        10,
+        "t1",
+        "~/talked/x { ex }\n~/talked/y { why }\n",
+        "talked",
+    ));
     reduced.apply_event(post(50, "t2", "lively debate", "talked"));
     let content = content_for_garden_view(&reduced, &ScopeId::Public);
     let rows = rank_open_questions(content, &reduced.forum_threads, &ScopeId::Public);

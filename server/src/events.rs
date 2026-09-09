@@ -28,6 +28,10 @@ pub enum Event {
     PostRedacted(PostRedacted),
     /// Private-room thread copied to the public forum (Manage only; ingests appended separately).
     ThreadGraduated(ThreadGraduated),
+    /// Viewer hid a pairwise matchup from their `/vote` deal queue.
+    VotePairSkipped(VotePairSkipped),
+    /// Viewer restored a previously skipped matchup.
+    VotePairUnskipped(VotePairUnskipped),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -147,6 +151,36 @@ pub struct ThreadGraduated {
     pub thread_tag: String,
     pub graduated_by: String,
     pub posts_copied: u32,
+}
+
+/// One principal skipped one unordered pair in a room (optional aspect group).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct VotePairSkipped {
+    pub ts: i64,
+    /// Human principal username (wire and storage: no `@`).
+    pub principal: String,
+    /// Permission boundary: `"public"` or private room id (`shortid/slug`).
+    pub room_id: String,
+    /// Storage form of one endpoint (order with `right` is not identity; reducer canonicalizes).
+    pub left: String,
+    pub right: String,
+    /// Aspect slug when skipped under `:{slug}`; omitted = canonical ranking.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aspect: Option<String>,
+    /// Pool/scope item the viewer was judging (display only; skip identity ignores this).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pool: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct VotePairUnskipped {
+    pub ts: i64,
+    pub principal: String,
+    pub room_id: String,
+    pub left: String,
+    pub right: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aspect: Option<String>,
 }
 
 fn generate_id() -> String {

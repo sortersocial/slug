@@ -279,6 +279,18 @@ pub fn suggest_next_pair_in_pool(
     pool: &[ItemId],
     current_pair: Option<(&ItemId, &ItemId)>,
 ) -> Option<(ItemId, ItemId)> {
+    suggest_next_pair_in_pool_excluding(group, pool, current_pair, None)
+}
+
+/// Same as [`suggest_next_pair_in_pool`], but never returns a pair in `excluded`
+/// (canonical unordered pairs). Used so a viewer's skipped matchups stay out of
+/// the `/vote` deal queue.
+pub fn suggest_next_pair_in_pool_excluding(
+    group: &GroupState,
+    pool: &[ItemId],
+    current_pair: Option<(&ItemId, &ItemId)>,
+    excluded: Option<&HashSet<(ItemId, ItemId)>>,
+) -> Option<(ItemId, ItemId)> {
     let current = current_pair.map(|(a, b)| canonical_pair(a, b));
     let mut pool: Vec<ItemId> = pool
         .iter()
@@ -289,6 +301,8 @@ pub fn suggest_next_pair_in_pool(
     if pool.len() < 2 {
         return None;
     }
+
+    let is_excluded = |pair: &(ItemId, ItemId)| excluded.is_some_and(|s| s.contains(pair));
 
     // Degree inside this pool: how many *other pool members* this item has
     // already been compared with. Lex-first unvoted-pair scan starred the
@@ -309,7 +323,7 @@ pub fn suggest_next_pair_in_pool(
     for i in 0..n {
         for j in (i + 1)..n {
             let pair = canonical_pair(&pool[i], &pool[j]);
-            if current.as_ref() == Some(&pair) {
+            if current.as_ref() == Some(&pair) || is_excluded(&pair) {
                 continue;
             }
             if is_pair_voted_in_group(group, &pool[i], &pool[j]) {
@@ -337,7 +351,7 @@ pub fn suggest_next_pair_in_pool(
     for i in 0..n {
         for j in (i + 1)..n {
             let pair = canonical_pair(&pool[i], &pool[j]);
-            if current.as_ref() != Some(&pair) {
+            if current.as_ref() != Some(&pair) && !is_excluded(&pair) {
                 return Some((pool[i].clone(), pool[j].clone()));
             }
         }
@@ -490,6 +504,24 @@ mod tests {
             landing.1, bk,
             "landing must not restar burger-king: {landing:?}"
         );
+    }
+
+    #[test]
+    fn suggest_next_pair_excludes_skipped_pairs() {
+        let group = crate::reducer::GroupState::new();
+        let a = ItemId::parse("~/a").unwrap().normalized_storage();
+        let b = ItemId::parse("~/b").unwrap().normalized_storage();
+        let c = ItemId::parse("~/c").unwrap().normalized_storage();
+        let excluded: HashSet<(ItemId, ItemId)> = [canonical_pair(&a, &b)].into_iter().collect();
+        let next = suggest_next_pair_in_pool_excluding(
+            &group,
+            &[a.clone(), b.clone(), c.clone()],
+            None,
+            Some(&excluded),
+        )
+        .expect("next pair");
+        assert_ne!(canonical_pair(&next.0, &next.1), canonical_pair(&a, &b));
+        assert!(next.0 == c || next.1 == c);
     }
 
     #[test]
