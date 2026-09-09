@@ -32,23 +32,21 @@
             (do (Thread/sleep 200) (recur))
             false))))))
 
-(defn- click-resolve-children-expecting-url!
-  "Click the are.na children button and wait for a JS `window.location` redirect.
+(defn- resolver-status-text [pg]
+  (try (or (locator/text-content (page/locator pg "#external-resolver-status")) "")
+       (catch Exception _ "")))
 
-  The /ui response is eval'd JS, not a document navigation, so Playwright can
-  miss the URL change if wait-for-url starts after location is already set.
-  Register the waiter first (same pattern as garden depth select)."
+(defn- click-resolve-children-expecting-url!
+  "Click the are.na children button and wait until the shareable URL includes
+  `url-needle`.
+
+  `/ui` eval's `window.location = …` rather than a document navigation.
+  Playwright `wait-for-url` on another thread can miss that (Page is not
+  thread-safe), including when the redirect already finished. Poll `page/url`
+  on this thread instead."
   [pg url-needle]
-  (let [waiter (future
-                 (page/wait-for-url pg
-                                    (re-pattern (str ".*\\Q" url-needle "\\E.*"))
-                                    {:timeout 15000}))]
-    (Thread/sleep 100)
-    (locator/click (page/locator pg "[data-testid=\"arena-resolve-children\"]"))
-    (let [result @waiter]
-      (if (core/anomaly? result)
-        (wait-for-url-includes pg url-needle 5000)
-        true))))
+  (locator/click (page/locator pg "[data-testid=\"arena-resolve-children\"]"))
+  (wait-for-url-includes pg url-needle 15000))
 
 (defn- wait-for-http-text [url expected timeout-ms]
   (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
@@ -193,9 +191,15 @@
                    "legacy channel URL shows are.na resolver panel")
                (is (click-resolve-children-expecting-url!
                     pg "/-/https://www.are.na/channel/my-chan")
-                   (str "legacy resolve redirects to canonical channel, url=" (page/url pg)))
+                   (str "legacy resolve redirects to canonical channel, url="
+                        (page/url pg)
+                        " status="
+                        (resolver-status-text pg)))
                (is (wait-for-text pg "body" "-/https://www.are.na/block/1" 15000)
-                   "legacy URL import lands on canonical channel page with children")))))
+                   (str "legacy URL import lands on canonical channel page with children, url="
+                        (page/url pg)
+                        " status="
+                        (resolver-status-text pg))))))
 
        (is (some #{"/v3/channels/my-chan/contents"} @(:paths @!arena))
            "mock are.na saw channel contents request")
