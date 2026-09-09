@@ -278,6 +278,13 @@ pub fn canonical_arena_item(item: &ItemId) -> Option<ItemId> {
     }
 }
 
+/// `Some` when `item` is a legacy `/:user/:channel` URL that should 308 to
+/// `/channel/:slug`. User profiles and already-canonical channel URLs are `None`.
+pub fn collapsed_legacy_arena_item(item: &ItemId) -> Option<ItemId> {
+    let canonical = canonical_arena_item(item)?;
+    (canonical.as_str() != item.as_str()).then_some(canonical)
+}
+
 /// Stable import thread for an are.na URL: one thread per channel or per user.
 fn resolver_thread_tag(item: &ItemId) -> String {
     let path = match arena_target(item) {
@@ -812,6 +819,20 @@ mod tests {
         assert_eq!(
             canonical.as_str(),
             "https://www.are.na/channel/item-industrial"
+        );
+        assert_eq!(
+            collapsed_legacy_arena_item(&legacy).as_ref().map(ItemId::as_str),
+            Some("https://www.are.na/channel/item-industrial")
+        );
+        assert_eq!(
+            collapsed_legacy_arena_item(
+                &ItemId::parse("https://www.are.na/channel/item-industrial").unwrap()
+            ),
+            None
+        );
+        assert_eq!(
+            collapsed_legacy_arena_item(&ItemId::parse("https://www.are.na/jake-chvatal").unwrap()),
+            None
         );
         // Same thread as the canonical form.
         assert_eq!(

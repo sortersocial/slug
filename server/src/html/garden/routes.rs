@@ -54,6 +54,14 @@ pub async fn redirect_strip_trailing_slash(uri: Uri) -> impl IntoResponse {
     redirect_permanent_preserving_query(canonical, &uri)
 }
 
+/// Legacy are.na `/:user/:channel` garden paths 308 onto `/channel/:slug`.
+fn arena_legacy_channel_redirect(request_path: &str, nav: &ThreadNav) -> Option<String> {
+    let parsed = ExternalOntologyPath::from_input(request_path);
+    let item = ItemId::parse(parsed.as_str())?;
+    let canonical = crate::resolvers::arena::collapsed_legacy_arena_item(&item)?;
+    Some(nav.garden_item_href(&canonical))
+}
+
 pub async fn garden_index(
     State(state): State<AppState>,
     jar: CookieJar,
@@ -241,6 +249,9 @@ pub async fn external_ontology_path(
     if let Some(canonical) = ExternalOntologyPath::legacy_redirect_target(&path) {
         return redirect_permanent_preserving_query(&canonical, &uri).into_response();
     }
+    if let Some(canonical) = arena_legacy_channel_redirect(&path, &ThreadNav::public()) {
+        return redirect_permanent_preserving_query(&canonical, &uri).into_response();
+    }
     let path = ExternalOntologyPath::from_input(&path);
     render_scope_view(
         state,
@@ -397,6 +408,9 @@ pub async fn room_external_ontology_path(
             .unwrap_or(canonical_tail.trim_start_matches('/'));
         let base = format!("{}-/{tail}", nav.garden_root_url().trim_end_matches('~'));
         return redirect_permanent_preserving_query(&base, &uri).into_response();
+    }
+    if let Some(canonical) = arena_legacy_channel_redirect(&path, &nav) {
+        return redirect_permanent_preserving_query(&canonical, &uri).into_response();
     }
     let path = ExternalOntologyPath::from_input(&path);
     render_scope_view(state, GardenBrowsePath::External(path), nav, jar, uri)

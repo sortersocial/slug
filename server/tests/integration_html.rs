@@ -774,3 +774,20 @@ async fn test_forum_index_moved_to_root() {
         assert_eq!(redirect_location(&resp), "/");
     }
 }
+
+#[tokio::test]
+async fn test_legacy_arena_channel_page_resolve_form_targets_canonical() {
+    let (addr, _tmp, _log, _state, _handle) = create_test_server_with_state().await;
+    let client = no_redirect_client();
+    let resp = client
+        .get(format!(
+            "http://{addr}/-/https://www.are.na/some-user/my-chan"
+        ))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        redirect_location(&resp),
+        "/-/https://www.are.na/channel/my-chan"
+    );
+}

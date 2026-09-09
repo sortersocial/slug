@@ -201,6 +201,30 @@ mod tests {
     }
 
     #[test]
+    fn kaocha_legacy_my_chan_url_rewrites_next_to_canonical() {
+        let nav = ThreadNav::public();
+        let markup = external_resolver_controls(
+            "https://www.are.na/some-user/my-chan",
+            &nav,
+            "/-/https://www.are.na/some-user/my-chan",
+        )
+        .expect("are.na panel renders");
+        let html = markup.into_string();
+        assert!(
+            html.contains("/-/https://www.are.na/channel/my-chan"),
+            "legacy ghost page must land on canonical channel, got {html}"
+        );
+        assert!(
+            html.contains("https://www.are.na/channel/my-chan"),
+            "resolve payload must target canonical item, got {html}"
+        );
+        assert!(
+            !html.contains("some-user"),
+            "legacy user segment must not remain in the resolve form, got {html}"
+        );
+    }
+
+    #[test]
     fn canonical_arena_channel_url_keeps_page_as_next() {
         let nav = ThreadNav::public();
         let markup = external_resolver_controls(

@@ -32,24 +32,6 @@
             (do (Thread/sleep 200) (recur))
             false))))))
 
-(defn- click-resolve-children-expecting-url!
-  "Click the are.na children button and wait for a JS `window.location` redirect.
-
-  The /ui response is eval'd JS, not a document navigation, so Playwright can
-  miss the URL change if wait-for-url starts after location is already set.
-  Register the waiter first (same pattern as garden depth select)."
-  [pg url-needle]
-  (let [waiter (future
-                 (page/wait-for-url pg
-                                    (re-pattern (str ".*\\Q" url-needle "\\E.*"))
-                                    {:timeout 15000}))]
-    (Thread/sleep 100)
-    (locator/click (page/locator pg "[data-testid=\"arena-resolve-children\"]"))
-    (let [result @waiter]
-      (if (core/anomaly? result)
-        (wait-for-url-includes pg url-needle 5000)
-        true))))
-
 (defn- wait-for-http-text [url expected timeout-ms]
   (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
     (loop []
@@ -187,13 +169,10 @@
                ;; isn't racing a stale redirect.
                (page/navigate pg (str base-url "/-/https://www.are.na/channel/my-chan"))
 
-               ;; Legacy /:user/:channel URLs resolve onto the canonical channel item.
+               ;; Legacy /:user/:channel garden URLs 308 onto the canonical channel item.
                (page/navigate pg (str base-url "/-/https://www.are.na/some-user/my-chan"))
-               (is (wait-for-text pg "#external-resolver-panel" "Are.na resolver" 15000)
-                   "legacy channel URL shows are.na resolver panel")
-               (is (click-resolve-children-expecting-url!
-                    pg "/-/https://www.are.na/channel/my-chan")
-                   (str "legacy resolve redirects to canonical channel, url=" (page/url pg)))
+               (is (wait-for-url-includes pg "/-/https://www.are.na/channel/my-chan" 15000)
+                   (str "legacy garden URL 308s to canonical channel, url=" (page/url pg)))
                (is (wait-for-text pg "body" "-/https://www.are.na/block/1" 15000)
                    "legacy URL import lands on canonical channel page with children")))))
 
