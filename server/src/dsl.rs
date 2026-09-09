@@ -1,3 +1,12 @@
+//! Line-oriented EmailDSL: after leading whitespace, a sigil (`~`, `-/`, `{…}`,
+//! `:`, `http`, …) may start a statement; every other line is [`Stmt::Prose`].
+//!
+//! The outer loop in [`parse_full`] is a classifier with committed-vs-fallback
+//! recovery, not a CFG. Inner statement parsers emit pedagogical errors
+//! (`vote explanations must start with…`) rather than generic expected-sets.
+//! See `ideas/parser-combinators.md` for why a combinator crate does not own
+//! this file.
+
 use std::collections::HashMap;
 
 /// Parsed DSL document.
