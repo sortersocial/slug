@@ -1,11 +1,7 @@
 //! Line-oriented EmailDSL: after leading whitespace, a sigil (`~`, `-/`, `{…}`,
-//! `:`, `http`, …) may start a statement; every other line is [`Stmt::Prose`].
-//!
-//! The outer loop in [`parse_full`] is a classifier with committed-vs-fallback
-//! recovery, not a CFG. Inner statement parsers emit pedagogical errors
-//! (`vote explanations must start with…`) rather than generic expected-sets.
-//! See `ideas/parser-combinators.md` for why a combinator crate does not own
-//! this file.
+//! `/`, `!`, `http`, …) commits the line to the grammar. Parse failure is an
+//! error, not prose. Every other line is [`Stmt::Prose`]. Valid `:slug` / `:`
+//! aspect lines also commit; invalid colon lines (`:)`, `: note`) stay prose.
 
 use std::collections::HashMap;
 
@@ -753,13 +749,18 @@ fn parse_block_prefixed_statement(
     }
 
     if let Some((border, k)) = parse_containment_op_at(s, i) {
+        let op = if border { "!<:" } else { "<:" };
         i = skip_ws(s, k);
         let Some((item2_raw, m)) = parse_item_name_at(s, i) else {
-            return Err(DslError::Parse("not a DSL line".to_string()));
+            return Err(DslError::Parse(format!(
+                "containment claims require a parent item after `{op}`"
+            )));
         };
         i = skip_ws(s, m);
         if !s[i..].trim().is_empty() {
-            return Err(DslError::Parse("not a DSL line".to_string()));
+            return Err(DslError::Parse(
+                "extra tokens after containment".to_string(),
+            ));
         }
         let (child, mut stmts) = sugar_containments(&item1_raw);
         let (parent, parent_sugar) = sugar_containments(&item2_raw);
@@ -824,15 +825,19 @@ fn parse_item_definition_statement(
         return Ok(stmts);
     }
 
-    if parse_containment_op_at(stripped, i).is_some() {
-        // Complete `~a <: ~b` without explanation is an error (like a rank vote).
-        // Incomplete / extra-token forms fall back to prose.
-        let (_, k) = parse_containment_op_at(stripped, i).unwrap();
+    if let Some((border, k)) = parse_containment_op_at(stripped, i) {
+        let op = if border { "!<:" } else { "<:" };
         let after = skip_ws(stripped, k);
         match parse_item_name_at(stripped, after) {
-            None => return Err(DslError::Parse("not a DSL line".to_string())),
+            None => {
+                return Err(DslError::Parse(format!(
+                    "containment claims require a parent item after `{op}`"
+                )));
+            }
             Some((_, m)) if !stripped[skip_ws(stripped, m)..].trim().is_empty() => {
-                return Err(DslError::Parse("not a DSL line".to_string()));
+                return Err(DslError::Parse(
+                    "extra tokens after containment".to_string(),
+                ));
             }
             Some(_) => {
                 return Err(DslError::Parse(
@@ -864,6 +869,26 @@ fn parse_item_definition_statement(
     Err(DslError::Parse(
         "vote explanations must start with a `{ ... }` block before the comparison".to_string(),
     ))
+}
+
+/// First non-whitespace character commits the line to the grammar (`~`, `-/`,
+/// `/`, `!`, `http(s)`, or a masked `{ ... }` token). `_italic` and similar
+/// are not sigils — `_` only counts as a masked block token.
+fn starts_with_dsl_sigil(stripped: &str) -> bool {
+    if stripped.is_empty() {
+        return false;
+    }
+    if stripped.starts_with("-/")
+        || stripped.starts_with("https://")
+        || stripped.starts_with("http://")
+    {
+        return true;
+    }
+    match stripped.chars().next() {
+        Some('~' | '/' | '!') => true,
+        Some('_') => parse_block_token_at(stripped, 0).is_some(),
+        _ => false,
+    }
 }
 
 fn parse_line(masked_line: &str, masker: &BlockMasker) -> Result<Vec<Stmt>, DslError> {
@@ -952,11 +977,6 @@ pub fn parse_full(text: &str) -> Result<Document, DslError> {
                         pending_block = None;
                         continue;
                     }
-                    Err(DslError::Parse(msg)) if msg == "not a DSL line" => {
-                        return Err(DslError::Parse(
-                            "expected vote statement after leading explanation block".to_string(),
-                        ));
-                    }
                     Err(e) => return Err(e),
                 }
             }
@@ -974,16 +994,7 @@ pub fn parse_full(text: &str) -> Result<Document, DslError> {
             continue;
         }
 
-        if !stripped.is_empty()
-            && (stripped.starts_with("-/")
-                || {
-                    let c = stripped.chars().next().unwrap();
-                    "/!~_".contains(c)
-                }
-                || stripped.starts_with("https://")
-                || stripped.starts_with("http://"))
-        {
-            // Flush prose buffer first
+        if starts_with_dsl_sigil(stripped) {
             flush_prose(&mut prose_buffer, &mut statements, &masker);
 
             if let Some((tok, end)) = parse_block_token_at(stripped, 0) {
@@ -997,23 +1008,13 @@ pub fn parse_full(text: &str) -> Result<Document, DslError> {
                 }
             }
 
-            // Parse DSL line; DSL statements are not prose, so errors should propagate
-            // except malformed containment forms (`~a <:`, `~a <: ~b extra`) which fall
-            // back to prose — they were never a successful historical parse.
             let start = statements.len();
-            match parse_line(line, &masker) {
-                Ok(stmts) => {
-                    statements.extend(stmts);
-                    for stmt in &mut statements[start..] {
-                        if let Stmt::Vote { aspect, .. } = stmt {
-                            *aspect = current_aspect.clone();
-                        }
-                    }
+            let stmts = parse_line(line, &masker)?;
+            statements.extend(stmts);
+            for stmt in &mut statements[start..] {
+                if let Stmt::Vote { aspect, .. } = stmt {
+                    *aspect = current_aspect.clone();
                 }
-                Err(DslError::Parse(msg)) if msg == "not a DSL line" => {
-                    prose_buffer.push(line);
-                }
-                Err(e) => return Err(e),
             }
         } else {
             prose_buffer.push(line);
@@ -1878,19 +1879,48 @@ mod tests {
     }
 
     #[test]
-    fn parse_malformed_containment_falls_back_to_prose() {
-        let incomplete = parse_full("~a <:").unwrap();
-        assert_eq!(
-            incomplete.statements,
-            vec![Stmt::Prose {
-                text: "~a <:".to_string()
-            }]
+    fn parse_malformed_containment_is_an_error() {
+        let incomplete = parse_full("~a <:").unwrap_err().to_string();
+        assert!(
+            incomplete.contains("parent item after `<:`"),
+            "unexpected error: {incomplete}"
         );
-        let extra = parse_full("~a <: ~b extra").unwrap();
+        let extra = parse_full("~a <: ~b extra").unwrap_err().to_string();
+        assert!(
+            extra.contains("extra tokens after containment"),
+            "unexpected error: {extra}"
+        );
+        let incomplete_border = parse_full("~a !<:").unwrap_err().to_string();
+        assert!(
+            incomplete_border.contains("parent item after `!<:`"),
+            "unexpected error: {incomplete_border}"
+        );
+    }
+
+    #[test]
+    fn parse_malformed_containment_after_explanation_is_an_error() {
+        let incomplete = parse_full("{ why }\n~a <:").unwrap_err().to_string();
+        assert!(
+            incomplete.contains("parent item after `<:`"),
+            "unexpected error: {incomplete}"
+        );
+        let extra = parse_full("{ why }\n~a <: ~b extra")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            extra.contains("extra tokens after containment"),
+            "unexpected error: {extra}"
+        );
+    }
+
+    #[test]
+    fn parse_underscore_prose_is_not_a_sigil() {
+        let input = "_italic_ is prose\n__dunder too";
+        let doc = parse_full(input).unwrap();
         assert_eq!(
-            extra.statements,
+            doc.statements,
             vec![Stmt::Prose {
-                text: "~a <: ~b extra".to_string()
+                text: input.to_string()
             }]
         );
     }
