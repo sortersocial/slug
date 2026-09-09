@@ -1814,6 +1814,49 @@ mod containment_tests {
         );
         assert!(c.fallen_borders().is_empty());
     }
+
+    #[test]
+    fn nested_path_sugar_places_children_without_explicit_claim() {
+        let mut state = ReducerState::default();
+        state.apply_event(Event::Ingest(ingest_at(
+            "op",
+            1,
+            "~fast-food { The fifteen biggest fast food brands on earth. }\n\
+             ~/fast-food/burger-king { https://www.bk.com }\n\
+             ~/fast-food/pizza-hut { https://www.pizzahut.com }\n",
+        )));
+        let c = state.public();
+        let parent = item("~fast-food");
+        let mut members = c.members_of(&parent);
+        members.sort();
+        assert_eq!(members, vec![item("~burger-king"), item("~pizza-hut")]);
+        let st = c
+            .border_state(&item("~burger-king"), &parent)
+            .expect("sugar edge");
+        assert!(st.sugar);
+        assert_eq!(st.explicit, 0);
+        assert_eq!(st.containment_weight, 1);
+    }
+
+    #[test]
+    fn sibling_leaf_items_are_not_children_of_each_other() {
+        let mut state = ReducerState::default();
+        state.apply_event(Event::Ingest(ingest_at(
+            "op",
+            1,
+            "~fast-food { prompt }\n\
+             ~burger-king { https://www.bk.com }\n\
+             ~pizza-hut { https://www.pizzahut.com }\n",
+        )));
+        let c = state.public();
+        assert!(
+            c.members_of(&item("~fast-food")).is_empty(),
+            "no `<:` and no nested path ⇒ empty electorate"
+        );
+        assert!(c
+            .border_state(&item("~burger-king"), &item("~fast-food"))
+            .is_none());
+    }
 }
 
 #[cfg(test)]
