@@ -89,9 +89,14 @@ pub fn create_app(state: AppState) -> Router {
         .route("/try", get(crate::html::editor_page))
         .route("/try/check", post(crate::html::editor_check))
         .route("/vote", get(crate::html::vote_compare_page))
+        .route("/vote/skipped", get(crate::html::vote_skipped_page))
         .route(
             "/r/:room_key/vote",
             get(crate::html::room_vote_compare_page),
+        )
+        .route(
+            "/r/:room_key/vote/skipped",
+            get(crate::html::room_vote_skipped_page),
         )
         .route("/~", get(crate::html::garden_index))
         .route("/~/", get(crate::html::redirect_strip_trailing_slash))

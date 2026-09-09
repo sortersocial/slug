@@ -9,7 +9,7 @@ use crate::{
     dsl,
     events::{
         AgentBound, Event, GrantAdded, Ingest, PostRedacted, RoomDeleted, ThreadGraduated,
-        UserRegistered,
+        UserRegistered, VotePairSkipped, VotePairUnskipped,
     },
     html::JsBuilder,
     identity::parse_agent,
@@ -1105,6 +1105,100 @@ pub async fn writer_actor(mut rx: mpsc::Receiver<WriteCmd>, state: AppState) {
                 reply,
             } => {
                 let out = redeem_invite_grant(&state, &token, &grantee_username).await;
+                let _ = reply.send(out);
+            }
+
+            WriteCmd::VoteSkip {
+                room,
+                left,
+                right,
+                aspect,
+                pool,
+                skip,
+                bearer,
+                reply,
+            } => {
+                let out = async {
+                    let mut reduced = state.reduced.write().await;
+                    let principal = verify_token(&reduced, &bearer).map_err(|(_, m)| (m, None))?;
+                    let room_key = reduced
+                        .resolve_room_id(room.trim())
+                        .unwrap_or_else(|| room.trim().to_string());
+                    let scope = scope_from_room_wire(&room_key);
+                    if matches!(scope, ScopeId::Room(_)) {
+                        if !reduced.rooms.contains(&room_key)
+                            || !reduced.user_has_cap(
+                                &room_key,
+                                &principal,
+                                crate::events::ThreadCapability::View,
+                            )
+                        {
+                            return Err(("room not found".into(), None));
+                        }
+                    }
+                    let Some(left_id) = crate::path_types::ItemId::parse(left.trim()) else {
+                        return Err(("bad left item".into(), None));
+                    };
+                    let Some(right_id) = crate::path_types::ItemId::parse(right.trim()) else {
+                        return Err(("bad right item".into(), None));
+                    };
+                    let left_id = left_id.normalized_storage().ontology_leaf();
+                    let right_id = right_id.normalized_storage().ontology_leaf();
+                    if left_id == right_id {
+                        return Err(("items must differ".into(), None));
+                    }
+                    let aspect = aspect
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_string);
+                    if let Some(slug) = &aspect {
+                        if !crate::dsl::is_valid_aspect_slug(slug) {
+                            return Err(("bad aspect slug".into(), None));
+                        }
+                    }
+                    let pool = pool.as_deref().and_then(|p| {
+                        crate::path_types::ItemId::parse(p.trim())
+                            .map(|i| i.normalized_storage().ontology_leaf().to_storage_string())
+                    });
+                    let ev = if skip {
+                        Event::VotePairSkipped(VotePairSkipped {
+                            ts: now_ms(),
+                            principal,
+                            room_id: if matches!(scope, ScopeId::Public) {
+                                "public".to_string()
+                            } else {
+                                room_key
+                            },
+                            left: left_id.to_storage_string(),
+                            right: right_id.to_storage_string(),
+                            aspect,
+                            pool,
+                        })
+                    } else {
+                        Event::VotePairUnskipped(VotePairUnskipped {
+                            ts: now_ms(),
+                            principal,
+                            room_id: if matches!(scope, ScopeId::Public) {
+                                "public".to_string()
+                            } else {
+                                room_key
+                            },
+                            left: left_id.to_storage_string(),
+                            right: right_id.to_storage_string(),
+                            aspect,
+                        })
+                    };
+                    state
+                        .event_log
+                        .append(&ev)
+                        .await
+                        .map_err(|e| (format!("{e}"), None))?;
+                    reduced.apply_event(ev);
+                    drop(reduced);
+                    Ok(RpcResult::VoteSkipOk { skipped: skip })
+                }
+                .await;
                 let _ = reply.send(out);
             }
         }

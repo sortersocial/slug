@@ -177,11 +177,24 @@ body.view-ontology .vote-compare-nav {
   gap: 0.5rem;
 }
 body.view-ontology .resolver-refresh-link,
-body.view-ontology .vote-compare-next {
+body.view-ontology .vote-compare-next,
+body.view-ontology .vote-compare-skip,
+body.view-ontology .vote-compare-skipped-link {
   border: 1px solid #bbb;
   color: #23a;
   padding: 0.2rem 0.55rem;
   text-decoration: none;
+}
+body.view-ontology .vote-compare-skip-form,
+body.view-ontology .vote-unskip-form {
+  display: inline;
+  margin: 0;
+}
+body.view-ontology button.vote-compare-skip,
+body.view-ontology button.vote-unskip {
+  background: inherit;
+  cursor: pointer;
+  font: inherit;
 }
 body.view-ontology .vote-compare-next.is-disabled {
   color: #666;

@@ -79,4 +79,15 @@ pub enum WriteCmd {
         grantee_username: String,
         reply: oneshot::Sender<Result<(), String>>,
     },
+    /// Hide or restore a `/vote` pair for this principal (durable skip index).
+    VoteSkip {
+        room: String,
+        left: String,
+        right: String,
+        aspect: Option<String>,
+        pool: Option<String>,
+        skip: bool,
+        bearer: String,
+        reply: oneshot::Sender<WriteCmdResult>,
+    },
 }

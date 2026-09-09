@@ -42,12 +42,14 @@ pub(crate) use forum::{
 };
 pub(crate) use garden::{
     encode_pin_cookie_value, external_resolver_status_markup, garden_ui_copy_rank,
-    vote_compare_post_success_js, GARDEN_PIN_COOKIE,
+    vote_compare_post_success_js, vote_compare_skip_redirect, vote_skipped_region_markup,
+    GARDEN_PIN_COOKIE,
 };
 pub use garden::{
     external_garden_index, external_ontology_path, garden_index, ontology_path,
     redirect_strip_trailing_slash, room_external_garden_index, room_external_ontology_path,
-    room_garden_index, room_ontology_path, room_vote_compare_page, vote_compare_page,
+    room_garden_index, room_ontology_path, room_vote_compare_page, room_vote_skipped_page,
+    vote_compare_page, vote_skipped_page,
 };
 pub use routing::RouteContext;
 pub use search::{search_page, search_results_fragment};

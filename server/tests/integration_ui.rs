@@ -1001,3 +1001,168 @@ async fn test_copy_garden_rank_returns_clipboard_js_with_markdown() {
         "expected button label flip to copied"
     );
 }
+
+fn ui_vote_compare_skip_rpc(room: &str, left: &str, right: &str, pool: Option<&str>) -> String {
+    let mut v = serde_json::json!({
+        "action": "vote_compare_skip",
+        "room": room,
+        "left_item": left,
+        "right_item": right,
+        "form_action": "/ui",
+    });
+    if let Some(p) = pool {
+        v["pool"] = serde_json::json!(p);
+    }
+    v.to_string()
+}
+
+fn ui_vote_compare_unskip_rpc(room: &str, left: &str, right: &str) -> String {
+    serde_json::json!({
+        "action": "vote_compare_unskip",
+        "room": room,
+        "left_item": left,
+        "right_item": right,
+        "form_action": "/ui",
+    })
+    .to_string()
+}
+
+#[tokio::test]
+async fn test_vote_skip_unskip_indexes_and_pages() {
+    let (addr, _tmp, _log, _handle) = create_test_server().await;
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    let bearer = test_bearer();
+
+    let seed = rpc_batch(
+        &client,
+        addr,
+        Some(&bearer),
+        serde_json::json!([{
+            "Post": {
+                "room": "public",
+                "thread_tag": "skip-pool",
+                "text": "~/skip-pool/a {alpha}\n~/skip-pool/b {beta}\n~/skip-pool/c {gamma}\n",
+                "return_rank_diff": false
+            }
+        }]),
+    )
+    .await;
+    assert_eq!(seed["results"][0]["ok"], true);
+
+    let pair_url = format!(
+        "http://{addr}/vote?left={}&right={}&pool={}",
+        urlencoding::encode("~/skip-pool/a"),
+        urlencoding::encode("~/skip-pool/b"),
+        urlencoding::encode("~/skip-pool")
+    );
+    let page = client
+        .get(&pair_url)
+        .header("Authorization", format!("Bearer {bearer}"))
+        .send()
+        .await
+        .unwrap();
+    assert!(page.status().is_success(), "{}", page.status());
+    let html = page.text().await.unwrap();
+    assert!(
+        html.contains("data-testid=\"vote-skip\""),
+        "skip control missing: {}",
+        html.chars().take(2000).collect::<String>()
+    );
+    assert!(html.contains("data-testid=\"vote-skipped\""));
+    assert!(html.contains("href=\"/vote/skipped\""));
+
+    let rpc = ui_vote_compare_skip_rpc(
+        "public",
+        "~/skip-pool/a",
+        "~/skip-pool/b",
+        Some("~/skip-pool"),
+    );
+    let skip = client
+        .post(format!("http://{addr}/ui"))
+        .header("Authorization", format!("Bearer {bearer}"))
+        .form(&[("__rpc__", rpc.as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(skip.status(), reqwest::StatusCode::OK);
+    let js = skip.text().await.unwrap();
+    assert!(
+        js.contains("window.location = ") && js.contains("/vote?"),
+        "skip should JS-redirect to next pair, got: {js}"
+    );
+    assert!(
+        !js.contains("skip-pool/a") || js.contains("skip-pool/c"),
+        "next pair after skipping a vs b should include c, got: {js}"
+    );
+
+    let skipped_page = client
+        .get(format!("http://{addr}/vote/skipped"))
+        .header("Authorization", format!("Bearer {bearer}"))
+        .send()
+        .await
+        .unwrap();
+    assert!(skipped_page.status().is_success());
+    let skipped_html = skipped_page.text().await.unwrap();
+    assert!(
+        skipped_html.contains("vote-skipped-row"),
+        "skipped list should show the pair: {}",
+        skipped_html.chars().take(2500).collect::<String>()
+    );
+    assert!(skipped_html.contains("unskip"));
+
+    let unskip = ui_vote_compare_unskip_rpc("public", "~/skip-pool/a", "~/skip-pool/b");
+    let unskip_resp = client
+        .post(format!("http://{addr}/ui"))
+        .header("Authorization", format!("Bearer {bearer}"))
+        .form(&[("__rpc__", unskip.as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unskip_resp.status(), reqwest::StatusCode::OK);
+    let unskip_js = unskip_resp.text().await.unwrap();
+    assert!(
+        unskip_js.contains("#vote-skipped-region"),
+        "unskip should morph the skipped list, got: {unskip_js}"
+    );
+    assert!(
+        unskip_js.contains("no skipped pairs"),
+        "empty skipped list after unskip, got: {unskip_js}"
+    );
+}
+
+#[tokio::test]
+async fn test_vote_skip_guest_redirects_to_login() {
+    let (addr, _tmp, _log, _handle) = create_test_server().await;
+    let client = reqwest::Client::new();
+    let rpc = ui_vote_compare_skip_rpc("public", "~/a", "~/b", None);
+    let resp = client
+        .post(format!("http://{addr}/ui"))
+        .form(&[("__rpc__", rpc.as_str())])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), reqwest::StatusCode::OK);
+    let js = resp.text().await.unwrap();
+    assert!(
+        js.contains("window.location = \"/login?next="),
+        "guest skip must JS-redirect to login, got: {js}"
+    );
+}
+
+#[tokio::test]
+async fn test_vote_skipped_page_guest_login_cta() {
+    let (addr, _tmp, _log, _handle) = create_test_server().await;
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("http://{addr}/vote/skipped"))
+        .send()
+        .await
+        .unwrap();
+    assert!(resp.status().is_success());
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("log in"));
+    assert!(body.contains("/login?next="));
+}

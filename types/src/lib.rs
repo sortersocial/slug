@@ -579,6 +579,10 @@ pub enum RpcResult {
     Search(SearchResponse),
     Feed(FeedResponse),
     RedactPostOk {},
+    VoteSkipOk {
+        /// `true` after skip, `false` after unskip.
+        skipped: bool,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]

@@ -340,6 +340,34 @@ pub async fn rpc_post_redact(
     rx.await.map_err(|_| ("writer dropped".into(), None))?
 }
 
+pub async fn rpc_vote_skip_with_bearer(
+    state: &AppState,
+    bearer_token: &str,
+    room: String,
+    left: String,
+    right: String,
+    aspect: Option<String>,
+    pool: Option<String>,
+    skip: bool,
+) -> Result<RpcResult, RpcErr> {
+    let (tx, rx) = oneshot::channel();
+    state
+        .write_tx
+        .send(WriteCmd::VoteSkip {
+            room,
+            left,
+            right,
+            aspect,
+            pool,
+            skip,
+            bearer: bearer_token.to_string(),
+            reply: tx,
+        })
+        .await
+        .map_err(|_| ("writer unavailable".into(), None))?;
+    rx.await.map_err(|_| ("writer dropped".into(), None))?
+}
+
 pub async fn rpc_room_delete(
     state: &AppState,
     headers: &HeaderMap,

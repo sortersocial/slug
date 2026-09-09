@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::canonical_path::canonicalize_tag;
 use crate::dsl;
-use crate::events::{Event, Ingest, ThreadCapability};
+use crate::events::{Event, Ingest, ThreadCapability, VotePairSkipped, VotePairUnskipped};
 use crate::path_types::ItemId;
 use slug_types::{is_room_short_id, room_id_from_route_segment, PostStats};
 
@@ -22,6 +22,27 @@ pub fn scope_from_room_wire(room: &str) -> ScopeId {
     } else {
         ScopeId::Room(r.to_string())
     }
+}
+
+/// Canonical unordered pair: lexicographic by storage string.
+pub(crate) fn canonical_item_pair(a: ItemId, b: ItemId) -> (ItemId, ItemId) {
+    let ac = a.normalized_storage();
+    let bc = b.normalized_storage();
+    if ac.as_str() <= bc.as_str() {
+        (ac, bc)
+    } else {
+        (bc, ac)
+    }
+}
+
+/// One principal's skip of an unordered pair (newest-first listing rows).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VoteSkipEntry {
+    pub ts: i64,
+    pub lo: ItemId,
+    pub hi: ItemId,
+    pub aspect: Option<String>,
+    pub pool: Option<ItemId>,
 }
 
 /// Parsed vote data (internal representation).
@@ -524,6 +545,10 @@ pub struct ReducerState {
     pub invites: HashMap<String, ActiveInviteState>,
     /// Private `(room_id, thread_tag)` pairs that were graduated to public.
     pub graduated_threads: HashSet<(String, String)>,
+    /// `(principal, scope)` → skipped pairs, newest first (listing index).
+    pub vote_skips_by_actor: HashMap<(String, ScopeId), VecDeque<VoteSkipEntry>>,
+    /// `(principal, scope, aspect)` → canonical pairs this viewer hid from `/vote` deals.
+    pub vote_skipped_pairs: HashMap<(String, ScopeId, Option<String>), HashSet<(ItemId, ItemId)>>,
 }
 
 impl ReducerState {
@@ -608,6 +633,115 @@ impl ReducerState {
             .get(actor)
             .map(|q| q.iter().cloned().collect())
             .unwrap_or_default()
+    }
+
+    /// Canonical pairs `principal` has skipped in `scope` under `aspect` (`None` = canonical ranking).
+    pub fn skipped_pairs(
+        &self,
+        principal: &str,
+        scope: &ScopeId,
+        aspect: Option<&str>,
+    ) -> HashSet<(ItemId, ItemId)> {
+        self.vote_skipped_pairs
+            .get(&(
+                principal.to_string(),
+                scope.clone(),
+                aspect.map(str::to_string),
+            ))
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Newest-first skip rows for `principal` in `scope` (every aspect).
+    pub fn skipped_entries(&self, principal: &str, scope: &ScopeId) -> Vec<VoteSkipEntry> {
+        self.vote_skips_by_actor
+            .get(&(principal.to_string(), scope.clone()))
+            .map(|q| q.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    fn apply_vote_pair_skipped(&mut self, ev: VotePairSkipped) {
+        let Some(left) = ItemId::parse(&ev.left) else {
+            return;
+        };
+        let Some(right) = ItemId::parse(&ev.right) else {
+            return;
+        };
+        let left = left.normalized_storage().ontology_leaf();
+        let right = right.normalized_storage().ontology_leaf();
+        if left == right {
+            return;
+        }
+        let (lo, hi) = canonical_item_pair(left, right);
+        let scope = scope_from_room_wire(&ev.room_id);
+        let aspect = ev
+            .aspect
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+        let pool = ev
+            .pool
+            .as_deref()
+            .and_then(|p| ItemId::parse(p.trim()).map(|i| i.normalized_storage().ontology_leaf()));
+        let actor_key = (ev.principal.clone(), scope.clone());
+        let pair_key = (ev.principal.clone(), scope, aspect.clone());
+        if let Some(q) = self.vote_skips_by_actor.get_mut(&actor_key) {
+            q.retain(|e| !(e.lo == lo && e.hi == hi && e.aspect == aspect));
+        }
+        let entry = VoteSkipEntry {
+            ts: ev.ts,
+            lo: lo.clone(),
+            hi: hi.clone(),
+            aspect: aspect.clone(),
+            pool,
+        };
+        nav!(
+            self.vote_skips_by_actor,
+            keypath(actor_key),
+            push_front(entry)
+        );
+        nav!(
+            self.vote_skipped_pairs,
+            keypath(pair_key),
+            set_elem((lo, hi))
+        );
+    }
+
+    fn apply_vote_pair_unskipped(&mut self, ev: VotePairUnskipped) {
+        let Some(left) = ItemId::parse(&ev.left) else {
+            return;
+        };
+        let Some(right) = ItemId::parse(&ev.right) else {
+            return;
+        };
+        let left = left.normalized_storage().ontology_leaf();
+        let right = right.normalized_storage().ontology_leaf();
+        if left == right {
+            return;
+        }
+        let (lo, hi) = canonical_item_pair(left, right);
+        let scope = scope_from_room_wire(&ev.room_id);
+        let aspect = ev
+            .aspect
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+        let actor_key = (ev.principal.clone(), scope.clone());
+        let pair_key = (ev.principal.clone(), scope, aspect.clone());
+        if let Some(q) = self.vote_skips_by_actor.get_mut(&actor_key) {
+            q.retain(|e| !(e.lo == lo && e.hi == hi && e.aspect == aspect));
+            if q.is_empty() {
+                self.vote_skips_by_actor.remove(&actor_key);
+            }
+        }
+        if let Some(set) = self.vote_skipped_pairs.get_mut(&pair_key) {
+            set.remove(&(lo, hi));
+            if set.is_empty() {
+                self.vote_skipped_pairs.remove(&pair_key);
+            }
+        }
     }
 
     /// Same order as [`Self::posts_by_actor_ids`], omitting ingests in scopes the viewer cannot see.
@@ -1109,6 +1243,8 @@ impl ReducerState {
         self.content.remove(&scope);
         self.forum_threads.retain(|(s, _), _| s != &scope);
         self.ingests_by_scope_thread.retain(|(s, _), _| s != &scope);
+        self.vote_skips_by_actor.retain(|(_, s), _| s != &scope);
+        self.vote_skipped_pairs.retain(|(_, s, _), _| s != &scope);
 
         let mut to_drop: Vec<String> = self
             .ingests_by_id
@@ -1325,6 +1461,8 @@ impl ReducerState {
                         },
                     });
             }
+            Event::VotePairSkipped(ev) => self.apply_vote_pair_skipped(ev),
+            Event::VotePairUnskipped(ev) => self.apply_vote_pair_unskipped(ev),
         }
     }
 }
@@ -1351,6 +1489,8 @@ impl Default for ReducerState {
             room_timeline: HashMap::new(),
             invites: HashMap::new(),
             graduated_threads: HashSet::new(),
+            vote_skips_by_actor: HashMap::new(),
+            vote_skipped_pairs: HashMap::new(),
         }
     }
 }
@@ -1851,5 +1991,136 @@ mod room_id_resolve_tests {
         );
         assert_eq!(state.resolve_room_id("zzzzzzz"), None);
         assert_eq!(state.resolve_room_id("unknown/room"), None);
+    }
+}
+
+#[cfg(test)]
+mod vote_skip_index_tests {
+    use super::*;
+    use crate::events::VotePairUnskipped;
+
+    fn pair(a: &str, b: &str) -> (ItemId, ItemId) {
+        canonical_item_pair(
+            ItemId::parse(a).unwrap().ontology_leaf(),
+            ItemId::parse(b).unwrap().ontology_leaf(),
+        )
+    }
+
+    #[test]
+    fn skip_unskip_updates_listing_and_pair_indexes() {
+        let mut state = ReducerState::default();
+        let (lo, hi) = pair("~/b", "~/a");
+        state.apply_event(Event::VotePairSkipped(VotePairSkipped {
+            ts: 10,
+            principal: "alice".into(),
+            room_id: "public".into(),
+            left: "~/b".into(),
+            right: "~/a".into(),
+            aspect: None,
+            pool: Some("~/topic".into()),
+        }));
+        let skipped = state.skipped_pairs("alice", &ScopeId::Public, None);
+        assert!(skipped.contains(&(lo.clone(), hi.clone())));
+        let rows = state.skipped_entries("alice", &ScopeId::Public);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].ts, 10);
+        assert_eq!(
+            rows[0]
+                .pool
+                .as_ref()
+                .map(|p| p.ontology_leaf().display_path()),
+            Some("~/topic".to_string())
+        );
+
+        state.apply_event(Event::VotePairSkipped(VotePairSkipped {
+            ts: 20,
+            principal: "alice".into(),
+            room_id: "public".into(),
+            left: "~/a".into(),
+            right: "~/b".into(),
+            aspect: None,
+            pool: Some("~/other".into()),
+        }));
+        let rows = state.skipped_entries("alice", &ScopeId::Public);
+        assert_eq!(
+            rows.len(),
+            1,
+            "re-skip must refresh the same row, not duplicate"
+        );
+        assert_eq!(rows[0].ts, 20);
+
+        state.apply_event(Event::VotePairUnskipped(VotePairUnskipped {
+            ts: 30,
+            principal: "alice".into(),
+            room_id: "public".into(),
+            left: "~/a".into(),
+            right: "~/b".into(),
+            aspect: None,
+        }));
+        assert!(state
+            .skipped_pairs("alice", &ScopeId::Public, None)
+            .is_empty());
+        assert!(state.skipped_entries("alice", &ScopeId::Public).is_empty());
+        assert!(state.vote_skipped_pairs.is_empty());
+        assert!(state.vote_skips_by_actor.is_empty());
+    }
+
+    #[test]
+    fn aspect_skips_are_a_separate_index_key() {
+        let mut state = ReducerState::default();
+        state.apply_event(Event::VotePairSkipped(VotePairSkipped {
+            ts: 1,
+            principal: "alice".into(),
+            room_id: "public".into(),
+            left: "~/a".into(),
+            right: "~/b".into(),
+            aspect: Some("beauty".into()),
+            pool: None,
+        }));
+        assert!(state
+            .skipped_pairs("alice", &ScopeId::Public, None)
+            .is_empty());
+        assert_eq!(
+            state
+                .skipped_pairs("alice", &ScopeId::Public, Some("beauty"))
+                .len(),
+            1
+        );
+        assert_eq!(state.skipped_entries("alice", &ScopeId::Public).len(), 1);
+    }
+
+    #[test]
+    fn room_delete_purges_skip_indexes() {
+        let mut state = ReducerState::default();
+        state.apply_event(Event::VotePairSkipped(VotePairSkipped {
+            ts: 1,
+            principal: "alice".into(),
+            room_id: "7jhckr4/den".into(),
+            left: "~/a".into(),
+            right: "~/b".into(),
+            aspect: None,
+            pool: None,
+        }));
+        state.apply_event(Event::VotePairSkipped(VotePairSkipped {
+            ts: 2,
+            principal: "alice".into(),
+            room_id: "public".into(),
+            left: "~/c".into(),
+            right: "~/d".into(),
+            aspect: None,
+            pool: None,
+        }));
+        state.apply_event(Event::RoomDeleted(crate::events::RoomDeleted {
+            ts: 3,
+            room_id: "7jhckr4/den".into(),
+            deleted_by: "alice".into(),
+        }));
+        assert!(state
+            .skipped_pairs("alice", &ScopeId::Room("7jhckr4/den".into()), None)
+            .is_empty());
+        assert_eq!(
+            state.skipped_pairs("alice", &ScopeId::Public, None).len(),
+            1
+        );
     }
 }
