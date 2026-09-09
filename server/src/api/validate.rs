@@ -44,7 +44,7 @@ pub fn validate_ingest_document(
             .unwrap_or(false)
             || public_content.item_bodies.contains_key(key)
     };
-    let doc = match dsl::parse_full(text) {
+    let doc = match dsl::parse_full_strict(text) {
         Ok(d) => d,
         Err(e) => {
             return Err((

@@ -42,6 +42,8 @@ Strict **CSP** that blocks `eval` would break the current app. Other projects ma
 
 - **Forum thread tags on write:** `validate_thread_tag` (`types/src/paths.rs`) canonicalizes then rejects empty tags and any tag containing `/` (would break `/t/:tag` routing). The new-thread form already constrains the charset client-side (`pattern="[a-z0-9_\\-]{1,64}"`); server write paths (`WriteCmd::Post` / `SystemIngest`, and UI `PostIngest` / `CheckIngest` / `VoteComparePost`) enforce the slash rule. Read/replay still uses `canonicalize_tag` only so historical tags keep resolving. System import tags use `:` instead of `/` (e.g. `import:https:::github.com:org:repo`).
 
+- **DSL write vs replay:** `validate_ingest_document` (forum compose, `CheckIngest`, `post_sorter`, `/try`) uses `parse_full_strict`. A line that starts with `~` / `http(s)` / `-/` and is not valid syntax is a parse error on that line — trailing `{ … }` on a `<:` claim, incomplete `~a <:`, extra tokens, and dotted names like `~mcdonalds.com` must not `PostOk` as inert prose. Reducer replay still uses lenient `parse_full` so already-stored malformed claims stay prose and keep their other statements.
+
 - **`HtmlUiAction` / `POST /ui`** (`server/src/html/ui_action.rs`, `server/src/api/ui_html.rs`): **Browser session** (cookie) UI commands. Payload is `__rpc__` + form fields. Most responses are **JS morphs**; some actions return **HTTP redirects** (see below).
 
 - **Do not add one-off POST routes** for browser mutations. New browser actions belong in **`HtmlUiAction`** behind **`POST /ui`**; new programmatic verbs belong in **`RpcCommand`** behind **`POST /api/v0/rpc`**. Ordinary shareable pages remain normal **`GET`** routes.
