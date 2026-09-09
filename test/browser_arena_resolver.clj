@@ -40,12 +40,17 @@
   "Click the are.na children button and wait until the shareable URL includes
   `url-needle`.
 
-  `/ui` eval's `window.location = …` rather than a document navigation.
-  Playwright `wait-for-url` on another thread can miss that (Page is not
-  thread-safe), including when the redirect already finished. Poll `page/url`
-  on this thread instead."
+  Empty external pages embed a live are.na iframe above the resolver. Playwright
+  pointer clicks can hit that frame and never submit `/ui`. Drive the button
+  through `HTMLElement.click()` so the same-document submit interceptor runs.
+  `/ui` then eval's `window.location = …`; poll `page/url` on this thread
+  (Playwright `wait-for-url` on another thread can miss an already-finished
+  redirect)."
   [pg url-needle]
-  (locator/click (page/locator pg "[data-testid=\"arena-resolve-children\"]"))
+  (page/evaluate pg
+                 "(() => { const b = document.querySelector('[data-testid=\"arena-resolve-children\"]');
+if (!b) throw new Error('missing arena-resolve-children');
+b.click(); })()")
   (wait-for-url-includes pg url-needle 15000))
 
 (defn- wait-for-http-text [url expected timeout-ms]
@@ -189,6 +194,8 @@
                (page/navigate pg (str base-url "/-/https://www.are.na/some-user/my-chan"))
                (is (wait-for-text pg "#external-resolver-panel" "Are.na resolver" 15000)
                    "legacy channel URL shows are.na resolver panel")
+               (is (wait-for-text pg "body" "/-/https://www.are.na/channel/my-chan" 5000)
+                   "legacy page resolve form lands on the canonical channel")
                (is (click-resolve-children-expecting-url!
                     pg "/-/https://www.are.na/channel/my-chan")
                    (str "legacy resolve redirects to canonical channel, url="
