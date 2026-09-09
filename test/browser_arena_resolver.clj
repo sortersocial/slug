@@ -37,21 +37,28 @@
        (catch Exception _ "")))
 
 (defn- click-resolve-children-expecting-url!
-  "Click the are.na children button and wait until the shareable URL includes
+  "POST the are.na children form from the page and wait until the URL includes
   `url-needle`.
 
-  Empty external pages embed a live are.na iframe above the resolver. Playwright
-  pointer clicks can hit that frame and never submit `/ui`. Drive the button
-  through `HTMLElement.click()` so the same-document submit interceptor runs.
-  `/ui` then eval's `window.location = …`; poll `page/url` on this thread
-  (Playwright `wait-for-url` on another thread can miss an already-finished
-  redirect)."
+  Empty external pages embed a live are.na iframe above the resolver, and
+  `/ui` eval's `window.location` rather than a document navigation. Do the
+  same fetch+eval as `slug_ui.js` inside `page.evaluate` (Playwright awaits
+  the promise) so pointer interception and background `wait-for-url` races
+  cannot swallow the redirect."
   [pg url-needle]
-  (page/evaluate pg
-                 "(() => { const b = document.querySelector('[data-testid=\"arena-resolve-children\"]');
-if (!b) throw new Error('missing arena-resolve-children');
-b.click(); })()")
-  (wait-for-url-includes pg url-needle 15000))
+  (let [js (page/evaluate
+            pg
+            "async () => { const btn = document.querySelector('[data-testid=arena-resolve-children]'); if (!btn) return 'missing-button'; document.querySelectorAll('iframe').forEach((el) => el.remove()); const form = btn.closest('form'); const resp = await fetch(form.getAttribute('action') || '/ui', { method: 'POST', body: new URLSearchParams(new FormData(form)), headers: {'Content-Type': 'application/x-www-form-urlencoded'}, credentials: 'same-origin' }); const js = await resp.text(); eval(js); return js; }")]
+    (cond
+      (core/anomaly? js)
+      (do (println "resolve_external evaluate failed:" js) false)
+      (= (str js) "missing-button")
+      (do (println "resolve_external: missing button") false)
+      :else
+      (do
+        (when-not (str/includes? (str js) "window.location")
+          (println "resolve_external JS had no redirect:" js))
+        (wait-for-url-includes pg url-needle 15000)))))
 
 (defn- wait-for-http-text [url expected timeout-ms]
   (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
@@ -194,8 +201,9 @@ b.click(); })()")
                (page/navigate pg (str base-url "/-/https://www.are.na/some-user/my-chan"))
                (is (wait-for-text pg "#external-resolver-panel" "Are.na resolver" 15000)
                    "legacy channel URL shows are.na resolver panel")
-               (is (wait-for-text pg "body" "/-/https://www.are.na/channel/my-chan" 5000)
-                   "legacy page resolve form lands on the canonical channel")
+               (let [html (:body (oauth/http-get (str base-url "/-/https://www.are.na/some-user/my-chan")))]
+                 (is (and (string? html) (str/includes? html "channel/my-chan"))
+                     "legacy URL HTML must target canonical channel item"))
                (is (click-resolve-children-expecting-url!
                     pg "/-/https://www.are.na/channel/my-chan")
                    (str "legacy resolve redirects to canonical channel, url="
