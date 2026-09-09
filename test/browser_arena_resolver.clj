@@ -14,12 +14,41 @@
 (defn- wait-for-text [pg selector expected timeout-ms]
   (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
     (loop []
-      (let [text (locator/text-content (page/locator pg selector))]
+      (let [text (try (locator/text-content (page/locator pg selector))
+                      (catch Exception _ nil))]
         (if (and (string? text) (str/includes? text expected))
           true
           (if (< (System/currentTimeMillis) deadline)
             (do (Thread/sleep 200) (recur))
             false))))))
+
+(defn- wait-for-url-includes [pg needle timeout-ms]
+  (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
+    (loop []
+      (let [url (try (or (page/url pg) "") (catch Exception _ ""))]
+        (if (str/includes? url needle)
+          true
+          (if (< (System/currentTimeMillis) deadline)
+            (do (Thread/sleep 200) (recur))
+            false))))))
+
+(defn- click-resolve-children-expecting-url!
+  "Click the are.na children button and wait for a JS `window.location` redirect.
+
+  The /ui response is eval'd JS, not a document navigation, so Playwright can
+  miss the URL change if wait-for-url starts after location is already set.
+  Register the waiter first (same pattern as garden depth select)."
+  [pg url-needle]
+  (let [waiter (future
+                 (page/wait-for-url pg
+                                    (re-pattern (str ".*\\Q" url-needle "\\E.*"))
+                                    {:timeout 15000}))]
+    (Thread/sleep 100)
+    (locator/click (page/locator pg "[data-testid=\"arena-resolve-children\"]"))
+    (let [result @waiter]
+      (if (core/anomaly? result)
+        (wait-for-url-includes pg url-needle 5000)
+        true))))
 
 (defn- wait-for-http-text [url expected timeout-ms]
   (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
@@ -153,12 +182,18 @@
                                        "-/https://www.are.na/block/1"
                                        15000)
                    "still-connected block kept after refresh")
+               ;; Refresh POST evals `window.location` back to this page. A full
+               ;; goto here aborts that in-flight JS so the legacy navigate below
+               ;; isn't racing a stale redirect.
+               (page/navigate pg (str base-url "/-/https://www.are.na/channel/my-chan"))
 
                ;; Legacy /:user/:channel URLs resolve onto the canonical channel item.
                (page/navigate pg (str base-url "/-/https://www.are.na/some-user/my-chan"))
                (is (wait-for-text pg "#external-resolver-panel" "Are.na resolver" 15000)
                    "legacy channel URL shows are.na resolver panel")
-               (locator/click (page/locator pg "[data-testid=\"arena-resolve-children\"]"))
+               (is (click-resolve-children-expecting-url!
+                    pg "/-/https://www.are.na/channel/my-chan")
+                   (str "legacy resolve redirects to canonical channel, url=" (page/url pg)))
                (is (wait-for-text pg "body" "-/https://www.are.na/block/1" 15000)
                    "legacy URL import lands on canonical channel page with children")))))
 
