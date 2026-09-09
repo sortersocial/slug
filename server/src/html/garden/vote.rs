@@ -528,6 +528,7 @@ pub(super) fn vote_compare_panel_markup(p: VoteComparePanel<'_>) -> maud::Markup
                     }
                     label class="vote-compare-slider-label" {
                         span id=(slider_left_id) { (item_display_path(p.left.as_str())) }
+                        // 0–100; slug_ui.js snaps to human ratios 100:1 … 1:1 … 1:100.
                         input type="range" id=(slider_id) class="vote-preference-slider" min="0" max="100" value="50"
                             aria-valuemin="0" aria-valuemax="100" aria-valuetext="1:1";
                         span id=(slider_right_id) { (item_display_path(p.right.as_str())) }

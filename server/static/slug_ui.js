@@ -70,6 +70,42 @@
     draftSaveTimers.set(container, handle);
   }
 
+  // Human-readable pairwise ratios, 100:1 … 1:1 … 1:100.
+  // Denser near a tie (5:4, 4:3, 3:2); 1–2–5 decades out to the DSL cap.
+  var VOTE_RATIOS = [
+    [100, 1], [50, 1], [30, 1], [20, 1], [15, 1], [10, 1], [8, 1], [5, 1],
+    [4, 1], [3, 1], [5, 2], [2, 1], [5, 3], [3, 2], [4, 3], [5, 4],
+    [1, 1],
+    [4, 5], [3, 4], [2, 3], [3, 5], [1, 2], [2, 5], [1, 3], [1, 4],
+    [1, 5], [1, 8], [1, 10], [1, 15], [1, 20], [1, 30], [1, 50], [1, 100]
+  ];
+
+  function voteRatioIndexForSlider(p) {
+    var n = VOTE_RATIOS.length - 1;
+    var i = Math.round((Number(p) / 100) * n);
+    if (isNaN(i)) return Math.floor(n / 2);
+    if (i < 0) return 0;
+    if (i > n) return n;
+    return i;
+  }
+
+  function sliderValueForVoteRatio(left, right) {
+    var L = Math.max(1, left);
+    var R = Math.max(1, right);
+    var target = Math.log(L / R);
+    var best = Math.floor((VOTE_RATIOS.length - 1) / 2);
+    var bestD = Infinity;
+    for (var i = 0; i < VOTE_RATIOS.length; i++) {
+      var pair = VOTE_RATIOS[i];
+      var d = Math.abs(Math.log(pair[0] / pair[1]) - target);
+      if (d < bestD) {
+        bestD = d;
+        best = i;
+      }
+    }
+    return Math.round((best / (VOTE_RATIOS.length - 1)) * 100);
+  }
+
   function syncVoteSliderFromDraft(form, data) {
     var slider = form.querySelector('.vote-preference-slider');
     if (!slider) return;
@@ -81,7 +117,7 @@
     var left = parseInt(data.ratio_left, 10);
     var right = parseInt(data.ratio_right, 10);
     if (!isNaN(left) && !isNaN(right) && left + right > 0) {
-      slider.value = String(Math.round((right * 100) / (left + right)));
+      slider.value = String(sliderValueForVoteRatio(left, right));
       slider.dispatchEvent(new Event('input', { bubbles: true }));
     }
   }
@@ -368,24 +404,8 @@
     }
     refreshPinHud();
 
-    // Vote compare: map slider 0–100 to reduced integer ratio weights.
+    // Vote compare: map slider 0–100 onto human ratios (100:1 … 1:1 … 1:100).
     // Home index can render several forms; bind each slider inside its form.
-    function gcd(a, b) {
-      a = Math.abs(a | 0);
-      b = Math.abs(b | 0);
-      while (b) {
-        var t = b;
-        b = a % b;
-        a = t;
-      }
-      return a || 1;
-    }
-    function reduceRatio(left, right) {
-      var L = Math.max(1, left | 0);
-      var R = Math.max(1, right | 0);
-      var g = gcd(L, R);
-      return [L / g, R / g];
-    }
     function bindVoteSlider(voteSlider) {
       if (!voteSlider || voteSlider.getAttribute('data-slug-bound')) return;
       voteSlider.setAttribute('data-slug-bound', '1');
@@ -396,11 +416,9 @@
       function syncVoteRatio() {
         var p = parseInt(voteSlider.value, 10);
         if (isNaN(p)) p = 50;
-        var rawL = 100 - p;
-        var rawR = p;
-        var reduced = reduceRatio(rawL, rawR);
-        var L = reduced[0];
-        var R = reduced[1];
+        var pair = VOTE_RATIOS[voteRatioIndexForSlider(p)];
+        var L = pair[0];
+        var R = pair[1];
         var label = L + ':' + R;
         if (rl) rl.value = String(L);
         if (rr) rr.value = String(R);
