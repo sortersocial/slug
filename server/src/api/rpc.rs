@@ -539,6 +539,7 @@ async fn rpc_check(
         rankings,
         threads: vec![format!("#{}", thread_id)],
         next: check_next,
+        warnings: v.doc.check_warnings(),
     })
 }
 

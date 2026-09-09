@@ -4,6 +4,8 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Document {
     pub statements: Vec<Stmt>,
+    /// Non-fatal diagnostics (e.g. URL-shaped lines that were parsed as prose).
+    pub warnings: Vec<String>,
 }
 
 /// A single statement in the DSL (or prose when using `parse_full`).
@@ -41,6 +43,34 @@ pub enum Stmt {
     Prose {
         text: String,
     },
+}
+
+impl Document {
+    /// Extra dry-run notes: parse warnings plus a hint when items were defined
+    /// but this document cannot fill the ranking preview (no votes).
+    pub fn check_warnings(&self) -> Vec<String> {
+        let mut warnings = self.warnings.clone();
+        let item_titles: Vec<&str> = self
+            .statements
+            .iter()
+            .filter_map(|s| match s {
+                Stmt::Item { title, .. } => Some(title.as_str()),
+                _ => None,
+            })
+            .collect();
+        let has_vote = self
+            .statements
+            .iter()
+            .any(|s| matches!(s, Stmt::Vote { .. }));
+        if !item_titles.is_empty() && !has_vote {
+            warnings.push(format!(
+                "defined {} item(s) ({}); ranking preview is empty until this document includes a vote",
+                item_titles.len(),
+                item_titles.join(", ")
+            ));
+        }
+        warnings
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -599,6 +629,37 @@ fn parse_item_name_at(s: &str, i: usize) -> Option<(String, usize)> {
     parse_item_name_at_with_mode(s, i, false)
 }
 
+/// `mcdonalds.com { body }` / `www.foo.com { x }` — looks like a definition but is prose.
+fn looks_like_lone_definition(stripped: &str) -> bool {
+    if stripped.is_empty()
+        || stripped.starts_with('~')
+        || stripped.starts_with("http://")
+        || stripped.starts_with("https://")
+        || stripped.starts_with("-/")
+        || stripped.starts_with('#')
+        || stripped.starts_with(':')
+    {
+        return false;
+    }
+    let bytes = stripped.as_bytes();
+    let mut i = 0usize;
+    while i < bytes.len() && !is_ws_byte(bytes[i]) && !bytes[i..].starts_with(b"__BLOCK_") {
+        i += 1;
+    }
+    if i == 0 {
+        return false;
+    }
+    let name = &stripped[..i];
+    if !name.contains('.') && !name.contains("://") {
+        return false;
+    }
+    i = skip_ws(stripped, i);
+    let Some((_, end)) = parse_block_token_at(stripped, i) else {
+        return false;
+    };
+    stripped[end..].trim().is_empty()
+}
+
 /// `~mcdonalds.com` lexes as `~mcdonalds` then leftover `.com`. Report the
 /// dotted spelling instead of a vote-explanation error that reads like a later
 /// valid claim failed.
@@ -904,9 +965,13 @@ fn parse_item_definition_statement(
         return Ok(stmts);
     }
 
-    Err(DslError::Parse(
-        "vote explanations must start with a `{ ... }` block before the comparison".to_string(),
-    ))
+    if parse_comparison_at(stripped, i).is_some() {
+        return Err(DslError::Parse(
+            "vote explanations must start with a `{ ... }` block before the comparison".to_string(),
+        ));
+    }
+
+    Err(DslError::Parse("extra tokens after item definition".to_string()))
 }
 
 fn parse_line(masked_line: &str, masker: &BlockMasker) -> Result<Vec<Stmt>, DslError> {
@@ -975,6 +1040,7 @@ pub fn parse_full_strict(text: &str) -> Result<Document, DslError> {
 fn parse_full_with(text: &str, strict: bool) -> Result<Document, DslError> {
     let (masker, masked) = mask_all(BlockMasker::new(), text);
     let mut statements: Vec<Stmt> = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
     let mut prose_buffer: Vec<&str> = Vec::new();
     let mut pending_block: Option<String> = None;
     let mut current_aspect: Option<String> = None;
@@ -1083,6 +1149,11 @@ fn parse_full_with(text: &str, strict: bool) -> Result<Document, DslError> {
                 Err(DslError::Parse(msg)) => return Err(at_line(line_no, msg)),
             }
         } else {
+            if looks_like_lone_definition(stripped) {
+                warnings.push(format!(
+                    "line {line_no} looks like an item definition but does not start with '~'; parsed as prose"
+                ));
+            }
             prose_buffer.push(line);
         }
     }
@@ -1097,7 +1168,10 @@ fn parse_full_with(text: &str, strict: bool) -> Result<Document, DslError> {
     // Final flush
     flush_prose(&mut prose_buffer, &mut statements, &masker);
 
-    Ok(Document { statements })
+    Ok(Document {
+        statements,
+        warnings,
+    })
 }
 
 #[cfg(test)]
@@ -2078,6 +2152,105 @@ kfc is a chain
         let (leaf, edges) = desugar_item_ref("https://example.com/a/b");
         assert_eq!(leaf, "https://example.com/a/b");
         assert!(edges.is_empty());
+    }
+
+    #[test]
+    fn parse_dotted_tilde_token_errors_on_line_1_not_later_claim() {
+        let input = "\
+~mcdonalds.com { https://mcdonalds.com }
+~fast-food-chains { the chains }
+
+{ if this resolves, the dot silently split the token }
+~mcdonalds <: ~fast-food-chains
+";
+        let err = parse_full(input).unwrap_err().to_string();
+        assert!(
+            err.contains("line 1:"),
+            "error must name the dotted definition line, got: {err}"
+        );
+        assert!(
+            err.contains("~mcdonalds.com")
+                && err.contains("not a valid tilde item name")
+                && err.contains("`.`"),
+            "error must name the dotted token, got: {err}"
+        );
+        assert!(
+            !err.contains("vote explanations must start"),
+            "must not misreport the later containment claim, got: {err}"
+        );
+    }
+
+    #[test]
+    fn parse_undotted_repro_still_succeeds() {
+        let input = "\
+~mcdonalds { https://mcdonalds.com }
+~fast-food-chains { the chains }
+
+{ identical claim, only the dotted line above was removed }
+~mcdonalds <: ~fast-food-chains
+";
+        let doc = parse_full(input).unwrap();
+        assert!(doc.warnings.is_empty());
+        assert_eq!(items(&doc).len(), 2);
+        assert_eq!(containments(&doc).len(), 1);
+    }
+
+    #[test]
+    fn parse_url_shaped_prose_definition_warns() {
+        let input = "mcdonalds.com { fast food }\n~fast-food { chains }";
+        let doc = parse_full(input).unwrap();
+        assert_eq!(
+            doc.warnings,
+            vec![
+                "line 1 looks like an item definition but does not start with '~'; parsed as prose"
+                    .to_string()
+            ]
+        );
+        assert!(
+            items(&doc)
+                .iter()
+                .all(|s| matches!(s, Stmt::Item { title, .. } if title == "~fast-food")),
+            "dotted host line must stay prose, not become an item"
+        );
+        assert!(matches!(
+            doc.statements.first(),
+            Some(Stmt::Prose { text }) if text.contains("mcdonalds.com")
+        ));
+    }
+
+    #[test]
+    fn parse_https_item_definition_still_creates_url_item() {
+        let doc = parse_full("https://mcdonalds.com { fast food }").unwrap();
+        assert!(
+            doc.warnings.is_empty(),
+            "valid URL items are not prose; got {:?}",
+            doc.warnings
+        );
+        assert_eq!(
+            items(&doc),
+            vec![&Stmt::Item {
+                title: "https://mcdonalds.com".to_string(),
+                body: Some("fast food".to_string()),
+            }]
+        );
+        let notes = doc.check_warnings();
+        assert!(
+            notes.iter().any(|w| w.contains("https://mcdonalds.com")
+                && w.contains("ranking preview is empty")),
+            "item-only docs must not look like a silent no-op, got {notes:?}"
+        );
+    }
+
+    #[test]
+    fn parse_nested_path_with_dot_errors_on_that_line() {
+        let err = parse_full("~a {a}\n~/food/subway.com { sandwich }\n")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("line 2:"), "got: {err}");
+        assert!(
+            err.contains("subway.com") && err.contains("not a valid tilde item name"),
+            "got: {err}"
+        );
     }
 
     #[test]
