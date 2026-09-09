@@ -825,10 +825,25 @@ fn push_item_ref_anchor(
     true
 }
 
+fn vote_aspect_href(garden_prefix: &str, slug: &str) -> String {
+    let room = garden_prefix.trim_end_matches('/').trim_end_matches('~');
+    format!("{room}vote?aspect={slug}")
+}
+
+fn push_aspect_ref_anchor(out: &mut String, raw_ref: &str, garden_prefix: &str) {
+    let slug = raw_ref.trim_start_matches(':');
+    out.push_str(r#"<a href=""#);
+    out.push_str(&escape_html(&vote_aspect_href(garden_prefix, slug)));
+    out.push_str(r#"" class="pre-link">"#);
+    out.push_str(&escape_html(raw_ref));
+    out.push_str("</a>");
+}
+
 /// Replace item refs in raw prose with clickable garden links.
 ///
 /// When `item_bodies` is set, matching ontology items get a `title` attribute with a truncated
 /// body preview for native browser tooltips (forum posts, item pages).
+/// `:aspect` slugs get the same `pre-link` styling and point at `/vote?aspect=`.
 pub(super) fn linkify_slugs_with_prefix(
     raw: &str,
     garden_prefix: &str,
@@ -842,6 +857,9 @@ pub(super) fn linkify_slugs_with_prefix(
                 if !push_item_ref_anchor(&mut out, &raw_ref, garden_prefix, item_bodies) {
                     out.push_str(&escape_html(&raw_ref));
                 }
+            }
+            crate::dsl::ProseToken::AspectRef(raw_ref) => {
+                push_aspect_ref_anchor(&mut out, &raw_ref, garden_prefix);
             }
         }
     }
@@ -1218,6 +1236,36 @@ mod linkify_title_tests {
     fn no_title_when_body_missing_or_empty() {
         let html = linkify_slugs_with_prefix("x ~/a/b y", "/~", Some(&HashMap::new()));
         assert!(!html.contains(" title="));
+    }
+
+    #[test]
+    fn aspect_refs_are_pre_links_like_slugs() {
+        let html = linkify_slugs_with_prefix(
+            "voted :beauty then :speed.\n:) 3:1",
+            "/~",
+            None,
+        );
+        assert!(
+            html.contains(r#"<a href="/vote?aspect=beauty" class="pre-link">:beauty</a>"#),
+            "expected public aspect link, got {html}"
+        );
+        assert!(
+            html.contains(r#"<a href="/vote?aspect=speed" class="pre-link">:speed</a>."#),
+            "trailing punctuation stays outside the link, got {html}"
+        );
+        assert!(
+            html.contains(":)") && !html.contains("aspect=)"),
+            "smileys must stay text, got {html}"
+        );
+        assert!(
+            html.contains("3:1") && !html.contains("aspect=1"),
+            "vote ratios must not linkify as aspects, got {html}"
+        );
+        let room = linkify_slugs_with_prefix(":beauty", "/r/9ab12cdroom/~", None);
+        assert!(
+            room.contains(r#"href="/r/9ab12cdroom/vote?aspect=beauty""#),
+            "room-scoped aspect href, got {room}"
+        );
     }
 }
 
