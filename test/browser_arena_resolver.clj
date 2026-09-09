@@ -199,7 +199,7 @@
                    (str "legacy URL import lands on canonical channel page with children, url="
                         (page/url pg)
                         " status="
-                        (resolver-status-text pg))))))
+                        (resolver-status-text pg)))))))
 
        (is (some #{"/v3/channels/my-chan/contents"} @(:paths @!arena))
            "mock are.na saw channel contents request")
