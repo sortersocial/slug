@@ -78,6 +78,25 @@
                (is (wait-for-text pg "body.view-vote-compare" "compare" 15000) "vote compare page")
                (is (wait-for-text pg "#vote-edge-history-region" "no votes on this pair" 15000)
                    "current pair starts without edge history")
+               (is (wait-for-text pg "#vote-ratio-readout" "1:1" 5000)
+                   "slider defaults to a 1:1 human ratio")
+               (page/evaluate pg (str "var s=document.getElementById('vote-preference-slider');"
+                                      "s.value='0';s.dispatchEvent(new Event('input',{bubbles:true}))"))
+               (is (wait-for-text pg "#vote-ratio-readout" "100:1" 5000)
+                   "slider min is 100:1")
+               (page/evaluate pg (str "var s=document.getElementById('vote-preference-slider');"
+                                      "s.value='100';s.dispatchEvent(new Event('input',{bubbles:true}))"))
+               (is (wait-for-text pg "#vote-ratio-readout" "1:100" 5000)
+                   "slider max is 1:100")
+               (page/evaluate pg (str "var s=document.getElementById('vote-preference-slider');"
+                                      "s.value='33';s.dispatchEvent(new Event('input',{bubbles:true}))"))
+               (let [mid (locator/text-content (page/locator pg "#vote-ratio-readout"))]
+                 (is (contains? #{"5:2" "2:1" "5:3" "3:2"} mid)
+                     (str "mid-left slider lands on a human ratio, got " mid)))
+               (page/evaluate pg (str "var s=document.getElementById('vote-preference-slider');"
+                                      "s.value='50';s.dispatchEvent(new Event('input',{bubbles:true}))"))
+               (is (wait-for-text pg "#vote-ratio-readout" "1:1" 5000)
+                   "slider center returns to 1:1")
                (locator/fill (page/locator pg "#vote-explain") "because playwright says so")
                (locator/click (page/locator pg "#vote-compare-form button[type=submit]"))
                (is (wait-for-text pg "ul.vote-edge-history" "because playwright" 20000)
