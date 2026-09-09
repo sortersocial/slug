@@ -110,7 +110,7 @@ Rule 4 — path sugar (idempotent)
 ```sorter
 ~/a/b/c { body }
 ```
-is the item `~c` plus membership edges `c <: b`, `b <: a`, and `a <: root` (so the root garden still has a first-level electorate). Sugar edges are **weight-1 and idempotent** (repeating the same path does not add weight). Explicit `<:` / `!<:` still accumulate +1. URLs and `/-/` paths are never desugared.
+is the item `~c` plus membership edges `c <: b`, `b <: a`, and `a <: root` (so the root garden still has a first-level electorate). `~/name` (one segment after the slash) emits `name <: root`. Bare `~name` emits no edges. Sugar edges are **weight-1 and idempotent** (repeating the same path does not add weight). Explicit `<:` / `!<:` still accumulate +1. URLs and `/-/` paths are never desugared. Sibling leaf definitions (`~fast-food` then `~burger-king`) do **not** nest — without a nested path or an explicit `<:` claim they stay unrelated.
 
 ```sorter
 {
@@ -129,7 +129,24 @@ Comparisons:
 
 Lines that begin with `@` are not DSL statements; the parser treats them like ordinary prose (so old examples that used `@…` still parse as text, but identity belongs in request metadata, not the file).
 
-Prose fallback: `<:` mid-prose, `~a <:`, `~a <: ~b extra`, and fenced claims stay prose.
+A line that **starts** with `~` / `~/` / `http(s)` / `-/` is a statement, not prose. If it isn't valid, the write path (`post_sorter`, forum compose, `/try`) returns a parse error on that line — it does not `PostOk` with the line silently dropped. Trailing `{ explanation }` on a claim is the usual miss:
+
+```sorter
+~/panda-express <: ~fast-food { this is fast food }   # error: explanation must come first
+```
+
+```sorter
+{
+this is fast food
+}
+~/panda-express <: ~fast-food
+```
+
+`~mcdonalds.com` is not a tilde name (charset `[a-z0-9_-]`); the error cites that line, not a later valid claim.
+
+Replay of already-stored ingests still treats the old malformed `~a <:` / `~a <: ~b extra` / trailing-explanation-on-claim spellings as prose so historical garden state is unchanged.
+
+`<:` mid-prose and claims inside code fences stay prose.
 
 ```sorter
 :beauty

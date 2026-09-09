@@ -629,38 +629,6 @@ fn parse_item_name_at(s: &str, i: usize) -> Option<(String, usize)> {
     parse_item_name_at_with_mode(s, i, false)
 }
 
-/// First token on a definition line (up to whitespace), for error text.
-fn attempted_item_token(stripped: &str) -> &str {
-    let tok = stripped.split_whitespace().next().unwrap_or(stripped);
-    match tok.find("__BLOCK_") {
-        Some(i) => tok[..i].trim_end(),
-        None => tok,
-    }
-}
-
-/// `.` / other junk glued onto a `~` slug (`~mcdonalds.com` → `Some('.')`).
-fn glued_invalid_slug_char(stripped: &str, name_end: usize) -> Option<char> {
-    let rest = stripped.get(name_end..)?;
-    let c = rest.chars().next()?;
-    if c.is_whitespace() || rest.starts_with("__BLOCK_") {
-        return None;
-    }
-    if parse_containment_op_at(stripped, name_end).is_some() {
-        return None;
-    }
-    if parse_comparison_at(stripped, name_end).is_some() {
-        return None;
-    }
-    Some(c)
-}
-
-fn invalid_item_token_error(stripped: &str, ch: char) -> DslError {
-    DslError::Parse(format!(
-        "invalid character '{ch}' in item token '{}'; item slugs are [a-z0-9_-]",
-        attempted_item_token(stripped)
-    ))
-}
-
 /// `mcdonalds.com { body }` / `www.foo.com { x }` — looks like a definition but is prose.
 fn looks_like_lone_definition(stripped: &str) -> bool {
     if stripped.is_empty()
@@ -692,13 +660,29 @@ fn looks_like_lone_definition(stripped: &str) -> bool {
     stripped[end..].trim().is_empty()
 }
 
-fn at_line(line: usize, err: DslError) -> DslError {
-    let DslError::Parse(msg) = err;
-    if msg.starts_with("line ") {
-        DslError::Parse(msg)
-    } else {
-        DslError::Parse(format!("line {line}: {msg}"))
+/// `~mcdonalds.com` lexes as `~mcdonalds` then leftover `.com`. Report the
+/// dotted spelling instead of a vote-explanation error that reads like a later
+/// valid claim failed.
+fn dotted_tilde_name_error(item_raw: &str, rest: &str) -> Option<String> {
+    if !item_raw.starts_with('~') || !rest.starts_with('.') {
+        return None;
     }
+    let suffix: String = rest
+        .chars()
+        .take_while(|c| !c.is_whitespace() && *c != '{')
+        .collect();
+    Some(format!(
+        "`{item_raw}{suffix}` is not a valid tilde item name; `.` is not allowed (charset is [a-z0-9_-])"
+    ))
+}
+
+/// Malformed `~… <: …` forms that `parse_full` historically swallowed as prose
+/// so old ingests still replay. The write path uses [`parse_full_strict`].
+fn is_lenient_statement_fallback(msg: &str) -> bool {
+    msg == "not a DSL line"
+        || msg.contains("explanations must come before the claim")
+        || msg == "extra tokens after containment claim"
+        || msg == "incomplete containment claim"
 }
 
 pub fn parse_prose_item_ref_at(s: &str, i: usize) -> Option<(String, usize)> {
@@ -831,6 +815,9 @@ fn parse_block_prefixed_statement(
 
     let (item1_raw, j) =
         parse_item_name_at(s, 0).ok_or_else(|| DslError::Parse("invalid item name".to_string()))?;
+    if let Some(msg) = dotted_tilde_name_error(&item1_raw, s.get(j..).unwrap_or("")) {
+        return Err(DslError::Parse(msg));
+    }
     let explanation = masker.extract_body(block_token);
     let mut i = skip_ws(s, j);
 
@@ -848,11 +835,16 @@ fn parse_block_prefixed_statement(
     if let Some((border, k)) = parse_containment_op_at(s, i) {
         i = skip_ws(s, k);
         let Some((item2_raw, m)) = parse_item_name_at(s, i) else {
-            return Err(DslError::Parse("not a DSL line".to_string()));
+            return Err(DslError::Parse("incomplete containment claim".to_string()));
         };
+        if let Some(msg) = dotted_tilde_name_error(&item2_raw, s.get(m..).unwrap_or("")) {
+            return Err(DslError::Parse(msg));
+        }
         i = skip_ws(s, m);
         if !s[i..].trim().is_empty() {
-            return Err(DslError::Parse("not a DSL line".to_string()));
+            return Err(DslError::Parse(
+                "extra tokens after containment claim".to_string(),
+            ));
         }
         let (child, mut stmts) = sugar_containments(&item1_raw);
         let (parent, parent_sugar) = sugar_containments(&item2_raw);
@@ -909,8 +901,8 @@ fn parse_item_definition_statement(
 ) -> Result<Vec<Stmt>, DslError> {
     let (item1_raw, j) = parse_item_name_at(stripped, 0)
         .ok_or_else(|| DslError::Parse("invalid item name".to_string()))?;
-    if let Some(ch) = glued_invalid_slug_char(stripped, j) {
-        return Err(invalid_item_token_error(stripped, ch));
+    if let Some(msg) = dotted_tilde_name_error(&item1_raw, stripped.get(j..).unwrap_or("")) {
+        return Err(DslError::Parse(msg));
     }
     let i = skip_ws(stripped, j);
 
@@ -922,17 +914,33 @@ fn parse_item_definition_statement(
 
     if parse_containment_op_at(stripped, i).is_some() {
         // Complete `~a <: ~b` without explanation is an error (like a rank vote).
-        // Incomplete / extra-token forms fall back to prose.
+        // Incomplete / extra-token / trailing-`{ … }` forms error on the write
+        // path; `parse_full` still swallows them as prose so historical ingests replay.
         let (_, k) = parse_containment_op_at(stripped, i).unwrap();
         let after = skip_ws(stripped, k);
         match parse_item_name_at(stripped, after) {
-            None => return Err(DslError::Parse("not a DSL line".to_string())),
-            Some((_, m)) if !stripped[skip_ws(stripped, m)..].trim().is_empty() => {
-                return Err(DslError::Parse("not a DSL line".to_string()));
-            }
-            Some(_) => {
+            None => return Err(DslError::Parse("incomplete containment claim".to_string())),
+            Some((item2_raw, m)) => {
+                if let Some(msg) =
+                    dotted_tilde_name_error(&item2_raw, stripped.get(m..).unwrap_or(""))
+                {
+                    return Err(DslError::Parse(msg));
+                }
+                let extra = stripped[skip_ws(stripped, m)..].trim();
+                if extra.is_empty() {
+                    return Err(DslError::Parse(
+                        "containment claims require a leading `{ ... }` explanation block"
+                            .to_string(),
+                    ));
+                }
+                if parse_block_token_at(extra, 0).is_some() {
+                    return Err(DslError::Parse(
+                        "containment explanations must come before the claim (`{ … }` then `~child <: ~parent`), not after"
+                            .to_string(),
+                    ));
+                }
                 return Err(DslError::Parse(
-                    "containment claims require a leading `{ ... }` explanation block".to_string(),
+                    "extra tokens after containment claim".to_string(),
                 ));
             }
         }
@@ -1012,14 +1020,31 @@ fn parse_line(masked_line: &str, masker: &BlockMasker) -> Result<Vec<Stmt>, DslE
 }
 
 /// Parse EmailDSL preserving prose for rendering; interleaves `Prose` with DSL nodes.
+///
+/// Malformed `~… <: …` lines that were never a successful historical parse fall
+/// back to prose so old ingests still replay. New posts go through
+/// [`parse_full_strict`].
 pub fn parse_full(text: &str) -> Result<Document, DslError> {
+    parse_full_with(text, false)
+}
+
+/// Like [`parse_full`], but a line that starts as DSL (`~`, `http(s)`, `-/`)
+/// and fails to parse is an error, not silent prose.
+///
+/// Trailing `{ explanation }` on a claim, incomplete `~a <:`, extra tokens, and
+/// dotted tilde names (`~mcdonalds.com`) must not `PostOk` with no edge.
+pub fn parse_full_strict(text: &str) -> Result<Document, DslError> {
+    parse_full_with(text, true)
+}
+
+fn parse_full_with(text: &str, strict: bool) -> Result<Document, DslError> {
     let (masker, masked) = mask_all(BlockMasker::new(), text);
     let mut statements: Vec<Stmt> = Vec::new();
     let mut warnings: Vec<String> = Vec::new();
     let mut prose_buffer: Vec<&str> = Vec::new();
     let mut pending_block: Option<String> = None;
     let mut current_aspect: Option<String> = None;
-    let mut source_line = 1usize;
+    let mut src_line = 1usize;
 
     let flush_prose = |buf: &mut Vec<&str>, out: &mut Vec<Stmt>, masker: &BlockMasker| {
         if buf.is_empty() {
@@ -1031,9 +1056,11 @@ pub fn parse_full(text: &str) -> Result<Document, DslError> {
         buf.clear();
     };
 
+    let at_line = |line: usize, msg: String| DslError::Parse(format!("line {line}: {msg}"));
+
     for line in masked.split('\n') {
-        let line_no = source_line;
-        source_line += 1 + masker.unmask(line).matches('\n').count();
+        let line_no = src_line;
+        src_line += 1 + masker.unmask(line).matches('\n').count();
         let stripped = line.trim_start();
         if let Some(tok) = pending_block.as_ref() {
             if stripped.is_empty() {
@@ -1059,20 +1086,15 @@ pub fn parse_full(text: &str) -> Result<Document, DslError> {
                     Err(DslError::Parse(msg)) if msg == "not a DSL line" => {
                         return Err(at_line(
                             line_no,
-                            DslError::Parse(
-                                "expected vote statement after leading explanation block"
-                                    .to_string(),
-                            ),
+                            "expected vote statement after leading explanation block".to_string(),
                         ));
                     }
-                    Err(e) => return Err(at_line(line_no, e)),
+                    Err(DslError::Parse(msg)) => return Err(at_line(line_no, msg)),
                 }
             }
             return Err(at_line(
                 line_no,
-                DslError::Parse(
-                    "expected vote statement after leading explanation block".to_string(),
-                ),
+                "expected vote statement after leading explanation block".to_string(),
             ));
         }
 
@@ -1109,8 +1131,8 @@ pub fn parse_full(text: &str) -> Result<Document, DslError> {
             }
 
             // Parse DSL line; DSL statements are not prose, so errors should propagate
-            // except malformed containment forms (`~a <:`, `~a <: ~b extra`) which fall
-            // back to prose — they were never a successful historical parse.
+            // except malformed containment forms (`~a <:`, `~a <: ~b extra`, trailing
+            // `{ … }` on a claim) which `parse_full` keeps as prose for replay.
             let start = statements.len();
             match parse_line(line, &masker) {
                 Ok(stmts) => {
@@ -1121,10 +1143,10 @@ pub fn parse_full(text: &str) -> Result<Document, DslError> {
                         }
                     }
                 }
-                Err(DslError::Parse(msg)) if msg == "not a DSL line" => {
+                Err(DslError::Parse(msg)) if !strict && is_lenient_statement_fallback(&msg) => {
                     prose_buffer.push(line);
                 }
-                Err(e) => return Err(at_line(line_no, e)),
+                Err(DslError::Parse(msg)) => return Err(at_line(line_no, msg)),
             }
         } else {
             if looks_like_lone_definition(stripped) {
@@ -1138,10 +1160,8 @@ pub fn parse_full(text: &str) -> Result<Document, DslError> {
 
     if pending_block.is_some() {
         return Err(at_line(
-            source_line.saturating_sub(1).max(1),
-            DslError::Parse(
-                "missing vote statement after leading explanation block".to_string(),
-            ),
+            src_line.saturating_sub(1).max(1),
+            "missing vote statement after leading explanation block".to_string(),
         ));
     }
 
@@ -2015,6 +2035,72 @@ mod tests {
                 text: "~a <: ~b extra".to_string()
             }]
         );
+        // Trailing explanation is the same class: looks like a claim, historically
+        // became inert prose so the rest of the post still ingested.
+        let trailing = parse_full("~/panda-express <: ~fast-food { this is fast food }").unwrap();
+        assert!(
+            matches!(trailing.statements.as_slice(), [Stmt::Prose { .. }]),
+            "lenient parse keeps trailing-explanation claims as prose for replay, got {:?}",
+            trailing.statements
+        );
+    }
+
+    #[test]
+    fn parse_full_strict_rejects_trailing_explanation_on_claim() {
+        let err = parse_full_strict("~/panda-express { orang chicken }\n~/panda-express <: ~fast-food { this is fast food }")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("line 2:") && err.contains("before the claim"),
+            "unexpected error: {err}"
+        );
+        assert!(
+            parse_full_strict("{ this is fast food }\n~/panda-express <: ~fast-food").is_ok(),
+            "leading explanation remains valid"
+        );
+    }
+
+    #[test]
+    fn parse_full_strict_rejects_incomplete_and_extra_containment() {
+        let incomplete = parse_full_strict("~a <:").unwrap_err().to_string();
+        assert!(
+            incomplete.contains("line 1:") && incomplete.contains("incomplete containment"),
+            "unexpected error: {incomplete}"
+        );
+        let extra = parse_full_strict("~a <: ~b extra").unwrap_err().to_string();
+        assert!(
+            extra.contains("line 1:") && extra.contains("extra tokens after containment"),
+            "unexpected error: {extra}"
+        );
+    }
+
+    #[test]
+    fn parse_full_strict_dotted_tilde_name_points_at_that_line() {
+        let input = "\
+~fast-food { The fifteen biggest chains. }
+~mcdonalds.com { McDonald's }
+{
+kfc is a chain
+}
+~kfc <: ~fast-food
+";
+        let err = parse_full_strict(input).unwrap_err().to_string();
+        assert!(
+            err.contains("line 2:") && err.contains("~mcdonalds.com") && err.contains("`.`"),
+            "dotted name must cite line 2, not the later valid claim; got {err}"
+        );
+        assert!(
+            !err.contains("vote explanations"),
+            "must not look like a vote/claim syntax error on a later line: {err}"
+        );
+        let claim_err =
+            parse_full_strict("~fast-food { chains }\n{ because }\n~mcdonalds.com <: ~fast-food")
+                .unwrap_err()
+                .to_string();
+        assert!(
+            claim_err.contains("line 3:") && claim_err.contains("~mcdonalds.com"),
+            "dotted name in a claim must cite that line; got {claim_err}"
+        );
     }
 
     #[test]
@@ -2059,6 +2145,10 @@ mod tests {
         let (leaf, edges) = desugar_item_ref("~luke");
         assert_eq!(leaf, "~luke");
         assert!(edges.is_empty());
+        // Slash-form single segment still attaches the leaf to root.
+        let (leaf, edges) = desugar_item_ref("~/luke");
+        assert_eq!(leaf, "~luke");
+        assert_eq!(edges, vec![("~luke".to_string(), "~/".to_string())]);
         let (leaf, edges) = desugar_item_ref("https://example.com/a/b");
         assert_eq!(leaf, "https://example.com/a/b");
         assert!(edges.is_empty());
@@ -2079,8 +2169,10 @@ mod tests {
             "error must name the dotted definition line, got: {err}"
         );
         assert!(
-            err.contains("invalid character '.'") && err.contains("~mcdonalds.com"),
-            "error must name the '.' and the attempted token, got: {err}"
+            err.contains("~mcdonalds.com")
+                && err.contains("not a valid tilde item name")
+                && err.contains("`.`"),
+            "error must name the dotted token, got: {err}"
         );
         assert!(
             !err.contains("vote explanations must start"),
@@ -2155,7 +2247,43 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("line 2:"), "got: {err}");
-        assert!(err.contains("invalid character '.'"), "got: {err}");
-        assert!(err.contains("subway.com"), "got: {err}");
+        assert!(
+            err.contains("subway.com") && err.contains("not a valid tilde item name"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn nested_path_sugar_is_not_an_explicit_claim() {
+        let doc =
+            parse_full("~fast-food { prompt }\n~/fast-food/burger-king { https://www.bk.com }\n")
+                .unwrap();
+        let sugar: Vec<_> = containments(&doc)
+            .into_iter()
+            .filter(|s| matches!(s, Stmt::Containment { sugar: true, .. }))
+            .collect();
+        assert!(
+            containments(&doc)
+                .iter()
+                .all(|s| matches!(s, Stmt::Containment { sugar: true, .. })),
+            "OP-style nested paths must not invent a `<:` claim"
+        );
+        assert!(sugar.iter().any(|s| matches!(
+            s,
+            Stmt::Containment { child, parent, sugar: true, .. }
+                if child == "~burger-king" && parent == "~fast-food"
+        )));
+    }
+
+    #[test]
+    fn sibling_leaf_definitions_emit_no_parent_child_edge() {
+        let doc = parse_full(
+            "~fast-food { prompt }\n~burger-king { https://www.bk.com }\n~pizza-hut { https://www.pizzahut.com }\n",
+        )
+        .unwrap();
+        assert!(
+            containments(&doc).is_empty(),
+            "flat siblings need an explicit `<:` (or nested path sugar) to share a scope"
+        );
     }
 }

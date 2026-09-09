@@ -279,30 +279,79 @@ pub fn suggest_next_pair_in_pool(
     pool: &[ItemId],
     current_pair: Option<(&ItemId, &ItemId)>,
 ) -> Option<(ItemId, ItemId)> {
+    suggest_next_pair_in_pool_excluding(group, pool, current_pair, None)
+}
+
+/// Same as [`suggest_next_pair_in_pool`], but never returns a pair in `excluded`
+/// (canonical unordered pairs). Used so a viewer's skipped matchups stay out of
+/// the `/vote` deal queue.
+pub fn suggest_next_pair_in_pool_excluding(
+    group: &GroupState,
+    pool: &[ItemId],
+    current_pair: Option<(&ItemId, &ItemId)>,
+    excluded: Option<&HashSet<(ItemId, ItemId)>>,
+) -> Option<(ItemId, ItemId)> {
     let current = current_pair.map(|(a, b)| canonical_pair(a, b));
-    let mut pool = pool.to_vec();
+    let mut pool: Vec<ItemId> = pool
+        .iter()
+        .map(|item| item.clone().normalized_storage())
+        .collect();
     pool.sort();
     pool.dedup();
     if pool.len() < 2 {
         return None;
     }
 
-    for i in 0..pool.len() {
-        for j in (i + 1)..pool.len() {
-            let pair = canonical_pair(&pool[i], &pool[j]);
-            if current.as_ref() == Some(&pair) {
-                continue;
-            }
-            if !is_pair_voted_in_group(group, &pool[i], &pool[j]) {
-                return Some((pool[i].clone(), pool[j].clone()));
+    let is_excluded = |pair: &(ItemId, ItemId)| excluded.is_some_and(|s| s.contains(pair));
+
+    // Degree inside this pool: how many *other pool members* this item has
+    // already been compared with. Lex-first unvoted-pair scan starred the
+    // alphabetically earliest item (burger-king on ~/fast-food) until every
+    // one of its pairs was judged.
+    let n = pool.len();
+    let mut degree = vec![0usize; n];
+    for i in 0..n {
+        for j in (i + 1)..n {
+            if is_pair_voted_in_group(group, &pool[i], &pool[j]) {
+                degree[i] += 1;
+                degree[j] += 1;
             }
         }
     }
 
-    for i in 0..pool.len() {
-        for j in (i + 1)..pool.len() {
+    let mut best_unvoted: Option<(u8, usize, usize, usize, usize)> = None;
+    for i in 0..n {
+        for j in (i + 1)..n {
             let pair = canonical_pair(&pool[i], &pool[j]);
-            if current.as_ref() != Some(&pair) {
+            if current.as_ref() == Some(&pair) || is_excluded(&pair) {
+                continue;
+            }
+            if is_pair_voted_in_group(group, &pool[i], &pool[j]) {
+                continue;
+            }
+            let overlap = match &current {
+                Some((a, b)) => {
+                    u8::from(pool[i] == *a || pool[i] == *b)
+                        + u8::from(pool[j] == *a || pool[j] == *b)
+                }
+                None => 0,
+            };
+            let max_deg = degree[i].max(degree[j]);
+            let sum_deg = degree[i] + degree[j];
+            let key = (overlap, max_deg, sum_deg, i, j);
+            if best_unvoted.as_ref().map_or(true, |best| key < *best) {
+                best_unvoted = Some(key);
+            }
+        }
+    }
+    if let Some((_, _, _, i, j)) = best_unvoted {
+        return Some((pool[i].clone(), pool[j].clone()));
+    }
+
+    for i in 0..n {
+        for j in (i + 1)..n {
+            let pair = canonical_pair(&pool[i], &pool[j]);
+            if current.as_ref() != Some(&pair) && !is_excluded(&pair) {
                 return Some((pool[i].clone(), pool[j].clone()));
             }
         }
@@ -381,28 +430,98 @@ mod tests {
         );
     }
 
+    fn apply_test_vote(group: &mut crate::reducer::GroupState, a: &ItemId, b: &ItemId, ts: i64) {
+        group.apply_vote(crate::reducer::VoteData {
+            ts,
+            a: a.clone(),
+            b: b.clone(),
+            ratio_left: 2,
+            ratio_right: 1,
+            body: "vote".to_string(),
+            principal: "tester".to_string(),
+            delegate: None,
+            thread_tag: "vote".to_string(),
+        });
+    }
+
     #[test]
     fn suggest_next_pair_skips_current_and_voted_pairs() {
         let mut group = crate::reducer::GroupState::new();
         let a = ItemId::parse("~/a").unwrap().normalized_storage();
         let b = ItemId::parse("~/b").unwrap().normalized_storage();
         let c = ItemId::parse("~/c").unwrap().normalized_storage();
-        group.apply_vote(crate::reducer::VoteData {
-            ts: 1,
-            a: a.clone(),
-            b: b.clone(),
-            ratio_left: 2,
-            ratio_right: 1,
-            body: "a beats b".to_string(),
-            principal: "tester".to_string(),
-            delegate: None,
-            thread_tag: "vote".to_string(),
-        });
+        apply_test_vote(&mut group, &a, &b, 1);
         let next =
             suggest_next_pair_in_pool(&group, &[a.clone(), b.clone(), c.clone()], Some((&a, &b)))
                 .expect("next pair");
         assert!(next.0 == c || next.1 == c);
         assert_ne!(canonical_pair(&next.0, &next.1), canonical_pair(&a, &b));
+    }
+
+    #[test]
+    fn suggest_next_pair_does_not_star_lex_first_item() {
+        // Same shape as ~/fast-food: burger-king sorts first, and every next
+        // pair used to keep it until all of its opponents were judged.
+        let mut group = crate::reducer::GroupState::new();
+        let bk = ItemId::parse("~burger-king").unwrap().normalized_storage();
+        let hut = ItemId::parse("~pizza-hut").unwrap().normalized_storage();
+        let pop = ItemId::parse("~popeyes").unwrap().normalized_storage();
+        let sbx = ItemId::parse("~starbucks").unwrap().normalized_storage();
+        apply_test_vote(&mut group, &bk, &hut, 1);
+        apply_test_vote(&mut group, &bk, &pop, 2);
+        apply_test_vote(
+            &mut group,
+            &bk,
+            &ItemId::parse("~chick-fil-a").unwrap().normalized_storage(),
+            1,
+        );
+        apply_test_vote(
+            &mut group,
+            &bk,
+            &ItemId::parse("~chipotle").unwrap().normalized_storage(),
+            2,
+        );
+        apply_test_vote(
+            &mut group,
+            &bk,
+            &ItemId::parse("~dominos").unwrap().normalized_storage(),
+            3,
+        );
+        let pool = [bk.clone(), hut.clone(), pop.clone(), sbx.clone()];
+        let next = suggest_next_pair_in_pool(&group, &pool, Some((&bk, &hut))).expect("next pair");
+        let next = canonical_pair(&next.0, &next.1);
+        assert_eq!(next, canonical_pair(&pop, &sbx));
+        assert_ne!(next.0, bk);
+        assert_ne!(next.1, bk);
+
+        let landing = suggest_next_pair_in_pool(&group, &pool, None).expect("landing pair");
+        let landing = canonical_pair(&landing.0, &landing.1);
+        assert_ne!(
+            landing.0, bk,
+            "landing must not restar burger-king: {landing:?}"
+        );
+        assert_ne!(
+            landing.1, bk,
+            "landing must not restar burger-king: {landing:?}"
+        );
+    }
+
+    #[test]
+    fn suggest_next_pair_excludes_skipped_pairs() {
+        let group = crate::reducer::GroupState::new();
+        let a = ItemId::parse("~/a").unwrap().normalized_storage();
+        let b = ItemId::parse("~/b").unwrap().normalized_storage();
+        let c = ItemId::parse("~/c").unwrap().normalized_storage();
+        let excluded: HashSet<(ItemId, ItemId)> = [canonical_pair(&a, &b)].into_iter().collect();
+        let next = suggest_next_pair_in_pool_excluding(
+            &group,
+            &[a.clone(), b.clone(), c.clone()],
+            None,
+            Some(&excluded),
+        )
+        .expect("next pair");
+        assert_ne!(canonical_pair(&next.0, &next.1), canonical_pair(&a, &b));
+        assert!(next.0 == c || next.1 == c);
     }
 
     #[test]

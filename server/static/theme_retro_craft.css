@@ -1102,7 +1102,10 @@ body.view-ontology .vote-compare-nav {
   justify-content: center;
   margin: 0.75rem 0;
 }
-body.view-ontology .vote-compare-next {
+body.view-ontology .vote-compare-next,
+body.view-ontology .vote-compare-skip,
+body.view-ontology .vote-compare-skipped-link,
+body.view-ontology button.vote-unskip {
   border: 1px solid #c8c4bc;
   color: #3d3a34;
   font-family: var(--font-ui);
@@ -1111,9 +1114,22 @@ body.view-ontology .vote-compare-next {
   padding: 0.25rem 0.65rem;
   text-decoration: none;
 }
-body.view-ontology .vote-compare-next:hover {
+body.view-ontology .vote-compare-next:hover,
+body.view-ontology .vote-compare-skip:hover,
+body.view-ontology .vote-compare-skipped-link:hover,
+body.view-ontology button.vote-unskip:hover {
   border-color: #a68e6b;
   color: #1a1814;
+}
+body.view-ontology .vote-compare-skip-form,
+body.view-ontology .vote-unskip-form {
+  display: inline;
+  margin: 0;
+}
+body.view-ontology button.vote-compare-skip,
+body.view-ontology button.vote-unskip {
+  background: inherit;
+  cursor: pointer;
 }
 body.view-ontology .vote-compare-next.is-disabled {
   color: #8a857a;

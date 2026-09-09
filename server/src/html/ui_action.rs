@@ -63,6 +63,33 @@ pub enum HtmlUiAction {
         #[serde(default = "default_ui_form_action")]
         form_action: String,
     },
+    /// Hide the current `/vote` pair and deal the next one.
+    VoteCompareSkip {
+        room: String,
+        left_item: String,
+        right_item: String,
+        /// Pool parent item path, if the skip was initiated from a pool URL.
+        #[serde(default)]
+        pool: Option<String>,
+        /// Aspect slug (`:slug` group). Empty / omitted → canonical ranking.
+        #[serde(default)]
+        aspect: Option<String>,
+        /// Distinguishes compare panels sharing one page (`vote-compare-skip-form-{suffix}`).
+        #[serde(default)]
+        dom_suffix: Option<String>,
+        #[serde(default = "default_ui_form_action")]
+        form_action: String,
+    },
+    /// Restore a skipped `/vote` pair (from `/vote/skipped`).
+    VoteCompareUnskip {
+        room: String,
+        left_item: String,
+        right_item: String,
+        #[serde(default)]
+        aspect: Option<String>,
+        #[serde(default = "default_ui_form_action")]
+        form_action: String,
+    },
     /// Set or clear the garden HUD pin cookie (`slug_garden_pin`). Response is **`303` + `Set-Cookie`** when submitted as a full-navigation form (`data-navigate="full"`), matching `POST /theme`.
     SetGardenPin {
         #[serde(default)]
@@ -359,6 +386,37 @@ mod tests {
                 explanation: "prefer a".into(),
                 next: "/t/psalms".into(),
                 pool: None,
+                aspect: Some("beauty".into()),
+                dom_suffix: None,
+                form_action: "/ui".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn vote_compare_skip_round_trip() {
+        let template = serde_json::json!({
+            "action": "vote_compare_skip",
+            "room": "public",
+            "left_item": "~/a",
+            "right_item": "~/b",
+            "pool": "~/topic",
+            "aspect": "beauty",
+            "form_action": "/ui",
+        });
+        let mut form = HashMap::new();
+        form.insert(
+            UI_RPC_FIELD.to_string(),
+            serde_json::to_string(&template).unwrap(),
+        );
+        let a = parse_html_ui_from_form(&form).unwrap();
+        assert_eq!(
+            a,
+            HtmlUiAction::VoteCompareSkip {
+                room: "public".into(),
+                left_item: "~/a".into(),
+                right_item: "~/b".into(),
+                pool: Some("~/topic".into()),
                 aspect: Some("beauty".into()),
                 dom_suffix: None,
                 form_action: "/ui".into(),

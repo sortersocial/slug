@@ -445,6 +445,10 @@ async fn test_vote_landing_serves_neediest_pair() {
         body.contains("value=\"duel\""),
         "thread_tag should seed to pool leaf"
     );
+    assert!(
+        body.contains("data-testid=\"vote-skip\""),
+        "logged-in landing should include skip"
+    );
 }
 
 #[tokio::test]

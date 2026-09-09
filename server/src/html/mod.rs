@@ -42,12 +42,14 @@ pub(crate) use forum::{
 };
 pub(crate) use garden::{
     encode_pin_cookie_value, external_resolver_status_markup, garden_ui_copy_rank,
-    vote_compare_post_success_js, GARDEN_PIN_COOKIE,
+    vote_compare_post_success_js, vote_compare_skip_redirect, vote_skipped_region_markup,
+    GARDEN_PIN_COOKIE,
 };
 pub use garden::{
     external_garden_index, external_ontology_path, garden_index, ontology_path,
     redirect_strip_trailing_slash, room_external_garden_index, room_external_ontology_path,
-    room_garden_index, room_ontology_path, room_vote_compare_page, vote_compare_page,
+    room_garden_index, room_ontology_path, room_vote_compare_page, room_vote_skipped_page,
+    vote_compare_page, vote_skipped_page,
 };
 pub use routing::RouteContext;
 pub use search::{search_page, search_results_fragment};
@@ -779,6 +781,22 @@ fn garden_href_for_item_ref(
     Some((id, href))
 }
 
+/// Forum/garden body label for a tilde (or URL-spelled tilde) ref.
+///
+/// Href is always the leaf page. Nested *written* paths (`~/fast-food/bk`) keep
+/// their spelling so path sugar stays visible in the thread — collapsing them
+/// to `~/bk` made `#fast-food` look like it never claimed membership.
+/// `https://slug.social/~/…` vote-UI spellings still show as the leaf.
+pub(super) fn tilde_ref_display_label(raw_ref: &str, id: &crate::path_types::ItemId) -> String {
+    if id.tilde_tail().is_some() && raw_ref.starts_with('~') {
+        raw_ref.to_string()
+    } else if id.tilde_tail().is_some() {
+        id.display_path()
+    } else {
+        raw_ref.to_string()
+    }
+}
+
 fn push_item_ref_anchor(
     out: &mut String,
     raw_ref: &str,
@@ -802,12 +820,7 @@ fn push_item_ref_anchor(
         }
     }
     out.push('>');
-    let label = if id.tilde_tail().is_some() {
-        id.display_path()
-    } else {
-        raw_ref.to_string()
-    };
-    out.push_str(&escape_html(&label));
+    out.push_str(&escape_html(&tilde_ref_display_label(raw_ref, &id)));
     out.push_str("</a>");
     true
 }
@@ -1150,7 +1163,25 @@ mod linkify_title_tests {
         let html = linkify_slugs_with_prefix("see ~/foo/bar ok", "/r/x/~", Some(&bodies));
         assert!(html.contains("title=\"Hello world line\""));
         assert!(html.contains("href=\"/r/x/~/bar\""));
-        assert!(html.contains(">~/bar<"), "leaf display text, got {html}");
+        assert!(
+            html.contains(">~/foo/bar<"),
+            "nested written path stays visible so sugar is auditable, got {html}"
+        );
+        assert!(
+            !html.contains(">~/bar<"),
+            "must not collapse nested sugar to the leaf, got {html}"
+        );
+    }
+
+    #[test]
+    fn tilde_url_spelling_still_displays_as_leaf() {
+        let html =
+            linkify_slugs_with_prefix("see https://slug.social/~/burger-king ok", "/~", None);
+        assert!(html.contains("href=\"/~/burger-king\""));
+        assert!(
+            html.contains(">~/burger-king<"),
+            "vote-UI URL spelling shows as leaf, got {html}"
+        );
     }
 
     #[test]

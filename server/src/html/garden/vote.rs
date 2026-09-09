@@ -20,10 +20,10 @@ use crate::{
     },
     middleware::canonical_view_url,
     path_types::ItemId,
-    reducer::{ContentState, ForumThreadState, ScopeId},
-    timeago,
-    scope_rank::{comparable_items, suggest_next_pair_in_pool},
+    reducer::{ContentState, ForumThreadState, ScopeId, VoteSkipEntry},
+    scope_rank::{comparable_items, suggest_next_pair_in_pool_excluding},
     state::AppState,
+    timeago,
 };
 
 use super::{
@@ -69,6 +69,10 @@ impl VoteCompareDomIds {
 
     pub(super) fn nav_id(&self) -> String {
         self.suffixed("vote-compare-nav")
+    }
+
+    pub(super) fn skip_form_id(&self) -> String {
+        self.suffixed("vote-compare-skip-form")
     }
 
     pub(super) fn slider_id(&self) -> String {
@@ -281,22 +285,33 @@ fn vote_edge_history_markup(content: &ContentState, left: &ItemId, right: &ItemI
 pub(crate) async fn vote_compare_post_success_js(
     state: &AppState,
     nav: &ThreadNav,
-    _room_wire: &str,
-    _thread_tag: &str,
+    principal: &str,
     left: &ItemId,
     right: &ItemId,
     pool: Option<&ItemId>,
-    _post_id: &str,
-    _post_idx: Option<usize>,
-    _next: &str,
+    aspect: Option<&str>,
+    next_path: &str,
     dom_suffix: Option<&str>,
 ) -> String {
     let ids = VoteCompareDomIds::with_suffix(dom_suffix.unwrap_or("").to_string());
     let reduced = state.reduced.read().await;
     let content = content_for_garden_view(&reduced, &nav.scope());
     let edge_history = vote_edge_history_markup(content, left, right);
-    let next_pair = suggest_next_vote_pair(content, left, right, pool);
-    let nav_markup = vote_compare_nav_markup(nav, next_pair.as_ref(), pool, &ids.nav_id());
+    let excluded = reduced.skipped_pairs(principal, &nav.scope(), aspect);
+    let group = vote_ranking_group(content, pool, aspect);
+    let next_pair = suggest_next_vote_pair(content, left, right, pool, group, Some(&excluded));
+    let nav_markup = vote_compare_nav_markup(&VoteCompareNavView {
+        nav,
+        left,
+        right,
+        next_pair: next_pair.as_ref(),
+        pool,
+        aspect,
+        nav_id: &ids.nav_id(),
+        skip_form_id: &ids.skip_form_id(),
+        logged_in: true,
+        next_path,
+    });
     drop(reduced);
     JsBuilder::new()
         .morph_inner_selector(&format!("#{}", ids.history_id()), edge_history)
@@ -312,6 +327,7 @@ pub(super) fn vote_compare_href(
     right: &ItemId,
     thread_override: Option<&str>,
     pool: Option<&ItemId>,
+    aspect: Option<&str>,
 ) -> String {
     let left_dp = left.display_path();
     let right_dp = right.display_path();
@@ -330,6 +346,9 @@ pub(super) fn vote_compare_href(
         let pool_dp = p.display_path();
         base = format!("{}&pool={}", base, urlencoding::encode(&pool_dp));
     }
+    if let Some(a) = aspect.filter(|s| !s.is_empty()) {
+        base = format!("{}&aspect={}", base, urlencoding::encode(a));
+    }
     base
 }
 
@@ -344,15 +363,70 @@ pub(super) fn vote_pool_href(nav: &ThreadNav, pool_item_str: &str) -> String {
     )
 }
 
-fn vote_compare_nav_markup(
-    nav: &ThreadNav,
-    next_pair: Option<&(ItemId, ItemId)>,
+pub(super) fn vote_skipped_href(nav: &ThreadNav) -> String {
+    format!("{}/vote/skipped", nav.room_path_prefix_for_vote_compare())
+}
+
+fn vote_ranking_group<'a>(
+    content: &'a ContentState,
     pool: Option<&ItemId>,
-    nav_id: &str,
-) -> maud::Markup {
-    let next_pair_href = next_pair.map(|(nl, nr)| vote_compare_href(nav, nl, nr, None, pool));
+    aspect: Option<&str>,
+) -> &'a crate::reducer::GroupState {
+    match (pool, aspect) {
+        (Some(scope), Some(slug)) => content
+            .aspect_group(scope, slug)
+            .unwrap_or(&content.ranking_group),
+        _ => &content.ranking_group,
+    }
+}
+
+struct VoteCompareNavView<'a> {
+    nav: &'a ThreadNav,
+    left: &'a ItemId,
+    right: &'a ItemId,
+    next_pair: Option<&'a (ItemId, ItemId)>,
+    pool: Option<&'a ItemId>,
+    aspect: Option<&'a str>,
+    nav_id: &'a str,
+    skip_form_id: &'a str,
+    logged_in: bool,
+    next_path: &'a str,
+}
+
+fn vote_compare_nav_markup(p: &VoteCompareNavView<'_>) -> maud::Markup {
+    let next_pair_href = p
+        .next_pair
+        .map(|(nl, nr)| vote_compare_href(p.nav, nl, nr, None, p.pool, p.aspect));
+    let skipped_href = vote_skipped_href(p.nav);
+    let mut skip_rpc = json!({
+        "action": "vote_compare_skip",
+        "room": p.nav.room_wire,
+        "left_item": p.left.as_str(),
+        "right_item": p.right.as_str(),
+        "pool": p.pool.map(|q| q.as_str()),
+        "form_action": "/ui",
+    });
+    if p.aspect.is_some() {
+        skip_rpc["aspect"] = json!(p.aspect);
+    }
+    let skip_json = template_json_compact(&skip_rpc).expect("vote skip rpc json");
     html! {
-        div id=(nav_id) class="vote-compare-nav" {
+        div id=(p.nav_id) class="vote-compare-nav" {
+            @if p.logged_in {
+                form id=(p.skip_form_id) class="vote-compare-skip-form" method="POST" action="/ui" {
+                    input type="hidden" name=(UI_RPC_FIELD) value=(skip_json);
+                    button type="submit" class="vote-compare-skip" data-testid="vote-skip" { "skip" }
+                }
+            } @else {
+                a class="vote-compare-skip" data-testid="vote-skip" href=(login_href_with_next(p.next_path)) { "skip" }
+            }
+            a class="vote-compare-skipped-link" data-testid="vote-skipped" href=(
+                if p.logged_in {
+                    skipped_href.clone()
+                } else {
+                    login_href_with_next(&skipped_href)
+                }
+            ) { "skipped" }
             @if let Some(href) = &next_pair_href {
                 a class="vote-compare-next" data-testid="vote-next-pair" href=(href) { "next pair" }
             } @else {
@@ -367,6 +441,8 @@ pub(super) fn suggest_next_vote_pair(
     current_left: &ItemId,
     current_right: &ItemId,
     pool_parent: Option<&ItemId>,
+    group: &crate::reducer::GroupState,
+    excluded: Option<&HashSet<(ItemId, ItemId)>>,
 ) -> Option<(ItemId, ItemId)> {
     let pool: Vec<ItemId> = if let Some(parent) = pool_parent {
         content.members_of(&parent.ontology_leaf())
@@ -385,11 +461,7 @@ pub(super) fn suggest_next_vote_pair(
     if pool.len() < 2 {
         return None;
     }
-    suggest_next_pair_in_pool(
-        &content.ranking_group,
-        &pool,
-        Some((current_left, current_right)),
-    )
+    suggest_next_pair_in_pool_excluding(group, &pool, Some((current_left, current_right)), excluded)
 }
 
 pub(super) fn vote_compare_item_card(
@@ -463,6 +535,7 @@ pub(super) fn vote_compare_panel_markup(p: VoteComparePanel<'_>) -> maud::Markup
     let form_id = p.ids.form_id();
     let history_id = p.ids.history_id();
     let nav_id = p.ids.nav_id();
+    let skip_form_id = p.ids.skip_form_id();
     let slider_id = p.ids.slider_id();
     let ratio_left_id = p.ids.ratio_left_id();
     let ratio_right_id = p.ids.ratio_right_id();
@@ -494,7 +567,18 @@ pub(super) fn vote_compare_panel_markup(p: VoteComparePanel<'_>) -> maud::Markup
                     p.item_bodies,
                 ))
             }
-            (vote_compare_nav_markup(p.nav, p.next_pair, p.pool, &nav_id))
+            (vote_compare_nav_markup(&VoteCompareNavView {
+                nav: p.nav,
+                left: p.left,
+                right: p.right,
+                next_pair: p.next_pair,
+                pool: p.pool,
+                aspect: p.aspect_slug,
+                nav_id: &nav_id,
+                skip_form_id: &skip_form_id,
+                logged_in: p.logged_in,
+                next_path: p.next_path,
+            }))
             div id=(history_id) {
                 (p.edge_history)
             }
@@ -528,6 +612,7 @@ pub(super) fn vote_compare_panel_markup(p: VoteComparePanel<'_>) -> maud::Markup
                     }
                     label class="vote-compare-slider-label" {
                         span id=(slider_left_id) { (item_display_path(p.left.as_str())) }
+                        // 0–100; slug_ui.js snaps to human ratios 100:1 … 1:1 … 1:100.
                         input type="range" id=(slider_id) class="vote-preference-slider" min="0" max="100" value="50"
                             aria-valuemin="0" aria-valuemax="100" aria-valuetext="1:1";
                         span id=(slider_right_id) { (item_display_path(p.right.as_str())) }
@@ -573,6 +658,7 @@ pub struct VoteCompareQuery {
 /// judged by distinct voted pairs, so winners keep winning: dealing a
 /// popular scope's stragglers grows it further. Fully-judged questions are
 /// skipped (nothing left to deal); `None` means everything is judged.
+#[derive(Debug, Clone)]
 pub(super) struct LandingQuestion {
     pub scope: ItemId,
     /// `None` = canonical ranking, `Some(slug)` = that aspect group.
@@ -645,8 +731,7 @@ fn open_questions(content: &ContentState) -> Vec<LandingQuestion> {
             let Some(group) = content.aspect_groups.get(&(ascope.clone(), slug.clone())) else {
                 continue;
             };
-            let (voted, possible) =
-                voted_density(&group.item_to_idx, &group.voted_pairs, &members);
+            let (voted, possible) = voted_density(&group.item_to_idx, &group.voted_pairs, &members);
             if voted < possible {
                 out.push(LandingQuestion {
                     scope: (*scope).clone(),
@@ -788,6 +873,18 @@ pub(super) async fn vote_compare_inner(
         None => None,
     };
 
+    let aspect_slug = q
+        .aspect
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    if let Some(slug) = &aspect_slug {
+        if !crate::dsl::is_valid_aspect_slug(slug) {
+            return (StatusCode::BAD_REQUEST, "bad aspect slug").into_response();
+        }
+    }
+
     let (left, right) = match (q.left.as_deref(), q.right.as_deref()) {
         (Some(l), Some(r)) => {
             let left = match ItemId::parse(l.trim()) {
@@ -819,7 +916,13 @@ pub(super) async fn vote_compare_inner(
                 )
                     .into_response();
             }
-            let pair = suggest_next_pair_in_pool(&content.ranking_group, &children, None);
+            let viewer = optional_principal(&headers, &jar, &reduced);
+            let excluded = viewer
+                .as_deref()
+                .map(|p| reduced.skipped_pairs(p, &nav.scope(), aspect_slug.as_deref()))
+                .unwrap_or_default();
+            let group = vote_ranking_group(content, Some(pool), aspect_slug.as_deref());
+            let pair = suggest_next_pair_in_pool_excluding(group, &children, None, Some(&excluded));
             drop(reduced);
             match pair {
                 Some(p) => p,
@@ -836,18 +939,6 @@ pub(super) async fn vote_compare_inner(
                 .into_response()
         }
     };
-
-    let aspect_slug = q
-        .aspect
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string);
-    if let Some(slug) = &aspect_slug {
-        if !crate::dsl::is_valid_aspect_slug(slug) {
-            return (StatusCode::BAD_REQUEST, "bad aspect slug").into_response();
-        }
-    }
 
     render_compare_page(
         state,
@@ -909,7 +1000,19 @@ async fn render_compare_page(
     let left_body = content.item_bodies.get(&left).cloned();
     let right_body = content.item_bodies.get(&right).cloned();
     let item_bodies_for_cards = content.item_bodies.clone();
-    let next_pair = suggest_next_vote_pair(content, &left, &right, pool_id.as_ref());
+    let excluded = viewer
+        .as_deref()
+        .map(|p| reduced.skipped_pairs(p, &nav.scope(), aspect_slug.as_deref()))
+        .unwrap_or_default();
+    let group = vote_ranking_group(content, pool_id.as_ref(), aspect_slug.as_deref());
+    let next_pair = suggest_next_vote_pair(
+        content,
+        &left,
+        &right,
+        pool_id.as_ref(),
+        group,
+        Some(&excluded),
+    );
     drop(reduced);
 
     let title = format!(
@@ -979,49 +1082,78 @@ async fn vote_landing(
     uri: Uri,
 ) -> axum::response::Response {
     let scope_id = nav.scope();
-    let (pick, index) = {
+    let (dealt, pair, index, skip_count) = {
         let reduced = state.reduced.read().await;
         let content = content_for_garden_view(&reduced, &nav.scope());
-        let pick = pick_landing_question(content);
-        let mut index = rank_open_questions(content, &reduced.forum_threads, &scope_id);
-        if let Some(dealt) = &pick {
-            index.retain(|row| {
-                !(row.question.scope == dealt.scope && row.question.aspect == dealt.aspect)
-            });
+        let viewer = optional_principal(&headers, &jar, &reduced);
+        let skip_count = viewer
+            .as_deref()
+            .map(|p| reduced.skipped_entries(p, &scope_id).len())
+            .unwrap_or(0);
+        let mut ranked = rank_open_questions(content, &reduced.forum_threads, &scope_id);
+        let mut dealt: Option<LandingQuestion> = None;
+        let mut pair: Option<(ItemId, ItemId)> = None;
+        // Prefer the usual popularity deal, but walk hotter→cooler if this
+        // viewer has skipped every remaining pair in the winner.
+        let mut order: Vec<LandingQuestion> = Vec::new();
+        if let Some(first) = pick_landing_question(content) {
+            order.push(first);
         }
-        index.truncate(OPEN_INDEX_CAP);
-        (pick, index)
+        for row in &ranked {
+            if !order
+                .iter()
+                .any(|q| q.scope == row.question.scope && q.aspect == row.question.aspect)
+            {
+                order.push(LandingQuestion {
+                    scope: row.question.scope.clone(),
+                    aspect: row.question.aspect.clone(),
+                    voted: row.question.voted,
+                    possible: row.question.possible,
+                    members: row.question.members,
+                    last_vote_ts: row.question.last_vote_ts,
+                });
+            }
+        }
+        for q in order {
+            let members = comparable_items(content, content.members_of(&q.scope));
+            let group = match &q.aspect {
+                None => &content.ranking_group,
+                Some(slug) => match content.aspect_group(&q.scope, slug) {
+                    Some(group) => group,
+                    None => continue,
+                },
+            };
+            let excluded = viewer
+                .as_deref()
+                .map(|p| reduced.skipped_pairs(p, &scope_id, q.aspect.as_deref()))
+                .unwrap_or_default();
+            if let Some(p) =
+                suggest_next_pair_in_pool_excluding(group, &members, None, Some(&excluded))
+            {
+                dealt = Some(q);
+                pair = Some(p);
+                break;
+            }
+        }
+        if let Some(d) = &dealt {
+            ranked
+                .retain(|row| !(row.question.scope == d.scope && row.question.aspect == d.aspect));
+        }
+        ranked.truncate(OPEN_INDEX_CAP);
+        (dealt, pair, ranked, skip_count)
     };
-    let Some(dealt) = pick else {
-        return landing_empty_page(&state, &jar, &uri).await;
-    };
-    let (scope, aspect, voted, possible) =
-        (dealt.scope, dealt.aspect, dealt.voted, dealt.possible);
-    let pair = {
-        let reduced = state.reduced.read().await;
-        let content = content_for_garden_view(&reduced, &nav.scope());
-        let members = comparable_items(content, content.members_of(&scope));
-        // Aspect groups share the scope electorate; canonical and aspect votes
-        // live in separate graphs, so deal from the group being judged.
-        let group = match &aspect {
-            None => &content.ranking_group,
-            Some(slug) => match content.aspect_group(&scope, slug) {
-                Some(group) => group,
-                None => {
-                    drop(reduced);
-                    return landing_empty_page(&state, &jar, &uri).await;
-                }
-            },
-        };
-        suggest_next_pair_in_pool(group, &members, None)
+    let Some(dealt) = dealt else {
+        return landing_empty_page(&state, &jar, &uri, skip_count, &nav).await;
     };
     let Some((left, right)) = pair else {
-        return landing_empty_page(&state, &jar, &uri).await;
+        return landing_empty_page(&state, &jar, &uri, skip_count, &nav).await;
     };
+    let (scope, aspect, voted, possible) = (dealt.scope, dealt.aspect, dealt.voted, dealt.possible);
     let scope_href = match &aspect {
         None => item_href(scope.as_str(), &nav),
         Some(slug) => format!("{}#aspect-{slug}", item_href(scope.as_str(), &nav)),
     };
+    let skipped_href = vote_skipped_href(&nav);
     let intro = html! {
         header class="vote-landing" {
             h1 class="vote-landing-title" { "judge one pair" }
@@ -1033,6 +1165,10 @@ async fn vote_landing(
                 " — "
                 (format!("{voted} of {possible}"))
                 " pairs judged, the garden's most compared open question."
+                @if skip_count > 0 {
+                    " "
+                    a href=(skipped_href) { (skip_count) " skipped" }
+                }
             }
             ol class="vote-landing-steps" {
                 li { "compare the two items below" }
@@ -1124,14 +1260,18 @@ fn open_index_markup(nav: &ThreadNav, rows: &[OpenRow], now: i64) -> maud::Marku
     }
 }
 
-/// Nothing left to judge: every scope with two comparable members is fully compared.
+/// Nothing left to judge: every scope with two comparable members is fully compared
+/// (or this viewer has skipped the rest).
 async fn landing_empty_page(
     state: &AppState,
     jar: &CookieJar,
     uri: &Uri,
+    skip_count: usize,
+    nav: &ThreadNav,
 ) -> axum::response::Response {
     let url_key = canonical_view_url(uri);
     let view_count = state.views.get_views(&url_key);
+    let skipped_href = vote_skipped_href(nav);
     let page = layout_full_bleed_chromeless(
         "vote",
         "view-ontology view-ontology-light view-vote-compare view-vote-compare-fullscreen",
@@ -1145,12 +1285,207 @@ async fn landing_empty_page(
                     ", or start a "
                     a href="/" { "thread" }
                     " to open a new question."
+                    @if skip_count > 0 {
+                        " "
+                        a href=(skipped_href) { (skip_count) " skipped" }
+                    }
                 }
             }
         },
         Some(view_count),
         theme_from_jar(jar),
         &theme_next_from_uri(uri),
+    );
+    Html(page.into_string()).into_response()
+}
+
+/// After skip: URL of the next unskipped pair (same pool/aspect), or `/vote` landing.
+pub(crate) fn vote_skip_redirect_href(
+    nav: &ThreadNav,
+    content: &ContentState,
+    left: &ItemId,
+    right: &ItemId,
+    pool: Option<&ItemId>,
+    aspect: Option<&str>,
+    excluded: &HashSet<(ItemId, ItemId)>,
+) -> String {
+    let group = vote_ranking_group(content, pool, aspect);
+    match suggest_next_vote_pair(content, left, right, pool, group, Some(excluded)) {
+        Some((nl, nr)) => vote_compare_href(nav, &nl, &nr, None, pool, aspect),
+        None => format!("{}/vote", nav.room_path_prefix_for_vote_compare()),
+    }
+}
+
+pub(crate) async fn vote_compare_skip_redirect(
+    state: &AppState,
+    nav: &ThreadNav,
+    principal: &str,
+    left: &ItemId,
+    right: &ItemId,
+    pool: Option<&ItemId>,
+    aspect: Option<&str>,
+) -> String {
+    let reduced = state.reduced.read().await;
+    let content = content_for_garden_view(&reduced, &nav.scope());
+    let excluded = reduced.skipped_pairs(principal, &nav.scope(), aspect);
+    vote_skip_redirect_href(nav, content, left, right, pool, aspect, &excluded)
+}
+
+fn vote_unskip_rpc_json(nav: &ThreadNav, e: &VoteSkipEntry) -> String {
+    let mut val = json!({
+        "action": "vote_compare_unskip",
+        "room": nav.room_wire,
+        "left_item": e.lo.as_str(),
+        "right_item": e.hi.as_str(),
+        "form_action": "/ui",
+    });
+    if let Some(a) = &e.aspect {
+        val["aspect"] = json!(a);
+    }
+    template_json_compact(&val).expect("unskip rpc json")
+}
+
+fn vote_skipped_list_markup(nav: &ThreadNav, entries: &[VoteSkipEntry], now: i64) -> maud::Markup {
+    html! {
+        div id="vote-skipped-region" {
+            @if entries.is_empty() {
+                p class="muted vote-skipped-empty" { "no skipped pairs" }
+            } @else {
+                ul class="vote-skipped-list" {
+                    @for e in entries {
+                        @let pair_href = vote_compare_href(
+                            nav,
+                            &e.lo,
+                            &e.hi,
+                            None,
+                            e.pool.as_ref(),
+                            e.aspect.as_deref(),
+                        );
+                        @let unskip_json = vote_unskip_rpc_json(nav, e);
+                        li class="vote-skipped-row" data-testid="vote-skipped-row" {
+                            a class="vote-skipped-pair" href=(pair_href) {
+                                code { (item_display_path(e.lo.as_str())) }
+                                " vs "
+                                code { (item_display_path(e.hi.as_str())) }
+                            }
+                            span class="muted vote-skipped-meta" {
+                                @if let Some(slug) = &e.aspect {
+                                    ":" (slug)
+                                    @if e.pool.is_some() { " in " }
+                                }
+                                @if let Some(pool) = &e.pool {
+                                    (item_display_path(pool.as_str()))
+                                }
+                                @if e.ts > 0 {
+                                    @let hover = timeago::rfc3339_utc(e.ts);
+                                    @let ago = timeago::timeago(now, e.ts);
+                                    " · "
+                                    span title=(hover) { (ago) }
+                                }
+                            }
+                            form class="vote-unskip-form" method="POST" action="/ui" {
+                                input type="hidden" name=(UI_RPC_FIELD) value=(unskip_json);
+                                button type="submit" class="vote-unskip" data-testid="vote-unskip" { "unskip" }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Markup for the skipped list after an unskip (morph target `#vote-skipped-region`).
+pub(crate) fn vote_skipped_region_markup(
+    nav: &ThreadNav,
+    entries: &[VoteSkipEntry],
+    now: i64,
+) -> maud::Markup {
+    vote_skipped_list_markup(nav, entries, now)
+}
+
+pub async fn vote_skipped_page(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    uri: Uri,
+) -> impl IntoResponse {
+    let nav = ThreadNav::public();
+    vote_skipped_inner(state, nav, headers, jar, uri).await
+}
+
+pub async fn room_vote_skipped_page(
+    State(state): State<AppState>,
+    Path(room_key): Path<String>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    uri: Uri,
+) -> impl IntoResponse {
+    let Some(room_id) = slug_types::room_id_from_route_segment(&room_key) else {
+        return (StatusCode::NOT_FOUND, "bad room path").into_response();
+    };
+    let Some(nav) = ThreadNav::from_room_id(&room_id) else {
+        return (StatusCode::NOT_FOUND, "bad room path").into_response();
+    };
+    let reduced = state.reduced.read().await;
+    let user = optional_principal(&headers, &jar, &reduced);
+    if !user_can_view_room(&reduced, &room_id, user.as_deref()) {
+        drop(reduced);
+        return room_not_found_page(&jar, &uri).into_response();
+    }
+    if !room_scope_has_garden_content(&reduced, &nav) {
+        drop(reduced);
+        return room_not_found_page(&jar, &uri).into_response();
+    }
+    drop(reduced);
+    vote_skipped_inner(state, nav, headers, jar, uri).await
+}
+
+async fn vote_skipped_inner(
+    state: AppState,
+    nav: ThreadNav,
+    headers: HeaderMap,
+    jar: CookieJar,
+    uri: Uri,
+) -> axum::response::Response {
+    let reduced = state.reduced.read().await;
+    let viewer = optional_principal(&headers, &jar, &reduced);
+    let next_path = uri
+        .path_and_query()
+        .map(|pq| pq.as_str().to_string())
+        .unwrap_or_else(|| vote_skipped_href(&nav));
+    let entries = viewer
+        .as_deref()
+        .map(|p| reduced.skipped_entries(p, &nav.scope()))
+        .unwrap_or_default();
+    drop(reduced);
+    let now = now_ms();
+    let vote_home = format!("{}/vote", nav.room_path_prefix_for_vote_compare());
+    let body = html! {
+        header class="vote-landing" {
+            h1 class="vote-landing-title" { "skipped pairs" }
+            p class="vote-landing-need" {
+                a href=(vote_home) { "back to vote" }
+            }
+        }
+        @if viewer.is_none() {
+            p {
+                a class="vote-compare-login-cta" href=(login_href_with_next(&next_path)) { "log in" }
+                " to see pairs you've skipped."
+            }
+        } @else {
+            (vote_skipped_list_markup(&nav, &entries, now))
+        }
+    };
+    let url_key = canonical_view_url(&uri);
+    let view_count = state.views.get_views(&url_key);
+    let page = layout_full_bleed_chromeless(
+        "skipped pairs — vote",
+        "view-ontology view-ontology-light view-vote-compare view-vote-compare-fullscreen view-vote-skipped",
+        body,
+        Some(view_count),
+        theme_from_jar(&jar),
+        &theme_next_from_uri(&uri),
     );
     Html(page.into_string()).into_response()
 }
