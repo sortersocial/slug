@@ -32,34 +32,6 @@
             (do (Thread/sleep 200) (recur))
             false))))))
 
-(defn- resolver-status-text [pg]
-  (try (or (locator/text-content (page/locator pg "#external-resolver-status")) "")
-       (catch Exception _ "")))
-
-(defn- click-resolve-children-expecting-url!
-  "POST the are.na children form from the page and wait until the URL includes
-  `url-needle`.
-
-  Empty external pages embed a live are.na iframe above the resolver, and
-  `/ui` eval's `window.location` rather than a document navigation. Do the
-  same fetch+eval as `slug_ui.js` inside `page.evaluate` (Playwright awaits
-  the promise) so pointer interception and background `wait-for-url` races
-  cannot swallow the redirect."
-  [pg url-needle]
-  (let [js (page/evaluate
-            pg
-            "async () => { const btn = document.querySelector('[data-testid=arena-resolve-children]'); if (!btn) return 'missing-button'; document.querySelectorAll('iframe').forEach((el) => el.remove()); const form = btn.closest('form'); const resp = await fetch(form.getAttribute('action') || '/ui', { method: 'POST', body: new URLSearchParams(new FormData(form)), headers: {'Content-Type': 'application/x-www-form-urlencoded'}, credentials: 'same-origin' }); const js = await resp.text(); eval(js); return js; }")]
-    (cond
-      (core/anomaly? js)
-      (do (println "resolve_external evaluate failed:" js) false)
-      (= (str js) "missing-button")
-      (do (println "resolve_external: missing button") false)
-      :else
-      (do
-        (when-not (str/includes? (str js) "window.location")
-          (println "resolve_external JS had no redirect:" js))
-        (wait-for-url-includes pg url-needle 15000)))))
-
 (defn- wait-for-http-text [url expected timeout-ms]
   (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
     (loop []
@@ -197,24 +169,12 @@
                ;; isn't racing a stale redirect.
                (page/navigate pg (str base-url "/-/https://www.are.na/channel/my-chan"))
 
-               ;; Legacy /:user/:channel URLs resolve onto the canonical channel item.
+               ;; Legacy /:user/:channel garden URLs 308 onto the canonical channel item.
                (page/navigate pg (str base-url "/-/https://www.are.na/some-user/my-chan"))
-               (is (wait-for-text pg "#external-resolver-panel" "Are.na resolver" 15000)
-                   "legacy channel URL shows are.na resolver panel")
-               (let [html (:body (oauth/http-get (str base-url "/-/https://www.are.na/some-user/my-chan")))]
-                 (is (and (string? html) (str/includes? html "channel/my-chan"))
-                     "legacy URL HTML must target canonical channel item"))
-               (is (click-resolve-children-expecting-url!
-                    pg "/-/https://www.are.na/channel/my-chan")
-                   (str "legacy resolve redirects to canonical channel, url="
-                        (page/url pg)
-                        " status="
-                        (resolver-status-text pg)))
+               (is (wait-for-url-includes pg "/-/https://www.are.na/channel/my-chan" 15000)
+                   (str "legacy garden URL 308s to canonical channel, url=" (page/url pg)))
                (is (wait-for-text pg "body" "-/https://www.are.na/block/1" 15000)
-                   (str "legacy URL import lands on canonical channel page with children, url="
-                        (page/url pg)
-                        " status="
-                        (resolver-status-text pg)))))))
+                   "legacy URL import lands on canonical channel page with children")))))
 
        (is (some #{"/v3/channels/my-chan/contents"} @(:paths @!arena))
            "mock are.na saw channel contents request")

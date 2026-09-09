@@ -786,37 +786,8 @@ async fn test_legacy_arena_channel_page_resolve_form_targets_canonical() {
         .send()
         .await
         .unwrap();
-    assert!(
-        resp.status().is_success(),
-        "legacy channel URL should render, got {}",
-        resp.status()
-    );
-    let body = resp.text().await.unwrap();
-    assert!(
-        body.contains("arena-resolve-children"),
-        "resolver button missing: {}",
-        body.chars().take(1500).collect::<String>()
-    );
-    assert!(
-        body.contains("/-/https://www.are.na/channel/my-chan"),
-        "resolve next must be the canonical channel page: {}",
-        body.chars().take(2500).collect::<String>()
-    );
-    let form_at = body
-        .find("arena-resolve-children")
-        .and_then(|i| body[..i].rfind("<form"))
-        .expect("resolve children form");
-    let form_end = body[form_at..]
-        .find("</form>")
-        .map(|n| form_at + n + "</form>".len())
-        .expect("resolve children form close");
-    let form = &body[form_at..form_end];
-    assert!(
-        form.contains("channel/my-chan"),
-        "resolve payload must target canonical item: {form}"
-    );
-    assert!(
-        !form.contains("some-user"),
-        "legacy user segment must not remain in the resolve form: {form}"
+    assert_eq!(
+        redirect_location(&resp),
+        "/-/https://www.are.na/channel/my-chan"
     );
 }
