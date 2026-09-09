@@ -107,6 +107,7 @@ pub async fn editor_check(
                 &v.doc,
             );
 
+            let check_warnings = v.doc.check_warnings();
             let status = html! {
                 span class="editor-ok" {
                     "valid"
@@ -115,6 +116,13 @@ pub async fn editor_check(
 
             let results = html! {
                 div id="editor-results" {
+                    @if !check_warnings.is_empty() {
+                        ul class="editor-warnings" {
+                            @for w in &check_warnings {
+                                li class="muted" { (w) }
+                            }
+                        }
+                    }
                     @for scope in &rankings {
                         @let heading = match &scope.aspect {
                             Some(slug) => format!("ranking: {} :{}", scope.parent, slug),

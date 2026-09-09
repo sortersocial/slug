@@ -546,6 +546,8 @@ pub enum RpcResult {
         rankings: Vec<CheckScopeRanking>,
         threads: Vec<String>,
         next: Vec<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        warnings: Vec<String>,
     },
     GardenRank(RankResponse),
     GardenItem(ItemResponse),

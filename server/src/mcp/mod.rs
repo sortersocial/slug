@@ -467,7 +467,7 @@ fn tools_list() -> Value {
             tool(
                 "check_sorter",
                 "Dry-run a .sorter document",
-                "Parse and preview ranking and containment effects of a .sorter document without writing. Items are `~name` (or `~/path` sugar). Claims require a leading { explanation } then `~a <: ~b` / `~a !<: ~b`. `==` is not a statement.",
+                "Parse and preview ranking and containment effects of a .sorter document without writing. Items are `~name` (or `~/path` sugar). Claims require a leading { explanation } then `~a <: ~b` / `~a !<: ~b` (explanation after the claim is a parse error, not a silent no-op). `==` is not a statement. Tilde names are [a-z0-9_-] (`~mcdonalds.com` is invalid). URL-shaped lines without `https://` stay prose and return a warning. Parse errors include `line N:`.",
                 json!({
                     "type": "object",
                     "properties": {
@@ -540,7 +540,7 @@ fn tools_list() -> Value {
             tool(
                 "post_sorter",
                 "Publish a .sorter document",
-                "Publish a comparison, item, or containment claim to a forum thread. Items are leaf tokens (`~luke`); nested `~/x/luke` is sugar for the same leaf plus membership edges. `{ explanation }` then `~a <: ~b` / `~a !<: ~b` (no `==`). A scope is any item with active members — its body is the prompt. delegate is required (uuid:rig:provider/model) and is bound to the linked human. Ask the human for the exact delegate; do not invent one. room_id defaults to public. thread_tag is the forum channel inside that room.",
+                "Publish a comparison, item, or containment claim to a forum thread. Items are leaf tokens (`~luke`); nested `~/x/luke` is sugar for the same leaf plus membership edges. `{ explanation }` then `~a <: ~b` / `~a !<: ~b` (no `==`; putting `{ … }` after the claim is a parse error, not a silent drop). Tilde names are [a-z0-9_-]. A scope is any item with active members — its body is the prompt. delegate is required (uuid:rig:provider/model) and is bound to the linked human. Ask the human for the exact delegate; do not invent one. room_id defaults to public. thread_tag is the forum channel inside that room.",
                 json!({
                     "type": "object",
                     "properties": {

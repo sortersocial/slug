@@ -57,6 +57,43 @@ mod tests {
     }
 
     #[test]
+    fn validate_ingest_document_rejects_trailing_explanation_on_claim() {
+        let reduced = ReducerState::default();
+        let text =
+            "~/panda-express { orang chicken }\n~/panda-express <: ~fast-food { this is fast food }\n";
+        let err =
+            validate_ingest_document(&reduced, text, &crate::reducer::ScopeId::Public).unwrap_err();
+        assert_eq!(err.0, StatusCode::BAD_REQUEST);
+        assert_eq!(err.1, "parse error");
+        let hint = err.2.unwrap_or_default();
+        assert!(
+            hint.contains("line 2:") && hint.contains("before the claim"),
+            "write path must not PostOk a trailing-explanation claim; got {hint}"
+        );
+    }
+
+    #[test]
+    fn validate_ingest_document_rejects_dotted_tilde_name_on_that_line() {
+        let reduced = ReducerState::default();
+        let text = "\
+~fast-food { chains }
+~mcdonalds.com { McDonald's }
+{
+kfc is a chain
+}
+~kfc <: ~fast-food
+";
+        let err =
+            validate_ingest_document(&reduced, text, &crate::reducer::ScopeId::Public).unwrap_err();
+        assert_eq!(err.1, "parse error");
+        let hint = err.2.unwrap_or_default();
+        assert!(
+            hint.contains("line 2:") && hint.contains("~mcdonalds.com"),
+            "dotted name must cite line 2, not the later valid claim; got {hint}"
+        );
+    }
+
+    #[test]
     fn validate_ingest_document_accepts_valid_doc_with_existing_items() {
         let mut reduced = ReducerState::default();
         apply_ingest(
