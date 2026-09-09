@@ -28,6 +28,8 @@ pub struct CompileResult {
     pub threads: Vec<String>,
     pub rankings: Vec<CheckScopeRanking>,
     pub stats: CompileStats,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ingest_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -255,6 +257,7 @@ fn compile_document_inner(
         threads: threads_in_document(text),
         rankings: rankings_for_document(&simulated, &scope, room_key, &validated.doc),
         stats: document_stats(&validated.doc),
+        warnings: validated.doc.check_warnings(),
         ingest_id,
         ingest_line,
     })
@@ -419,6 +422,39 @@ mod tests {
         .unwrap_err();
         assert!(!err.ok);
         assert!(err.error.contains("undefined"));
+    }
+
+    #[test]
+    fn compile_dotted_tilde_token_is_line_1_parse_error() {
+        let err = compile_document(
+            &ReducerState::default(),
+            "public",
+            "~mcdonalds.com { https://mcdonalds.com }\n~fast-food-chains { the chains }\n\n{ why }\n~mcdonalds <: ~fast-food-chains\n",
+        )
+        .unwrap_err();
+        let detail = err.parse_error.as_deref().unwrap_or(&err.error);
+        assert!(detail.contains("line 1:"), "got {detail}");
+        assert!(detail.contains("invalid character '.'"), "got {detail}");
+        assert!(!detail.contains("vote explanations must start"), "got {detail}");
+    }
+
+    #[test]
+    fn compile_url_shaped_prose_definition_warns() {
+        let result = compile_document(
+            &ReducerState::default(),
+            "public",
+            "mcdonalds.com { fast food }\n~chains { the chains }",
+        )
+        .unwrap();
+        assert!(result.ok);
+        assert!(
+            result.warnings.iter().any(|w| w.contains("line 1")
+                && w.contains("does not start with '~'")
+                && w.contains("parsed as prose")),
+            "got {:?}",
+            result.warnings
+        );
+        assert_eq!(result.stats.items, 1);
     }
 
     #[test]

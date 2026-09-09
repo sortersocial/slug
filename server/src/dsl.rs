@@ -4,6 +4,8 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Document {
     pub statements: Vec<Stmt>,
+    /// Non-fatal diagnostics (e.g. URL-shaped lines that were parsed as prose).
+    pub warnings: Vec<String>,
 }
 
 /// A single statement in the DSL (or prose when using `parse_full`).
@@ -41,6 +43,34 @@ pub enum Stmt {
     Prose {
         text: String,
     },
+}
+
+impl Document {
+    /// Extra dry-run notes: parse warnings plus a hint when items were defined
+    /// but this document cannot fill the ranking preview (no votes).
+    pub fn check_warnings(&self) -> Vec<String> {
+        let mut warnings = self.warnings.clone();
+        let item_titles: Vec<&str> = self
+            .statements
+            .iter()
+            .filter_map(|s| match s {
+                Stmt::Item { title, .. } => Some(title.as_str()),
+                _ => None,
+            })
+            .collect();
+        let has_vote = self
+            .statements
+            .iter()
+            .any(|s| matches!(s, Stmt::Vote { .. }));
+        if !item_titles.is_empty() && !has_vote {
+            warnings.push(format!(
+                "defined {} item(s) ({}); ranking preview is empty until this document includes a vote",
+                item_titles.len(),
+                item_titles.join(", ")
+            ));
+        }
+        warnings
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -599,6 +629,78 @@ fn parse_item_name_at(s: &str, i: usize) -> Option<(String, usize)> {
     parse_item_name_at_with_mode(s, i, false)
 }
 
+/// First token on a definition line (up to whitespace), for error text.
+fn attempted_item_token(stripped: &str) -> &str {
+    let tok = stripped.split_whitespace().next().unwrap_or(stripped);
+    match tok.find("__BLOCK_") {
+        Some(i) => tok[..i].trim_end(),
+        None => tok,
+    }
+}
+
+/// `.` / other junk glued onto a `~` slug (`~mcdonalds.com` → `Some('.')`).
+fn glued_invalid_slug_char(stripped: &str, name_end: usize) -> Option<char> {
+    let rest = stripped.get(name_end..)?;
+    let c = rest.chars().next()?;
+    if c.is_whitespace() || rest.starts_with("__BLOCK_") {
+        return None;
+    }
+    if parse_containment_op_at(stripped, name_end).is_some() {
+        return None;
+    }
+    if parse_comparison_at(stripped, name_end).is_some() {
+        return None;
+    }
+    Some(c)
+}
+
+fn invalid_item_token_error(stripped: &str, ch: char) -> DslError {
+    DslError::Parse(format!(
+        "invalid character '{ch}' in item token '{}'; item slugs are [a-z0-9_-]",
+        attempted_item_token(stripped)
+    ))
+}
+
+/// `mcdonalds.com { body }` / `www.foo.com { x }` — looks like a definition but is prose.
+fn looks_like_lone_definition(stripped: &str) -> bool {
+    if stripped.is_empty()
+        || stripped.starts_with('~')
+        || stripped.starts_with("http://")
+        || stripped.starts_with("https://")
+        || stripped.starts_with("-/")
+        || stripped.starts_with('#')
+        || stripped.starts_with(':')
+    {
+        return false;
+    }
+    let bytes = stripped.as_bytes();
+    let mut i = 0usize;
+    while i < bytes.len() && !is_ws_byte(bytes[i]) && !bytes[i..].starts_with(b"__BLOCK_") {
+        i += 1;
+    }
+    if i == 0 {
+        return false;
+    }
+    let name = &stripped[..i];
+    if !name.contains('.') && !name.contains("://") {
+        return false;
+    }
+    i = skip_ws(stripped, i);
+    let Some((_, end)) = parse_block_token_at(stripped, i) else {
+        return false;
+    };
+    stripped[end..].trim().is_empty()
+}
+
+fn at_line(line: usize, err: DslError) -> DslError {
+    let DslError::Parse(msg) = err;
+    if msg.starts_with("line ") {
+        DslError::Parse(msg)
+    } else {
+        DslError::Parse(format!("line {line}: {msg}"))
+    }
+}
+
 pub fn parse_prose_item_ref_at(s: &str, i: usize) -> Option<(String, usize)> {
     parse_item_name_at_with_mode(s, i, true)
 }
@@ -807,6 +909,9 @@ fn parse_item_definition_statement(
 ) -> Result<Vec<Stmt>, DslError> {
     let (item1_raw, j) = parse_item_name_at(stripped, 0)
         .ok_or_else(|| DslError::Parse("invalid item name".to_string()))?;
+    if let Some(ch) = glued_invalid_slug_char(stripped, j) {
+        return Err(invalid_item_token_error(stripped, ch));
+    }
     let i = skip_ws(stripped, j);
 
     if i >= stripped.len() {
@@ -852,9 +957,13 @@ fn parse_item_definition_statement(
         return Ok(stmts);
     }
 
-    Err(DslError::Parse(
-        "vote explanations must start with a `{ ... }` block before the comparison".to_string(),
-    ))
+    if parse_comparison_at(stripped, i).is_some() {
+        return Err(DslError::Parse(
+            "vote explanations must start with a `{ ... }` block before the comparison".to_string(),
+        ));
+    }
+
+    Err(DslError::Parse("extra tokens after item definition".to_string()))
 }
 
 fn parse_line(masked_line: &str, masker: &BlockMasker) -> Result<Vec<Stmt>, DslError> {
@@ -906,9 +1015,11 @@ fn parse_line(masked_line: &str, masker: &BlockMasker) -> Result<Vec<Stmt>, DslE
 pub fn parse_full(text: &str) -> Result<Document, DslError> {
     let (masker, masked) = mask_all(BlockMasker::new(), text);
     let mut statements: Vec<Stmt> = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
     let mut prose_buffer: Vec<&str> = Vec::new();
     let mut pending_block: Option<String> = None;
     let mut current_aspect: Option<String> = None;
+    let mut source_line = 1usize;
 
     let flush_prose = |buf: &mut Vec<&str>, out: &mut Vec<Stmt>, masker: &BlockMasker| {
         if buf.is_empty() {
@@ -921,6 +1032,8 @@ pub fn parse_full(text: &str) -> Result<Document, DslError> {
     };
 
     for line in masked.split('\n') {
+        let line_no = source_line;
+        source_line += 1 + masker.unmask(line).matches('\n').count();
         let stripped = line.trim_start();
         if let Some(tok) = pending_block.as_ref() {
             if stripped.is_empty() {
@@ -944,15 +1057,22 @@ pub fn parse_full(text: &str) -> Result<Document, DslError> {
                         continue;
                     }
                     Err(DslError::Parse(msg)) if msg == "not a DSL line" => {
-                        return Err(DslError::Parse(
-                            "expected vote statement after leading explanation block".to_string(),
+                        return Err(at_line(
+                            line_no,
+                            DslError::Parse(
+                                "expected vote statement after leading explanation block"
+                                    .to_string(),
+                            ),
                         ));
                     }
-                    Err(e) => return Err(e),
+                    Err(e) => return Err(at_line(line_no, e)),
                 }
             }
-            return Err(DslError::Parse(
-                "expected vote statement after leading explanation block".to_string(),
+            return Err(at_line(
+                line_no,
+                DslError::Parse(
+                    "expected vote statement after leading explanation block".to_string(),
+                ),
             ));
         }
 
@@ -1004,23 +1124,34 @@ pub fn parse_full(text: &str) -> Result<Document, DslError> {
                 Err(DslError::Parse(msg)) if msg == "not a DSL line" => {
                     prose_buffer.push(line);
                 }
-                Err(e) => return Err(e),
+                Err(e) => return Err(at_line(line_no, e)),
             }
         } else {
+            if looks_like_lone_definition(stripped) {
+                warnings.push(format!(
+                    "line {line_no} looks like an item definition but does not start with '~'; parsed as prose"
+                ));
+            }
             prose_buffer.push(line);
         }
     }
 
     if pending_block.is_some() {
-        return Err(DslError::Parse(
-            "missing vote statement after leading explanation block".to_string(),
+        return Err(at_line(
+            source_line.saturating_sub(1).max(1),
+            DslError::Parse(
+                "missing vote statement after leading explanation block".to_string(),
+            ),
         ));
     }
 
     // Final flush
     flush_prose(&mut prose_buffer, &mut statements, &masker);
 
-    Ok(Document { statements })
+    Ok(Document {
+        statements,
+        warnings,
+    })
 }
 
 #[cfg(test)]
@@ -1931,5 +2062,100 @@ mod tests {
         let (leaf, edges) = desugar_item_ref("https://example.com/a/b");
         assert_eq!(leaf, "https://example.com/a/b");
         assert!(edges.is_empty());
+    }
+
+    #[test]
+    fn parse_dotted_tilde_token_errors_on_line_1_not_later_claim() {
+        let input = "\
+~mcdonalds.com { https://mcdonalds.com }
+~fast-food-chains { the chains }
+
+{ if this resolves, the dot silently split the token }
+~mcdonalds <: ~fast-food-chains
+";
+        let err = parse_full(input).unwrap_err().to_string();
+        assert!(
+            err.contains("line 1:"),
+            "error must name the dotted definition line, got: {err}"
+        );
+        assert!(
+            err.contains("invalid character '.'") && err.contains("~mcdonalds.com"),
+            "error must name the '.' and the attempted token, got: {err}"
+        );
+        assert!(
+            !err.contains("vote explanations must start"),
+            "must not misreport the later containment claim, got: {err}"
+        );
+    }
+
+    #[test]
+    fn parse_undotted_repro_still_succeeds() {
+        let input = "\
+~mcdonalds { https://mcdonalds.com }
+~fast-food-chains { the chains }
+
+{ identical claim, only the dotted line above was removed }
+~mcdonalds <: ~fast-food-chains
+";
+        let doc = parse_full(input).unwrap();
+        assert!(doc.warnings.is_empty());
+        assert_eq!(items(&doc).len(), 2);
+        assert_eq!(containments(&doc).len(), 1);
+    }
+
+    #[test]
+    fn parse_url_shaped_prose_definition_warns() {
+        let input = "mcdonalds.com { fast food }\n~fast-food { chains }";
+        let doc = parse_full(input).unwrap();
+        assert_eq!(
+            doc.warnings,
+            vec![
+                "line 1 looks like an item definition but does not start with '~'; parsed as prose"
+                    .to_string()
+            ]
+        );
+        assert!(
+            items(&doc)
+                .iter()
+                .all(|s| matches!(s, Stmt::Item { title, .. } if title == "~fast-food")),
+            "dotted host line must stay prose, not become an item"
+        );
+        assert!(matches!(
+            doc.statements.first(),
+            Some(Stmt::Prose { text }) if text.contains("mcdonalds.com")
+        ));
+    }
+
+    #[test]
+    fn parse_https_item_definition_still_creates_url_item() {
+        let doc = parse_full("https://mcdonalds.com { fast food }").unwrap();
+        assert!(
+            doc.warnings.is_empty(),
+            "valid URL items are not prose; got {:?}",
+            doc.warnings
+        );
+        assert_eq!(
+            items(&doc),
+            vec![&Stmt::Item {
+                title: "https://mcdonalds.com".to_string(),
+                body: Some("fast food".to_string()),
+            }]
+        );
+        let notes = doc.check_warnings();
+        assert!(
+            notes.iter().any(|w| w.contains("https://mcdonalds.com")
+                && w.contains("ranking preview is empty")),
+            "item-only docs must not look like a silent no-op, got {notes:?}"
+        );
+    }
+
+    #[test]
+    fn parse_nested_path_with_dot_errors_on_that_line() {
+        let err = parse_full("~a {a}\n~/food/subway.com { sandwich }\n")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("line 2:"), "got: {err}");
+        assert!(err.contains("invalid character '.'"), "got: {err}");
+        assert!(err.contains("subway.com"), "got: {err}");
     }
 }

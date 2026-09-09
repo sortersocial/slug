@@ -467,7 +467,7 @@ fn tools_list() -> Value {
             tool(
                 "check_sorter",
                 "Dry-run a .sorter document",
-                "Parse and preview ranking and containment effects of a .sorter document without writing. Items are `~name` (or `~/path` sugar). Claims require a leading { explanation } then `~a <: ~b` / `~a !<: ~b`. `==` is not a statement.",
+                "Parse and preview ranking and containment effects of a .sorter document without writing. Items are `~name` (or `~/path` sugar); slugs are [a-z0-9_-] (a dot is an error on that line). URL-shaped lines without `https://` stay prose and return a warning. Claims require a leading { explanation } then `~a <: ~b` / `~a !<: ~b`. `==` is not a statement. Parse errors include `line N:`.",
                 json!({
                     "type": "object",
                     "properties": {

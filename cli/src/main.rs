@@ -1597,6 +1597,7 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
                     rankings,
                     threads,
                     next,
+                    warnings,
                 } => {
                     if json {
                         println!(
@@ -1606,10 +1607,17 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
                                 "rankings": rankings,
                                 "threads": threads,
                                 "next": next,
+                                "warnings": warnings,
                             }))?
                         );
                     } else {
                         println!("✓ check ok (dry-run)");
+                        if !warnings.is_empty() {
+                            println!("warnings:");
+                            for w in warnings.iter() {
+                                println!("  {w}");
+                            }
+                        }
                         if !threads.is_empty() {
                             println!("threads:");
                             for t in threads {
