@@ -110,7 +110,7 @@ Rule 4 — path sugar (idempotent)
 ```sorter
 ~/a/b/c { body }
 ```
-is the item `~c` plus membership edges `c <: b`, `b <: a`, and `a <: root` (so the root garden still has a first-level electorate). Sugar edges are **weight-1 and idempotent** (repeating the same path does not add weight). Explicit `<:` / `!<:` still accumulate +1. URLs and `/-/` paths are never desugared.
+is the item `~c` plus membership edges `c <: b`, `b <: a`, and `a <: root` (so the root garden still has a first-level electorate). `~/name` (one segment after the slash) emits `name <: root`. Bare `~name` emits no edges. Sugar edges are **weight-1 and idempotent** (repeating the same path does not add weight). Explicit `<:` / `!<:` still accumulate +1. URLs and `/-/` paths are never desugared. Sibling leaf definitions (`~fast-food` then `~burger-king`) do **not** nest — without a nested path or an explicit `<:` claim they stay unrelated.
 
 ```sorter
 {

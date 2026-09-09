@@ -1928,8 +1928,46 @@ mod tests {
         let (leaf, edges) = desugar_item_ref("~luke");
         assert_eq!(leaf, "~luke");
         assert!(edges.is_empty());
+        // Slash-form single segment still attaches the leaf to root.
+        let (leaf, edges) = desugar_item_ref("~/luke");
+        assert_eq!(leaf, "~luke");
+        assert_eq!(edges, vec![("~luke".to_string(), "~/".to_string())]);
         let (leaf, edges) = desugar_item_ref("https://example.com/a/b");
         assert_eq!(leaf, "https://example.com/a/b");
         assert!(edges.is_empty());
+    }
+
+    #[test]
+    fn nested_path_sugar_is_not_an_explicit_claim() {
+        let doc =
+            parse_full("~fast-food { prompt }\n~/fast-food/burger-king { https://www.bk.com }\n")
+                .unwrap();
+        let sugar: Vec<_> = containments(&doc)
+            .into_iter()
+            .filter(|s| matches!(s, Stmt::Containment { sugar: true, .. }))
+            .collect();
+        assert!(
+            containments(&doc)
+                .iter()
+                .all(|s| matches!(s, Stmt::Containment { sugar: true, .. })),
+            "OP-style nested paths must not invent a `<:` claim"
+        );
+        assert!(sugar.iter().any(|s| matches!(
+            s,
+            Stmt::Containment { child, parent, sugar: true, .. }
+                if child == "~burger-king" && parent == "~fast-food"
+        )));
+    }
+
+    #[test]
+    fn sibling_leaf_definitions_emit_no_parent_child_edge() {
+        let doc = parse_full(
+            "~fast-food { prompt }\n~burger-king { https://www.bk.com }\n~pizza-hut { https://www.pizzahut.com }\n",
+        )
+        .unwrap();
+        assert!(
+            containments(&doc).is_empty(),
+            "flat siblings need an explicit `<:` (or nested path sugar) to share a scope"
+        );
     }
 }
