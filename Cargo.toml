@@ -1,5 +1,5 @@
 [workspace]
-members = ["server", "cli", "sorterc"]
+members = ["server", "cli", "sorterc", "x-listener"]
 resolver = "2"
 
 
