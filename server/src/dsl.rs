@@ -484,6 +484,8 @@ fn skip_ws(s: &str, mut i: usize) -> usize {
 pub enum ProseToken {
     Text(String),
     ItemRef(String),
+    /// `:slug` aspect ref (`[a-z0-9_-]{1,64}`). Bare `:` and invalid colon tokens stay text.
+    AspectRef(String),
 }
 
 fn trim_prose_item_ref_end(s: &str, mut end: usize) -> usize {
@@ -689,6 +691,38 @@ pub fn parse_prose_item_ref_at(s: &str, i: usize) -> Option<(String, usize)> {
     parse_item_name_at_with_mode(s, i, true)
 }
 
+/// `:beauty` in prose. Requires a token boundary so `3:1` and `https://` do not match.
+pub fn parse_prose_aspect_ref_at(s: &str, i: usize) -> Option<(String, usize)> {
+    let bytes = s.as_bytes();
+    if i >= bytes.len() || bytes[i] != b':' {
+        return None;
+    }
+    if i > 0 {
+        let prev = s[..i].chars().next_back()?;
+        if prev.is_ascii_alphanumeric() || prev == '_' || prev == '-' {
+            return None;
+        }
+    }
+    let mut j = i + 1;
+    while j < bytes.len() {
+        if bytes[j..].starts_with(b"__BLOCK_") {
+            break;
+        }
+        if !matches!(bytes[j], b'a'..=b'z' | b'0'..=b'9' | b'_' | b'-') {
+            break;
+        }
+        j += 1;
+        if j - (i + 1) > 64 {
+            return None;
+        }
+    }
+    let slug = &s[i + 1..j];
+    if !is_valid_aspect_slug(slug) {
+        return None;
+    }
+    Some((format!(":{slug}"), j))
+}
+
 pub fn tokenize_prose_item_refs(text: &str) -> Vec<ProseToken> {
     if text.is_empty() {
         return Vec::new();
@@ -704,6 +738,15 @@ pub fn tokenize_prose_item_refs(text: &str) -> Vec<ProseToken> {
                 tokens.push(ProseToken::Text(masker.unmask(&masked[text_start..i])));
             }
             tokens.push(ProseToken::ItemRef(masker.unmask(&raw)));
+            i = end;
+            text_start = i;
+            continue;
+        }
+        if let Some((raw, end)) = parse_prose_aspect_ref_at(&masked, i) {
+            if text_start < i {
+                tokens.push(ProseToken::Text(masker.unmask(&masked[text_start..i])));
+            }
+            tokens.push(ProseToken::AspectRef(masker.unmask(&raw)));
             i = end;
             text_start = i;
             continue;
@@ -1278,6 +1321,44 @@ mod tests {
                     "before ```json\n{\"url\":\"https://example.com\"}\n``` after ".to_string()
                 ),
                 ProseToken::ItemRef("~/x".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn prose_tokenizer_finds_aspect_refs() {
+        let tokens = tokenize_prose_item_refs("see :beauty and :a-b_c1.\n:speed 3:1 :)");
+        assert_eq!(
+            tokens,
+            vec![
+                ProseToken::Text("see ".to_string()),
+                ProseToken::AspectRef(":beauty".to_string()),
+                ProseToken::Text(" and ".to_string()),
+                ProseToken::AspectRef(":a-b_c1".to_string()),
+                ProseToken::Text(".\n".to_string()),
+                ProseToken::AspectRef(":speed".to_string()),
+                ProseToken::Text(" 3:1 :)".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn prose_tokenizer_does_not_treat_ratios_or_urls_as_aspects() {
+        let tokens = tokenize_prose_item_refs("~/a 3:1 ~/b and https://example.com/x");
+        assert!(
+            tokens.iter().all(|t| !matches!(t, ProseToken::AspectRef(_))),
+            "3:1 and https:// must not yield aspect refs, got {tokens:?}"
+        );
+    }
+
+    #[test]
+    fn prose_tokenizer_does_not_linkify_aspects_inside_code_fences() {
+        let tokens = tokenize_prose_item_refs("```\n:beauty\n``` then :speed");
+        assert_eq!(
+            tokens,
+            vec![
+                ProseToken::Text("```\n:beauty\n``` then ".to_string()),
+                ProseToken::AspectRef(":speed".to_string()),
             ]
         );
     }
