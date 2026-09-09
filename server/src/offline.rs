@@ -228,7 +228,7 @@ fn compile_document_inner(
     let scope = scope_from_room_wire(room_key);
     let validated =
         validate_ingest_document(base, text, &scope).map_err(|(_, message, hint)| {
-            let parse_error = dsl::parse_full(text).err().map(|e| e.to_string());
+            let parse_error = dsl::parse_full_strict(text).err().map(|e| e.to_string());
             CompileError {
                 ok: false,
                 error: message,
