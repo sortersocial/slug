@@ -622,6 +622,34 @@ async fn mcp_oauth_accepts_claude_redirect() {
 }
 
 #[tokio::test]
+async fn mcp_oauth_accepts_muse_redirect() {
+    let (addr, _tmp, _log, _handle) = create_test_server().await;
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    let resp = client
+        .get(format!("http://{addr}/oauth/authorize"))
+        .query(&[
+            ("response_type", "code"),
+            ("client_id", "https://muse.ai/oauth/client.json"),
+            ("redirect_uri", "https://www.muse.ai/oauth/callback"),
+            (
+                "code_challenge",
+                "LGZJYPXoCfqeQ2pG8EKrCEHgLugRSKQ1j3qQQB8GYeU",
+            ),
+            ("code_challenge_method", "S256"),
+            ("state", "muse-mcp"),
+            ("scope", "slug.read slug.write"),
+            ("resource", "http://127.0.0.1:8080/mcp"),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), reqwest::StatusCode::TEMPORARY_REDIRECT);
+}
+
+#[tokio::test]
 async fn mcp_whoami_and_private_room_round_trip() {
     let (addr, _tmp, _log, state, _handle) = create_test_server_with_state().await;
     let client = reqwest::Client::new();

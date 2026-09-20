@@ -10,6 +10,7 @@ pub mod html;
 pub mod identity;
 pub mod mcp;
 pub mod middleware;
+pub mod muse;
 pub mod offline;
 pub mod path_types;
 pub mod ranking;
@@ -144,6 +145,7 @@ pub fn create_app(state: AppState) -> Router {
         .route("/api/v0/whoami", get(api::get_whoami))
         .route("/api/v0/rpc", post(api::handle_rpc_batch))
         .merge(crate::mcp::mcp_routes())
+        .merge(crate::muse::muse_routes())
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             crate::middleware::view_count_middleware,

@@ -1,4 +1,4 @@
-//! Thin OAuth 2.1 authorization server for ChatGPT / Codex / Claude MCP clients.
+//! Thin OAuth 2.1 authorization server for ChatGPT / Codex / Claude / Muse clients.
 //!
 //! Those hosts are the OAuth clients. Humans still sign in with the existing
 //! Google login. On success we mint a one-time authorization code and the token
@@ -103,10 +103,14 @@ pub struct AuthorizeQuery {
 }
 
 fn https_redirect_host_allowed(host: &str) -> bool {
-    matches!(host, "chatgpt.com" | "chat.openai.com" | "claude.ai")
-        || host.ends_with(".chatgpt.com")
+    matches!(
+        host,
+        "chatgpt.com" | "chat.openai.com" | "claude.ai" | "muse.ai" | "meta.ai"
+    ) || host.ends_with(".chatgpt.com")
         || host.ends_with(".chat.openai.com")
         || host.ends_with(".claude.ai")
+        || host.ends_with(".muse.ai")
+        || host.ends_with(".meta.ai")
 }
 
 pub fn redirect_uri_allowed(redirect_uri: &str) -> bool {
@@ -158,7 +162,7 @@ pub async fn oauth_authorize(
     if !redirect_uri_allowed(&redirect_uri) {
         return (
             StatusCode::BAD_REQUEST,
-            "redirect_uri is not an allowed ChatGPT, Claude, or localhost callback",
+            "redirect_uri is not an allowed ChatGPT, Claude, Muse, or localhost callback",
         )
             .into_response();
     }
@@ -466,6 +470,12 @@ mod tests {
         assert!(redirect_uri_allowed(
             "https://www.claude.ai/api/mcp/auth_callback"
         ));
+        assert!(redirect_uri_allowed(
+            "https://muse.ai/connectors/oauth/callback"
+        ));
+        assert!(redirect_uri_allowed("https://www.muse.ai/oauth/callback"));
+        assert!(redirect_uri_allowed("https://meta.ai/oauth/callback"));
+        assert!(!redirect_uri_allowed("https://notmuse.ai/oauth/callback"));
         assert!(redirect_uri_allowed("http://127.0.0.1:9/cb"));
         assert!(redirect_uri_allowed("http://localhost:3118/callback"));
         assert!(!redirect_uri_allowed("https://evil.example/cb"));
