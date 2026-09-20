@@ -338,9 +338,13 @@ pub fn openapi_spec() -> Value {
                 .cloned()
                 .unwrap_or(json!(false)),
         );
-        let mut path_item = Map::new();
+        let key = format!("/{name}");
+        let mut path_item = match paths.remove(&key) {
+            Some(Value::Object(existing)) => existing,
+            _ => Map::new(),
+        };
         path_item.insert("post".into(), Value::Object(post));
-        paths.insert(format!("/{name}"), Value::Object(path_item));
+        paths.insert(key, Value::Object(path_item));
     }
     json!({
         "openapi": "3.0.3",
@@ -511,6 +515,8 @@ mod tests {
                 .any(|s| s.as_object().map(|o| o.is_empty()).unwrap_or(false)),
             true
         );
+        assert!(paths["/whoami"]["get"].is_object());
+        assert!(paths["/whoami"]["post"].is_object());
         assert_eq!(
             paths["/whoami"]["get"]["security"][0]["bearerAuth"]
                 .as_array()
