@@ -41,7 +41,8 @@ pub async fn view_count_middleware(
             && !path.starts_with("/oauth")
             && !path.starts_with("/.well-known")
             && path != "/mcp"
-            && !path.starts_with("/muse")
+            && !path.starts_with("/muse/v1")
+            && path != "/muse.md"
             && path != "/healthz"
             && path != "/ui"
         {

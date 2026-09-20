@@ -88,6 +88,8 @@ pub fn create_app(state: AppState) -> Router {
         .route("/search/results", get(crate::html::search_results_fragment))
         .route("/u/:username", get(crate::html::user_profile_page))
         .route("/try", get(crate::html::editor_page))
+        .route("/muse", get(crate::html::muse_page))
+        .route("/muse/", get(crate::html::muse_page))
         .route("/try/check", post(crate::html::editor_check))
         .route("/vote", get(crate::html::vote_compare_page))
         .route("/vote/skipped", get(crate::html::vote_skipped_page))

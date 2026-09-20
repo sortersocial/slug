@@ -37,6 +37,7 @@ pub fn muse_routes() -> axum::Router<AppState> {
             get(muse_openapi).options(muse_options),
         )
         .route("/muse/v1/docs.md", get(muse_docs).options(muse_options))
+        .route("/muse.md", get(muse_docs).options(muse_options))
         .route("/muse/v1/status", get(muse_status).options(muse_options))
         .route("/muse/v1/whoami", get(muse_whoami).options(muse_options))
         .route(

@@ -94,6 +94,17 @@ async fn muse_status_and_public_spec_need_no_auth() {
     assert!(md.contains("openapi.json"));
     assert!(md.contains("/status"));
     assert!(md.contains("slug_"));
+
+    let listing = muse_get(&client, addr, "/muse", None).await;
+    assert!(listing.status().is_success(), "{}", listing.status());
+    let html = listing.text().await.unwrap();
+    assert!(html.contains("/muse/v1/openapi.json"), "{html}");
+    assert!(html.contains("muse.ai/platform"), "{html}");
+    assert!(html.contains("Paste this into Muse"), "{html}");
+
+    let md_alias = muse_get(&client, addr, "/muse.md", None).await;
+    assert!(md_alias.status().is_success());
+    assert!(md_alias.text().await.unwrap().contains("openapi.json"));
 }
 
 #[tokio::test]

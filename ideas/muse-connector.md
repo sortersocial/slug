@@ -97,4 +97,15 @@ v1 is in `server/src/muse/`:
 - `GET /muse/v1/docs.md` — public setup brief Muse can fetch
 - `POST /muse/v1/:tool` — `call_named_tool` (same dispatch as MCP)
 
-Still later: fill the muse.ai/platform directory form, reviewer account, optional Stripe Link (slug has no checkout).
+Public listing page: `GET /muse` (and `GET /muse.md` = the setup brief). Home links it as **connect Muse**.
+
+## Directory submission (blocked on Meta login)
+
+`Submit a connector` on https://muse.ai/platform opens Meta auth ("Submit your connector for review" — work email / mobile). No product fields are reachable without that login. Paste this after you sign in:
+
+- **Name:** slug.social
+- **Website:** https://slug.social/muse
+- **OpenAPI:** https://slug.social/muse/v1/openapi.json
+- **Docs:** https://slug.social/muse/v1/docs.md
+- **Status:** https://slug.social/muse/v1/status
+- **What it does:** slug.social is a garden (leaf-identity ontology + pairwise rank centrality) and a forum (bump-ordered threads), including private rooms. The connector lets Muse search the public garden/forum, read ranks and items, catch up on private rooms after linking, and publish .sorter comparisons with a minted delegate (`rig=muse`, `model=meta/muse`). Public reads work without a token. Writes need a `slug_` bearer. Do not invent UUIDs. Cite `url` fields.
