@@ -248,7 +248,7 @@ pub fn tools_list() -> Value {
             tool(
                 "identity_start",
                 "Mint a conversation delegate",
-                "Mint a fresh delegate (uuid:rig:provider/model) for this chat. If the human is already linked, returns the delegate immediately — pass it on every post_sorter and get_feed. If not linked, returns a Google login_url and session; show the URL, then call identity_poll. Do not invent a UUID.",
+                "Mint a fresh delegate (uuid:rig:provider/model) for this chat. If the human is already linked, returns the delegate immediately — pass it on every post_sorter and get_feed. If not linked, returns a Google login_url; show that URL as a clickable link (the register/OAuth flow). Never ask the human for a token — they never see one. Then call identity_poll. Do not invent a UUID.",
                 json!({
                     "type": "object",
                     "properties": {
@@ -264,7 +264,7 @@ pub fn tools_list() -> Value {
             tool(
                 "identity_poll",
                 "Poll identity login",
-                "After identity_start without a linked account, poll the session until the human finishes Google login. Returns the minted delegate when complete.",
+                "After identity_start without a linked account, poll the session until the human finishes Google login. Returns the minted delegate when complete. Never return or request a token.",
                 json!({
                     "type": "object",
                     "properties": {
@@ -1108,7 +1108,7 @@ async fn identity_start(state: &AppState, headers: &HeaderMap, args: &Value) -> 
             "session": session,
             "login_url": login_url,
             "poll_url": poll_url,
-            "instruction": "Show login_url to the human as a clickable link, then immediately call identity_poll with this session."
+            "instruction": "Show login_url to the human as a clickable OAuth/register link. Do not ask for a token — they never see one. Then immediately call identity_poll with this session."
         }),
         format!("sign in at {login_url}"),
     )
@@ -1122,6 +1122,11 @@ async fn identity_poll(state: &AppState, args: &Value) -> Value {
     let Some(pending) = sessions.get(&session) else {
         return tool_err("unknown session", None);
     };
+    let login_url = format!(
+        "{}/auth/login?session={}",
+        public_url(),
+        urlencoding::encode(&session)
+    );
     match &pending.complete {
         Some((user, _token)) => tool_ok(
             json!({
@@ -1129,6 +1134,8 @@ async fn identity_poll(state: &AppState, args: &Value) -> Value {
                 "complete": true,
                 "user": user,
                 "delegate": pending.agent,
+                "session": session,
+                "instruction": "Linked. Keep using this session (X-Slug-Session on Muse REST). Never show or ask for a token."
             }),
             format!("linked as {user}"),
         ),
@@ -1137,6 +1144,9 @@ async fn identity_poll(state: &AppState, args: &Value) -> Value {
                 "phase": "pending",
                 "complete": false,
                 "delegate": pending.agent,
+                "session": session,
+                "login_url": login_url,
+                "instruction": "Keep showing login_url as a clickable link. Do not ask for a token. Poll again."
             }),
             "waiting for the human to finish Google login",
         ),
@@ -1636,6 +1646,10 @@ pub fn mcp_routes() -> axum::Router<AppState> {
         .route(
             "/.well-known/oauth-protected-resource",
             get(oauth::oauth_protected_resource).options(mcp_options),
+        )
+        .route(
+            "/.well-known/oauth-protected-resource/muse/v1",
+            get(oauth::oauth_protected_resource_muse).options(mcp_options),
         )
         .route(
             "/.well-known/oauth-authorization-server",

@@ -26,6 +26,17 @@ pub fn mcp_resource_url() -> String {
     format!("{}/mcp", public_url())
 }
 
+pub fn muse_resource_url() -> String {
+    format!("{}/muse/v1", public_url())
+}
+
+/// OAuth `resource` may be the MCP endpoint or the Muse connector.
+pub fn resource_allowed(resource: &str) -> bool {
+    let got = resource.trim().trim_end_matches('/');
+    got == mcp_resource_url().trim_end_matches('/')
+        || got == muse_resource_url().trim_end_matches('/')
+}
+
 pub fn issuer_url() -> String {
     public_url()
 }
@@ -42,22 +53,44 @@ fn protected_resource_metadata_url() -> String {
     format!("{}/.well-known/oauth-protected-resource", public_url())
 }
 
+pub fn muse_protected_resource_metadata_url() -> String {
+    format!(
+        "{}/.well-known/oauth-protected-resource/muse/v1",
+        public_url()
+    )
+}
+
 pub fn www_authenticate_challenge(error: &str, description: &str) -> String {
+    www_authenticate_for(&protected_resource_metadata_url(), error, description)
+}
+
+pub fn www_authenticate_challenge_muse(error: &str, description: &str) -> String {
+    www_authenticate_for(&muse_protected_resource_metadata_url(), error, description)
+}
+
+fn www_authenticate_for(resource_metadata: &str, error: &str, description: &str) -> String {
     format!(
         "Bearer resource_metadata=\"{}\", error=\"{}\", error_description=\"{}\"",
-        protected_resource_metadata_url(),
+        resource_metadata,
         error,
         description.replace('"', "'")
     )
 }
 
 pub async fn oauth_protected_resource() -> impl IntoResponse {
-    let resource = mcp_resource_url();
+    protected_resource_json(&mcp_resource_url(), &format!("{}/mcp", public_url()))
+}
+
+pub async fn oauth_protected_resource_muse() -> impl IntoResponse {
+    protected_resource_json(&muse_resource_url(), &format!("{}/muse", public_url()))
+}
+
+fn protected_resource_json(resource: &str, documentation: &str) -> impl IntoResponse {
     Json(serde_json::json!({
         "resource": resource,
         "authorization_servers": [issuer_url()],
         "scopes_supported": ["slug.read", "slug.write"],
-        "resource_documentation": format!("{}/", public_url()),
+        "resource_documentation": documentation,
     }))
 }
 
@@ -105,12 +138,20 @@ pub struct AuthorizeQuery {
 fn https_redirect_host_allowed(host: &str) -> bool {
     matches!(
         host,
-        "chatgpt.com" | "chat.openai.com" | "claude.ai" | "muse.ai" | "meta.ai"
+        "chatgpt.com"
+            | "chat.openai.com"
+            | "claude.ai"
+            | "muse.ai"
+            | "meta.ai"
+            | "agent.meta.ai"
+            | "auth.meta.com"
     ) || host.ends_with(".chatgpt.com")
         || host.ends_with(".chat.openai.com")
         || host.ends_with(".claude.ai")
         || host.ends_with(".muse.ai")
         || host.ends_with(".meta.ai")
+        || host.ends_with(".agent.meta.ai")
+        || host.ends_with(".auth.meta.com")
 }
 
 pub fn redirect_uri_allowed(redirect_uri: &str) -> bool {
@@ -219,12 +260,12 @@ pub async fn oauth_authorize(
         .filter(|s| !s.is_empty())
         .unwrap_or(&expected_resource)
         .to_string();
-    if resource != expected_resource {
+    if !resource_allowed(&resource) {
         return authorize_error_redirect(
             &redirect_uri,
             state_q.as_deref(),
             "invalid_target",
-            "resource must be this server's /mcp URL",
+            "resource must be this server's /mcp or /muse/v1 URL",
         );
     }
 
@@ -433,7 +474,7 @@ pub fn cors_headers(headers: &mut HeaderMap) {
     headers.insert(
         header::ACCESS_CONTROL_ALLOW_HEADERS,
         HeaderValue::from_static(
-            "authorization, content-type, mcp-session-id, mcp-protocol-version, accept",
+            "authorization, content-type, mcp-session-id, mcp-protocol-version, accept, x-slug-session",
         ),
     );
     headers.insert(
@@ -475,6 +516,10 @@ mod tests {
         ));
         assert!(redirect_uri_allowed("https://www.muse.ai/oauth/callback"));
         assert!(redirect_uri_allowed("https://meta.ai/oauth/callback"));
+        assert!(redirect_uri_allowed(
+            "https://agent.meta.ai/connectors/oauth/callback"
+        ));
+        assert!(redirect_uri_allowed("https://auth.meta.com/oauth/callback"));
         assert!(!redirect_uri_allowed("https://notmuse.ai/oauth/callback"));
         assert!(redirect_uri_allowed("http://127.0.0.1:9/cb"));
         assert!(redirect_uri_allowed("http://localhost:3118/callback"));
@@ -483,5 +528,15 @@ mod tests {
             "https://notclaude.ai/api/mcp/auth_callback"
         ));
         assert!(!redirect_uri_allowed("/local"));
+    }
+
+    #[test]
+    fn muse_and_mcp_resources_allowed() {
+        assert!(resource_allowed("http://127.0.0.1:8080/mcp"));
+        assert!(resource_allowed("http://127.0.0.1:8080/mcp/"));
+        assert!(resource_allowed("http://127.0.0.1:8080/muse/v1"));
+        assert!(resource_allowed("http://127.0.0.1:8080/muse/v1/"));
+        assert!(!resource_allowed("http://127.0.0.1:8080/api/v0/rpc"));
+        assert!(!resource_allowed("https://evil.example/muse/v1"));
     }
 }
