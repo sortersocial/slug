@@ -389,7 +389,9 @@ pub async fn thread_index(
             p class="muted home-judge-cta" {
                 "new here? "
                 a href="/vote" { "judge one pair" }
-                " — rankings come from comparisons."
+                " — rankings come from comparisons. "
+                a href="/muse" { "connect Muse" }
+                "."
             }
             p class="muted home-index-hint" {
                 "the index is ephemeral — five live threads. bookmark a "

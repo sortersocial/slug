@@ -15,6 +15,7 @@ mod breadcrumb_path;
 mod editor;
 mod forum;
 mod garden;
+mod muse;
 pub mod routing;
 mod search;
 pub mod ui_action;
@@ -25,6 +26,7 @@ pub use auth::{
     choose_username_page,
 };
 pub use editor::{editor_check, editor_page};
+pub use muse::muse_page;
 pub use forum::{
     redirect_forum_index, room_page, room_thread_post_view, room_thread_view, thread_feed_html,
     thread_feed_html_for_room, thread_index, thread_post_view, thread_view, ThreadNav,

@@ -224,7 +224,7 @@ fn search_result_schema() -> Value {
     })
 }
 
-fn tools_list() -> Value {
+pub fn tools_list() -> Value {
     json!({
         "tools": [
             tool(
@@ -823,6 +823,16 @@ async fn linked_principal(state: &AppState, headers: &HeaderMap) -> Result<Strin
 async fn tools_call(state: &AppState, headers: &HeaderMap, params: &Value) -> Value {
     let name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
     let args = params.get("arguments").cloned().unwrap_or(json!({}));
+    call_named_tool(state, headers, name, args).await
+}
+
+/// Shared tool dispatch used by `POST /mcp` and the Muse OpenAPI/REST surface.
+pub async fn call_named_tool(
+    state: &AppState,
+    headers: &HeaderMap,
+    name: &str,
+    args: Value,
+) -> Value {
     match name {
         "health" => tool_ok(json!({"ok": true, "status": "ok"}), "ok"),
         "whoami" => whoami(state, headers).await,

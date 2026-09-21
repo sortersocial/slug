@@ -10,6 +10,7 @@ pub mod html;
 pub mod identity;
 pub mod mcp;
 pub mod middleware;
+pub mod muse;
 pub mod offline;
 pub mod path_types;
 pub mod ranking;
@@ -87,6 +88,8 @@ pub fn create_app(state: AppState) -> Router {
         .route("/search/results", get(crate::html::search_results_fragment))
         .route("/u/:username", get(crate::html::user_profile_page))
         .route("/try", get(crate::html::editor_page))
+        .route("/muse", get(crate::html::muse_page))
+        .route("/muse/", get(crate::html::muse_page))
         .route("/try/check", post(crate::html::editor_check))
         .route("/vote", get(crate::html::vote_compare_page))
         .route("/vote/skipped", get(crate::html::vote_skipped_page))
@@ -144,6 +147,7 @@ pub fn create_app(state: AppState) -> Router {
         .route("/api/v0/whoami", get(api::get_whoami))
         .route("/api/v0/rpc", post(api::handle_rpc_batch))
         .merge(crate::mcp::mcp_routes())
+        .merge(crate::muse::muse_routes())
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             crate::middleware::view_count_middleware,
