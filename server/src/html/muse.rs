@@ -31,15 +31,15 @@ pub async fn muse_page(
     let spec = format!("{base}/openapi.json");
     let docs = format!("{base}/docs.md");
     let status = format!("{base}/status");
-    let paste = format!(
+    let brief = format!(
         "Build a custom connector for slug.social.\n\n\
 The OpenAPI spec is at {spec}.\n\
 It is public, so read it without logging in. The setup brief is at {docs}.\n\n\
-Auth is the header Authorization: Bearer <token>. The token starts with slug_. \
-I will paste it into the secure credential prompt and never into this chat.\n\n\
-Do not publish anything yet. Call GET {status} first, then GET {base}/whoami, \
-then POST {base}/identity_start with rig=muse and model=meta/muse. \
-Show me the linked user and every operation in the spec."
+The human never has a token and must never be asked for one. Do not open a credential prompt.\n\n\
+Do not publish anything yet. Call GET {status} first, then POST {base}/identity_start \
+with rig=muse and model=meta/muse. Show login_url as a clickable OAuth/register link. \
+The human signs in with Google and picks a username. Poll POST {base}/identity_poll \
+until complete, then send header X-Slug-Session. Show the linked user and every operation in the spec."
     );
 
     let page = layout(
@@ -60,10 +60,10 @@ Show me the linked user and every operation in the spec."
                 " → "
                 code { "{\"ok\":true,\"status\":\"ok\"}" }
                 ". Then "
-                a href=(format!("{base}/whoami")) { code { "GET /whoami" } }
-                " with a "
-                code { "slug_" }
-                " bearer."
+                code { "POST /identity_start" }
+                " and show "
+                code { "login_url" }
+                " — the human clicks Google register, never a token."
             }
             ul {
                 li { a href=(spec) { "OpenAPI 3.0.3" } " — " code { "/muse/v1/openapi.json" } }
@@ -71,8 +71,8 @@ Show me the linked user and every operation in the spec."
                 li { a href=(status) { "status" } " — " code { "/muse/v1/status" } }
                 li { a href="/mcp" { "MCP" } " — Muse Code / ChatGPT / Claude still use " code { "POST /mcp" } }
             }
-            h3 { "Paste this into Muse" }
-            pre { (paste) }
+            h3 { "Connector brief" }
+            pre { (brief) }
             h3 { "Directory listing" }
             p {
                 "Reviewed connectors go through "

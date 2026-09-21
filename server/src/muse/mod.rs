@@ -1,7 +1,10 @@
 //! Muse Connector Platform surface (`/muse/v1`).
 //!
 //! Consumer Muse (muse.ai) does not speak MCP. It builds a custom connector from a
-//! public OpenAPI spec plus a `slug_…` bearer in its Secure Credentials Store.
+//! public OpenAPI spec. Humans never see a `slug_` token: the agent starts
+//! `identity_start` and shows `login_url` (Google register / OAuth). After
+//! `identity_poll` completes, Muse sends `X-Slug-Session`. Host OAuth 2.1 + PKCE
+//! is the directory/Connect path; the access token stays in the host vault.
 //! Tools call [`crate::mcp::call_named_tool`] so garden/forum writes still go through
 //! the same event-log path as `POST /mcp` and `POST /api/v0/rpc`.
 
@@ -15,13 +18,19 @@ use serde_json::{json, Map, Value};
 
 use crate::{
     api::public_url,
-    mcp::{call_named_tool, oauth::cors_headers, tools_list},
+    mcp::{
+        call_named_tool,
+        oauth::{cors_headers, www_authenticate_challenge_muse},
+        tools_list,
+    },
     state::AppState,
 };
 
 const CONNECTOR_NAME: &str = "slug-social";
 const CONNECTOR_TITLE: &str = "slug.social";
 const CONNECTOR_VERSION: &str = env!("CARGO_PKG_VERSION");
+const SESSION_HEADER: &str = "x-slug-session";
+const AUTH_NEXT: &str = "POST /identity_start with rig=muse and model=meta/muse. Show login_url as a clickable OAuth/register link. Never ask the human for a token.";
 
 pub fn muse_base_url() -> String {
     format!("{}/muse/v1", public_url())
@@ -79,8 +88,9 @@ async fn muse_index() -> impl IntoResponse {
         "openapi": format!("{base}/openapi.json"),
         "docs": format!("{base}/docs.md"),
         "mcp": format!("{}/mcp", public_url()),
-        "auth": "Authorization: Bearer slug_<id>_<secret>",
-        "instructions": "Public OpenAPI at /muse/v1/openapi.json. Paste a slug_ bearer into Muse's Secure Credentials Store, never into chat. Call GET /status first, then GET /whoami, then POST /identity_start with rig=muse and model=meta/muse. Writes still require that minted delegate on post_sorter."
+        "oauth_authorize": format!("{}/oauth/authorize", public_url()),
+        "auth": "identity_start login_url (Google register). The human never sees a token.",
+        "instructions": "Public OpenAPI at /muse/v1/openapi.json. Do not ask the human for a token. Call GET /status, then POST /identity_start with rig=muse and model=meta/muse, show login_url as a clickable OAuth link, then POST /identity_poll until complete. Afterwards send X-Slug-Session. Writes still require that minted delegate on post_sorter."
     }))
 }
 
@@ -97,6 +107,7 @@ async fn muse_status() -> impl IntoResponse {
 }
 
 async fn muse_whoami(State(state): State<AppState>, headers: HeaderMap) -> impl IntoResponse {
+    let headers = resolve_muse_session_auth(&state, headers).await;
     let result = call_named_tool(&state, &headers, "whoami", json!({})).await;
     tool_http_response(result)
 }
@@ -129,6 +140,7 @@ async fn muse_tool_post(
             return status_json(StatusCode::BAD_REQUEST, json!({"error": err.body_text()}));
         }
     };
+    let headers = resolve_muse_session_auth(&state, headers).await;
     let result = call_named_tool(&state, &headers, name, args).await;
     tool_http_response(result)
 }
@@ -141,6 +153,7 @@ async fn muse_tool_get(
     match tool.as_str() {
         "status" | "health" => return json_cors(json!({"ok": true, "status": "ok"})),
         "whoami" => {
+            let headers = resolve_muse_session_auth(&state, headers).await;
             let result = call_named_tool(&state, &headers, "whoami", json!({})).await;
             return tool_http_response(result);
         }
@@ -188,15 +201,74 @@ fn status_json(status: StatusCode, body: Value) -> Response {
     res
 }
 
+fn session_id_from_headers(headers: &HeaderMap) -> Option<String> {
+    let v = headers.get(SESSION_HEADER)?.to_str().ok()?.trim();
+    if v.is_empty() {
+        None
+    } else {
+        Some(v.to_string())
+    }
+}
+
+/// After `identity_poll` completes, Muse authenticates with `X-Slug-Session`
+/// instead of a user-pasted bearer. Host OAuth still sends `Authorization`.
+async fn resolve_muse_session_auth(state: &AppState, mut headers: HeaderMap) -> HeaderMap {
+    if headers.get(header::AUTHORIZATION).is_some() {
+        return headers;
+    }
+    let Some(session) = session_id_from_headers(&headers) else {
+        return headers;
+    };
+    let sessions = state.pending_sessions.read().await;
+    let Some((_, bearer)) = sessions.get(&session).and_then(|p| p.complete.clone()) else {
+        return headers;
+    };
+    if let Ok(value) = HeaderValue::from_str(&format!("Bearer {bearer}")) {
+        headers.insert(header::AUTHORIZATION, value);
+    }
+    headers
+}
+
+fn sanitize_muse_structured(mut structured: Value) -> Value {
+    let Some(obj) = structured.as_object_mut() else {
+        return structured;
+    };
+    obj.remove("poll_url");
+    obj.remove("token");
+    match obj.get("phase").and_then(|v| v.as_str()) {
+        Some("present_oauth_url_to_user") => {
+            obj.insert(
+                "instruction".into(),
+                json!("Show login_url as a clickable OAuth/register link. The human signs in with Google and picks a username. Never ask for, paste, or mention a token. Then call identity_poll with this session until complete, and send X-Slug-Session on later private/write calls."),
+            );
+        }
+        Some("pending") => {
+            obj.insert(
+                "instruction".into(),
+                json!("Keep showing login_url as a clickable link. Do not ask for a token. Poll identity_poll again."),
+            );
+        }
+        Some("complete") => {
+            obj.insert(
+                "instruction".into(),
+                json!("Linked. Send header X-Slug-Session with this session on later private-room and write calls. Never show or ask for a token."),
+            );
+        }
+        _ => {}
+    }
+    structured
+}
+
 fn tool_http_response(result: Value) -> Response {
     let is_error = result
         .get("isError")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
-    let structured = result
+    let mut structured = result
         .get("structuredContent")
         .cloned()
         .unwrap_or_else(|| json!({}));
+    structured = sanitize_muse_structured(structured);
     if !is_error {
         return json_cors(structured);
     }
@@ -212,16 +284,25 @@ fn tool_http_response(result: Value) -> Response {
         .and_then(|v| v.as_array())
         .and_then(|a| a.first())
         .and_then(|v| v.as_str())
-        .map(str::to_string);
-    let status = if auth.is_some() {
+        .is_some();
+    let status = if auth {
         StatusCode::UNAUTHORIZED
     } else if unknown {
         StatusCode::NOT_FOUND
     } else {
         StatusCode::BAD_REQUEST
     };
+    if status == StatusCode::UNAUTHORIZED {
+        if let Some(obj) = structured.as_object_mut() {
+            obj.insert("next".into(), json!(AUTH_NEXT));
+        }
+    }
     let mut res = status_json(status, structured);
-    if let Some(challenge) = auth {
+    if auth {
+        let challenge = www_authenticate_challenge_muse(
+            "insufficient_scope",
+            "Link your slug.social account to continue.",
+        );
         if let Ok(value) = HeaderValue::from_str(&challenge) {
             res.headers_mut().insert(header::WWW_AUTHENTICATE, value);
         }
@@ -231,6 +312,7 @@ fn tool_http_response(result: Value) -> Response {
 
 pub fn openapi_spec() -> Value {
     let base = muse_base_url();
+    let origin = public_url();
     let tools = tools_list()
         .get("tools")
         .and_then(|v| v.as_array())
@@ -272,9 +354,9 @@ pub fn openapi_spec() -> Value {
             "get": {
                 "operationId": "getWhoami",
                 "summary": "Linked identity",
-                "description": "Validate the slug_ bearer and return the linked human plus bound delegates. This is the credential check after GET /status.",
+                "description": "Return the linked human plus bound delegates after the human finishes the identity_start login_url (or host OAuth). Unlinked callers get 401 with next = show login_url. Never ask the human for a token.",
                 "tags": ["identity"],
-                "security": [{"bearerAuth": []}],
+                "security": [{"oauth2": ["slug.read"]}],
                 "responses": muse_responses(true)
             }
         }),
@@ -293,12 +375,21 @@ pub fn openapi_spec() -> Value {
             .cloned()
             .unwrap_or(json!({"type": "object"}));
         let optional_auth = tool_allows_noauth(tool);
-        let security = if optional_auth {
-            json!([{}, {"bearerAuth": []}])
-        } else {
-            json!([{"bearerAuth": []}])
-        };
         let annotations = tool.get("annotations").cloned().unwrap_or(json!({}));
+        let read_only = annotations
+            .get("readOnlyHint")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+        let oauth_scopes = if read_only {
+            json!(["slug.read"])
+        } else {
+            json!(["slug.read", "slug.write"])
+        };
+        let security = if optional_auth {
+            json!([{}, {"oauth2": oauth_scopes}])
+        } else {
+            json!([{"oauth2": oauth_scopes}])
+        };
         let mut post = Map::new();
         post.insert("operationId".into(), json!(format!("call_{name}")));
         post.insert("summary".into(), json!(title));
@@ -316,7 +407,7 @@ pub fn openapi_spec() -> Value {
                 }
             }),
         );
-        post.insert("responses".into(), muse_responses(false));
+        post.insert("responses".into(), muse_responses(!optional_auth));
         post.insert("x-mcp-name".into(), json!(name));
         post.insert(
             "x-readOnlyHint".into(),
@@ -352,17 +443,25 @@ pub fn openapi_spec() -> Value {
         "info": {
             "title": CONNECTOR_TITLE,
             "version": CONNECTOR_VERSION,
-            "description": "slug.social Muse connector. Same tools as POST /mcp. Public reads work without a token; private rooms and writes need Authorization: Bearer slug_…. post_sorter still requires a minted delegate (uuid:rig:provider/model)."
+            "description": "slug.social Muse connector. Same tools as POST /mcp. Public reads work without login. Private rooms and writes need the human to click the identity_start login_url (Google register) or host OAuth 2.1 + PKCE — the human never sees a token. post_sorter still requires a minted delegate (uuid:rig:provider/model)."
         },
         "servers": [{"url": base, "description": "slug.social Muse connector"}],
         "paths": paths,
         "components": {
             "securitySchemes": {
-                "bearerAuth": {
-                    "type": "http",
-                    "scheme": "bearer",
-                    "bearerFormat": "slug",
-                    "description": "slug_<token_id>_<secret> from Google login or /oauth/token. Paste into Muse Secure Credentials Store. Never put the token in chat."
+                "oauth2": {
+                    "type": "oauth2",
+                    "description": "OAuth 2.1 authorization code + PKCE S256. The human clicks the authorize URL, signs in with Google, and picks a username. The access token stays in the host. Never show or ask the human for a token. Agent-driven linking uses POST /identity_start (show login_url) then X-Slug-Session.",
+                    "flows": {
+                        "authorizationCode": {
+                            "authorizationUrl": format!("{origin}/oauth/authorize"),
+                            "tokenUrl": format!("{origin}/oauth/token"),
+                            "scopes": {
+                                "slug.read": "Private-room reads and identity",
+                                "slug.write": "Writes (post_sorter, create_room, …)"
+                            }
+                        }
+                    }
                 }
             }
         },
@@ -424,12 +523,15 @@ fn muse_responses(auth_required: bool) -> Value {
         responses.insert(
             "401".into(),
             json!({
-                "description": "Missing or invalid slug_ bearer",
+                "description": "Not linked. Call POST /identity_start and show login_url. Never ask for a token.",
                 "content": {
                     "application/json": {
                         "schema": {
                             "type": "object",
-                            "properties": {"error": {"type": "string"}}
+                            "properties": {
+                                "error": {"type": "string"},
+                                "next": {"type": "string"}
+                            }
                         }
                     }
                 }
@@ -446,39 +548,42 @@ pub fn docs_markdown() -> String {
 
 Slug is a garden (leaf-identity ontology + pairwise rank centrality) and a forum (bump-ordered threads), including private rooms.
 
-Consumer Muse does not speak MCP. Use this public OpenAPI spec and a `slug_` bearer. Muse Code and ChatGPT/Claude keep using `POST /mcp`.
+Consumer Muse does not speak MCP. Use this public OpenAPI spec. Muse Code and ChatGPT/Claude keep using `POST /mcp`.
 
-## Paste this into Muse
+## Give this to Muse
 
 Build a custom connector for slug.social.
 
 The OpenAPI spec is at {base}/openapi.json.
 It is public, so read it without logging in. This brief is at {base}/docs.md.
 
-Auth is the header `Authorization: Bearer <token>`. The token starts with `slug_`. I will paste it into the secure credential prompt and never into this chat.
+The human never has a token and must never be asked for one. Do not open a credential prompt. Do not mention tokens.
 
-Do not publish anything yet. Call GET {base}/status first, then GET {base}/whoami, then POST {base}/identity_start with `rig=muse` and `model=meta/muse`. Show me the linked user and every operation in the spec.
+Do not publish anything yet. Call GET {base}/status first, then POST {base}/identity_start with `rig=muse` and `model=meta/muse`. Show `login_url` as a clickable OAuth/register link. The human signs in with Google and picks a username. Poll POST {base}/identity_poll with that `session` until `complete`. Then send header `X-Slug-Session: <session>` on private-room and write calls. Show the linked user and every operation in the spec.
 
 ## Contract
 
 - `GET /status` — unauthenticated liveness (`{{"ok":true,"status":"ok"}}`). Same as MCP `health` / `GET /healthz`.
-- `GET /whoami` — validates the bearer; returns `user` and bound `delegates`.
+- `POST /identity_start` — starts the register flow. Unlinked callers get `login_url`. Show that URL. Never invent a UUID. Never ask for a token.
+- `POST /identity_poll` — wait until the human finishes Google login. Then send `X-Slug-Session`.
+- `GET /whoami` — linked human and bound `delegates` after that register flow (or host OAuth). Unlinked is HTTP 401 with `next` pointing at `identity_start`.
 - `POST /{{tool}}` — one path per MCP tool, JSON body = that tool's `inputSchema`.
-- Public garden/forum reads work without a token (`search`, `fetch`, `get_rank`, `get_item`, `get_pair`, `get_matchup`, `list_threads`, `get_thread`, `check_sorter`).
-- Private rooms and all writes need the bearer. `post_sorter` also requires `delegate` (`uuid:rig:provider/model`) from `identity_start`. Do not invent a UUID.
+- Public garden/forum reads work without login (`search`, `fetch`, `get_rank`, `get_item`, `get_pair`, `get_matchup`, `list_threads`, `get_thread`, `check_sorter`).
+- Private rooms and all writes need the completed session header (or host OAuth). `post_sorter` also requires `delegate` (`uuid:rig:provider/model`) from `identity_start`. Do not invent a UUID.
 - Cite `url` fields. Every post read exposes `actor` and `delegate`.
 
 ## Write loop
 
 1. `GET /status`
-2. `GET /whoami`
-3. `POST /identity_start` `{{"rig":"muse","model":"meta/muse"}}`
-4. Ask the human for their view
-5. Draft a `.sorter` document
-6. `POST /check_sorter`
-7. `POST /post_sorter` with that exact delegate
+2. `POST /identity_start` `{{"rig":"muse","model":"meta/muse"}}` — show `login_url`
+3. `POST /identity_poll` until complete, then `X-Slug-Session`
+4. `GET /whoami`
+5. Ask the human for their view
+6. Draft a `.sorter` document
+7. `POST /check_sorter`
+8. `POST /post_sorter` with that exact delegate
 
-`create_room` only creates private rooms. Directory listing (reviewed connector) is submitted at https://muse.ai/platform pointing at this spec.
+`create_room` only creates private rooms. Directory listing (reviewed connector) is submitted at https://muse.ai/platform pointing at this spec. Host OAuth (authorization code + PKCE) is `/oauth/authorize` if Muse Connect uses the OpenAPI oauth2 scheme — still a click, never a pasted secret.
 "#
     )
 }
@@ -486,6 +591,30 @@ Do not publish anything yet. Call GET {base}/status first, then GET {base}/whoam
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn assert_no_user_token_copy(text: &str) {
+        let lower = text.to_lowercase();
+        assert!(
+            !text.contains("slug_"),
+            "user-facing Muse copy must not mention slug_ tokens: {text}"
+        );
+        assert!(
+            !lower.contains("secure credential"),
+            "must not tell Muse to use a credential vault paste: {text}"
+        );
+        for phrase in [
+            "paste a token",
+            "paste the token",
+            "paste it into",
+            "bearer <token>",
+            "bearer token",
+        ] {
+            assert!(
+                !lower.contains(phrase),
+                "must not tell anyone to paste a token ({phrase}): {text}"
+            );
+        }
+    }
 
     #[test]
     fn openapi_lists_every_mcp_tool() {
@@ -519,21 +648,34 @@ mod tests {
         assert!(paths["/whoami"]["get"].is_object());
         assert!(paths["/whoami"]["post"].is_object());
         assert_eq!(
-            paths["/whoami"]["get"]["security"][0]["bearerAuth"]
+            paths["/whoami"]["get"]["security"][0]["oauth2"]
                 .as_array()
                 .unwrap()
-                .len(),
-            0
+                .as_slice(),
+            ["slug.read"]
+        );
+        assert_eq!(
+            spec["components"]["securitySchemes"]["oauth2"]["type"],
+            "oauth2"
+        );
+        assert!(spec["components"]["securitySchemes"]["bearerAuth"].is_null());
+        assert_no_user_token_copy(&spec["info"]["description"].as_str().unwrap());
+        assert_no_user_token_copy(
+            spec["components"]["securitySchemes"]["oauth2"]["description"]
+                .as_str()
+                .unwrap(),
         );
     }
 
     #[test]
-    fn docs_point_at_public_spec_and_status() {
+    fn docs_point_at_public_spec_and_login_url() {
         let md = docs_markdown();
         assert!(md.contains("/muse/v1/openapi.json"));
         assert!(md.contains("/muse/v1/status"));
-        assert!(md.contains("slug_"));
+        assert!(md.contains("login_url"));
+        assert!(md.contains("identity_start"));
         assert!(md.contains("rig=muse") || md.contains("\"rig\":\"muse\""));
-        assert!(md.contains("Secure Credentials Store") || md.contains("secure credential"));
+        assert!(md.contains("Never ask") || md.contains("never be asked"));
+        assert_no_user_token_copy(&md);
     }
 }
