@@ -1,0 +1,2 @@
+{"data":{"id":"1001","text":"hello #slugsocial — first signal","author_id":"42"},"includes":{"users":[{"id":"42","username":"alice"}]}}
+{"data":{"id":"1002","text":"check https://t.co/xyz #slugsocial","author_id":"99","entities":{"urls":[{"url":"https://t.co/xyz","expanded_url":"https://example.com/cool","display_url":"example.com/cool"}]}},"includes":{"users":[{"id":"99","username":"bob"}]}}
