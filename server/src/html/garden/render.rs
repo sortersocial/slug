@@ -9,6 +9,7 @@ use crate::{
     html::{
         cli_panel, format_ratio_current_markup, forum::ThreadNav, layout, now_ms, ratio_pct,
         recency_color_style, render_item_body_in_scope, theme_from_jar, theme_next_from_uri,
+        LinkifyCtx,
     },
     middleware::canonical_view_url,
     path_types::ItemId,
@@ -138,6 +139,7 @@ pub(super) async fn render_scope_view(
     let external_href = external_source_href(&model.item);
     let external_can_embed = external_frame_allowed(&model.item);
     let (garden_room, garden_prefix) = garden_layout_meta(&nav);
+    let hint_item = ItemId::parse(&model.item);
     // Canonical `/-/https://…` (or room-scoped) path — not the raw request URI (legacy host-first).
     let next_for_pin = {
         let base = item_href(&model.item, &nav);
@@ -177,7 +179,11 @@ pub(super) async fn render_scope_view(
                         (render_item_body_in_scope(
                             body,
                             nav.garden_root_url(),
-                            Some(&scope_content.item_bodies),
+                            LinkifyCtx {
+                                item_bodies: Some(&scope_content.item_bodies),
+                                content: Some(scope_content),
+                                hint_item: hint_item.as_ref(),
+                            },
                         ))
                     }
                 } @else if external_empty_body {

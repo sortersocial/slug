@@ -8,6 +8,7 @@ use crate::html::js_string_literal;
 use crate::html::ui_action::{HtmlUiAction, UI_RPC_FIELD};
 use crate::html::{
     authorship_attr, profile_href, recency_color_style, render_linkified_with_embeds_in_scope,
+    LinkifyCtx,
 };
 use crate::timeago;
 
@@ -196,13 +197,19 @@ pub(crate) fn ingest_entry_markup(
         } else {
             "ingest-entry"
         };
-        let item_bodies = reduced
-            .content_for_scope(&nav.scope())
-            .map(|c| &c.item_bodies);
+        let content = reduced.content_for_scope(&nav.scope());
         html! {
             div class=(entry_class) id=(frag.as_str()) data-ingest-id=(ing.id) {
                 (post_header_row(nav, tag, post_idx, ing, viewer, now, show_delete))
-                (render_linkified_with_embeds_in_scope(display_body, nav.garden_root_url(), item_bodies))
+                (render_linkified_with_embeds_in_scope(
+                    display_body,
+                    nav.garden_root_url(),
+                    LinkifyCtx {
+                        item_bodies: content.map(|c| &c.item_bodies),
+                        content,
+                        hint_item: None,
+                    },
+                ))
                 @if truncated {
                     div class="post-truncation-banner" role="note" {
                         p.post-truncation-title { "Long post — preview ends here" }

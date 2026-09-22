@@ -1,5 +1,4 @@
 use maud::html;
-use std::collections::HashMap;
 
 use crate::canonical_path::canonicalize_tag;
 use crate::reducer::{scope_from_room_wire, ScopeId};
@@ -8,7 +7,7 @@ use crate::state::AppState;
 use super::access::user_can_view_room;
 use super::ingest::{ingest_entry_markup, post_header_row, redacted_header_row};
 use super::nav::{post_fragment_id, ThreadNav};
-use crate::html::{now_ms, render_linkified_with_embeds_in_scope, JsBuilder};
+use crate::html::{now_ms, render_linkified_with_embeds_in_scope, JsBuilder, LinkifyCtx};
 
 pub(crate) async fn thread_ui_expand_post_full(
     state: &AppState,
@@ -48,11 +47,8 @@ pub(crate) async fn thread_ui_expand_post_full(
     if reduced.redacted_posts.contains(&ing.id) {
         return crate::html::ui_js_warn("post not found");
     }
-    let item_bodies: Option<HashMap<crate::path_types::ItemId, String>> = reduced
-        .content_for_scope(&scope)
-        .map(|c| c.item_bodies.clone());
+    let content = reduced.content_for_scope(&scope);
     let ing_id = ing.id.clone();
-    drop(reduced);
 
     let frag = post_fragment_id(post_index);
     let full_html = html! {
@@ -69,10 +65,15 @@ pub(crate) async fn thread_ui_expand_post_full(
             (render_linkified_with_embeds_in_scope(
                 &ing.raw,
                 nav.garden_root_url(),
-                item_bodies.as_ref(),
+                LinkifyCtx {
+                    item_bodies: content.map(|c| &c.item_bodies),
+                    content,
+                    hint_item: None,
+                },
             ))
         }
     };
+    drop(reduced);
 
     JsBuilder::new()
         .morph_selector(&format!("[data-ingest-id=\"{ing_id}\"]"), full_html)
@@ -117,11 +118,8 @@ pub(crate) async fn thread_ui_expand_redacted_post(
     if !reduced.redacted_posts.contains(&ing.id) {
         return crate::html::ui_js_warn("post not found");
     }
-    let item_bodies: Option<HashMap<crate::path_types::ItemId, String>> = reduced
-        .content_for_scope(&scope)
-        .map(|c| c.item_bodies.clone());
+    let content = reduced.content_for_scope(&scope);
     let ing_id = ing.id.clone();
-    drop(reduced);
 
     let frag = post_fragment_id(post_index);
     let full_html = html! {
@@ -130,10 +128,15 @@ pub(crate) async fn thread_ui_expand_redacted_post(
             (render_linkified_with_embeds_in_scope(
                 &ing.raw,
                 nav.garden_root_url(),
-                item_bodies.as_ref(),
+                LinkifyCtx {
+                    item_bodies: content.map(|c| &c.item_bodies),
+                    content,
+                    hint_item: None,
+                },
             ))
         }
     };
+    drop(reduced);
 
     JsBuilder::new()
         .morph_selector(&format!("[data-ingest-id=\"{ing_id}\"]"), full_html)
