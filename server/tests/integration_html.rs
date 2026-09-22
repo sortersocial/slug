@@ -791,3 +791,58 @@ async fn test_legacy_arena_channel_page_resolve_form_targets_canonical() {
         "/-/https://www.are.na/channel/my-chan"
     );
 }
+
+#[tokio::test]
+async fn test_thread_aspect_ref_links_to_garden_sort() {
+    let (addr, _tmp, _log, state, _handle) = create_test_server_with_state().await;
+    {
+        let mut w = state.reduced.write().await;
+        w.apply_event(Event::Ingest(Ingest {
+            ts: 40,
+            id: "ing-top-billing".into(),
+            raw: "#celestial-hierarchy { movie poster }\n\
+~/celestial-hierarchy/named-angels { named angels }\n\
+~/celestial-hierarchy/named-angels/gabriel { gabriel }\n\
+~/celestial-hierarchy/named-angels/michael { michael }\n\
+:top-billing { whose name goes first }\n\
+{ gabriel first }\n\
+~gabriel 3:2 ~michael\n"
+                .into(),
+            principal: "testuser".into(),
+            delegate: None,
+            room_id: "public".into(),
+            thread_tag: "celestial-hierarchy".into(),
+        }));
+    }
+    let client = reqwest::Client::new();
+    let thread = client
+        .get(format!("http://{addr}/t/celestial-hierarchy"))
+        .send()
+        .await
+        .unwrap();
+    assert!(thread.status().is_success(), "{}", thread.status());
+    let body = thread.text().await.unwrap();
+    assert!(
+        body.contains("href=\"/~/named-angels#aspect-top-billing\""),
+        ":top-billing should link to the garden sort, got {}",
+        body.chars().take(4000).collect::<String>()
+    );
+    assert!(
+        !body.contains("href=\"/vote?aspect=top-billing\""),
+        "must not keep the vote-landing aspect href: {}",
+        body.chars().take(4000).collect::<String>()
+    );
+
+    let garden = client
+        .get(format!("http://{addr}/~/named-angels"))
+        .send()
+        .await
+        .unwrap();
+    assert!(garden.status().is_success(), "{}", garden.status());
+    let garden_body = garden.text().await.unwrap();
+    assert!(
+        garden_body.contains("id=\"aspect-top-billing\""),
+        "garden page should render the aspect ranking: {}",
+        garden_body.chars().take(4000).collect::<String>()
+    );
+}

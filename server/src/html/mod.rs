@@ -26,7 +26,6 @@ pub use auth::{
     choose_username_page,
 };
 pub use editor::{editor_check, editor_page};
-pub use muse::muse_page;
 pub use forum::{
     redirect_forum_index, room_page, room_thread_post_view, room_thread_view, thread_feed_html,
     thread_feed_html_for_room, thread_index, thread_post_view, thread_view, ThreadNav,
@@ -34,6 +33,7 @@ pub use forum::{
 pub(crate) use forum::{
     thread_latest_page_region, thread_region_page_morphs, ThreadRegionPageMorphs,
 };
+pub use muse::muse_page;
 
 pub use forum::user_can_view_room;
 pub use forum::user_profile_page;
@@ -827,15 +827,153 @@ fn push_item_ref_anchor(
     true
 }
 
+/// Optional garden state used when turning `:aspect` refs into ranking links.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct LinkifyCtx<'a> {
+    pub item_bodies: Option<&'a HashMap<crate::path_types::ItemId, String>>,
+    pub content: Option<&'a crate::reducer::ContentState>,
+    pub hint_item: Option<&'a crate::path_types::ItemId>,
+}
+
 fn vote_aspect_href(garden_prefix: &str, slug: &str) -> String {
     let room = garden_prefix.trim_end_matches('/').trim_end_matches('~');
     format!("{room}vote?aspect={slug}")
 }
 
-fn push_aspect_ref_anchor(out: &mut String, raw_ref: &str, garden_prefix: &str) {
+fn mentioned_item_leaves(raw: &str) -> Vec<crate::path_types::ItemId> {
+    crate::dsl::tokenize_prose_item_refs(raw)
+        .into_iter()
+        .filter_map(|token| match token {
+            crate::dsl::ProseToken::ItemRef(raw_ref) => {
+                crate::path_types::ItemId::parse(&slug_types::canonicalize_item(&raw_ref))
+                    .map(|id| id.ontology_leaf())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// Immediate path-sugar parent of a written ref (`~/parent/child` → `~parent`).
+/// Leaf-only refs (`~child`) parent to the garden root and are ignored.
+fn path_sugar_parent(raw_ref: &str) -> Option<crate::path_types::ItemId> {
+    let id = crate::path_types::ItemId::parse(&slug_types::canonicalize_item(raw_ref))?;
+    let parent = id.parent()?;
+    if parent.tilde_tail() == Some("") {
+        return None;
+    }
+    Some(parent.ontology_leaf())
+}
+
+fn infer_aspect_scope_from_text(raw: &str) -> Option<crate::path_types::ItemId> {
+    let mentioned = mentioned_item_leaves(raw);
+    let mut counts: HashMap<crate::path_types::ItemId, usize> = HashMap::new();
+    for token in crate::dsl::tokenize_prose_item_refs(raw) {
+        let crate::dsl::ProseToken::ItemRef(raw_ref) = token else {
+            continue;
+        };
+        if let Some(parent) = path_sugar_parent(&raw_ref) {
+            *counts.entry(parent).or_default() += 1;
+        }
+    }
+    counts
+        .into_iter()
+        .max_by(|(a, ca), (b, cb)| {
+            let a_mentioned = mentioned.iter().any(|id| id == a) as i32;
+            let b_mentioned = mentioned.iter().any(|id| id == b) as i32;
+            a_mentioned
+                .cmp(&b_mentioned)
+                .then(ca.cmp(cb))
+                .then(b.as_str().cmp(a.as_str()))
+        })
+        .map(|(id, _)| id)
+}
+
+/// Garden parent whose ranking this `:aspect` belongs to.
+///
+/// Prefer a live aspect group (hint item, then items mentioned in the same
+/// document, then most-voted). Fall back to path-sugar parents in the text so
+/// a post that defines `~/scope/child` still links before lookup is available.
+fn resolve_aspect_scope(
+    slug: &str,
+    raw: &str,
+    ctx: LinkifyCtx<'_>,
+) -> Option<crate::path_types::ItemId> {
+    if let Some(content) = ctx.content {
+        let mut candidates: Vec<crate::path_types::ItemId> = content
+            .aspect_groups
+            .keys()
+            .filter(|(_, s)| s == slug)
+            .map(|(parent, _)| parent.clone())
+            .collect();
+        candidates.sort();
+        candidates.dedup();
+        if let Some(hint) = ctx.hint_item {
+            let hint = hint.ontology_leaf();
+            if candidates.iter().any(|c| c == &hint) {
+                return Some(hint);
+            }
+        }
+        if candidates.is_empty() {
+            return infer_aspect_scope_from_text(raw);
+        }
+        if candidates.len() == 1 {
+            return candidates.pop();
+        }
+        let mentioned = mentioned_item_leaves(raw);
+        let mut best: Option<(crate::path_types::ItemId, usize, usize)> = None;
+        for scope in candidates {
+            let members = content.members_of(&scope);
+            let mention_score = mentioned
+                .iter()
+                .filter(|id| *id == &scope || members.iter().any(|m| m == *id))
+                .count();
+            let votes = content
+                .aspect_group(&scope, slug)
+                .map(|g| g.voted_pairs.len())
+                .unwrap_or(0);
+            let take = match &best {
+                None => true,
+                Some((inc_id, inc_mentions, inc_votes)) => {
+                    mention_score > *inc_mentions
+                        || (mention_score == *inc_mentions && votes > *inc_votes)
+                        || (mention_score == *inc_mentions
+                            && votes == *inc_votes
+                            && scope.as_str() < inc_id.as_str())
+                }
+            };
+            if take {
+                best = Some((scope, mention_score, votes));
+            }
+        }
+        return best.map(|(id, _, _)| id);
+    }
+    infer_aspect_scope_from_text(raw)
+}
+
+fn aspect_ref_href(garden_prefix: &str, slug: &str, raw: &str, ctx: LinkifyCtx<'_>) -> String {
+    if let Some(scope) = resolve_aspect_scope(slug, raw, ctx) {
+        if let Some((_, href)) = garden_href_for_item_ref(&scope.display_path(), garden_prefix) {
+            return format!("{href}#aspect-{slug}");
+        }
+    }
+    vote_aspect_href(garden_prefix, slug)
+}
+
+fn push_aspect_ref_anchor(
+    out: &mut String,
+    raw_ref: &str,
+    garden_prefix: &str,
+    raw_doc: &str,
+    ctx: LinkifyCtx<'_>,
+) {
     let slug = raw_ref.trim_start_matches(':');
     out.push_str(r#"<a href=""#);
-    out.push_str(&escape_html(&vote_aspect_href(garden_prefix, slug)));
+    out.push_str(&escape_html(&aspect_ref_href(
+        garden_prefix,
+        slug,
+        raw_doc,
+        ctx,
+    )));
     out.push_str(r#"" class="pre-link">"#);
     out.push_str(&escape_html(raw_ref));
     out.push_str("</a>");
@@ -845,23 +983,37 @@ fn push_aspect_ref_anchor(out: &mut String, raw_ref: &str, garden_prefix: &str) 
 ///
 /// When `item_bodies` is set, matching ontology items get a `title` attribute with a truncated
 /// body preview for native browser tooltips (forum posts, item pages).
-/// `:aspect` slugs get the same `pre-link` styling and point at `/vote?aspect=`.
+/// `:aspect` slugs get the same `pre-link` styling and point at the garden ranking
+/// for the relevant scope (`/~/parent#aspect-slug`) when that context can be
+/// resolved; otherwise they keep `/vote?aspect=`.
+#[cfg(test)]
 pub(super) fn linkify_slugs_with_prefix(
     raw: &str,
     garden_prefix: &str,
     item_bodies: Option<&HashMap<crate::path_types::ItemId, String>>,
 ) -> String {
+    linkify_slugs(
+        raw,
+        garden_prefix,
+        LinkifyCtx {
+            item_bodies,
+            ..LinkifyCtx::default()
+        },
+    )
+}
+
+pub(super) fn linkify_slugs(raw: &str, garden_prefix: &str, ctx: LinkifyCtx<'_>) -> String {
     let mut out = String::with_capacity(raw.len() + 64);
     for token in crate::dsl::tokenize_prose_item_refs(raw) {
         match token {
             crate::dsl::ProseToken::Text(text) => out.push_str(&escape_html(&text)),
             crate::dsl::ProseToken::ItemRef(raw_ref) => {
-                if !push_item_ref_anchor(&mut out, &raw_ref, garden_prefix, item_bodies) {
+                if !push_item_ref_anchor(&mut out, &raw_ref, garden_prefix, ctx.item_bodies) {
                     out.push_str(&escape_html(&raw_ref));
                 }
             }
             crate::dsl::ProseToken::AspectRef(raw_ref) => {
-                push_aspect_ref_anchor(&mut out, &raw_ref, garden_prefix);
+                push_aspect_ref_anchor(&mut out, &raw_ref, garden_prefix, raw, ctx);
             }
         }
     }
@@ -996,11 +1148,11 @@ fn extract_embed_frames(raw: &str) -> Vec<EmbedFrame> {
 pub(super) fn render_linkified_with_embeds_in_scope(
     raw: &str,
     garden_prefix: &str,
-    item_bodies: Option<&HashMap<crate::path_types::ItemId, String>>,
+    ctx: LinkifyCtx<'_>,
 ) -> Markup {
     let embeds = extract_embed_frames(raw);
     html! {
-        pre { (maud::PreEscaped(linkify_slugs_with_prefix(raw, garden_prefix, item_bodies))) }
+        pre { (maud::PreEscaped(linkify_slugs(raw, garden_prefix, ctx))) }
         @if !embeds.is_empty() {
             div class="rich-embeds" {
                 @for e in embeds {
@@ -1023,14 +1175,14 @@ pub(super) fn render_linkified_with_embeds_in_scope(
 pub(super) fn render_item_body_in_scope(
     raw: &str,
     garden_prefix: &str,
-    item_bodies: Option<&HashMap<crate::path_types::ItemId, String>>,
+    ctx: LinkifyCtx<'_>,
 ) -> Markup {
     if let Some(m) = crate::resolvers::try_render_resolver_item_body(raw) {
         return html! {
             div class="item-body-rich" { (m) }
         };
     }
-    render_linkified_with_embeds_in_scope(raw, garden_prefix, item_bodies)
+    render_linkified_with_embeds_in_scope(raw, garden_prefix, ctx)
 }
 
 /// CLI strings are embedded in a single-quoted JS literal; they must never need escaping.
@@ -1242,14 +1394,10 @@ mod linkify_title_tests {
 
     #[test]
     fn aspect_refs_are_pre_links_like_slugs() {
-        let html = linkify_slugs_with_prefix(
-            "voted :beauty then :speed.\n:) 3:1",
-            "/~",
-            None,
-        );
+        let html = linkify_slugs_with_prefix("voted :beauty then :speed.\n:) 3:1", "/~", None);
         assert!(
             html.contains(r#"<a href="/vote?aspect=beauty" class="pre-link">:beauty</a>"#),
-            "expected public aspect link, got {html}"
+            "isolated aspect with no garden context keeps the vote href, got {html}"
         );
         assert!(
             html.contains(r#"<a href="/vote?aspect=speed" class="pre-link">:speed</a>."#),
@@ -1267,6 +1415,85 @@ mod linkify_title_tests {
         assert!(
             room.contains(r#"href="/r/9ab12cdroom/vote?aspect=beauty""#),
             "room-scoped aspect href, got {room}"
+        );
+    }
+
+    #[test]
+    fn aspect_refs_link_to_garden_sort_from_path_sugar() {
+        let html = linkify_slugs_with_prefix(
+            "~/celestial-hierarchy/named-angels {poster}\n\
+             ~/celestial-hierarchy/named-angels/gabriel {g}\n\
+             ~/celestial-hierarchy/named-angels/michael {m}\n\
+             :top-billing {star power}\n\
+             ~gabriel 3:2 ~michael\n",
+            "/~",
+            None,
+        );
+        assert!(
+            html.contains(
+                r#"<a href="/~/named-angels#aspect-top-billing" class="pre-link">:top-billing</a>"#
+            ),
+            "path-sugar parent of the ranked children is the garden sort, got {html}"
+        );
+        let room = linkify_slugs_with_prefix(
+            "~/songs/a {a}\n~/songs/b {b}\n:beauty\n~a 2:1 ~b\n",
+            "/r/9ab12cdroom/~",
+            None,
+        );
+        assert!(
+            room.contains(r#"href="/r/9ab12cdroom/~/songs#aspect-beauty""#),
+            "room-scoped garden aspect href, got {room}"
+        );
+    }
+
+    #[test]
+    fn aspect_refs_prefer_live_aspect_group_over_path_sugar() {
+        use crate::events::{Event, Ingest};
+        use crate::reducer::ReducerState;
+
+        let mut state = ReducerState::default();
+        state.apply_event(Event::Ingest(Ingest {
+            ts: 1,
+            id: "ing-1".into(),
+            raw: "~/psalms/psalm-a {a}\n~/psalms/psalm-b {b}\n:beauty {pretty}\n{x}\n~/psalms/psalm-a 2:1 ~/psalms/psalm-b\n\
+                  ~/songs/song-a {sa}\n~/songs/song-b {sb}\n:beauty {pretty}\n{y}\n~/songs/song-a 3:1 ~/songs/song-b\n"
+                .into(),
+            principal: "t".into(),
+            delegate: None,
+            room_id: "public".into(),
+            thread_tag: "mix".into(),
+        }));
+        let content = state.public();
+        let html = linkify_slugs(
+            "later note: :beauty among ~/psalms/psalm-a and ~/psalms/psalm-b",
+            "/~",
+            LinkifyCtx {
+                item_bodies: None,
+                content: Some(content),
+                hint_item: None,
+            },
+        );
+        assert!(
+            html.contains(r#"href="/~/psalms#aspect-beauty""#),
+            "mentioned psalm members pick that aspect group, got {html}"
+        );
+        assert!(
+            !html.contains(r#"href="/~/songs#aspect-beauty""#),
+            "must not pick the other :beauty group, got {html}"
+        );
+
+        let hinted = linkify_slugs(
+            "just :beauty",
+            "/~",
+            LinkifyCtx {
+                item_bodies: None,
+                content: Some(content),
+                hint_item: Some(&crate::path_types::ItemId::parse("~/songs").unwrap()),
+            },
+        );
+        assert!(
+            hinted.contains(r#"href="/~/songs#aspect-beauty""#),
+            "item-page hint wins when the current item hosts the aspect, got {hinted}"
         );
     }
 }

@@ -16,7 +16,7 @@ use crate::{
     html::{
         format_ratio, forum::ThreadNav, layout_full_bleed_chromeless, now_ms, ratio_pct,
         render_item_body_in_scope, theme_from_jar, theme_next_from_uri, ui_action::UI_RPC_FIELD,
-        user_can_post_room, JsBuilder,
+        user_can_post_room, JsBuilder, LinkifyCtx,
     },
     middleware::canonical_view_url,
     path_types::ItemId,
@@ -481,7 +481,11 @@ pub(super) fn vote_compare_item_card(
                     (render_item_body_in_scope(
                         body,
                         nav.garden_root_url(),
-                        item_bodies,
+                        LinkifyCtx {
+                            item_bodies,
+                            content: None,
+                            hint_item: Some(item),
+                        },
                     ))
                 }
             } @else {
