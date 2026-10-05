@@ -533,6 +533,16 @@ body.view-ontology .ont-history-link-open {
   color: #1a4a8c;
   font-weight: 600;
 }
+body.view-ontology .ont-voter-filter {
+  background: #f7f3eb;
+  border: 1px solid #c8c4bc;
+  box-sizing: border-box;
+  font-size: 0.85em;
+  margin: 6px 0;
+  max-width: 100%;
+  padding: 6px 10px;
+  width: 100%;
+}
 
 nav.breadcrumb.ont-sibling-nav {
   margin-top: 0;

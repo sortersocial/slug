@@ -554,6 +554,16 @@ body.view-ontology .ont-history-link-open {
   color: #23a;
   font-weight: 600;
 }
+body.view-ontology .ont-voter-filter {
+  background: #faf8f3;
+  border: 1px solid #ccc;
+  box-sizing: border-box;
+  font-size: 0.85em;
+  margin: 6px 0;
+  max-width: 100%;
+  padding: 6px 10px;
+  width: 100%;
+}
 
 /* ================================================================
    GARDEN HIERARCHY — parents ↑ / self / children ↓ (paper context).

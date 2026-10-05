@@ -991,3 +991,111 @@ async fn test_scope_page_without_history_shows_empty_replay_state() {
         .unwrap();
     assert_eq!(missing.status(), reqwest::StatusCode::NOT_FOUND);
 }
+
+#[tokio::test]
+async fn test_scope_page_by_voter_forks_rankings_and_replay() {
+    let (addr, _tmp, _log, state, _handle) = create_test_server_with_state().await;
+    let client = reqwest::Client::new();
+    let alice = seed_test_identity(&state, "alice", "alicetok", "secret").await;
+    let bob = seed_test_identity(&state, "bob", "bobtok", "secret").await;
+    let post = |bearer: &str, delegate: &str, text: &str| {
+        let client = client.clone();
+        let bearer = bearer.to_string();
+        let delegate = delegate.to_string();
+        let text = text.to_string();
+        async move {
+            rpc_batch(
+                &client,
+                addr,
+                Some(&bearer),
+                serde_json::json!([{
+                    "Post": {
+                        "room": "public",
+                        "thread_tag": "fork-test",
+                        "delegate": delegate,
+                        "text": text,
+                        "return_rank_diff": false
+                    }
+                }]),
+            )
+            .await
+        }
+    };
+
+    post(
+        &alice,
+        "00000000-0000-0000-0000-00000000000a:rig:test/model",
+        "~/fork/alpha { a }\n~/fork/beta { b }\n~/fork/gamma { c }\n{ alice prefers alpha }\n~/fork/alpha 3:1 ~/fork/beta\n",
+    )
+    .await;
+    post(
+        &alice,
+        "00000000-0000-0000-0000-00000000000a:rig:test/model",
+        "{ alpha clears gamma too }\n~/fork/alpha 2:1 ~/fork/gamma\n",
+    )
+    .await;
+    post(
+        &bob,
+        "00000000-0000-0000-0000-00000000000b:rig:test/model",
+        "{ bob prefers beta }\n~/fork/beta 3:1 ~/fork/alpha\n",
+    )
+    .await;
+
+    let get_body = |url: String| {
+        let client = client.clone();
+        async move { client.get(url).send().await.unwrap().text().await.unwrap() }
+    };
+
+    // Alice's fork: only her vote counts, alpha leads.
+    let body = get_body(format!("http://{addr}/~/fork?by=alice")).await;
+    assert!(body.contains("filtered: only votes by"), "{body}");
+    assert!(body.contains("alice"));
+    let (ia, ib) = (body.find("/~/alpha"), body.find("/~/beta"));
+    assert!(ia.is_some() && ib.is_some() && ia < ib, "alice's fork crowns alpha");
+
+    // Bob's fork: beta leads.
+    let body = get_body(format!("http://{addr}/~/fork?by=bob")).await;
+    let (ia, ib) = (body.find("/~/alpha"), body.find("/~/beta"));
+    assert!(ia.is_some() && ib.is_some() && ib < ia, "bob's fork crowns beta");
+
+    // An unknown voter empties the table but keeps the notice.
+    let body = get_body(format!("http://{addr}/~/fork?by=mallory")).await;
+    assert!(body.contains("filtered: only votes by"));
+    assert!(body.contains("no voted pairs yet in this scope"));
+
+    // The replay honors the fork and names the voter.
+    let data: serde_json::Value = client
+        .get(format!("http://{addr}/~/fork?v=history.json&by=alice"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(data["voter"].as_str().unwrap(), "alice");
+    let history = data["history"].as_array().unwrap();
+    assert_eq!(history.len(), 2, "only alice's vote events survive");
+    let rankings = history[1]["current_rankings"].as_array().unwrap();
+    let score = |item: &str| {
+        rankings
+            .iter()
+            .find(|r| r["item"] == item)
+            .and_then(|r| r["score"].as_f64())
+            .unwrap()
+    };
+    assert!(score("~/alpha") > score("~/beta"), "alice's replay crowns alpha");
+
+    let data: serde_json::Value = client
+        .get(format!("http://{addr}/~/fork?v=history.json&by=mallory"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(data["history"].as_array().unwrap().len(), 0);
+
+    // The link bar carries the filter into the replay URL (`&` escapes in hrefs).
+    let body = get_body(format!("http://{addr}/~/fork?by=alice")).await;
+    assert!(body.contains("/~/fork?v=history&amp;by=alice"));
+}

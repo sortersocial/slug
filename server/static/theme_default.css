@@ -1920,6 +1920,16 @@ body.view-ontology .ont-history-link-open {
   color: var(--link);
   font-weight: 600;
 }
+body.view-ontology .ont-voter-filter {
+  background: var(--g2);
+  border: 1px solid var(--lo);
+  box-sizing: border-box;
+  font-size: 0.85em;
+  margin: 6px 0;
+  max-width: 100%;
+  padding: 6px 10px;
+  width: 100%;
+}
 
 /* GitHub resolver import cards (rich bodies on -/ garden + vote compare) */
 article.import-card {

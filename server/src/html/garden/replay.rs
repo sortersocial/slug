@@ -55,6 +55,17 @@ pub(super) fn replay_mode_from_uri(uri: &Uri) -> Option<ReplayMode> {
         })
 }
 
+/// The `?by=` voter filter: fork the garden to one voter's canonical votes.
+/// Matches the vote's human principal or its full delegate string.
+pub(super) fn voter_from_uri(uri: &Uri) -> Option<String> {
+    uri.query()
+        .into_iter()
+        .flat_map(|q| q.split('&'))
+        .find_map(|pair| pair.strip_prefix("by="))
+        .and_then(|v| urlencoding::decode(v).ok().map(|s| s.into_owned()))
+        .filter(|s| !s.is_empty())
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub(super) struct ReplayRanked {
     item: String,
@@ -103,6 +114,9 @@ pub(super) struct ReplayData {
     final_matrix: Vec<Vec<MatrixCell>>,
     /// Members omitted from the replay (over [`MAX_MEMBERS`]).
     truncated_members: usize,
+    /// The `?by=` voter this replay is filtered to, if any.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    voter: Option<String>,
     /// False when there is not enough history to chart (panel shows the
     /// empty state instead of the replay link).
     #[serde(skip_serializing)]
@@ -134,10 +148,12 @@ fn vote_score(ratio_left: i32, ratio_right: i32) -> f64 {
 
 /// Build the replay payload for one scope, or `None` when the scope has no
 /// members at all (childless leaf pages get neither panel nor replay).
+/// `voter` (the `?by=` filter) forks the replay to one voter's votes.
 pub(super) fn build_replay(
     content: &ContentState,
     rankings: &ChildrenRankings,
     scope_item: &str,
+    voter: Option<&str>,
 ) -> Option<ReplayData> {
     // Members in display order: ranked across components, then unranked.
     let mut members: Vec<ItemId> = rankings
@@ -176,6 +192,11 @@ pub(super) fn build_replay(
             for v in vs {
                 let lo = if v.a <= v.b { &v.a } else { &v.b };
                 if lo == m && member_set.contains(&v.a) && member_set.contains(&v.b) {
+                    if let Some(voter) = voter {
+                        if v.principal != voter && v.delegate.as_deref() != Some(voter) {
+                            continue;
+                        }
+                    }
                     votes_by_ts.entry(v.ts).or_default().push(v);
                 }
             }
@@ -304,17 +325,19 @@ pub(super) fn build_replay(
         history,
         final_matrix,
         truncated_members,
+        voter: voter.map(str::to_string),
         sufficient,
     })
 }
 
-/// The `?v=history.json` payload.
+/// The `?v=history.json` payload (`?by=` forks to one voter's votes).
 pub(super) fn replay_history_json_response(
     content: &ContentState,
     rankings: &ChildrenRankings,
     scope_item: &str,
+    voter: Option<&str>,
 ) -> axum::response::Response {
-    match build_replay(content, rankings, scope_item) {
+    match build_replay(content, rankings, scope_item, voter) {
         Some(data) => axum::Json(serde_json::to_value(data).expect("replay serializes"))
             .into_response(),
         None => (
@@ -334,11 +357,18 @@ fn esc(s: &str) -> String {
 }
 
 /// The `?v=history` page: one HTML file, the sorter-proof stack verbatim.
-pub(super) fn replay_page_response(nav: &ThreadNav, scope_item: &str) -> axum::response::Response {
+pub(super) fn replay_page_response(
+    nav: &ThreadNav,
+    scope_item: &str,
+    voter: Option<&str>,
+) -> axum::response::Response {
     let display = item_display_path(scope_item);
     let back_href = item_href(scope_item, nav);
+    let by_query = voter
+        .map(|v| format!("&by={}", urlencoding::encode(v)))
+        .unwrap_or_default();
     let config = serde_json::json!({
-        "dataUrl": format!("{back_href}?v=history.json"),
+        "dataUrl": format!("{back_href}?v=history.json{by_query}"),
         "backHref": back_href,
         "backLabel": display,
     });
@@ -353,15 +383,20 @@ pub(super) fn replay_page_response(nav: &ThreadNav, scope_item: &str) -> axum::r
 /// The flat-page link bar: always visible on scopes with members. Links to
 /// `?v=history` when history suffices; otherwise an empty state naming what
 /// it waits for (plus a vote link when there are at least two children).
+/// `voter` (the `?by=` filter) forks the counts and carries into the link.
 pub(super) fn score_history_link_panel(
     content: &ContentState,
     rankings: &ChildrenRankings,
     nav: &ThreadNav,
     scope_item: &str,
     vote_href: Option<String>,
+    voter: Option<&str>,
 ) -> Option<Markup> {
-    let data = build_replay(content, rankings, scope_item)?;
-    let replay_href = format!("{}?v=history", item_href(scope_item, nav));
+    let data = build_replay(content, rankings, scope_item, voter)?;
+    let by_query = voter
+        .map(|v| format!("&by={}", urlencoding::encode(v)))
+        .unwrap_or_default();
+    let replay_href = format!("{}?v=history{}", item_href(scope_item, nav), by_query);
     Some(if data.sufficient {
         html! {
             div class="ont-history-link" {
@@ -653,6 +688,7 @@ const REPLAY_HTML: &str = r##"<!DOCTYPE html>
                     {topbar}
                     <div className="replay-subtitle">
                         {data.criteria}
+                        {data.voter ? ` · filtered by ${data.voter}` : ''}
                         {data.truncated_members > 0 ? ` · top ${data.items.length} of ${data.items.length + data.truncated_members} members` : ''}
                     </div>
 
@@ -858,14 +894,14 @@ mod tests {
     fn childless_scope_builds_nothing() {
         let content = ContentState::default();
         let rankings = rankings_for(&[], &[]);
-        assert!(build_replay(&content, &rankings, "~scope").is_none());
+        assert!(build_replay(&content, &rankings, "~scope", None).is_none());
     }
 
     #[test]
     fn single_event_is_not_yet_a_replay() {
         let content = content_with_votes(vec![vote(1, &leaf("~a"), &leaf("~b"), 2, 1, "a over b")]);
         let rankings = rankings_for(&["~a", "~b"], &[]);
-        let data = build_replay(&content, &rankings, "~scope").expect("builds");
+        let data = build_replay(&content, &rankings, "~scope", None).expect("builds");
         assert!(!data.sufficient, "one vote event is not a replay");
         assert_eq!(data.history.len(), 1);
     }
@@ -878,7 +914,7 @@ mod tests {
             vote(3, &leaf("~a"), &leaf("~c"), 3, 1, "a over c"),
         ]);
         let rankings = rankings_for(&["~a", "~b", "~c"], &[]);
-        let data = build_replay(&content, &rankings, "~scope").expect("builds");
+        let data = build_replay(&content, &rankings, "~scope", None).expect("builds");
         assert!(data.sufficient);
         assert_eq!(data.history.len(), 3);
 
@@ -910,7 +946,7 @@ mod tests {
             vote(2, &leaf("~a"), &leaf("~b"), 2, 1, "a still outranks b"),
         ]);
         let rankings = rankings_for(&["~a", "~b"], &[]);
-        let data = build_replay(&content, &rankings, "~scope").expect("builds");
+        let data = build_replay(&content, &rankings, "~scope", None).expect("builds");
         assert_eq!(data.history.len(), 2, "two events, no dedupe collapse");
 
         // mean(75%, 66.7%) win share for a over b.
@@ -935,11 +971,42 @@ mod tests {
         let names: Vec<String> = (0..70).map(|i| format!("~m{i:02}")).collect();
         let refs: Vec<&str> = names.iter().map(String::as_str).collect();
         let rankings = rankings_for(&refs, &[]);
-        let data = build_replay(&content, &rankings, "~scope").expect("builds");
+        let data = build_replay(&content, &rankings, "~scope", None).expect("builds");
         assert_eq!(data.items.len(), MAX_MEMBERS);
         assert_eq!(data.truncated_members, 70 - MAX_MEMBERS);
         assert_eq!(data.history.len(), MAX_EVENTS);
         assert_eq!(data.final_matrix.len(), MAX_MEMBERS);
+    }
+
+    #[test]
+    fn voter_filter_forks_the_replay() {
+        let mut alice_vote = vote(1, &leaf("~a"), &leaf("~b"), 3, 1, "alice loves a");
+        alice_vote.principal = "alice".to_string();
+        let mut bob_vote = vote(2, &leaf("~b"), &leaf("~a"), 3, 1, "bob loves b");
+        bob_vote.principal = "bob".to_string();
+        let content = content_with_votes(vec![alice_vote, bob_vote]);
+        let rankings = rankings_for(&["~a", "~b"], &[]);
+
+        let canon = build_replay(&content, &rankings, "~scope", None).expect("builds");
+        assert_eq!(canon.history.len(), 2, "both votes in the canonical replay");
+        assert!(canon.voter.is_none());
+
+        let alice = build_replay(&content, &rankings, "~scope", Some("alice")).expect("builds");
+        assert_eq!(alice.voter.as_deref(), Some("alice"));
+        assert_eq!(alice.history.len(), 1, "only alice's vote survives");
+        let a = score_of(&alice.history[0], "~/a").unwrap();
+        let b = score_of(&alice.history[0], "~/b").unwrap();
+        assert!(a > b, "alice's fork crowns a");
+
+        let bob = build_replay(&content, &rankings, "~scope", Some("bob")).expect("builds");
+        let a = score_of(&bob.history[0], "~/a").unwrap();
+        let b = score_of(&bob.history[0], "~/b").unwrap();
+        assert!(b > a, "bob's fork crowns b");
+
+        let nobody =
+            build_replay(&content, &rankings, "~scope", Some("mallory")).expect("builds");
+        assert!(nobody.history.is_empty(), "unknown voter gets an empty replay");
+        assert!(!nobody.sufficient);
     }
 
     #[test]

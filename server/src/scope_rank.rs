@@ -210,6 +210,29 @@ pub fn build_children_rankings_in_group(
     build_rankings_for_group_and_items(group, &items)
 }
 
+/// Rebuild a vote graph containing only one voter's canonical votes.
+///
+/// `voter` matches the vote's human principal or its full delegate string.
+/// Each vote is recorded in both endpoints' `item_votes` lists; taking it from
+/// the smaller endpoint's list counts it once while keeping repeated
+/// same-pair votes (they add — the kernel accumulates edges, so application
+/// order does not matter for the final graph).
+pub fn filtered_group_by_voter(content: &ContentState, voter: &str) -> GroupState {
+    let mut group = GroupState::new();
+    for (item, votes) in &content.item_votes {
+        for v in votes {
+            let lo = if v.a <= v.b { &v.a } else { &v.b };
+            if lo != item {
+                continue;
+            }
+            if v.principal == voter || v.delegate.as_deref() == Some(voter) {
+                group.apply_vote(v.clone());
+            }
+        }
+    }
+    group
+}
+
 /// Host-only `https://…` roots for the external garden index (`/-/`).
 ///
 /// Includes every `https://host` ancestor of any [`ItemId::Web`] item that appears in

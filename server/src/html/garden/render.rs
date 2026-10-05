@@ -32,7 +32,7 @@ use super::{
     pin::{child_row_pin_or_vote, ont_pin_vote_controls, pinned_item_from_jar},
     replay::{
         replay_history_json_response, replay_mode_from_uri, replay_page_response,
-        score_history_link_panel, ReplayMode,
+        score_history_link_panel, voter_from_uri, ReplayMode,
     },
     vote::vote_pool_href,
 };
@@ -134,16 +134,34 @@ pub(super) async fn render_scope_view(
     let pin_ref = pinned_item_from_jar(&jar);
     let reduced = state.reduced.read().await;
     let child_depth = child_depth_from_uri(&uri);
-    let model = build_item_page_view_model(&reduced, &scope, browse.item(), child_depth);
+    let mut model = build_item_page_view_model(&reduced, &scope, browse.item(), child_depth);
     let scope_content = content_for_garden_view(&reduced, &scope);
+    let voter = voter_from_uri(&uri);
     // The replay is a query-param view of the scope page itself: `?v=history`
     // serves the one-file React app, `?v=history.json` its data payload.
     match replay_mode_from_uri(&uri) {
-        Some(ReplayMode::Page) => return replay_page_response(&nav, &model.item),
+        Some(ReplayMode::Page) => {
+            return replay_page_response(&nav, &model.item, voter.as_deref());
+        }
         Some(ReplayMode::Data) => {
-            return replay_history_json_response(scope_content, &model.child_rankings, &model.item);
+            return replay_history_json_response(
+                scope_content,
+                &model.child_rankings,
+                &model.item,
+                voter.as_deref(),
+            );
         }
         None => {}
+    }
+    // `?by=` forks the flat page too: the ranked children table re-solves from
+    // a graph holding only that voter's canonical votes.
+    if let Some(v) = &voter {
+        let filtered = crate::scope_rank::filtered_group_by_voter(scope_content, v);
+        let parent = ItemId::parse(&model.item)
+            .map(|id| id.ontology_leaf())
+            .unwrap_or_else(|| ItemId::opaque(model.item.clone()));
+        model.child_rankings =
+            crate::scope_rank::build_children_rankings_in_group(scope_content, &parent, &filtered);
     }
     let thread_href = |tag: &str| nav.thread_url(tag);
     let external_empty_body = browse.is_external() && model.body.is_none();
@@ -339,6 +357,14 @@ pub(super) async fn render_scope_view(
                         }
                     }
                 }
+                @if let Some(v) = &voter {
+                    div class="ont-voter-filter" {
+                        "filtered: only votes by "
+                        strong { (v) }
+                        " · "
+                        a href=(item_href(&model.item, &nav)) { "show all" }
+                    }
+                }
                 @if model.child_rankings.component_rankings.is_empty() {
                     p class="muted" { "no voted pairs yet in this scope" }
                 }
@@ -352,6 +378,7 @@ pub(super) async fn render_scope_view(
                     } else {
                         None
                     },
+                    voter.as_deref(),
                 ) {
                     (panel)
                 }
