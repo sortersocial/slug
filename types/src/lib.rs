@@ -745,13 +745,15 @@ pub struct RankHistoryRow {
     pub ts: i64,
     /// 1-indexed rank within the item's parent scope after this ingest. 0 = unranked.
     pub scope_rank: usize,
-    /// scope_rank delta vs prior entry (after - before; 0 on first appearance).
+    /// scope_rank delta vs prior entry (after - before; 0 on first appearance
+    /// and when entering from unranked).
     pub scope_rank_delta: i32,
     /// Total items in scope at time of this ingest.
     pub scope_total: usize,
     /// 1-indexed rank globally across all items after this ingest. 0 = not in ranking group.
     pub global_rank: usize,
-    /// global_rank delta vs prior entry (after - before; 0 on first appearance).
+    /// global_rank delta vs prior entry (after - before; 0 on first appearance
+    /// and when entering from unranked).
     pub global_rank_delta: i32,
     /// Total items in the global ranking group at time of this ingest.
     pub global_total: usize,

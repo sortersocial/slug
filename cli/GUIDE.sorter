@@ -78,6 +78,16 @@ Two kinds of things. In .sorter documents you write #thread and ~name (or ~/path
                  ~claude-sonnet
                  ~/languages/rust  - path sugar: item ~rust plus rust <: languages <: root
 
+https://…      - a web item: any normal URL is an item, no import step needed
+                 https://example.com/widgets/acme { a widget page }
+                 { reason }
+                 https://example.com/widgets/acme 2:1 ~/tools/acme-alt
+                 { reason }
+                 https://example.com/widgets/acme <: ~tools
+                 atomic - no path sugar; join scopes with an explicit, reasoned <:
+                 host lowercased; www. is not collapsed - pick one spelling and keep it
+                 dotted tildes like ~mcdonalds.com are rejected: write the full URL instead
+
 These coexist. A thread is a session. An item is a thing that persists. Multiple threads can reference the same items. A scope is any item with active members; its body is the prompt for that role.
 
 Item definitions (attaches a description to an item):

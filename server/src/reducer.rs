@@ -1176,12 +1176,15 @@ impl ReducerState {
                 let (before_scope, before_global, _) =
                     before.get(item).copied().unwrap_or((0, 0, 0.0));
                 let prev = content.rank_history.get(item).and_then(|v| v.last());
-                let scope_delta = if prev.is_none() {
+                // Entering from unranked (before == 0) is an arrival, not a
+                // drop: `after - 0` would render nonsense like "#1 (↓1)".
+                // Zero it, matching first-appearance semantics.
+                let scope_delta = if prev.is_none() || before_scope == 0 {
                     0
                 } else {
                     after_scope as i32 - before_scope as i32
                 };
-                let global_delta = if prev.is_none() {
+                let global_delta = if prev.is_none() || before_global == 0 {
                     0
                 } else {
                     after_global as i32 - before_global as i32
@@ -1551,6 +1554,39 @@ mod rank_position_cache_tests {
             "the second ingest must reuse its before positions and recompute only after voting"
         );
         assert_eq!(content.rank_history[&ItemId::parse("~b").unwrap()].len(), 2);
+    }
+
+    #[test]
+    fn entrance_from_unranked_reports_zero_delta() {
+        let mut content = ContentState::default();
+        ReducerState::apply_ingest_to_content(
+            &mut content,
+            &ingest(
+                "first",
+                "~/memo/a { a }\n~/memo/b { b }\n{ a wins }\n~/memo/a 2:1 ~/memo/b",
+            ),
+        )
+        .unwrap();
+        ReducerState::apply_ingest_to_content(
+            &mut content,
+            &ingest("second", "{ c arrives }\n~/memo/c 2:1 ~/memo/a"),
+        )
+        .unwrap();
+
+        // c was unranked before this ingest: its arrival is not a "↓" drop.
+        let c_hist = &content.rank_history[&ItemId::parse("~c").unwrap()];
+        let entrance = c_hist.last().unwrap();
+        assert_eq!(entrance.scope_rank, 1, "c takes the top of the scope");
+        assert_eq!(entrance.scope_rank_delta, 0, "arrival is not a drop");
+        assert_eq!(entrance.global_rank_delta, 0);
+
+        // An item ranked on both sides still reports real movement.
+        let a_hist = &content.rank_history[&ItemId::parse("~a").unwrap()];
+        let a_second = a_hist.last().unwrap();
+        assert_eq!(
+            a_second.scope_rank_delta, 1,
+            "c 2:1 a knocks a down one: {a_second:?}"
+        );
     }
 }
 
