@@ -8,6 +8,7 @@ mod item;
 mod item_page;
 mod pin;
 mod render;
+mod replay;
 mod routes;
 mod vote;
 

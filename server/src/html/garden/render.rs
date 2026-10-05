@@ -30,6 +30,10 @@ use super::{
         build_item_page_view_model, fragment_slug, item_relations_markup, AspectRankingView,
     },
     pin::{child_row_pin_or_vote, ont_pin_vote_controls, pinned_item_from_jar},
+    replay::{
+        replay_history_json_response, replay_mode_from_uri, replay_page_response,
+        score_history_link_panel, ReplayMode,
+    },
     vote::vote_pool_href,
 };
 
@@ -132,6 +136,15 @@ pub(super) async fn render_scope_view(
     let child_depth = child_depth_from_uri(&uri);
     let model = build_item_page_view_model(&reduced, &scope, browse.item(), child_depth);
     let scope_content = content_for_garden_view(&reduced, &scope);
+    // The replay is a query-param view of the scope page itself: `?v=history`
+    // serves the one-file React app, `?v=history.json` its data payload.
+    match replay_mode_from_uri(&uri) {
+        Some(ReplayMode::Page) => return replay_page_response(&nav, &model.item),
+        Some(ReplayMode::Data) => {
+            return replay_history_json_response(scope_content, &model.child_rankings, &model.item);
+        }
+        None => {}
+    }
     let thread_href = |tag: &str| nav.thread_url(tag);
     let external_empty_body = browse.is_external() && model.body.is_none();
     let cli_path_arg = item_display_path(&model.item);
@@ -328,6 +341,19 @@ pub(super) async fn render_scope_view(
                 }
                 @if model.child_rankings.component_rankings.is_empty() {
                     p class="muted" { "no voted pairs yet in this scope" }
+                }
+                @if let Some(panel) = score_history_link_panel(
+                    scope_content,
+                    &model.child_rankings,
+                    &nav,
+                    &model.item,
+                    if total_children >= 2 {
+                        Some(vote_pool_href(&nav, &model.item))
+                    } else {
+                        None
+                    },
+                ) {
+                    (panel)
                 }
                 (ont_ranking_lists_markup(
                     &model.child_rankings,

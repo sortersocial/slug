@@ -791,3 +791,203 @@ async fn test_legacy_arena_channel_page_resolve_form_targets_canonical() {
         "/-/https://www.are.na/channel/my-chan"
     );
 }
+
+#[tokio::test]
+async fn test_scope_page_links_to_history_replay() {
+    let (addr, _tmp, _log, _handle) = create_test_server().await;
+    let client = reqwest::Client::new();
+    let bearer = test_bearer();
+    let post = |delegate: &str, text: &str| {
+        let client = client.clone();
+        let bearer = bearer.clone();
+        let text = text.to_string();
+        let delegate = delegate.to_string();
+        async move {
+            rpc_batch(
+                &client,
+                addr,
+                Some(&bearer),
+                serde_json::json!([{
+                    "Post": {
+                        "room": "public",
+                        "thread_tag": "chart-test",
+                        "delegate": delegate,
+                        "text": text,
+                        "return_rank_diff": false
+                    }
+                }]),
+            )
+            .await
+        }
+    };
+
+    post(
+        "00000000-0000-0000-0000-000000000001:rig:test/model",
+        "~/chart/alpha { first }\n~/chart/beta { second }\n~/chart/gamma { third }\n{ alpha over beta }\n~/chart/alpha 2:1 ~/chart/beta\n",
+    )
+    .await;
+    post(
+        "00000000-0000-0000-0000-000000000002:rig:test/model",
+        "{ beta over gamma }\n~/chart/beta 2:1 ~/chart/gamma\n",
+    )
+    .await;
+    post(
+        "00000000-0000-0000-0000-000000000003:rig:test/model",
+        "{ alpha over gamma }\n~/chart/alpha 3:1 ~/chart/gamma\n",
+    )
+    .await;
+
+    // The flat scope page links to the replay view.
+    let body = client
+        .get(format!("http://{addr}/~/chart"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        body.contains("open the replay"),
+        "flat page links the replay: {}",
+        body.chars().take(3000).collect::<String>()
+    );
+    assert!(body.contains("/~/chart?v=history"));
+
+    // The replay page is the one-file sorter-proof React stack, bound to its data URL.
+    let page = client
+        .get(format!("http://{addr}/~/chart?v=history"))
+        .send()
+        .await
+        .unwrap();
+    assert!(page.status().is_success(), "{}", page.status());
+    let page = page.text().await.unwrap();
+    for needle in [
+        "text/babel",
+        "chart.js",
+        "react-query",
+        "SLUG_REPLAY",
+        "/~/chart?v=history.json",
+        "Comparison Matrix",
+    ] {
+        assert!(
+            page.contains(needle),
+            "replay page should contain {needle}"
+        );
+    }
+
+    // The data payload is sorter-proof-shaped.
+    let data: serde_json::Value = client
+        .get(format!("http://{addr}/~/chart?v=history.json"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let items = data["items"].as_array().unwrap();
+    assert_eq!(items.len(), 3);
+    assert!(items.iter().any(|i| i == "~/alpha"));
+    let history = data["history"].as_array().unwrap();
+    assert!(
+        history.len() >= 2,
+        "three posts produce at least two vote events"
+    );
+    let step0 = &history[0];
+    assert!(step0["timestamp"].is_i64());
+    assert!(step0["current_rankings"].is_array());
+    assert!(step0["unsorted_items"].is_array());
+    assert!(
+        step0["unsorted_items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i == "~/gamma"),
+        "gamma waits unsorted until its first vote"
+    );
+    assert!(step0["comparison"]["explanation"].is_string());
+    // alpha 2:1 beta → alpha's row shows a 66.7% win share over beta.
+    let matrix = data["final_matrix"].as_array().unwrap();
+    assert_eq!(matrix.len(), 3);
+    let w = matrix[0][1]["weight"].as_f64().unwrap();
+    assert!((w - 66.7).abs() < 0.05, "alpha row vs beta: {w}");
+    assert!(matrix[0][1]["details"]["explanation"]
+        .as_str()
+        .unwrap()
+        .contains("REASONING:"));
+    assert!(data["criteria"].is_string());
+}
+
+#[tokio::test]
+async fn test_scope_page_without_history_shows_empty_replay_state() {
+    let (addr, _tmp, _log, _handle) = create_test_server().await;
+    let client = reqwest::Client::new();
+    let bearer = test_bearer();
+    rpc_batch(
+        &client,
+        addr,
+        Some(&bearer),
+        serde_json::json!([{
+            "Post": {
+                "room": "public",
+                "thread_tag": "chartless-test",
+                "delegate": "00000000-0000-0000-0000-000000000009:rig:test/model",
+                "text": "~/solo/lonely { no votes yet }\n",
+                "return_rank_diff": false
+            }
+        }]),
+    )
+    .await;
+
+    // One unranked member: the bar stays visible as an empty state, no replay link.
+    let body = client
+        .get(format!("http://{addr}/~/solo"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        body.contains("ont-history-empty"),
+        "scope with members but no vote history should render the empty state"
+    );
+    assert!(
+        body.contains("score history draws itself"),
+        "empty state should say what it waits for"
+    );
+    assert!(
+        !body.contains("open the replay"),
+        "no replay link before history suffices"
+    );
+
+    // Its replay JSON is well-formed but event-free.
+    let data: serde_json::Value = client
+        .get(format!("http://{addr}/~/solo?v=history.json"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(data["history"].as_array().unwrap().len(), 0);
+
+    // A childless leaf: no bar, and its data view 404s.
+    let leaf_body = client
+        .get(format!("http://{addr}/~/lonely"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        !leaf_body.contains("ont-history-link"),
+        "childless leaf page should not render the replay bar"
+    );
+    let missing = client
+        .get(format!("http://{addr}/~/lonely?v=history.json"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(missing.status(), reqwest::StatusCode::NOT_FOUND);
+}

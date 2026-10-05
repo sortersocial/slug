@@ -539,6 +539,22 @@ body.view-ontology .vote-open-links {
   white-space: nowrap;
 }
 
+/* Garden score-history replay link (the replay lives at ?v=history) */
+body.view-ontology .ont-history-link {
+  background: #faf8f3;
+  border: 1px solid #ccc;
+  box-sizing: border-box;
+  font-size: 0.85em;
+  margin: 6px 0;
+  max-width: 100%;
+  padding: 6px 10px;
+  width: 100%;
+}
+body.view-ontology .ont-history-link-open {
+  color: #23a;
+  font-weight: 600;
+}
+
 /* ================================================================
    GARDEN HIERARCHY — parents ↑ / self / children ↓ (paper context).
    Lean retro version of the same system in the other themes:

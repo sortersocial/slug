@@ -518,6 +518,22 @@ body.view-ontology-light .ont-tab.is-active {
   color: #1a1814;
 }
 
+/* Garden score-history replay link (the replay lives at ?v=history) */
+body.view-ontology .ont-history-link {
+  background: #f7f3eb;
+  border: 1px solid #c8c4bc;
+  box-sizing: border-box;
+  font-size: 0.85em;
+  margin: 6px 0;
+  max-width: 100%;
+  padding: 6px 10px;
+  width: 100%;
+}
+body.view-ontology .ont-history-link-open {
+  color: #1a4a8c;
+  font-weight: 600;
+}
+
 nav.breadcrumb.ont-sibling-nav {
   margin-top: 0;
   width: 100%;
