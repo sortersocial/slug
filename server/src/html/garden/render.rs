@@ -265,7 +265,13 @@ pub(super) async fn render_scope_view(
                         div class="rank-history-entry" {
                             div class="rank-history-meta" title=(hover) {
                                 span class="rank-history-pos" {
-                                    (format!("#{} of {}{}", e.scope_rank, e.scope_total, delta_str))
+                                    @if e.scope_rank == 0 && e.scope_total == 0 {
+                                        (format!("unscoped{}", delta_str))
+                                    } @else if e.scope_rank == 0 {
+                                        (format!("unranked of {}{}", e.scope_total, delta_str))
+                                    } @else {
+                                        (format!("#{} of {}{}", e.scope_rank, e.scope_total, delta_str))
+                                    }
                                 }
                                 " · "
                                 span class="ts-recency" style=(ts_style.as_str()) { (ago) }

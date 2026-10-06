@@ -693,7 +693,9 @@ fn item_page_scope_labels_prompt_and_lists_memberships() {
     let jedi = build_item_page_view_model(&reduced, &ScopeId::Public, "~/jedi", 1);
     assert!(jedi.is_scope, "jedi has an active member");
     assert_eq!(jedi.body.as_deref(), Some("who is a jedi"));
-    assert!(jedi.memberships.is_empty());
+    // Top-level items live in the root electorate (the bare-tilde default).
+    assert_eq!(jedi.memberships.len(), 1);
+    assert_eq!(jedi.memberships[0].parent, ItemId::parse("~").unwrap());
 
     let luke = build_item_page_view_model(&reduced, &ScopeId::Public, "~/x/luke", 1);
     assert!(!luke.is_scope);
@@ -744,7 +746,9 @@ fn item_page_renders_memberships_suspended_borders_and_journal() {
     );
     apply_ingest(&mut reduced, 2, "{ out }\n~luke !<: ~jedi\n");
     let suspended = build_item_page_view_model(&reduced, &ScopeId::Public, "~luke", 1);
-    assert!(suspended.memberships.is_empty());
+    // Excommunicated from jedi, luke falls back to the root electorate.
+    assert_eq!(suspended.memberships.len(), 1);
+    assert_eq!(suspended.memberships[0].parent, ItemId::parse("~").unwrap());
     assert_eq!(suspended.suspended_borders.len(), 1);
     assert_eq!(
         suspended.suspended_borders[0].status,
@@ -760,7 +764,8 @@ fn item_page_renders_memberships_suspended_borders_and_journal() {
 
     apply_ingest(&mut reduced, 3, "{ still in }\n~luke <: ~jedi\n");
     let breached = build_item_page_view_model(&reduced, &ScopeId::Public, "~luke", 1);
-    assert_eq!(breached.memberships.len(), 1);
+    // Reactivated jedi membership plus the root fallback.
+    assert_eq!(breached.memberships.len(), 2);
     assert_eq!(breached.fallen_journal.len(), 1);
     let html = item_relations_markup(&breached, &ThreadNav::public(), 10_000).into_string();
     assert!(

@@ -113,6 +113,10 @@ pub fn validate_ingest_document(
                             ));
                         }
                     };
+                    // The ontology root is a system item: always defined, no body needed.
+                    if it == crate::path_types::ItemId::ontology_root() {
+                        continue;
+                    }
                     if !defined_in_doc.contains(&it) && !item_exists(&it) {
                         return Err((
                             StatusCode::BAD_REQUEST,

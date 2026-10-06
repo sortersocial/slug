@@ -1151,6 +1151,26 @@ impl ReducerState {
             }
         }
 
+        // Bare tilde items otherwise float in no electorate — invisible to
+        // every scope page, including the root garden. Default the root as
+        // home for anything with no active membership: the garden index is
+        // the root electorate, and a thing in the garden should be *in* the
+        // garden. Idempotent sugar (weight 1); never re-plants a scoped item.
+        let root = ItemId::ontology_root();
+        for item in &ingest_items {
+            if item.tilde_tail().is_none() || !content.scopes_of(item).is_empty() {
+                continue;
+            }
+            content.apply_containment_claim(
+                item.clone(),
+                root.clone(),
+                false,
+                true,
+                ing.ts,
+                &ing.id,
+            );
+        }
+
         for item in ingest_items.iter() {
             nav!(
                 content.item_snippets,
@@ -1586,6 +1606,71 @@ mod rank_position_cache_tests {
         assert_eq!(
             a_second.scope_rank_delta, 1,
             "c 2:1 a knocks a down one: {a_second:?}"
+        );
+    }
+
+    #[test]
+    fn bare_tilde_items_default_to_root_membership() {
+        let root = ItemId::ontology_root();
+        let mut content = ContentState::default();
+
+        // Bare item definition: joins the root electorate.
+        ReducerState::apply_ingest_to_content(
+            &mut content,
+            &ingest("bare-def", "~ghost { floating no more }"),
+        )
+        .unwrap();
+        let ghost = ItemId::parse("~ghost").unwrap();
+        assert!(
+            content.members_of(&root).contains(&ghost),
+            "bare item joins the root electorate"
+        );
+
+        // Bare vote: both endpoints join root and get real scope ranks.
+        ReducerState::apply_ingest_to_content(
+            &mut content,
+            &ingest("bare-vote", "{ tape over wave }\n~tape 2:1 ~wave"),
+        )
+        .unwrap();
+        for name in ["~tape", "~wave"] {
+            assert!(
+                content
+                    .members_of(&root)
+                    .contains(&ItemId::parse(name).unwrap()),
+                "{name} joins the root electorate"
+            );
+        }
+        let tape_hist = &content.rank_history[&ItemId::parse("~tape").unwrap()];
+        assert!(
+            tape_hist.last().unwrap().scope_rank >= 1,
+            "a real scope rank, not 0: {:?}",
+            tape_hist.last().unwrap()
+        );
+
+        // Path sugar keeps nesting: ~/sect/adept joins ~sect, not root.
+        ReducerState::apply_ingest_to_content(
+            &mut content,
+            &ingest("nested", "~/sect/adept { nested }"),
+        )
+        .unwrap();
+        let adept = ItemId::parse("~adept").unwrap();
+        assert!(
+            !content.members_of(&root).contains(&adept),
+            "nested item stays out of root"
+        );
+        assert!(content
+            .members_of(&root)
+            .contains(&ItemId::parse("~sect").unwrap()));
+
+        // An already-scoped item referenced bare later is not re-planted.
+        ReducerState::apply_ingest_to_content(
+            &mut content,
+            &ingest("late-ref", "{ referencing the scoped one }\n~adept 2:1 ~tape"),
+        )
+        .unwrap();
+        assert!(
+            !content.members_of(&root).contains(&adept),
+            "scoped item is not re-planted into root"
         );
     }
 }

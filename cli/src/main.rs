@@ -526,13 +526,25 @@ fn print_rank_history_response(resp: &slug_types::RankHistoryResponse) {
             std::cmp::Ordering::Greater => format!(" ↓{}", e.global_rank_delta),
             std::cmp::Ordering::Equal => String::new(),
         };
+        let scope_str = if e.scope_rank == 0 && e.scope_total == 0 {
+            "unscoped".to_string()
+        } else if e.scope_rank == 0 {
+            format!("unranked of {}", e.scope_total)
+        } else {
+            format!("#{} of {}", e.scope_rank, e.scope_total)
+        };
+        let global_str = if e.global_rank == 0 && e.global_total == 0 {
+            "ungrouped".to_string()
+        } else if e.global_rank == 0 {
+            format!("unranked of {}", e.global_total)
+        } else {
+            format!("#{} of {}", e.global_rank, e.global_total)
+        };
         println!(
-            "\n  #{} of {} among siblings{}   #{} of {} globally{}   {}   {} post #{}{}",
-            e.scope_rank,
-            e.scope_total,
+            "\n  {} among siblings{}   {} globally{}   {}   {} post #{}{}",
+            scope_str,
             scope_delta,
-            e.global_rank,
-            e.global_total,
+            global_str,
             global_delta,
             slug_types::timeago::timeago(now_ms, e.ts),
             e.thread,

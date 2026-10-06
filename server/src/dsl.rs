@@ -581,6 +581,15 @@ fn parse_item_name_at_with_mode(
         return None;
     }
     j += 1;
+    // Bare root token: `~` (or `~/` with no path) is the ontology root, so
+    // containment can claim it explicitly (`{ why } ~child <: ~`). The wire
+    // layer already canonicalizes both spellings to the root.
+    if j >= bytes.len() || is_ws_byte(bytes[j]) {
+        return Some(("~".to_string(), j));
+    }
+    if bytes[j] == b'/' && (j + 1 >= bytes.len() || is_ws_byte(bytes[j + 1])) {
+        return Some(("~/".to_string(), j + 1));
+    }
     if j < bytes.len() && bytes[j] == b'/' {
         j += 1;
         let start = j;
@@ -1939,6 +1948,33 @@ mod tests {
             containments(&doc).is_empty(),
             "URL items are never desugared"
         );
+    }
+
+    #[test]
+    fn parse_containment_claim_can_target_root() {
+        // Bare `~` is the ontology root; the explicit claim needs a reason.
+        let doc = parse_full("{ home }\n~a <: ~").unwrap();
+        assert!(matches!(
+            containments(&doc)
+                .iter()
+                .find(|s| matches!(s, Stmt::Containment { sugar: false, .. })),
+            Some(Stmt::Containment {
+                child,
+                parent,
+                border: false,
+                ..
+            }) if child == "~a" && (parent == "~" || parent == "~/")
+        ));
+        // `~/` spells the same target.
+        let doc2 = parse_full("{ home }\n~a <: ~/").unwrap();
+        assert!(matches!(
+            containments(&doc2)
+                .iter()
+                .find(|s| matches!(s, Stmt::Containment { sugar: false, .. })),
+            Some(Stmt::Containment {
+                parent, ..
+            }) if parent == "~/" || parent == "~"
+        ));
     }
 
     #[test]
