@@ -1295,12 +1295,13 @@ async fn read_room(state: &AppState, headers: &HeaderMap, args: &Value) -> Value
             delegate: None,
             since: Some(0),
             limit: Some(40),
+            room: Some(room_id.clone()),
         },
     )
     .await
     {
         Ok(RpcResult::Feed(feed)) => {
-            feed_posts_json(state, feed.posts.into_iter().filter(|p| p.room == room_id)).await
+            feed_posts_json(state, feed.posts).await
         }
         Ok(_) => json!([]),
         Err((e, h)) => return write_rpc_err(e, h),
@@ -1347,17 +1348,13 @@ async fn get_feed(state: &AppState, headers: &HeaderMap, args: &Value) -> Value 
             delegate: delegate.clone(),
             since,
             limit,
+            room: room_filter.clone(),
         },
     )
     .await
     {
         Ok(RpcResult::Feed(feed)) => {
-            let posts = match room_filter.as_deref() {
-                Some(room) => {
-                    feed_posts_json(state, feed.posts.into_iter().filter(|p| p.room == room)).await
-                }
-                None => feed_posts_json(state, feed.posts).await,
-            };
+            let posts = feed_posts_json(state, feed.posts).await;
             tool_ok(
                 json!({
                     "posts": posts,

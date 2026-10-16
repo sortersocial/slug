@@ -80,6 +80,7 @@ fn rpc_feed(
     requested_since: Option<i64>,
     implicit_anchor: Option<(usize, i64)>,
     limit: usize,
+    room_filter: Option<&str>,
 ) -> FeedResponse {
     let since = requested_since.or_else(|| implicit_anchor.map(|(_, ts)| ts));
     let implicit_anchor_index = requested_since
@@ -104,6 +105,11 @@ fn rpc_feed(
         .map(|(_, id)| id.as_str())
         .filter(|id| {
             reduced.ingests_by_id.get(*id).is_some_and(|ing| {
+                if let Some(room) = room_filter {
+                    if ing.room_id != room {
+                        return false;
+                    }
+                }
                 let scope = scope_from_room_wire(&ing.room_id);
                 can_view_scope(reduced, &scope, Some(viewer))
             })
@@ -1799,6 +1805,7 @@ pub async fn dispatch_rpc(state: &AppState, headers: &HeaderMap, cmd: RpcCommand
             delegate,
             since,
             limit,
+            room,
         } => {
             const DEFAULT_LIMIT: usize = 50;
             const MAX_LIMIT: usize = 200;
@@ -1806,6 +1813,11 @@ pub async fn dispatch_rpc(state: &AppState, headers: &HeaderMap, cmd: RpcCommand
             match verify_bearer_principal(&headers, &reduced) {
                 Err((_, m)) => line_err(m, None),
                 Ok(viewer) => {
+                    let room_filter = room
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(|s| reduced.resolve_room_id(s).unwrap_or_else(|| s.to_string()));
                     let delegate_parsed: Option<Result<String, String>> = delegate
                         .as_deref()
                         .map(str::trim)
@@ -1845,6 +1857,7 @@ pub async fn dispatch_rpc(state: &AppState, headers: &HeaderMap, cmd: RpcCommand
                                         since,
                                         implicit_anchor,
                                         limit,
+                                        room_filter.as_deref(),
                                     )))
                                 };
                             drop(reduced);
@@ -1869,6 +1882,7 @@ pub async fn dispatch_rpc(state: &AppState, headers: &HeaderMap, cmd: RpcCommand
                                 since,
                                 implicit_anchor,
                                 limit,
+                                room_filter.as_deref(),
                             )));
                             drop(reduced);
                             line

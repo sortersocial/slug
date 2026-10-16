@@ -520,6 +520,11 @@ pub enum RpcCommand {
         since: Option<i64>,
         #[serde(default)]
         limit: Option<usize>,
+        /// When set, only posts in this room (`"public"` or a private room id).
+        /// The filter applies before the limit, so `total` counts matching
+        /// posts in that room only.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        room: Option<String>,
     },
     /// Remove the author's post from the garden and replace the body with a tombstone in the thread.
     PostRedact {

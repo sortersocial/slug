@@ -1857,6 +1857,7 @@ async fn run() -> Result<()> {
                         None => None,
                     },
                     limit: Some(limit),
+                    room: None,
                 }],
             )
             .await?;
