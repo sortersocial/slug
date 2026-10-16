@@ -1065,13 +1065,31 @@ pub async fn dispatch_rpc(state: &AppState, headers: &HeaderMap, cmd: RpcCommand
                     .unwrap_or_else(|| ItemId::opaque(item_str.clone()));
                 let item_str = item.as_str().to_string();
                 if !content.items.contains(&item) {
-                    line_err(
-                        "item not found",
-                        Some(format!(
-                            "{} does not exist",
-                            GardenItemUrl::from_storage_str(&item_str, &room)
-                        )),
-                    )
+                    let members = content.members_of(&item);
+                    if !members.is_empty() {
+                        let leaf = item.last_segment();
+                        let children_cmd = if room == "public" {
+                            format!("npx slugsocial@latest public garden children -- {leaf}")
+                        } else {
+                            format!("npx slugsocial@latest private {room} garden children -- {leaf}")
+                        };
+                        line_err(
+                            "item not found",
+                            Some(format!(
+                                "{} is a scope with {} children, not an item with a body (folder paths are scopes, not vote targets); rank them with: {children_cmd}",
+                                GardenItemUrl::from_storage_str(&item_str, &room),
+                                members.len(),
+                            )),
+                        )
+                    } else {
+                        line_err(
+                            "item not found",
+                            Some(format!(
+                                "{} does not exist",
+                                GardenItemUrl::from_storage_str(&item_str, &room)
+                            )),
+                        )
+                    }
                 } else {
                     let want_full = full.unwrap_or(false);
                     let (body, truncated, body_len) = match content.item_bodies.get(&item) {
@@ -1505,13 +1523,31 @@ pub async fn dispatch_rpc(state: &AppState, headers: &HeaderMap, cmd: RpcCommand
                 let item_str = item.as_str().to_string();
                 let limit = limit.unwrap_or(50).clamp(1, 200);
                 if !content.items.contains(&item) {
-                    line_err(
-                        "item not found",
-                        Some(format!(
-                            "{} does not exist",
-                            GardenItemUrl::from_storage_str(&item_str, &room)
-                        )),
-                    )
+                    let members = content.members_of(&item);
+                    if !members.is_empty() {
+                        let leaf = item.last_segment();
+                        let children_cmd = if room == "public" {
+                            format!("npx slugsocial@latest public garden children -- {leaf}")
+                        } else {
+                            format!("npx slugsocial@latest private {room} garden children -- {leaf}")
+                        };
+                        line_err(
+                            "item not found",
+                            Some(format!(
+                                "{} is a scope with {} children, not an item with vote history (folder paths are scopes, not vote targets); rank them with: {children_cmd}",
+                                GardenItemUrl::from_storage_str(&item_str, &room),
+                                members.len(),
+                            )),
+                        )
+                    } else {
+                        line_err(
+                            "item not found",
+                            Some(format!(
+                                "{} does not exist",
+                                GardenItemUrl::from_storage_str(&item_str, &room)
+                            )),
+                        )
+                    }
                 } else {
                     let votes: Vec<VoteRow> = content
                         .item_votes
