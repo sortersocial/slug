@@ -2,7 +2,6 @@ use std::collections::HashSet;
 use std::sync::OnceLock;
 
 use axum::{extract::State, http::HeaderMap, response::IntoResponse, Json};
-use rand::seq::SliceRandom;
 use slug_types::paths::{ForumThreadUrl, GardenItemUrl, TildeOntologyPath};
 use slug_types::*;
 use tokio::sync::oneshot;
@@ -13,7 +12,6 @@ use crate::{
     events::{Event, Ingest, ThreadCapability},
     identity::{parse_agent, parse_username},
     path_types::ItemId,
-    ranking::ranked_items_subset,
     reducer::{scope_from_room_wire, ReducerState, ScopeId},
     scope_rank::{comparable_items, suggest_next_pair_in_pool},
     state::{AppState, InviteState},
@@ -22,7 +20,7 @@ use crate::{
 
 use super::auth::{parse_bearer, verify_bearer_principal};
 use super::helpers::{
-    compute_connectivity_stats, is_pair_voted, now_ms, paginate_rankings, parse_parent_specs,
+    compute_connectivity_stats, now_ms, paginate_rankings, parse_parent_specs,
     pick_random_distinct_item_pair, validate_garden_parent_scope_paths, vote_touches_path,
 };
 use super::validate::validate_ingest_document;
@@ -938,56 +936,12 @@ async fn rpc_get_pair(
         if group.idx_to_item.is_empty() {
             pick_random_distinct_item_pair(&pool)
         } else {
-            let mut rng = rand::thread_rng();
-            let idxs: Vec<usize> = pool
-                .iter()
-                .filter_map(|it| group.item_to_idx.get(it).copied())
-                .collect();
-            let ranked = ranked_items_subset(group, &idxs, 10000, 1e-8);
-            let ranked_set: HashSet<ItemId> = ranked.iter().map(|r| r.item.clone()).collect();
-            let unsorted: Vec<ItemId> = pool
-                .iter()
-                .filter(|it| !ranked_set.contains(*it))
-                .cloned()
-                .collect();
-            let mut pick: Option<(ItemId, ItemId)> = None;
-            if !unsorted.is_empty() {
-                if let Some(left) = unsorted.choose(&mut rng).cloned() {
-                    let mut candidates: Vec<ItemId> = if !ranked.is_empty() {
-                        ranked.iter().map(|r| r.item.clone()).collect()
-                    } else {
-                        pool.clone()
-                    };
-                    candidates.retain(|c| c != &left);
-                    if let Some(right) = candidates.choose(&mut rng).cloned() {
-                        pick = Some((left, right));
-                    }
-                }
-            } else if ranked.len() >= 2 {
-                for i in 0..(ranked.len().saturating_sub(1)) {
-                    let a = ranked[i].item.as_str();
-                    let b = ranked[i + 1].item.as_str();
-                    if a != b && !is_pair_voted(group, a, b) {
-                        pick = Some((ranked[i].item.clone(), ranked[i + 1].item.clone()));
-                        break;
-                    }
-                }
-                if pick.is_none() {
-                    for _ in 0..64 {
-                        let (Some(a), Some(b)) = (
-                            pool.choose(&mut rng).cloned(),
-                            pool.choose(&mut rng).cloned(),
-                        ) else {
-                            break;
-                        };
-                        if a != b && !is_pair_voted(group, a.as_str(), b.as_str()) {
-                            pick = Some((a, b));
-                            break;
-                        }
-                    }
-                }
-            }
-            pick.or_else(|| suggest_next_pair_in_pool(group, &pool, None))
+            // `suggest_next_pair_in_pool` is bridging-aware: when the pool
+            // subgraph is disconnected it deals a cross-component pair first
+            // (any such vote merges two components). The old adjacent-rank
+            // scan dealt intra-component pairs instead, so `pair` never
+            // showed the vote that would connect the graph.
+            suggest_next_pair_in_pool(group, &pool, None)
                 .or_else(|| pick_random_distinct_item_pair(&pool))
         }
     };

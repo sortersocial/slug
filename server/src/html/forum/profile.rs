@@ -113,7 +113,7 @@ pub async fn user_profile_page(
                     }
                 }
             }
-            (cli_panel(&["npx slugsocial public forum list".to_string()]))
+            (cli_panel(&["npx slugsocial@latest public forum list".to_string()]))
         },
         Some(view_count),
         theme_from_jar(&jar),

@@ -297,6 +297,47 @@ fn canonical_pair(a: &ItemId, b: &ItemId) -> (ItemId, ItemId) {
     }
 }
 
+/// Connected-component ids for a normalized pool, using only in-pool voted
+/// pairs. Items absent from `group` (never voted anywhere) are singleton
+/// components. Returns one component id per pool index.
+fn pool_component_ids(group: &GroupState, pool: &[ItemId]) -> Vec<usize> {
+    let n = pool.len();
+    let mut parent: Vec<usize> = (0..n).collect();
+    fn find(parent: &mut [usize], mut x: usize) -> usize {
+        while parent[x] != x {
+            parent[x] = parent[parent[x]];
+            x = parent[x];
+        }
+        x
+    }
+    fn union(parent: &mut [usize], a: usize, b: usize) {
+        let ra = find(parent, a);
+        let rb = find(parent, b);
+        if ra != rb {
+            if ra < rb {
+                parent[rb] = ra;
+            } else {
+                parent[ra] = rb;
+            }
+        }
+    }
+    for i in 0..n {
+        for j in (i + 1)..n {
+            if is_pair_voted_in_group(group, &pool[i], &pool[j]) {
+                union(&mut parent, i, j);
+            }
+        }
+    }
+    let mut root_to_id: HashMap<usize, usize> = HashMap::new();
+    let mut out = vec![0usize; n];
+    for i in 0..n {
+        let r = find(&mut parent, i);
+        let next = root_to_id.len();
+        out[i] = *root_to_id.entry(r).or_insert(next);
+    }
+    out
+}
+
 pub fn suggest_next_pair_in_pool(
     group: &GroupState,
     pool: &[ItemId],
@@ -343,6 +384,56 @@ pub fn suggest_next_pair_in_pool_excluding(
     }
 
     let mut best_unvoted: Option<(u8, usize, usize, usize, usize)> = None;
+    // When the pool subgraph is disconnected, a vote inside one component can
+    // never connect it to the others. Prefer a bridging pair first: any single
+    // cross-component vote merges two components, decrementing
+    // `comparisons_until_connected`. Among bridging pairs, attach to the
+    // largest components first (a singleton joins the main ranking rather than
+    // pairing singletons together), then keep the existing low-degree
+    // preference so one item is not starred.
+    {
+        use std::cmp::Reverse;
+        let comp = pool_component_ids(group, &pool);
+        let num_components = comp.iter().copied().max().map(|m| m + 1).unwrap_or(0);
+        if num_components > 1 {
+            let mut comp_size = vec![0usize; num_components];
+            for &c in &comp {
+                comp_size[c] += 1;
+            }
+            let mut best_bridge: Option<(u8, Reverse<usize>, usize, usize, usize, usize)> = None;
+            for i in 0..n {
+                for j in (i + 1)..n {
+                    if comp[i] == comp[j] {
+                        continue;
+                    }
+                    let pair = canonical_pair(&pool[i], &pool[j]);
+                    if current.as_ref() == Some(&pair) || is_excluded(&pair) {
+                        continue;
+                    }
+                    if is_pair_voted_in_group(group, &pool[i], &pool[j]) {
+                        continue;
+                    }
+                    let overlap = match &current {
+                        Some((a, b)) => {
+                            u8::from(pool[i] == *a || pool[i] == *b)
+                                + u8::from(pool[j] == *a || pool[j] == *b)
+                        }
+                        None => 0,
+                    };
+                    let size_sum = comp_size[comp[i]] + comp_size[comp[j]];
+                    let max_deg = degree[i].max(degree[j]);
+                    let sum_deg = degree[i] + degree[j];
+                    let key = (overlap, Reverse(size_sum), max_deg, sum_deg, i, j);
+                    if best_bridge.as_ref().map_or(true, |best| key < *best) {
+                        best_bridge = Some(key);
+                    }
+                }
+            }
+            if let Some((_, _, _, _, i, j)) = best_bridge {
+                return Some((pool[i].clone(), pool[j].clone()));
+            }
+        }
+    }
     for i in 0..n {
         for j in (i + 1)..n {
             let pair = canonical_pair(&pool[i], &pool[j]);
@@ -545,6 +636,51 @@ mod tests {
         .expect("next pair");
         assert_ne!(canonical_pair(&next.0, &next.1), canonical_pair(&a, &b));
         assert!(next.0 == c || next.1 == c);
+    }
+
+    #[test]
+    fn suggest_next_pair_prefers_bridging_vote_when_disconnected() {
+        // Portraits shape: a 3-node component (a-b, b-c voted; a-c open) plus
+        // a 2-node component (d-e voted). Degree-only logic ties a-c against
+        // every cross-component pair and lex order picks intra-component a-c,
+        // which can never connect the graph. Bridging must win.
+        let mut group = crate::reducer::GroupState::new();
+        let a = ItemId::parse("~/a").unwrap().normalized_storage();
+        let b = ItemId::parse("~/b").unwrap().normalized_storage();
+        let c = ItemId::parse("~/c").unwrap().normalized_storage();
+        let d = ItemId::parse("~/d").unwrap().normalized_storage();
+        let e = ItemId::parse("~/e").unwrap().normalized_storage();
+        apply_test_vote(&mut group, &a, &b, 1);
+        apply_test_vote(&mut group, &b, &c, 2);
+        apply_test_vote(&mut group, &d, &e, 3);
+        let pool = [a.clone(), b.clone(), c.clone(), d.clone(), e.clone()];
+        let next = suggest_next_pair_in_pool(&group, &pool, None).expect("next pair");
+        let (lo, hi) = (&next.0, &next.1);
+        let in_abc = |x: &ItemId| *x == a || *x == b || *x == c;
+        let in_de = |x: &ItemId| *x == d || *x == e;
+        assert!(
+            (in_abc(lo) && in_de(hi)) || (in_de(lo) && in_abc(hi)),
+            "expected a bridging pair across components, got {next:?}"
+        );
+    }
+
+    #[test]
+    fn suggest_next_pair_attaches_singleton_to_largest_component() {
+        // A 3-node component plus a never-voted singleton: bridging to the
+        // main component must beat pairing singletons together.
+        let mut group = crate::reducer::GroupState::new();
+        let a = ItemId::parse("~/a").unwrap().normalized_storage();
+        let b = ItemId::parse("~/b").unwrap().normalized_storage();
+        let c = ItemId::parse("~/c").unwrap().normalized_storage();
+        let fresh = ItemId::parse("~/fresh").unwrap().normalized_storage();
+        apply_test_vote(&mut group, &a, &b, 1);
+        apply_test_vote(&mut group, &b, &c, 2);
+        let pool = [a.clone(), b.clone(), c.clone(), fresh.clone()];
+        let next = suggest_next_pair_in_pool(&group, &pool, None).expect("next pair");
+        assert!(
+            next.0 == fresh || next.1 == fresh,
+            "expected the singleton to be attached, got {next:?}"
+        );
     }
 
     #[test]

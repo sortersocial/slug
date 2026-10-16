@@ -142,7 +142,7 @@ pub async fn garden_index(
                 (rankings_markup)
             }
             (aspects_markup)
-            (cli_panel(&["npx slugsocial garden tree"]))
+            (cli_panel(&["npx slugsocial@latest garden tree"]))
         },
         Some(view_count),
         theme_from_jar(&jar),

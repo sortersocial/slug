@@ -406,7 +406,7 @@ pub async fn thread_index(
                 }
             }
             (render_thread_feed(Some(&nav), "thread-feed", &public_rows, now))
-            (cli_panel(&["npx slugsocial public forum list"]))
+            (cli_panel(&["npx slugsocial@latest public forum list"]))
         },
         Some(view_count),
         post_stats,

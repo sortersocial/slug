@@ -159,8 +159,8 @@ async fn thread_view_inner(
     };
 
     let cli = match &sc {
-        ScopeId::Public => format!("npx slugsocial public forum show {tag}"),
-        ScopeId::Room(r) => format!("npx slugsocial private {r} forum show {tag}"),
+        ScopeId::Public => format!("npx slugsocial@latest public forum show {tag}"),
+        ScopeId::Room(r) => format!("npx slugsocial@latest private {r} forum show {tag}"),
     };
 
     let url_key = canonical_view_url(&uri);
@@ -308,9 +308,9 @@ pub async fn room_page(
         return (StatusCode::NOT_FOUND, "room not found").into_response();
     };
     let members_markup = room_members_section_markup(&reduced, &room_id, false, user.as_deref());
-    let forum_cli = format!("npx slugsocial private {room_id} forum list");
-    let garden_cli = format!("npx slugsocial private {room_id} garden tree");
-    let audit_cli = format!("npx slugsocial private {room_id} audit");
+    let forum_cli = format!("npx slugsocial@latest private {room_id} forum list");
+    let garden_cli = format!("npx slugsocial@latest private {room_id} garden tree");
+    let audit_cli = format!("npx slugsocial@latest private {room_id} audit");
     drop(reduced);
 
     let url_key = canonical_view_url(&uri);
