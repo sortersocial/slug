@@ -338,10 +338,10 @@ pub async fn forum_index(
 ) -> impl IntoResponse {
     let now = now_ms();
     let reduced = state.reduced.read().await;
+    let user = optional_principal(&headers, &jar, &reduced);
     let rows = all_public_rows(&reduced, now);
     let post_stats = reduced.public_post_stats();
     drop(reduced);
-
     let nav = ThreadNav::public();
     let reduced_read = state.reduced.read().await;
     let strip = auth_strip(&headers, &jar, &reduced_read);
@@ -359,6 +359,13 @@ pub async fn forum_index(
             h2 { "all threads" }
             p class="muted home-index-hint" {
                 (format!("{} live threads, bump-newest first — the front page shows ten", rows.len()))
+            }
+            div id="new-thread-ui-slot" {
+                @if user.is_some() {
+                    (fragment_new_thread_slot(&nav, true, false))
+                } @else {
+                    (login_to_post_hint_markup())
+                }
             }
             (render_thread_feed(Some(&nav), "thread-feed", &rows, now))
             (cli_panel(&["npx slugsocial@latest public forum list --all"]))
