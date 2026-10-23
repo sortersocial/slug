@@ -584,6 +584,7 @@ pub(super) fn bc_segment(label: &str, href: &str, is_current: bool) -> Markup {
 }
 
 /// Breadcrumb for external ontology `/-/https://…`
+/// Brand goes home (`/` = dark forum) everywhere here — same mode toggle.
 fn bc_path_external(path: &ExternalOntologyPath) -> Markup {
     html! {
         a href="/" { "slug.social" }
@@ -601,16 +602,20 @@ fn bc_path_external(path: &ExternalOntologyPath) -> Markup {
 /// Breadcrumb for the garden root (`/~`, the only caller). Deeper tilde pages render
 /// the containment breadcrumb (`scoped_bc_containment`); URL segments are not
 /// hierarchy — nested inputs redirect to the leaf before any page renders.
+/// Brand is the mode toggle: on the garden root the brand goes home (`/` =
+/// dark forum) instead of to itself.
 fn bc_path(path: &OntologyPath) -> Markup {
     html! {
-        a href=(path.slug_root_href()) { "slug.social" }
+        a href="/" { "slug.social" }
         (bc_segment("~", "/~", true))
     }
 }
 
 /// Render the thread path breadcrumb: `slug.social` on `/`, or `… / threads / #tag` / `… / post #N`.
-/// Brand always points at home (`/`, the thread index). When focusing a post, `#tag` links
-/// to the thread page that contains it (`?offset=` + `#post-N`).
+/// Brand is the mode toggle: on a thread page it goes home (`/` = dark forum);
+/// at root the brand goes to the garden (`/~` = light mode) instead of itself.
+/// When focusing a post, `#tag` links to the thread page that contains it
+/// (`?offset=` + `#post-N`).
 pub(super) fn bc_threads(thread_tag: Option<&str>, focused_post: Option<usize>) -> Markup {
     let nav = ThreadNav::public();
     html! {
@@ -628,7 +633,7 @@ pub(super) fn bc_threads(thread_tag: Option<&str>, focused_post: Option<usize>) 
                 (bc_segment(&format!("#{tag}"), &nav.thread_url(tag), true))
             }
         } @else {
-            a href="/" class="bc-current" { "slug.social" }
+            a href="/~" { "slug.social" }
         }
     }
 }

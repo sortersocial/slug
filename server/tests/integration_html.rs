@@ -679,6 +679,67 @@ async fn test_home_empty_garden_has_honest_empty_state() {
 }
 
 #[tokio::test]
+async fn test_brand_is_mode_toggle_home_goes_garden_elsewhere_goes_home() {
+    let (addr, _tmp, _log, state, _handle) = create_test_server_with_state().await;
+    {
+        let mut w = state.reduced.write().await;
+        // Garden needs a voteless item with a body to render.
+        w.apply_event(Event::Ingest(Ingest {
+            ts: 7,
+            id: "ing-brand-toggle-item".into(),
+            raw: "~/toggle-me {a kept item}".into(),
+            principal: "testuser".into(),
+            delegate: None,
+            room_id: "public".into(),
+            thread_tag: "toggle-thread".into(),
+        }));
+    }
+    let client = reqwest::Client::new();
+    // Root: dark forum. Brand teleports to light mode — the garden, not itself.
+    let home = client
+        .get(format!("http://{addr}/"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        home.contains("href=\"/~\">slug.social<"),
+        "at root the brand must go to the garden (light mode): {}",
+        home.chars().take(1200).collect::<String>()
+    );
+    // Thread page: brand goes home (dark forum).
+    let thread = client
+        .get(format!("http://{addr}/t/toggle-thread"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        thread.contains("href=\"/\">slug.social<"),
+        "on a thread the brand must go home: {}",
+        thread.chars().take(1200).collect::<String>()
+    );
+    // Garden item page: brand goes home (dark forum).
+    let garden = client
+        .get(format!("http://{addr}/~/toggle-me"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        garden.contains("href=\"/\">slug.social<"),
+        "on a garden item the brand must go home: {}",
+        garden.chars().take(1200).collect::<String>()
+    );
+}
+
+#[tokio::test]
 async fn test_home_index_caps_at_ten_but_old_thread_url_stays() {
     let (addr, _tmp, _log, state, _handle) = create_test_server_with_state().await;
     {

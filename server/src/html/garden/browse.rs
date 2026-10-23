@@ -89,7 +89,7 @@ pub(super) fn scoped_bc_containment(
     };
     match nav.scope() {
         ScopeId::Public => html! {
-            a href=(path.slug_root_href()) { "slug.social" }
+            a href="/" { "slug.social" }
             (bc_segment("~", "/~", path.is_root()))
             (segments)
         },
