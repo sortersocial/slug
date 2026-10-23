@@ -28,7 +28,7 @@ pub use auth::{
 pub use editor::{editor_check, editor_page};
 pub use muse::muse_page;
 pub use forum::{
-    redirect_forum_index, room_page, room_thread_post_view, room_thread_view, thread_feed_html,
+    forum_index, room_page, room_thread_post_view, room_thread_view, thread_feed_html,
     thread_feed_html_for_room, thread_index, thread_post_view, thread_view, ThreadNav,
 };
 pub(crate) use forum::{

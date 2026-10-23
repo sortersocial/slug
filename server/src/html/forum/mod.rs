@@ -15,7 +15,7 @@ mod room_members;
 mod thread_morph;
 mod views;
 
-pub use feed::{redirect_forum_index, thread_feed_html, thread_feed_html_for_room, thread_index};
+pub use feed::{forum_index, thread_feed_html, thread_feed_html_for_room, thread_index};
 pub(crate) use feed::{
     thread_latest_page_region, thread_region_page_morphs, ThreadRegionPageMorphs,
 };

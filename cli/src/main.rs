@@ -29,11 +29,14 @@ struct Cli {
 /// Subcommands under `public forum` / `private <room> forum`.
 #[derive(Subcommand, Debug)]
 enum ForumCmd {
-    /// List recently active threads (public: 5, ephemeral; private rooms: full list)
+    /// List recently active threads (public: 10 freshest, --all for full list; private rooms: full list)
     List {
         /// Output as JSON for agent parsing
         #[arg(long)]
         json: bool,
+        /// Show every public thread, bump-newest first (same as /t)
+        #[arg(long)]
+        all: bool,
     },
     /// Show posts in a thread (`TAG` without #; quote if the tag contains spaces)
     Show {
@@ -1286,19 +1289,20 @@ async fn run_scoped(base: &str, room: &str, sub: ScopedCmd) -> Result<()> {
         },
         ScopedCmd::Forum { sub } => {
             match sub {
-                ForumCmd::List { json } => {
+                ForumCmd::List { json, all } => {
                     let batch = send_rpc(
                         &client,
                         base,
                         scoped_read_bearer,
                         vec![RpcCommand::ListForumThreads {
                             room: room.to_string(),
+                            all: Some(all),
                         }],
                     )
                     .await?;
                     match rpc_line_ok_scoped_read(&batch.results[0], room)? {
                         RpcResult::ForumThreads(resp) => {
-                            let threads = if room == "public" {
+                            let threads = if room == "public" && !all {
                                 resp.threads
                                     .iter()
                                     .take(PUBLIC_INDEX_THREAD_LIMIT)

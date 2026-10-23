@@ -26,8 +26,9 @@ pub const MAX_ITEM_BODY_PREVIEW_CHARS: usize = 100_000;
 pub const MAX_FORUM_POST_PREVIEW_CHARS: usize = 20_000;
 
 /// Visible public thread-index size (`GET /`, `forum list`, `ListForumThreads` for public).
-/// Older threads stay reachable at `/t/:tag` if you bookmarked the url.
-pub const PUBLIC_INDEX_THREAD_LIMIT: usize = 5;
+/// Older threads stay reachable at `/t/:tag` if you bookmarked the url —
+/// and the full bump-ordered list lives at `/t`.
+pub const PUBLIC_INDEX_THREAD_LIMIT: usize = 10;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ApiError {
@@ -429,6 +430,9 @@ pub enum RpcCommand {
     },
     ListForumThreads {
         room: String,
+        /// Full bump-ordered list (same as /t). Default: ten freshest.
+        #[serde(default)]
+        all: Option<bool>,
     },
     RoomCreate {
         slug: String,

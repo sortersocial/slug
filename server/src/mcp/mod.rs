@@ -367,7 +367,7 @@ pub fn tools_list() -> Value {
             tool(
                 "list_threads",
                 "List forum threads",
-                "List recently active forum threads (bump-ordered). The public index is ephemeral — at most 5 threads. Older threads stay at /t/:tag if you know the tag (use get_thread). Pass room_id from list_rooms to list a private room (uncapped; linked account required). Omit room_id or use public for the public forum.",
+                "List recently active forum threads (bump-ordered). The front page shows the ten freshest; the full list lives at /t. Older threads stay at /t/:tag if you know the tag (use get_thread). Pass room_id from list_rooms to list a private room (uncapped; linked account required). Omit room_id or use public for the public forum.",
                 json!({
                     "type": "object",
                     "properties": { "room_id": room_id_schema() }
@@ -863,6 +863,7 @@ pub async fn call_named_tool(
                 headers,
                 RpcCommand::ListForumThreads {
                     room: arg_room(&args),
+                    all: None,
                 },
             )
             .await
@@ -1278,6 +1279,7 @@ async fn read_room(state: &AppState, headers: &HeaderMap, args: &Value) -> Value
         headers,
         RpcCommand::ListForumThreads {
             room: room_id.clone(),
+            all: None,
         },
     )
     .await

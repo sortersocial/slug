@@ -645,7 +645,7 @@ async fn test_home_is_thread_index() {
     assert!(guest_body.contains("log in to post"));
     assert!(guest_body.contains("judge one pair"));
     assert!(guest_body.contains("href=\"/vote\""));
-    assert!(guest_body.contains("the index is ephemeral"));
+    assert!(guest_body.contains("ten live threads"));
     assert!(!guest_body.contains("data-testid=\"question-index\""));
 
     let authed = client
@@ -674,16 +674,16 @@ async fn test_home_empty_garden_has_honest_empty_state() {
     assert!(body.contains("id=\"thread-feed\""));
     assert!(body.contains("no threads yet"));
     assert!(body.contains("log in to post"));
-    assert!(body.contains("the index is ephemeral"));
+    assert!(body.contains("ten live threads"));
     assert!(!body.contains("data-testid=\"question-index\""));
 }
 
 #[tokio::test]
-async fn test_home_index_caps_at_five_but_old_thread_url_stays() {
+async fn test_home_index_caps_at_ten_but_old_thread_url_stays() {
     let (addr, _tmp, _log, state, _handle) = create_test_server_with_state().await;
     {
         let mut w = state.reduced.write().await;
-        for i in 0..6 {
+        for i in 0..11 {
             w.apply_event(Event::Ingest(Ingest {
                 ts: 100 + i,
                 id: format!("ing-ephemeral-{i}"),
@@ -710,21 +710,50 @@ async fn test_home_index_caps_at_five_but_old_thread_url_stays() {
         .and_then(|rest| rest.split("</div>").next())
         .unwrap_or("");
     assert!(
-        feed.contains("href=\"/t/thread-5\""),
+        feed.contains("href=\"/t/thread-10\""),
         "newest thread should stay on the board: {feed}"
     );
     assert!(
         feed.contains("href=\"/t/thread-1\""),
-        "fifth-newest should stay on the board: {feed}"
+        "tenth-newest should stay on the board: {feed}"
     );
     assert!(
         !feed.contains("href=\"/t/thread-0\""),
-        "oldest thread should fall off the ephemeral index: {feed}"
+        "oldest thread should fall off the front page: {feed}"
     );
     assert_eq!(
         feed.matches("href=\"/t/thread-").count(),
-        5,
-        "public index should list five threads: {feed}"
+        10,
+        "public front page should list ten threads: {feed}"
+    );
+    assert!(
+        home.contains("href=\"/t\""),
+        "front page should link to the full thread index: {}",
+        home.chars().take(3000).collect::<String>()
+    );
+
+    let all = client
+        .get(format!("http://{addr}/t"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        all.contains("href=\"/t/thread-0\""),
+        "full index should keep the oldest thread: {}",
+        all.chars().take(1500).collect::<String>()
+    );
+    assert!(
+        all.contains("href=\"/t/thread-10\""),
+        "full index should keep the newest thread: {}",
+        all.chars().take(1500).collect::<String>()
+    );
+    assert_eq!(
+        all.matches("href=\"/t/thread-").count(),
+        11,
+        "full index should list every thread: {all}"
     );
 
     let old = client
@@ -746,14 +775,14 @@ async fn test_home_index_caps_at_five_but_old_thread_url_stays() {
     );
 
     let live = client
-        .get(format!("http://{addr}/t/thread-5"))
+        .get(format!("http://{addr}/t/thread-10"))
         .send()
         .await
         .unwrap()
         .text()
         .await
         .unwrap();
-    assert!(live.contains("hello from thread-5"));
+    assert!(live.contains("hello from thread-10"));
     assert!(
         !live.contains("off the index"),
         "frontpage thread should not show the fallen-off hint: {}",
@@ -762,16 +791,22 @@ async fn test_home_index_caps_at_five_but_old_thread_url_stays() {
 }
 
 #[tokio::test]
-async fn test_forum_index_moved_to_root() {
+async fn test_forum_index_lists_every_thread() {
     let (addr, _tmp, _log, _state, _handle) = create_test_server_with_state().await;
-    let client = no_redirect_client();
+    let client = reqwest::Client::new();
     for path in ["/t", "/t/"] {
         let resp = client
             .get(format!("http://{addr}{path}"))
             .send()
             .await
             .unwrap();
-        assert_eq!(redirect_location(&resp), "/");
+        assert!(resp.status().is_success(), "{}", resp.status());
+        let body = resp.text().await.unwrap();
+        assert!(
+            body.contains("all threads"),
+            "/t should render the full thread index: {}",
+            body.chars().take(1500).collect::<String>()
+        );
     }
 }
 

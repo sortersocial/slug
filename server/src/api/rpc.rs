@@ -551,7 +551,7 @@ fn forum_scope_from_room(room: &str) -> ScopeId {
     scope_from_room_wire(room)
 }
 
-fn rpc_list_forum_threads(reduced: &ReducerState, room: &str) -> ThreadsResponse {
+fn rpc_list_forum_threads(reduced: &ReducerState, room: &str, all: bool) -> ThreadsResponse {
     let scope = forum_scope_from_room(room);
     let mut out: Vec<ThreadSummary> = reduced
         .forum_threads
@@ -565,7 +565,7 @@ fn rpc_list_forum_threads(reduced: &ReducerState, room: &str) -> ThreadsResponse
         })
         .collect();
     out.sort_by(|a, b| b.last_activity_ts.cmp(&a.last_activity_ts));
-    if room == "public" {
+    if room == "public" && !all {
         out.truncate(PUBLIC_INDEX_THREAD_LIMIT);
     }
     ThreadsResponse { threads: out }
@@ -1172,14 +1172,16 @@ pub async fn dispatch_rpc(state: &AppState, headers: &HeaderMap, cmd: RpcCommand
                 }
             }
         }
-        RpcCommand::ListForumThreads { room } => {
+        RpcCommand::ListForumThreads { room, all } => {
             let reduced = state.reduced.read().await;
             if let Err((e, h)) = authorize_room_read(&reduced, &headers, &room) {
                 line_err(e, h)
             } else {
                 let room = reduced.resolve_room_id(&room).unwrap_or(room);
                 line_ok(RpcResult::ForumThreads(rpc_list_forum_threads(
-                    &reduced, &room,
+                    &reduced,
+                    &room,
+                    all.unwrap_or(false),
                 )))
             }
         }

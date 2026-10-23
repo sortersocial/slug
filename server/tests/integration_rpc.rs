@@ -375,11 +375,11 @@ async fn test_check_endpoint_does_not_commit() {
 }
 
 #[tokio::test]
-async fn test_list_forum_threads_public_caps_at_five() {
+async fn test_list_forum_threads_public_caps_at_ten() {
     let (addr, _tmp, _log, state, _handle) = create_test_server_with_state().await;
     {
         let mut w = state.reduced.write().await;
-        for i in 0..6 {
+        for i in 0..11 {
             w.apply_event(Event::Ingest(Ingest {
                 ts: 200 + i,
                 id: format!("ing-list-cap-{i}"),
@@ -402,7 +402,7 @@ async fn test_list_forum_threads_public_caps_at_five() {
     let threads = list_body["results"][0]["result"]["ForumThreads"]["threads"]
         .as_array()
         .unwrap();
-    assert_eq!(threads.len(), 5, "{threads:?}");
+    assert_eq!(threads.len(), 10, "{threads:?}");
     let tags: Vec<&str> = threads
         .iter()
         .filter_map(|t| t["thread"].as_str())
@@ -410,6 +410,11 @@ async fn test_list_forum_threads_public_caps_at_five() {
     assert_eq!(
         tags,
         vec![
+            "#list-cap-10",
+            "#list-cap-9",
+            "#list-cap-8",
+            "#list-cap-7",
+            "#list-cap-6",
             "#list-cap-5",
             "#list-cap-4",
             "#list-cap-3",
@@ -417,6 +422,18 @@ async fn test_list_forum_threads_public_caps_at_five() {
             "#list-cap-1"
         ]
     );
+
+    let all_body = rpc_batch(
+        &client,
+        addr,
+        None,
+        serde_json::json!([{ "ListForumThreads": { "room": "public", "all": true } }]),
+    )
+    .await;
+    let all_threads = all_body["results"][0]["result"]["ForumThreads"]["threads"]
+        .as_array()
+        .unwrap();
+    assert_eq!(all_threads.len(), 11, "{all_threads:?}");
 
     let show = rpc_batch(
         &client,

@@ -67,7 +67,7 @@ pub(super) fn collect_thread_rows_for_scope(
         .collect()
 }
 
-/// Sort bump-newest first and keep only the public board (5 threads).
+/// Sort bump-newest first and keep only the public front page (10 threads).
 pub(super) fn take_public_index(rows: &mut Vec<ThreadRow>) {
     rows.sort_by(|a, b| b.last_ts.cmp(&a.last_ts));
     rows.truncate(PUBLIC_INDEX_THREAD_LIMIT);
@@ -76,6 +76,13 @@ pub(super) fn take_public_index(rows: &mut Vec<ThreadRow>) {
 pub(super) fn public_index_rows(reduced: &ReducerState, now: i64) -> Vec<ThreadRow> {
     let mut rows = collect_thread_rows_for_scope(reduced, &ScopeId::Public, now);
     take_public_index(&mut rows);
+    rows
+}
+
+/// Every public thread, bump-newest first — the "show all" behind `/t`.
+pub(super) fn all_public_rows(reduced: &ReducerState, now: i64) -> Vec<ThreadRow> {
+    let mut rows = collect_thread_rows_for_scope(reduced, &ScopeId::Public, now);
+    rows.sort_by(|a, b| b.last_ts.cmp(&a.last_ts));
     rows
 }
 
@@ -321,12 +328,49 @@ pub(crate) async fn thread_latest_page_region(
     (latest_offset, markup)
 }
 
-/// Retired `/t` index path → `/`: the public thread index lives at the site root.
-pub async fn redirect_forum_index(uri: Uri) -> impl IntoResponse {
-    match uri.query() {
-        Some(q) if !q.is_empty() => axum::response::Redirect::permanent(&format!("/?{q}")),
-        _ => axum::response::Redirect::permanent("/"),
-    }
+/// Full public thread index (`GET /t`): every thread, bump-newest first.
+/// The front page (`/`) shows the ten freshest with a "show all" link here.
+pub async fn forum_index(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    jar: CookieJar,
+    uri: Uri,
+) -> impl IntoResponse {
+    let now = now_ms();
+    let reduced = state.reduced.read().await;
+    let rows = all_public_rows(&reduced, now);
+    let post_stats = reduced.public_post_stats();
+    drop(reduced);
+
+    let nav = ThreadNav::public();
+    let reduced_read = state.reduced.read().await;
+    let strip = auth_strip(&headers, &jar, &reduced_read);
+    drop(reduced_read);
+
+    let url_key = canonical_view_url(&uri);
+    let view_count = state.views.get_views(&url_key);
+
+    let page = layout_with_post_stats(
+        "all threads — slug.social",
+        "view-thread",
+        html! {
+            (strip)
+            nav class="breadcrumb" { (bc_threads(None, None)) }
+            h2 { "all threads" }
+            p class="muted home-index-hint" {
+                (format!("{} live threads, bump-newest first — the front page shows ten", rows.len()))
+            }
+            (render_thread_feed(Some(&nav), "thread-feed", &rows, now))
+            (cli_panel(&["npx slugsocial@latest public forum list --all"]))
+        },
+        Some(view_count),
+        post_stats,
+        theme_from_jar(&jar),
+        &theme_next_from_uri(&uri),
+        None,
+        None,
+    );
+    Html(page.into_string())
 }
 
 /// Public thread index (`GET /`): private rooms (signed-in), then public bump-ordered threads.
@@ -394,7 +438,9 @@ pub async fn thread_index(
                 "."
             }
             p class="muted home-index-hint" {
-                "the index is ephemeral — five live threads. bookmark a "
+                "the front page shows ten live threads — "
+                a href="/t" { "show all" }
+                ". bookmark a "
                 code { "/t/…" }
                 " url to keep one."
             }
